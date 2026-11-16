@@ -1,0 +1,48 @@
+# P2-T114 Phase B (Entscheid): Warten mehrere Threads auf denselben Thread,
+# bekommt der erste Wartende das Ergebnis, jeder andere einen fangbaren Fehler.
+funktion rechne(n):
+    setze s auf 0
+    setze i auf 0
+    solange i < 100000:
+        setze s auf s + n
+        setze i auf i + 1
+    gib_zurück [s]
+
+funktion erster(t):
+    gib_zurück t.warten()[0]
+
+funktion zweiter(t):
+    versuche:
+        t.warten()
+        gib_zurück 1
+    fange e:
+        gib_zurück 0
+
+# 1) Ein anderer Thread wartet zuerst: der Hauptthread bekommt den Fehler.
+setze t auf starte(rechne, 1)
+setze u auf starte(erster, t)
+zeige u.warten()
+versuche:
+    t.warten()
+    zeige "FALSCH: Hauptthread bekam das Ergebnis"
+fange e:
+    zeige "Hauptthread: " + e
+
+# 2) Der Hauptthread wartet zuerst: der andere Thread bekommt den Fehler,
+#    der Hauptthread darf erneut warten und bekommt dasselbe Ergebnis (P2-T119).
+setze t2 auf starte(rechne, 2)
+zeige t2.warten()[0]
+setze u2 auf starte(zweiter, t2)
+zeige u2.warten()
+zeige t2.warten()
+
+# 3) Gleichzeitig: genau einer der beiden bekommt das Ergebnis.
+setze t3 auf starte(rechne, 3)
+setze u3 auf starte(zweiter, t3)
+setze ich auf 0
+versuche:
+    t3.warten()
+    setze ich auf 1
+fange e:
+    setze ich auf 0
+zeige ich + u3.warten()

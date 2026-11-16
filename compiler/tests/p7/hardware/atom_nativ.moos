@@ -1,0 +1,26 @@
+# P2-T114 Phase B: Atomics in @nativ (atomicrmw/cmpxchg/atomic load/store,
+# seq_cst), im Bare-Profil wie hosted. Zeiger ptr[T] mit Integer-Zieltyp.
+@nativ
+funktion atom_zaehle(p: ptr[u64], n: u64) -> u64:
+    unsicher:
+        gib_zurück atom_addieren(p, n)
+
+@nativ
+funktion atom_lies(p: ptr[u64]) -> u64:
+    unsicher:
+        gib_zurück atom_laden(p)
+
+@nativ
+funktion atom_setze(p: ptr[u32], wert: u32) -> void:
+    unsicher:
+        atom_speichern(p, wert)
+
+@nativ
+funktion atom_tausch(p: ptr[u32], wert: u32) -> u32:
+    unsicher:
+        gib_zurück atomic_swap(p, wert)
+
+@nativ
+funktion atom_cas(p: ptr[u32], alt: u32, neu_wert: u32) -> bool:
+    unsicher:
+        gib_zurück atom_vergleichen_und_tauschen(p, alt, neu_wert)

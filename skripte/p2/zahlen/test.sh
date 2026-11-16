@@ -299,8 +299,13 @@ expect_fail "$tests/native_matrix_neg_literal.moos" "Ganzzahlliteral '300' passt
 expect_fail "$tests/native_matrix_neg_bool_arith.moos" 'Ganzzahltyp erwartet'
 expect_fail "$tests/native_matrix_neg_bool_vergleich.moos" 'Vergleich ist fuer diesen Typ nicht definiert'
 expect_fail "$tests/native_matrix_neg_local.moos" 'Native lokale Variable braucht eine Typannotation'
-expect_fail "$tests/native_matrix_neg_rekursion.moos" "Rekursive native Aufrufe sind noch nicht unterstützt: 'f'"
-echo "PASS P2-T9 Negativ: Mischtyp, Literalbereich, bool-Arithmetik/-Ordnung, Local ohne Typ, Rekursion"
+echo "PASS P2-T9 Negativ: Mischtyp, Literalbereich, bool-Arithmetik/-Ordnung, Local ohne Typ"
+# P2-T118: Seit P2-T109 (Thought ce353a53) ist native Rekursion erlaubt (Zyklus ->
+# System-Emitter im Sicher-Modus). Die Fixture hat keine Abbruchbedingung und
+# wuerde zur Laufzeit nicht terminieren: daher nur Compile-/IR-Nachweis.
+"$compiler" compile "$tests/native_matrix_neg_rekursion.moos" --emit-ir -o "$out/rekursion.ll"
+mise exec -- opt -passes=verify -disable-output "$out/rekursion.ll"
+echo "PASS P2-T109 native Selbstrekursion kompiliert (IR verifiziert, nicht ausgefuehrt)"
 # 25. P2-T9 A4 (Review 9b847d8e): Literalpaare ohne typisierten Nachbarn in beiden
 #     Lowerern reihenfolgeunabhaengig (1.0 < 2 und 1 < 2.0 -> f64; -1 < 0 -> i64).
 "$compiler" compile "$tests/native_literal_standard.moos" -o "$out/literal_standard"

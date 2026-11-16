@@ -446,15 +446,46 @@ Diagnostic catalog (source of truth: `compiler/src/diagnose.rs`, `moo-compiler e
 | M-N003 | A function declared with `extern "C"` is used as a value; it is not a moo value; wrap the C call in a scalar `@nativ` function (see the exception at M-N001) |
 | M-N004 | A `@nativ` function is called directly (from dynamic or native code) with a different number of arguments than its signature has; the message names the expected and the passed count. For a native function *value* the runtime checks the count instead and reports a catchable error |
 | M-H001 … M-H005 | Hints: type mismatch on a method, own struct shadows a built-in type, module alias shadowed, float literal rounds to zero, unknown target |
+| M-H006 / M-H007 | Hints: nonsensical operator between number and text (`--typpruefung`) / number literal without digits or above u64 |
+| M-H008 | Hint: deprecated name (transitional alias). `kern_inw`/`kern_outw`/`kern_inl`/`kern_outl` → `port_lese16`/`port_schreibe16`/`port_lese32`/`port_schreibe32` (EN `port_in16`/`port_out16`/`port_in32`/`port_out32`); same effect, replace the name. Silent in stdlib modules |
+| M-P001 | Compile error: a function, method or lambda reachable from `starte`/`spawn` reads or writes a top-level variable that is not marked `geteilt` (EN `shared`). Allowed without marker: a never reassigned `konstante` holding a number, text, boolean or `nichts`. Fix: send the value through a channel or pass it as a `starte` argument (`starte(f, a, b, ...)`, up to eight arguments, each shared and deep-frozen like any shared value), mark the global `geteilt konstante NAME auf wert` (deep-frozen), or use a lock/atomic. The message names the call chain |
+| M-P002 | Access in code that is only *possibly* reachable from a thread (function value, method by name, unknown `starte` value). Only an error with `--typ-streng`; otherwise checked at run time in every build of programs that use `starte` (violation: message and exit 1, not catchable) |
+| M-P003 | A `geteilt` global is assigned again, or `geteilt` is used below top level. Shared globals are deep-frozen at initialisation. Fix: unmarked global that only the main thread changes, or lock/atomic |
+| M-T001 … M-T005 | Type checking (`--typpruefung`, errors with `--typ-streng`): annotation mismatch / argument type / return type / argument count (hint) / element or field type |
+| M-F001 / M-F002 | Hints (errors with `--typ-streng`): a call to a function that throws, or to a failing built-in (network, database, file loading), is not inside `versuche:`. Fix: wrap the call in `versuche:` |
 | M-W000 | Tool or command line error (outside the source) |
 
-Native function values: in hosted programs a `@nativ` function can be stored in a variable (`setze f auf quadrat`), passed as an argument, used in `map`/`filter`, imported from a module and started as a thread (`starte(quadrat, 6)`; the thread calls it with exactly one argument). A call through the value checks the argument count and the argument types before the native call: a wrong count, a wrong type, a non-integral value for an integer parameter or an out-of-range value (for example `300` for `i8`) is a runtime error that `versuche:` can catch, and the program continues normally. What is not possible is reported at compile time: M-N001 (see table), M-N002 (bare/UEFI), M-N003 (`extern "C"` as a value). Evidence: the fixtures `compiler/tests/p2/native_wert_*`.
+Concurrency in short (rule: a mutable value belongs to exactly one thread; sharing freezes it deeply):
+
+```
+geteilt konstante Z auf atom(0)                 # shared cell; EN: shared
+geteilt konstante KONTO auf sperre({"stand": 0})
+
+func work(n):                                    # EN: func, spawn, wait, atomic_*, lock, with
+    atomic_add(Z, n)                            # returns the OLD value
+    with KONTO as k:                            # DE: mit KONTO als k:
+        k["stand"] = k["stand"] + n
+    return n
+
+set t to spawn(work, 5)                         # up to eight arguments: spawn(f, a, b, ...)
+show t.wait()                                   # first waiter owns the result
+```
+
+Atom functions: `atom_laden|atomic_load`, `atom_speichern|atomic_store`, `atom_addieren|atomic_add`, `atom_tauschen|atomic_swap`, `atom_vergleichen_und_tauschen|atomic_compare_exchange`. A second thread calling `wait` on the same thread gets a catchable error. `kanal.senden(übergib p)` / `transfer p` moves a buffer to the receiver without copy or freeze (the sender's variable becomes `nichts`; extra references or views are a catchable error). Hardware syntax (`@nativ` + `unsicher:`): `port_lese*`/`port_schreibe*` (EN `port_in*`/`port_out*`) are the canonical names; `kern_in*`/`kern_out*` are deprecated (M-H008). Examples verified against the compiler: see `docs/lernen.md`, section "Multithreading".
+
+Native function values: in hosted programs a `@nativ` function can be stored in a variable (`setze f auf quadrat`), passed as an argument, used in `map`/`filter`, imported from a module and started as a thread (`starte(quadrat, 6)`; the thread calls it with the arguments given after the function, and a native value checks their count before the thread starts). The first thread that waits owns the result: every further `warten` of that thread returns the same result again, any other waiting thread gets a catchable error. A call through the value checks the argument count and the argument types before the native call: a wrong count, a wrong type, a non-integral value for an integer parameter or an out-of-range value (for example `300` for `i8`) is a runtime error that `versuche:` can catch, and the program continues normally. What is not possible is reported at compile time: M-N001 (see table), M-N002 (bare/UEFI), M-N003 (`extern "C"` as a value). Evidence: the fixtures `compiler/tests/p2/native_wert_*`.
 
 Native calls: a direct call of a `@nativ` function with the wrong number of arguments is the compile error M-N004 (with a line number when the call is in dynamic code or in a native function with control flow, i.e. a system body; a direct call between plain native functions is reported without a line; evidence: `compiler/tests/p2/native_call_arity*`). Recursive and mutually recursive `@nativ` functions are supported, including a pure `@nativ` caller of a recursive function (evidence: `compiler/tests/p2/native_call_rekursion_*`). `moo-compiler erklaere M-N004` prints the catalog entry.
 
-Reserved ranges: `M-T` type checking, `M-M` memory, `M-F` error paths.
+Reserved ranges: `M-T` type checking, `M-M` memory, `M-F` error paths, `M-P` threads and shared state (P2-T114).
 Runtime hints for unhandled errors (`Hinweis: unbehandelter Fehler ...`) are printed
 by the running program, not by the compiler.
+
+Exit code: an unhandled `wirf` (no `versuche:` in the call path) prints
+`Unbehandelter Fehler: <text>` plus the throw site to **stderr** and exits with code 1,
+independent of `MOO_STRENG`. An unhandled error in a worker thread does not stop the
+process at once (thread isolation) but is reported and the process exits with 1 at the
+end. `teste_alle()` exits with 1 if any test fails.
 
 Known limits: code generation stops at its first error (lexer and parser collect all);
 a missing `)` is reported at the next statement because line breaks inside brackets are joined.

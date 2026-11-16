@@ -635,7 +635,7 @@ impl<'d> Pruefer<'d> {
             self.stmt_ausdruecke(stmt, &Sicht { env, nur: Some(&fluss.zugewiesen) }, k);
             match stmt {
                 Stmt::Assignment { zeile, name, ty, value }
-                | Stmt::ConstAssignment { zeile, name, ty, value } => {
+                | Stmt::ConstAssignment { zeile, name, ty, value, .. } => {
                     let wert_ty = self.ableiten(value, &Sicht { env, nur: Some(&fluss.zugewiesen) });
                     self.zuweisung_pruefen(*zeile, name, ty.as_ref(), value, b, env, &fluss, k);
                     fluss.zugewiesen.insert(name.clone());
@@ -1452,4 +1452,676 @@ fn gelesene_namen(expr: &Expr, out: &mut HashSet<String>) {
         }
         _ => {}
     }
+}
+
+
+// ===================================================================
+// P2-T114 Phase C: Globale gehoeren dem Hauptthread (ADR 2290622c).
+// ===================================================================
+//
+// Laeuft fuer jedes compile/pruefe (nicht nur mit --typpruefung) auf dem
+// aufgeloesten Programm (Module eingefuegt). Wurzeln sind die Funktionen und
+// Lambdas, die an starte/spawn gehen. Was von dort ueber direkte Aufrufe,
+// Konstruktoren und im Koerper erzeugte Lambdas sicher erreicht wird und eine
+// Globale liest oder schreibt, die nicht `geteilt` markiert ist, ist ein
+// Fehler (M-P001). Ausnahme ohne Markierung: `konstante N auf 5` (Zahl,
+// Wahrheitswert, nichts), die nirgends neu gesetzt wird. Vielleicht erreichbar (Funktionswerte, Methoden nach Name,
+// unbekannter starte-Wert): mit --typ-streng Fehler (M-P002), sonst
+// Laufzeitpruefung moo_global_pruefen im Codegen (GlobalePruefplan).
+// Die Namensaufloesung folgt dem Codegen: Parameter und lokal zuerst
+// geschriebene Namen sind lokal (collect_all_var_names,
+// first_use_is_local_write, `global x`); Lambdas im Hauptprogramm fangen alle
+// Variablen des Hauptrahmens ein (Kopie), lesen also keine Globale.
+
+/// Ergebnis der Effektpruefung fuer den Codegen.
+#[derive(Debug, Clone, Default)]
+pub struct GlobalePruefplan {
+    /// LLVM-Namen der Funktionen (Methoden als `Klasse__methode`), in denen
+    /// jeder Globalzugriff zur Laufzeit geprueft wird.
+    pub funktionen: HashSet<String>,
+    /// Lambdas (`__lambda_N`) mit Globalzugriff vielleicht auf einem Thread.
+    pub lambdas: bool,
+    /// `geteilt` markierte Globale (eingefroren, Lesen erlaubt).
+    pub geteilt: HashSet<String>,
+    /// P2-T114 B: unveraenderliche Text-Konstanten, die Threads ohne `geteilt`
+    /// lesen; der Codegen teilt sie bei der Initialisierung (atomarer Zaehler).
+    pub text_teilen: HashSet<String>,
+}
+
+/// P2-T114 B: Builtins, deren Funktionsargument die Runtime auf einem fremden
+/// Thread aufruft (Name, Argumentindex). Gesichtet 16.11.2026: Webserver
+/// (web_server/web_annehmen: Annahmeschleife im Programm, kein Handler-Rueckruf),
+/// UI (GTK/X11/Wayland/Win32/Tray: Rueckrufe aus der Ereignisschleife des
+/// Hauptthreads), bei/ausloesen (synchron), parallel fuer (sequentiell):
+/// keiner ruft auf einem fremden Thread zurueck. Neue Quellen hier eintragen.
+/// Unabhaengig davon gelten Funktionswerte, die an extern-C-Funktionen gehen
+/// (C-Rueckrufe), als vielleicht fremd (Laufzeitpruefung).
+const FREMDTHREAD_RUECKRUFE: &[(&str, usize)] = &[];
+
+#[derive(Debug, Clone)]
+enum KoerperArt {
+    Haupt,
+    Funktion(String),
+    Methode(String, String),
+    Lambda,
+    Test(String),
+}
+
+struct Koerper {
+    art: KoerperArt,
+    zeile: usize,
+    /// (Globale, Zeile, schreibt)
+    zugriffe: Vec<(String, usize, bool)>,
+    sicher: Vec<usize>,
+    vielleicht: Vec<usize>,
+    dynamisch: bool,
+}
+
+impl Koerper {
+    fn neu(art: KoerperArt, zeile: usize) -> Self {
+        Koerper { art, zeile, zugriffe: Vec::new(), sicher: Vec::new(), vielleicht: Vec::new(), dynamisch: false }
+    }
+
+    fn anzeige(&self) -> String {
+        match &self.art {
+            KoerperArt::Haupt => "Hauptprogramm".to_string(),
+            KoerperArt::Funktion(n) => format!("Funktion '{n}'"),
+            KoerperArt::Methode(k, m) => format!("Methode '{k}.{m}'"),
+            KoerperArt::Lambda => format!("Lambda in Zeile {}", self.zeile),
+            KoerperArt::Test(n) => format!("Test '{n}'"),
+        }
+    }
+
+    fn kurz(&self) -> String {
+        match &self.art {
+            KoerperArt::Funktion(n) | KoerperArt::Test(n) => n.clone(),
+            KoerperArt::Methode(k, m) => format!("{k}.{m}"),
+            KoerperArt::Lambda => format!("Lambda (Zeile {})", self.zeile),
+            KoerperArt::Haupt => "Hauptprogramm".to_string(),
+        }
+    }
+}
+
+/// Lokale Namen eines Koerpers; `alle` im Hauptrahmen (dort gehoert ohnehin
+/// alles dem Hauptthread, Lambdas fangen alles ein).
+#[derive(Clone)]
+struct Lokal {
+    namen: HashSet<String>,
+    alle: bool,
+}
+
+struct EffektScan {
+    /// Top-Level-Variablen (LLVM-Globale) -> geteilt markiert.
+    globale: HashMap<String, bool>,
+    funktionen: HashMap<String, usize>,
+    methoden: HashMap<String, Vec<usize>>,
+    konstruktoren: HashMap<String, usize>,
+    koerper: Vec<Koerper>,
+    /// starte-Wurzeln: Koerper (None = Funktionswert unbekannt), Zeile.
+    wurzeln: Vec<(Option<usize>, usize)>,
+    adresse: HashSet<usize>,
+    lambdas: Vec<usize>,
+    haupt_schreibt: Vec<(String, usize)>,
+    geteilt_falsch: Vec<(String, usize)>,
+    /// P2-T114 B: extern-C-Funktionen (Ziele von C-Rueckrufen).
+    extern_c: HashSet<String>,
+    /// P2-T114 B: Koerper, die vielleicht auf einem fremden (Nicht-Moo-)Thread
+    /// laufen (C-Rueckrufe, FREMDTHREAD_RUECKRUFE).
+    fremd_wurzeln: Vec<usize>,
+}
+
+impl EffektScan {
+    fn ist_global(&self, n: &str, l: &Lokal) -> bool {
+        !l.alle && !l.namen.contains(n) && self.globale.contains_key(n)
+    }
+
+    /// Name einer eigenen Top-Level-Funktion, nicht verschattet.
+    fn funktion(&self, n: &str, l: &Lokal) -> Option<usize> {
+        if l.namen.contains(n) || self.globale.contains_key(n) {
+            return None;
+        }
+        self.funktionen.get(n).copied()
+    }
+
+    fn zugriff(&mut self, id: usize, n: &str, z: usize, l: &Lokal, schreibt: bool) {
+        if matches!(self.koerper[id].art, KoerperArt::Haupt) {
+            if schreibt && self.globale.contains_key(n) {
+                self.haupt_schreibt.push((n.to_string(), z));
+            }
+            return;
+        }
+        if self.ist_global(n, l) {
+            self.koerper[id].zugriffe.push((n.to_string(), z, schreibt));
+        }
+    }
+
+    /// Wie der Codegen (compile_function_def): Parameter, und Namen, deren
+    /// erste Verwendung ein lokales Schreiben ist, ohne `global`.
+    fn lokale(&self, params: &[String], body: &[Stmt]) -> Lokal {
+        let decl: HashSet<String> = body.iter()
+            .filter_map(|s| if let Stmt::Global(n, _) = s { Some(n.clone()) } else { None })
+            .flatten()
+            .collect();
+        let mut namen: HashSet<String> = params.iter().cloned().collect();
+        for n in crate::codegen::CodeGen::collect_all_var_names(body) {
+            if namen.contains(&n) || decl.contains(&n) {
+                continue;
+            }
+            if self.globale.contains_key(&n)
+                && crate::codegen::CodeGen::first_use_is_local_write(body, &n) != Some(true) {
+                continue;
+            }
+            namen.insert(n);
+        }
+        Lokal { namen, alle: false }
+    }
+
+    fn stmts(&mut self, id: usize, stmts: &[Stmt], l: &Lokal, oberste: bool) {
+        for s in stmts {
+            self.stmt(id, s, l, oberste);
+        }
+    }
+
+    fn stmt(&mut self, id: usize, s: &Stmt, l: &Lokal, oberste: bool) {
+        let z = s.zeile();
+        match s {
+            Stmt::Assignment { name, value, .. } => {
+                self.expr(id, value, z, l);
+                self.zugriff(id, name, z, l, true);
+            }
+            Stmt::CompoundAssignment { name, value, .. } => {
+                self.expr(id, value, z, l);
+                self.zugriff(id, name, z, l, false);
+                self.zugriff(id, name, z, l, true);
+            }
+            Stmt::ConstAssignment { name, value, geteilt, .. } => {
+                let haupt = matches!(self.koerper[id].art, KoerperArt::Haupt);
+                if *geteilt && !(oberste && haupt) {
+                    self.geteilt_falsch.push((name.clone(), z));
+                }
+                self.expr(id, value, z, l);
+                if !(*geteilt && oberste && haupt) {
+                    self.zugriff(id, name, z, l, true);
+                }
+            }
+            Stmt::PropertyAssignment { object, value, .. } => {
+                self.expr(id, object, z, l);
+                self.expr(id, value, z, l);
+            }
+            Stmt::IndexAssignment { object, index, value, .. } => {
+                self.expr(id, object, z, l);
+                self.expr(id, index, z, l);
+                self.expr(id, value, z, l);
+            }
+            Stmt::Show(e, _) | Stmt::Expression(e, _) | Stmt::Throw(e, _) | Stmt::Defer(e, _)
+            | Stmt::Expect(e, _) | Stmt::Return(Some(e), _) => self.expr(id, e, z, l),
+            Stmt::If { condition, body, else_body, .. } => {
+                self.expr(id, condition, z, l);
+                self.stmts(id, body, l, false);
+                self.stmts(id, else_body, l, false);
+            }
+            Stmt::While { condition, body, .. } => {
+                self.expr(id, condition, z, l);
+                self.stmts(id, body, l, false);
+            }
+            Stmt::For { iterable, body, .. } | Stmt::ParallelFor { iterable, body, .. } => {
+                self.expr(id, iterable, z, l);
+                self.stmts(id, body, l, false);
+            }
+            Stmt::Precondition { condition, .. } | Stmt::Postcondition { condition, .. } => {
+                self.expr(id, condition, z, l);
+            }
+            Stmt::TryCatch { try_body, catch_body, .. } => {
+                self.stmts(id, try_body, l, false);
+                self.stmts(id, catch_body, l, false);
+            }
+            Stmt::Match { value, cases, .. } => {
+                self.expr(id, value, z, l);
+                for (muster, waechter, body) in cases {
+                    let mut l2 = l.clone();
+                    if let Some(m) = muster {
+                        namen_in(m, &mut l2.namen);
+                    }
+                    if let Some(w) = waechter {
+                        self.expr(id, w, z, &l2);
+                    }
+                    self.stmts(id, body, &l2, false);
+                }
+            }
+            Stmt::Guard { condition, else_body, .. } => {
+                self.expr(id, condition, z, l);
+                self.stmts(id, else_body, l, false);
+            }
+            Stmt::UnsafeBlock { body, .. } => self.stmts(id, body, l, false),
+            Stmt::Export(inner, _) => self.stmt(id, inner, l, oberste),
+            _ => {}
+        }
+    }
+
+    fn lambda(&mut self, id: usize, params: &[String], body: &Expr, z: usize, l: &Lokal) -> usize {
+        let lid = self.koerper.len();
+        self.koerper.push(Koerper::neu(KoerperArt::Lambda, z));
+        self.lambdas.push(lid);
+        self.koerper[id].sicher.push(lid);
+        let mut l2 = l.clone();
+        l2.namen.extend(params.iter().cloned());
+        self.expr(lid, body, z, &l2);
+        lid
+    }
+
+    fn expr(&mut self, id: usize, e: &Expr, z: usize, l: &Lokal) {
+        match e {
+            Expr::Identifier(n) => {
+                if self.ist_global(n, l) {
+                    self.koerper[id].zugriffe.push((n.clone(), z, false));
+                } else if let Some(f) = self.funktion(n, l) {
+                    // Funktion als Wert: laeuft vielleicht hier (map, Rueckruf).
+                    self.adresse.insert(f);
+                    self.koerper[id].vielleicht.push(f);
+                }
+            }
+            Expr::FunctionCall { name, args, zeile } => {
+                let z = if *zeile > 0 { *zeile } else { z };
+                let mut rest: &[Expr] = args;
+                if name == "starte" || name == "spawn" {
+                    match args.first() {
+                        Some(Expr::Identifier(f)) if self.funktion(f, l).is_some() => {
+                            let f = self.funktion(f, l);
+                            self.wurzeln.push((f, z));
+                            rest = &args[1..];
+                        }
+                        Some(Expr::Lambda { params, body, .. }) => {
+                            let lid = self.lambda(id, params, body, z, l);
+                            self.wurzeln.push((Some(lid), z));
+                            rest = &args[1..];
+                        }
+                        _ => self.wurzeln.push((None, z)),
+                    }
+                } else if self.extern_c.contains(name.as_str())
+                    || FREMDTHREAD_RUECKRUFE.iter().any(|(n, _)| n == name)
+                {
+                    // P2-T114 B: Rueckruf, den C bzw. die Runtime auf einem
+                    // fremden Thread aufrufen kann -> Laufzeitpruefung.
+                    for (i, a) in args.iter().enumerate() {
+                        let gilt = self.extern_c.contains(name.as_str())
+                            || FREMDTHREAD_RUECKRUFE.iter().any(|(n, k)| n == name && *k == i);
+                        match a {
+                            Expr::Identifier(f) if gilt && self.funktion(f, l).is_some() => {
+                                let f = self.funktion(f, l).unwrap_or_default();
+                                self.fremd_wurzeln.push(f);
+                            }
+                            Expr::Lambda { params, body, .. } if gilt => {
+                                let lid = self.lambda(id, params, body, z, l);
+                                self.fremd_wurzeln.push(lid);
+                                continue;
+                            }
+                            _ => {}
+                        }
+                        self.expr(id, a, z, l);
+                    }
+                    rest = &[];
+                } else if let Some(f) = self.funktion(name, l) {
+                    self.koerper[id].sicher.push(f);
+                } else if l.namen.contains(name.as_str()) || self.globale.contains_key(name.as_str()) {
+                    // Aufruf eines Funktionswerts.
+                    if self.ist_global(name, l) {
+                        self.koerper[id].zugriffe.push((name.clone(), z, false));
+                    }
+                    self.koerper[id].dynamisch = true;
+                }
+                for a in rest {
+                    self.expr(id, a, z, l);
+                }
+            }
+            Expr::MethodCall { object, method, args } => {
+                self.expr(id, object, z, l);
+                for a in args {
+                    self.expr(id, a, z, l);
+                }
+                if let Some(ms) = self.methoden.get(method).cloned() {
+                    self.koerper[id].vielleicht.extend(ms);
+                }
+            }
+            Expr::New { class_name, args } => {
+                for a in args {
+                    self.expr(id, a, z, l);
+                }
+                if let Some(&k) = self.konstruktoren.get(class_name) {
+                    self.koerper[id].sicher.push(k);
+                }
+            }
+            Expr::Lambda { params, body, .. } => {
+                self.lambda(id, params, body, z, l);
+            }
+            Expr::Pipe { left, right } => {
+                self.expr(id, left, z, l);
+                match right.as_ref() {
+                    Expr::Identifier(f) if self.funktion(f, l).is_some() => {
+                        let f = self.funktion(f, l).unwrap_or_default();
+                        self.koerper[id].sicher.push(f);
+                    }
+                    r => self.expr(id, r, z, l),
+                }
+            }
+            Expr::ListComprehension { expr, var_name, iterable, condition } => {
+                self.expr(id, iterable, z, l);
+                let mut l2 = l.clone();
+                l2.namen.insert(var_name.clone());
+                self.expr(id, expr, z, &l2);
+                if let Some(c) = condition {
+                    self.expr(id, c, z, &l2);
+                }
+            }
+            Expr::QueryExpr { var_name, source, where_cond, order_expr, select_expr } => {
+                self.expr(id, source, z, l);
+                let mut l2 = l.clone();
+                l2.namen.insert(var_name.clone());
+                for t in [where_cond.as_deref(), order_expr.as_deref(), Some(select_expr.as_ref())].into_iter().flatten() {
+                    self.expr(id, t, z, &l2);
+                }
+            }
+            Expr::MatchExpr { value, cases } => {
+                self.expr(id, value, z, l);
+                for (muster, waechter, ergebnis) in cases {
+                    let mut l2 = l.clone();
+                    if let Some(m) = muster {
+                        namen_in(m, &mut l2.namen);
+                    }
+                    if let Some(w) = waechter {
+                        self.expr(id, w, z, &l2);
+                    }
+                    self.expr(id, ergebnis, z, &l2);
+                }
+            }
+            andere => {
+                for k in kinder(andere) {
+                    self.expr(id, k, z, l);
+                }
+            }
+        }
+    }
+}
+
+/// Literal eines Werttyps ohne Referenzzaehler (Zahl, Wahrheitswert, nichts).
+fn ist_skalar_literal(e: &Expr) -> bool {
+    match e {
+        Expr::Number(_) | Expr::Boolean(_) | Expr::None => true,
+        Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => matches!(operand.as_ref(), Expr::Number(_)),
+        _ => false,
+    }
+}
+
+fn effekt_melden(d: Diagnose) {
+    FEHLER.with(|f| f.set(f.get() + 1));
+    diagnose::melden(d);
+}
+
+const ABHILFE_GLOBALE: &str = "Den Wert per Kanal senden oder als Argument von starte uebergeben, \
+    die Globale mit 'geteilt' markieren (geteilt konstante NAME auf wert, dann tief eingefroren) \
+    oder den Zugriff ueber eine Sperre bzw. ein Atom fuehren.";
+
+/// P2-T114 Phase C: Effektpruefung der Globalen (siehe Abschnittskopf).
+/// Meldet Fehler selbst; Err, wenn welche gemeldet wurden.
+pub fn globale_pruefen(program: &Program, datei: &str) -> Result<GlobalePruefplan, String> {
+    let mut plan = GlobalePruefplan::default();
+    let mut globale: HashMap<String, bool> = HashMap::new();
+    for s in &program.statements {
+        match s {
+            Stmt::Assignment { name, .. } => {
+                globale.entry(name.clone()).or_insert(false);
+            }
+            Stmt::ConstAssignment { name, geteilt, .. } => {
+                let e = globale.entry(name.clone()).or_insert(false);
+                *e |= *geteilt;
+            }
+            _ => {}
+        }
+    }
+    plan.geteilt = globale.iter().filter(|(_, g)| **g).map(|(n, _)| n.clone()).collect();
+    // Kandidaten fuer unveraenderliche Wertkonstanten (siehe unten).
+    let skalar_konst: HashSet<String> = program.statements.iter().filter_map(|s| match s {
+        Stmt::ConstAssignment { name, value, geteilt: false, .. } if ist_skalar_literal(value) => Some(name.clone()),
+        _ => None,
+    }).collect();
+    // P2-T114 B: Text-Konstanten (Texte sind unveraenderlich). Nur solche vor
+    // der ersten Anweisung, die Code ausfuehren kann: dann ist die Globale
+    // gesetzt und geteilt, bevor irgendein Thread starten kann.
+    let mut text_konst: HashSet<String> = HashSet::new();
+    for s in &program.statements {
+        match s {
+            Stmt::ConstAssignment { name, value: Expr::String(_), geteilt: false, .. } => {
+                text_konst.insert(name.clone());
+            }
+            Stmt::ConstAssignment { value, .. } | Stmt::Assignment { value, .. }
+                if ist_skalar_literal(value) || matches!(value, Expr::String(_)) => {}
+            Stmt::FunctionDef { .. } | Stmt::ClassDef { .. } | Stmt::StructDef { .. }
+            | Stmt::InterfaceDef { .. } | Stmt::DataClassDef { .. } | Stmt::ExternC { .. }
+            | Stmt::Import { .. } => {}
+            _ => break,
+        }
+    }
+    let extern_c: HashSet<String> = program.statements.iter().filter_map(|s| match s {
+        Stmt::ExternC { name, .. } => Some(name.clone()),
+        _ => None,
+    }).collect();
+
+    let mut scan = EffektScan {
+        globale,
+        funktionen: HashMap::new(),
+        methoden: HashMap::new(),
+        konstruktoren: HashMap::new(),
+        koerper: vec![Koerper::neu(KoerperArt::Haupt, 0)],
+        wurzeln: Vec::new(),
+        adresse: HashSet::new(),
+        lambdas: Vec::new(),
+        haupt_schreibt: Vec::new(),
+        geteilt_falsch: Vec::new(),
+        extern_c,
+        fremd_wurzeln: Vec::new(),
+    };
+    // Koerper anlegen (Funktionen, Methoden, Tests), dann scannen.
+    let mut zu_scannen: Vec<(usize, &[String], &[Stmt])> = Vec::new();
+    let leer: &[String] = &[];
+    for s in &program.statements {
+        match s {
+            Stmt::FunctionDef { name, params, body, decorators, zeile, .. } if !ist_nativ(decorators) => {
+                let id = scan.koerper.len();
+                scan.koerper.push(Koerper::neu(KoerperArt::Funktion(name.clone()), *zeile));
+                scan.funktionen.insert(name.clone(), id);
+                zu_scannen.push((id, params, body));
+            }
+            Stmt::ClassDef { name: klasse, body, .. } => {
+                for m in body {
+                    if let Stmt::FunctionDef { name, params, body, decorators, zeile, .. } = m {
+                        if ist_nativ(decorators) {
+                            continue;
+                        }
+                        let id = scan.koerper.len();
+                        scan.koerper.push(Koerper::neu(KoerperArt::Methode(klasse.clone(), name.clone()), *zeile));
+                        scan.methoden.entry(name.clone()).or_default().push(id);
+                        if name == "erstelle" {
+                            scan.konstruktoren.insert(klasse.clone(), id);
+                        }
+                        zu_scannen.push((id, params, body));
+                    }
+                }
+            }
+            Stmt::TestDef { name, body, zeile } => {
+                let id = scan.koerper.len();
+                scan.koerper.push(Koerper::neu(KoerperArt::Test(name.clone()), *zeile));
+                zu_scannen.push((id, leer, body));
+            }
+            _ => {}
+        }
+    }
+    scan.stmts(0, &program.statements, &Lokal { namen: HashSet::new(), alle: true }, true);
+    for (id, params, body) in zu_scannen {
+        let l = scan.lokale(params, body);
+        scan.stmts(id, body, &l, false);
+    }
+
+    // Sicher erreichbar (mit Vorgaenger fuer die Aufrufkette).
+    let n = scan.koerper.len();
+    let mut von: Vec<Option<usize>> = vec![None; n];
+    let mut wurzel_zeile: Vec<usize> = vec![0; n];
+    let mut sicher = vec![false; n];
+    let mut schlange: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for (w, z) in &scan.wurzeln {
+        if let Some(w) = *w {
+            if !sicher[w] {
+                sicher[w] = true;
+                wurzel_zeile[w] = *z;
+                schlange.push_back(w);
+            }
+        }
+    }
+    while let Some(b) = schlange.pop_front() {
+        for &k in &scan.koerper[b].sicher {
+            if !sicher[k] {
+                sicher[k] = true;
+                von[k] = Some(b);
+                schlange.push_back(k);
+            }
+        }
+    }
+    // Vielleicht erreichbar.
+    let mut vielleicht = sicher.clone();
+    // P2-T114 B: Rueckrufe auf fremden Threads sind vielleicht-Wurzeln.
+    for &w in &scan.fremd_wurzeln {
+        vielleicht[w] = true;
+    }
+    schlange.extend((0..n).filter(|&b| vielleicht[b]));
+    let mut dynamisch = scan.wurzeln.iter().any(|(w, _)| w.is_none());
+    let mut erweitert = false;
+    loop {
+        while let Some(b) = schlange.pop_front() {
+            dynamisch |= scan.koerper[b].dynamisch;
+            let kanten: Vec<usize> = scan.koerper[b].sicher.iter().chain(scan.koerper[b].vielleicht.iter()).copied().collect();
+            for k in kanten {
+                if !vielleicht[k] {
+                    vielleicht[k] = true;
+                    schlange.push_back(k);
+                }
+            }
+        }
+        if dynamisch && !erweitert {
+            erweitert = true;
+            let ziele: Vec<usize> = scan.adresse.iter().chain(scan.lambdas.iter()).copied().collect();
+            for k in ziele {
+                if !vielleicht[k] {
+                    vielleicht[k] = true;
+                    schlange.push_back(k);
+                }
+            }
+            continue;
+        }
+        break;
+    }
+
+    // `konstante N auf 5` (Zahl, Wahrheitswert, nichts), im ganzen Programm
+    // genau einmal geschrieben: Wertetyp ohne Referenzzaehler und nie
+    // geaendert, also von Threads lesbar wie eine geteilte Globale.
+    let mut schreibzahl: HashMap<&str, usize> = HashMap::new();
+    for (g, _) in &scan.haupt_schreibt {
+        *schreibzahl.entry(g.as_str()).or_default() += 1;
+    }
+    for k in &scan.koerper {
+        for (g, _, schreibt) in &k.zugriffe {
+            if *schreibt {
+                *schreibzahl.entry(g.as_str()).or_default() += 1;
+            }
+        }
+    }
+    let unveraenderlich: HashSet<String> = skalar_konst.into_iter().chain(text_konst.iter().cloned())
+        .filter(|g| schreibzahl.get(g.as_str()).copied().unwrap_or(0) == 1)
+        .collect();
+    plan.geteilt.extend(unveraenderlich.iter().cloned());
+    // Nur wenn es Threads geben kann (starte/Rueckruf): sonst IR unveraendert.
+    if !scan.wurzeln.is_empty() || !scan.fremd_wurzeln.is_empty() {
+        plan.text_teilen = unveraenderlich.iter().filter(|g| text_konst.contains(*g)).cloned().collect();
+    }
+
+    let quelle = |k: &Koerper| -> String {
+        match &k.art {
+            KoerperArt::Funktion(f) => program.funktion_quellen.get(f).cloned().unwrap_or_else(|| datei.to_string()),
+            _ => datei.to_string(),
+        }
+    };
+    let streng = STRENG.with(|s| s.get());
+    let mut fehler = 0usize;
+    for b in 0..n {
+        let k = &scan.koerper[b];
+        let mut gemeldet: HashSet<&str> = HashSet::new();
+        for (g, z, schreibt) in &k.zugriffe {
+            let ist_geteilt = scan.globale.get(g).copied().unwrap_or(false);
+            if ist_geteilt {
+                if *schreibt && gemeldet.insert(g.as_str()) {
+                    fehler += 1;
+                    effekt_melden(Diagnose::fehler("M-P003", format!(
+                        "Die Globale '{g}' ist geteilt und damit eingefroren; sie kann nicht neu gesetzt werden."))
+                        .ort(*z, 0).datei(quelle(k)).funktion(k.kurz())
+                        .vorschlag("Eine veraenderliche Globale ohne 'geteilt' anlegen, die nur der Hauptthread aendert, oder eine Sperre bzw. ein Atom verwenden."));
+                }
+                continue;
+            }
+            if unveraenderlich.contains(g) {
+                continue;
+            }
+            if !vielleicht[b] || !gemeldet.insert(g.as_str()) {
+                continue;
+            }
+            let tun = if *schreibt { "schreibt" } else { "liest" };
+            if sicher[b] {
+                // Aufrufkette bis zur Wurzel.
+                let mut kette = vec![k.kurz()];
+                let mut c = b;
+                while let Some(p) = von[c] {
+                    kette.push(scan.koerper[p].kurz());
+                    c = p;
+                }
+                kette.reverse();
+                fehler += 1;
+                effekt_melden(Diagnose::fehler("M-P001", format!(
+                    "{} laeuft auf einem eigenen Thread (starte in Zeile {}: {}) und {tun} die Globale '{g}'. Globale gehoeren dem Hauptthread.",
+                    k.anzeige(), wurzel_zeile[c], kette.join(" -> ")))
+                    .ort(*z, 0).datei(quelle(k)).funktion(k.kurz())
+                    .vorschlag(ABHILFE_GLOBALE));
+            } else if streng {
+                fehler += 1;
+                effekt_melden(Diagnose::fehler("M-P002", format!(
+                    "{} laeuft vielleicht auf einem eigenen Thread (Aufruf ueber einen Funktionswert oder eine Methode, nicht beweisbar) und {tun} die Globale '{g}' (--typ-streng).",
+                    k.anzeige()))
+                    .ort(*z, 0).datei(quelle(k)).funktion(k.kurz())
+                    .vorschlag(ABHILFE_GLOBALE));
+            } else {
+                match &k.art {
+                    KoerperArt::Funktion(f) => { plan.funktionen.insert(f.clone()); }
+                    KoerperArt::Methode(kl, m) => { plan.funktionen.insert(format!("{kl}__{m}")); }
+                    KoerperArt::Lambda => plan.lambdas = true,
+                    KoerperArt::Haupt | KoerperArt::Test(_) => {}
+                }
+            }
+        }
+    }
+    let mut doppelt: HashSet<&str> = HashSet::new();
+    for (g, z) in &scan.haupt_schreibt {
+        if scan.globale.get(g).copied().unwrap_or(false) && doppelt.insert(g.as_str()) {
+            fehler += 1;
+            effekt_melden(Diagnose::fehler("M-P003", format!(
+                "Die Globale '{g}' ist geteilt und damit eingefroren; sie kann nicht neu gesetzt werden."))
+                .ort(*z, 0).datei(datei.to_string())
+                .vorschlag("Eine veraenderliche Globale ohne 'geteilt' anlegen, die nur der Hauptthread aendert, oder eine Sperre bzw. ein Atom verwenden."));
+        }
+    }
+    for (g, z) in &scan.geteilt_falsch {
+        fehler += 1;
+        effekt_melden(Diagnose::fehler("M-P003", format!(
+            "'geteilt' gilt nur fuer Globale auf oberster Ebene, nicht fuer '{g}' in einem Block oder einer Funktion."))
+            .ort(*z, 0).datei(datei.to_string())
+            .vorschlag("Die Zeile 'geteilt konstante NAME auf wert' auf die oberste Ebene der Datei stellen."));
+    }
+    if fehler > 0 {
+        return Err(format!("{fehler} Fehler bei Globalen und Threads"));
+    }
+    Ok(plan)
 }

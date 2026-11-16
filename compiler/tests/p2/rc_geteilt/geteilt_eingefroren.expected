@@ -1,0 +1,13 @@
+3
+hinzufügen: Wert ist zwischen Threads geteilt und damit eingefroren
+Index setzen: Wert ist zwischen Threads geteilt und damit eingefroren
+[1, 2, 3]
+1
+Wörterbuch: Wert ist zwischen Threads geteilt und damit eingefroren
+1
+5
+Objekt: Wert ist zwischen Threads geteilt und damit eingefroren
+5
+[1, 2]
+[0, 1, 2, 99]
+Kanal: Wert ist zwischen Threads geteilt und damit eingefroren

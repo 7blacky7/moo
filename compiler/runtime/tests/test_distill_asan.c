@@ -3,9 +3,9 @@
 #include <math.h>
 #include <float.h>
 #include <stdio.h>
-int moo_error_flag = 0;
-MooValue moo_last_error;
-int moo_try_depth = 0;
+MOO_TLS int moo_error_flag = 0;
+MOO_TLS MooValue moo_last_error;
+MOO_TLS int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 void moo_throw(MooValue e) { moo_release(e); moo_error_flag = 1; }
 void moo_socket_free(void *p) {(void)p;} void moo_thread_free(void *p) {(void)p;}

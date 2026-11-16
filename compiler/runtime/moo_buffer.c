@@ -1,5 +1,6 @@
 #include "moo_buffer.h"
 #include "moo_buffer_value.h"
+#include "moo_rc.h"
 
 #include <float.h>
 #include <stdint.h>
@@ -29,7 +30,7 @@ struct MooBuffer {
 struct MooBufferPin { MooBufferStorage* storage; };
 
 static void moo_buffer_storage_drop(MooBufferStorage* s) {
-    if (--s->refs == 0) {
+    if (moo_rc_size_dec(&s->refs) == 0) {
         free(s->data);
         free(s);
     }
@@ -158,18 +159,19 @@ MooBufferStatus moo_buffer_view(MooBuffer* b, size_t start, size_t len, MooBuffe
     *out = NULL;
     if (start > b->len || len > b->len - start) return MOO_BUFFER_BOUNDS;
     MooBufferStorage* s = b->storage;
-    if (s->refs == SIZE_MAX || s->views == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
+    if (moo_rc_size_lesen(&s->refs) == SIZE_MAX || moo_rc_size_lesen(&s->views) == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
     MooBuffer* view = malloc(sizeof(*view));
     if (!view) return MOO_BUFFER_ALLOC;
     view->refcount = 1; view->storage = s; view->start = b->start + start; view->len = len; view->is_view = 1;
-    ++s->refs; ++s->views; *out = view;
+    /* P2-T114: views/pins atomar, Sichten koennen in verschiedenen Threads enden. */
+    moo_rc_size_inc(&s->refs); moo_rc_size_inc(&s->views); *out = view;
     return MOO_BUFFER_OK;
 }
 
 MooBufferStatus moo_buffer_retain(MooBuffer* b) {
     if (!b) return MOO_BUFFER_INVALID;
-    if (b->refcount == INT32_MAX) return MOO_BUFFER_OVERFLOW;
-    ++b->refcount;
+    if (moo_rc_voll(&b->refcount)) return MOO_BUFFER_OVERFLOW;
+    moo_rc_inc(&b->refcount);
     return MOO_BUFFER_OK;
 }
 
@@ -177,13 +179,13 @@ void moo_buffer_free(void* ptr) {
     MooBuffer* b = ptr;
     if (!b) return;
     MooBufferStorage* s = b->storage;
-    if (b->is_view) --s->views;
+    if (b->is_view) moo_rc_size_dec(&s->views);
     free(b);
     moo_buffer_storage_drop(s);
 }
 
 void moo_buffer_drop(MooBuffer* b) {
-    if (b && --b->refcount == 0) moo_buffer_free(b);
+    if (b && moo_rc_dec(&b->refcount)) moo_buffer_free(b);
 }
 
 size_t moo_buffer_len(const MooBuffer* b) { return b ? b->len : 0; }
@@ -202,11 +204,22 @@ MooBufferStatus moo_buffer_set(MooBuffer* b, size_t index, const void* value) {
     return MOO_BUFFER_OK;
 }
 
+int moo_buffer_alleinbesitz(MooValue value) {
+    if (value.tag != MOO_BUFFER || !moo_val_as_ptr(value)) return 0;
+    MooBuffer* b = moo_val_as_ptr(value);
+    if (b->is_view || moo_rc_lesen(&b->refcount) != 1) return 0;
+    MooBufferStorage* s = b->storage;
+    return moo_rc_size_lesen(&s->refs) == 1 && moo_rc_size_lesen(&s->views) == 0
+        && moo_rc_size_lesen(&s->pins) == 0;
+}
+
 MooBufferStatus moo_buffer_resize(MooBuffer* b, size_t len) {
     if (!b || b->is_view) return MOO_BUFFER_INVALID;
     MooBufferStorage* s = b->storage;
     if (len == s->len) return MOO_BUFFER_OK;
-    if (s->views || s->pins) return MOO_BUFFER_PINNED;
+    /* P2-T114: ein geteilter Puffer ist eingefroren und waechst nicht. */
+    if (moo_rc_ist_geteilt(&b->refcount)) return MOO_BUFFER_PINNED;
+    if (moo_rc_size_lesen(&s->views) || moo_rc_size_lesen(&s->pins)) return MOO_BUFFER_PINNED;
     const size_t max_len = SIZE_MAX / s->elem_size;
     if (len > max_len) return MOO_BUFFER_OVERFLOW;
     if (!len) {
@@ -234,7 +247,8 @@ MooBufferStatus moo_buffer_append_scalar(MooBuffer* b, MooBufferScalarType type,
     if (!b || !value || b->is_view) return MOO_BUFFER_INVALID;
     MooBufferStorage* s = b->storage;
     if (type == MOO_BUFFER_SCALAR_NONE || s->scalar_type != type) return MOO_BUFFER_TYPE;
-    if (s->views || s->pins) return MOO_BUFFER_PINNED;
+    if (moo_rc_ist_geteilt(&b->refcount)) return MOO_BUFFER_PINNED;
+    if (moo_rc_size_lesen(&s->views) || moo_rc_size_lesen(&s->pins)) return MOO_BUFFER_PINNED;
     if (s->len == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
     /* Copy before resize: value may alias storage and growth may free it. */
     unsigned char copy[8];
@@ -251,10 +265,10 @@ MooBufferStatus moo_buffer_pin(MooBuffer* b, MooBufferPin** out, void** data) {
     if (!b || !out || !data) return MOO_BUFFER_INVALID;
     *out = NULL; *data = NULL;
     MooBufferStorage* s = b->storage;
-    if (s->refs == SIZE_MAX || s->pins == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
+    if (moo_rc_size_lesen(&s->refs) == SIZE_MAX || moo_rc_size_lesen(&s->pins) == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
     MooBufferPin* pin = malloc(sizeof(*pin));
     if (!pin) return MOO_BUFFER_ALLOC;
-    pin->storage = s; ++s->refs; ++s->pins;
+    pin->storage = s; moo_rc_size_inc(&s->refs); moo_rc_size_inc(&s->pins);
     *data = s->data ? s->data + b->start * s->elem_size : NULL;
     *out = pin;
     return MOO_BUFFER_OK;
@@ -263,5 +277,5 @@ MooBufferStatus moo_buffer_pin(MooBuffer* b, MooBufferPin** out, void** data) {
 void moo_buffer_unpin(MooBufferPin* pin) {
     if (!pin) return;
     MooBufferStorage* s = pin->storage;
-    --s->pins; free(pin); moo_buffer_storage_drop(s);
+    moo_rc_size_dec(&s->pins); free(pin); moo_buffer_storage_drop(s);
 }

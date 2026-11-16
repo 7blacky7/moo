@@ -143,6 +143,31 @@ pub const MAX_TIEFE_REFERENZ_STACK: usize = 512 * 1024 * 1024;
 static MAX_TIEFE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(MAX_TIEFE_STANDARD);
 
 /// Tiefenbudget fuer einen Stack von `stack` Bytes (proportional zur Messung).
+/// P2-T114 B: erster Sprung, der einen mit-Block verlassen wuerde
+/// (gib_zurueck immer; abbrechen/weiter ausserhalb einer inneren Schleife).
+/// Verschachtelte Funktionen und Klassen zaehlen nicht.
+fn mit_sprung(stmts: &[Stmt], in_schleife: bool) -> Option<&'static str> {
+    for s in stmts {
+        let r = match s {
+            Stmt::Return(..) => Some("gib_zurück"),
+            Stmt::Break(_) if !in_schleife => Some("abbrechen"),
+            Stmt::Continue(_) if !in_schleife => Some("weiter"),
+            Stmt::If { body, else_body, .. } => mit_sprung(body, in_schleife).or_else(|| mit_sprung(else_body, in_schleife)),
+            Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::ParallelFor { body, .. } => mit_sprung(body, true),
+            Stmt::TryCatch { try_body, catch_body, .. } =>
+                mit_sprung(try_body, in_schleife).or_else(|| mit_sprung(catch_body, in_schleife)),
+            Stmt::Match { cases, .. } => cases.iter().find_map(|(_, _, b)| mit_sprung(b, in_schleife)),
+            Stmt::Guard { else_body, .. } => mit_sprung(else_body, in_schleife),
+            Stmt::UnsafeBlock { body, .. } => mit_sprung(body, in_schleife),
+            _ => None,
+        };
+        if r.is_some() {
+            return r;
+        }
+    }
+    None
+}
+
 pub fn tiefe_fuer_stack(stack: usize) -> usize {
     MAX_TIEFE_STANDARD * (stack / (1024 * 1024)) / (MAX_TIEFE_REFERENZ_STACK / (1024 * 1024))
 }
@@ -500,6 +525,14 @@ impl Parser {
                             Some(TokenType::String(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
                             Some(TokenType::Func)) => self.parse_extern_c(vec![]),
+            // P2-T114 Phase C: Soft-Keyword `geteilt` (P2-T119: EN `shared`) nur
+            // direkt vor `konstante`/`setze`; sonst bleibt es ein normaler Name.
+            TokenType::Identifier(kw) if (kw == "geteilt" || kw == "shared")
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Const) | Some(TokenType::Set)) => self.parse_geteilt(),
+            // P2-T114 Phase B: Soft-Keyword `mit SPERRE als NAME:` (EN `with ... as`),
+            // nur wenn auf derselben Zeile `als NAME :` folgt.
+            TokenType::Identifier(kw) if (kw == "mit" || kw == "with") && self.mit_block_folgt() => self.parse_mit(),
             TokenType::Set => self.parse_assignment(),
             TokenType::Const => self.parse_const_assignment(),
             TokenType::Show => self.parse_show(),
@@ -791,7 +824,92 @@ impl Parser {
         let ty = self.parse_optional_annotation()?;
         self.eat(&TokenType::To)?;
         let value = self.parse_expression()?;
-        Ok(Stmt::ConstAssignment { zeile: 0, name, ty, value })
+        Ok(Stmt::ConstAssignment { zeile: 0, name, ty, value, geteilt: false })
+    }
+
+    /// P2-T114 Phase C: `geteilt konstante NAME auf wert` oder
+    /// `geteilt setze NAME auf wert`. Ergebnis ist eine Konstante mit
+    /// Markierung geteilt (tief eingefroren, von Threads lesbar).
+    fn parse_geteilt(&mut self) -> Result<Stmt, ParseError> {
+        let ort = ParseError::bei(self.current());
+        self.pos += 1; // geteilt / shared
+        let stmt = if matches!(self.current_type(), TokenType::Const) {
+            self.parse_const_assignment()?
+        } else {
+            self.parse_assignment()?
+        };
+        match stmt {
+            Stmt::Assignment { zeile, name, ty, value }
+            | Stmt::ConstAssignment { zeile, name, ty, value, .. } =>
+                Ok(Stmt::ConstAssignment { zeile, name, ty, value, geteilt: true }),
+            _ => Err(ParseError {
+                message: "'geteilt'/'shared' markiert nur eine Globale: geteilt konstante NAME auf wert".to_string(),
+                ..ort
+            }),
+        }
+    }
+
+    /// P2-T114 B: `mit ... als NAME:` auf einer Zeile (Klammertiefe 0).
+    fn mit_block_folgt(&self) -> bool {
+        let mut tiefe = 0i32;
+        let mut i = self.pos + 1;
+        while let Some(t) = self.tokens.get(i) {
+            match &t.token_type {
+                TokenType::Newline | TokenType::Eof => return false,
+                TokenType::LParen | TokenType::LBracket | TokenType::LBrace => tiefe += 1,
+                TokenType::RParen | TokenType::RBracket | TokenType::RBrace => tiefe -= 1,
+                TokenType::Colon if tiefe == 0 => return false,
+                TokenType::As if tiefe == 0 => {
+                    return i > self.pos + 1
+                        && matches!(self.tokens.get(i + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+                        && matches!(self.tokens.get(i + 2).map(|t| &t.token_type), Some(TokenType::Colon));
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    /// P2-T114 B: `mit s als k: rumpf` sperrt s, bindet den Inhalt an k und
+    /// gibt die Sperre am Blockende frei, auch wenn der Rumpf wirft. Entzuckert
+    /// zu versuche/fange mit erneutem wirf; Spruenge aus dem Block (gib_zurueck,
+    /// abbrechen, weiter) sind ein Compilefehler, damit nie eine Sperre leckt.
+    fn parse_mit(&mut self) -> Result<Stmt, ParseError> {
+        let ort = ParseError::bei(self.current());
+        let zeile = self.current().line;
+        self.pos += 1; // mit
+        let sperre = self.parse_expression()?;
+        self.eat(&TokenType::As)?;
+        let name = self.eat_identifier()?;
+        let body = self.parse_block_body(false)?;
+        if let Some(was) = mit_sprung(&body, false) {
+            return Err(ParseError {
+                message: format!("'{was}' verlaesst den mit-Block; das ist nicht erlaubt, weil die Sperre sonst nicht freigegeben wuerde. Ergebnis in einer Variablen merken und nach dem Block verwenden."),
+                ..ort
+            });
+        }
+        let s = format!("__mit_sperre_{}", self.pos);
+        let f = format!("__mit_fehler_{}", self.pos);
+        let id = |n: &str| Expr::Identifier(n.to_string());
+        let setze = |n: &str, value: Expr| Stmt::Assignment { zeile, name: n.to_string(), ty: None, value };
+        let verlassen = |pruefen: bool| Stmt::Expression(Expr::FunctionCall {
+            name: "__moo_sperre_verlassen".to_string(),
+            args: vec![id(&s), Expr::Boolean(pruefen)], zeile }, zeile);
+        let stmts = vec![
+            setze(&s, sperre),
+            setze(&name, Expr::FunctionCall { name: "__moo_sperre_betreten".to_string(), args: vec![id(&s)], zeile }),
+            Stmt::TryCatch {
+                zeile,
+                try_body: body,
+                catch_var: Some(f.clone()),
+                catch_body: vec![setze(&name, Expr::None), verlassen(false), Stmt::Throw(id(&f), zeile)],
+            },
+            setze(&name, Expr::None),
+            verlassen(true),
+            setze(&s, Expr::None),
+        ];
+        Ok(Stmt::If { zeile, condition: Expr::Boolean(true), body: stmts, else_body: Vec::new() })
     }
 
     fn parse_show(&mut self) -> Result<Stmt, ParseError> {
@@ -968,6 +1086,34 @@ impl Parser {
             })();
             self.native_context = previous_native;
             let (ty, value) = parsed?;
+            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value, decorators });
+        }
+        // P7-T6: @nativ statisch NAME: T auf wert — beschreibbarer statischer
+        // Speicher (.data/.bss) fuer Kernel-Stack, GDT, Seitentabellen, Puffer.
+        // Gleiche Form wie die native Konstante; das Merkmal traegt ein
+        // internes Decorator "statisch" (Auswertung in native_const.rs).
+        if matches!(self.current_type(), TokenType::Identifier(name) if name == "statisch" || name == "static")
+            && decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
+            && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+        {
+            self.pos += 1; // statisch/static
+            let name = self.eat_identifier()?;
+            let line = self.current().line;
+            let column = self.current().column;
+            let previous_native = self.native_context;
+            self.native_context = true;
+            let parsed = (|| {
+                let ty = self.parse_optional_annotation()?.ok_or_else(|| ParseError {
+                    message: "Statischer Speicher braucht eine Typannotation (statisch name: Typ auf wert)".to_string(),
+                    ..ParseError::an(line, column)
+                })?;
+                self.eat(&TokenType::To)?;
+                Ok((ty, self.parse_expression()?))
+            })();
+            self.native_context = previous_native;
+            let (ty, value) = parsed?;
+            let mut decorators = decorators;
+            decorators.push(crate::ast::Decorator { name: "statisch".to_string(), args: Vec::new() });
             return Ok(Stmt::NativeConst { zeile: 0, name, ty, value, decorators });
         }
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "extern") {
@@ -1899,6 +2045,15 @@ impl Parser {
             }
             TokenType::Identifier(name) => {
                 self.pos += 1;
+                // P2-T114 B: `übergib puffer` (EN `transfer`) als Praefix; zwei
+                // Namen hintereinander waren vorher ein Syntaxfehler.
+                if matches!(name.as_str(), "übergib" | "uebergib" | "transfer") {
+                    if let TokenType::Identifier(var) = self.current_type().clone() {
+                        let zeile = self.current().line;
+                        self.pos += 1;
+                        return Ok(Expr::FunctionCall { name: "übergib".to_string(), args: vec![Expr::Identifier(var)], zeile });
+                    }
+                }
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
                     // P7-T4 (5A): assembler(schluessel=wert, ...) in @nativ als ein Dict-Argument.

@@ -1,0 +1,40 @@
+# P2-T113: Fehlerzustand je Thread. Zwei Worker und der Hauptthread werfen
+# und fangen gleichzeitig je 3000 eigene Fehler; jeder faengt genau seine
+# eigenen. Ein unbehandelter Worker-Fehler bleibt im Worker (Hinweis dort)
+# und landet nicht im versuche des wartenden Hauptthreads.
+# (Uebernommen aus dem T113-Kandidaten fehler_thread_getrennt.moos.)
+funktion fange_eigene(praefix, n):
+    setze treffer auf 0
+    setze i auf 0
+    solange i < n:
+        setze erwartet auf praefix + text(i)
+        versuche:
+            wirf erwartet
+        fange e:
+            wenn e == erwartet:
+                setze treffer auf treffer + 1
+        setze i auf i + 1
+    gib_zurück treffer
+
+funktion lauf_a(n):
+    gib_zurück fange_eigene("A", n)
+
+funktion lauf_b(n):
+    gib_zurück fange_eigene("B", n)
+
+funktion wirft_ohne_versuche(x):
+    schlafe(0.001)
+    wirf "aus dem Worker"
+
+setze ta auf starte(lauf_a, 3000)
+setze tb auf starte(lauf_b, 3000)
+zeige "Haupt " + text(fange_eigene("H", 3000))
+zeige "A " + text(ta.warten())
+zeige "B " + text(tb.warten())
+
+versuche:
+    setze tw auf starte(wirft_ohne_versuche, 0)
+    tw.warten()
+    zeige "Hauptthread ohne fremden Fehler"
+fange e:
+    zeige "FALSCH: fremder Fehler gefangen: " + e

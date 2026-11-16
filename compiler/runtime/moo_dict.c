@@ -1,6 +1,18 @@
 #include "moo_runtime.h"
+#include "moo_rc.h"
 
 #define DICT_INITIAL_CAPACITY 16
+
+// P2-T114: Ein geteiltes Woerterbuch ist eingefroren (ein Lade+Test wie
+// vorher die Mitmarkier-Pruefung aus P2-T112, jetzt vor der Aenderung).
+#define DICT_GESPERRT(d) MOO_RC_SELTEN((d)->frozen || moo_rc_ist_geteilt(&(d)->refcount))
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((cold, noinline))
+#endif
+static void dict_gesperrt_werfen(const MooDict* d) {
+    moo_throw(moo_string_new(d->frozen ? "Wörterbuch ist eingefroren!" : MOO_GETEILT_TEXT));
+}
 #define DICT_LOAD_FACTOR 0.75
 
 static uint32_t hash_string(const char* str) {
@@ -95,7 +107,7 @@ static inline void release_key_after_lookup(MooValue key_str, MooValue orig_key)
 
 void moo_dict_set(MooValue dict, MooValue key, MooValue value) {
     MooDict* d = MV_DICT(dict);
-    if (d->frozen) { moo_throw(moo_string_new("Wörterbuch ist eingefroren!")); return; }
+    if (DICT_GESPERRT(d)) { dict_gesperrt_werfen(d); return; }
     MooValue key_str = moo_to_string(key);
     if ((double)(d->count + d->tombs) / d->capacity > DICT_LOAD_FACTOR) dict_grow(d);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
@@ -182,7 +194,7 @@ MooValue moo_dict_length(MooValue dict) {
 
 void moo_dict_remove(MooValue dict, MooValue key) {
     MooDict* d = MV_DICT(dict);
-    if (d->frozen) { moo_throw(moo_string_new("Wörterbuch ist eingefroren!")); return; }
+    if (DICT_GESPERRT(d)) { dict_gesperrt_werfen(d); return; }
     MooValue key_str = moo_to_string(key);
     int32_t slot = dict_find_slot(d, MV_STR(key_str)->chars);
     if (d->entries[slot].occupied) {

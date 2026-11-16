@@ -5,7 +5,7 @@
  * PT_LOAD in freie physische Seiten beliebiger Lage, bildet sie per eigener
  * Seitentabelle hier ab und springt im 64-Bit-Modus nach ENTRY mit der
  * Boot-Info (physisch, identisch abgebildet) in rdi (SysV). Der Kern setzt
- * seinen Stack selbst (kern_stapel_ende). Befund P7-T5: eine feste physische
+ * seinen Stack selbst (KERN_STAPEL, Moo). Befund P7-T5: eine feste physische
  * Adresse (16 MiB) war in OVMF belegt.
  *
  * Verwendung:
@@ -49,10 +49,8 @@ SECTIONS
     {
         *(COMMON)
         *(.bss .bss.*)
-        . = ALIGN(16);
-        kern_stapel = .;
-        . += 64K;
-        kern_stapel_ende = .;
+        /* P7-T6: der Stack ist kein Linkersymbol mehr, sondern
+         * @nativ statisch KERN_STAPEL in uefi_kern.moos. */
     }
 
     /* Nur fuer den (hier ungenutzten) Bare-Allocator der C-Runtime. */

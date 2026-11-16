@@ -1,4 +1,4 @@
-# P2-T95: dieselbe Stelle in einer Schleife -> ein Hinweis plus Zaehler.
+# P2-T95/T117: Wurf in einer Schleife ohne versuche: -> erster Wurf beendet mit Exit 1.
 funktion g(i):
     wenn i % 2 == 0:
         wirf "gerade " + text(i)

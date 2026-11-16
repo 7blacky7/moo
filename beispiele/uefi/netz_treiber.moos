@@ -52,9 +52,73 @@
 #     Commit 12798ec29a); auf dem N100 mit iPXE belegt (Thought 9ad7cd7a).
 #
 # SPEICHERMODELL: UEFI bildet identisch ab, kern_alloc-Adressen sind DMA-Adressen.
-# Ordnung beruht auf x86-TSO (Barrieren aus P7-T4 sind aus dynamischem Moo noch
-# nicht aufrufbar). Werte laufen als Zahl (exakt bis 2^53). Nur Polling, keine
-# Interrupts. Der CF8/CFC-Weg ist im QEMU-Gate (q35, ECAM) nicht ausgefuehrt.
+# Geraeteregister und PCI-Konfiguration laufen seit P7-T18 ueber die @nativ-
+# Zugriffsschicht unten (ADR P7-T3 Variante A): volatile 32-Bit-Zugriffe mit
+# exakter Breite, registerfeld_lesen fuer STATUS, port_*32 fuer CF8/CFC und echte
+# Barrieren (schreibbarriere vor jeder Tuerklingel, lesebarriere nach RX-DD).
+# speicher_lesen/-schreiben bleibt nur fuer gewoehnlichen RAM (Zustandsblock,
+# Deskriptoren, Puffer) - das ist der Uebergangsweg, kein Registerzugriff mehr.
+# Nur Polling, keine Interrupts. Der CF8/CFC-Weg ist im QEMU-Gate (q35, ECAM)
+# nicht ausgefuehrt.
+
+# ---------------- Hardwarezugriff (@nativ, Variante A) ----------------
+# Kopf des Registerblocks (8254x SDM / I210 DS:22633-22634).
+struktur NtRegKopf:
+    ctrl: u32
+    reserviert: u32
+    status: u32
+
+@nativ
+funktion nt_mmio_lese32(adresse: u64) -> u32:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adresse)
+        gib_zurück volatile_lesen(p)
+
+@nativ
+funktion nt_mmio_schreibe32(adresse: u64, wert: u32) -> void:
+    unsicher:
+        setze p: ptr[u32] auf zeiger(adresse)
+        volatile_schreiben(p, wert)
+
+# Tuerklingel (Ende-Register einer Queue): erst muessen Deskriptor- und
+# Pufferstores im RAM sichtbar sein, dann darf das Geraet sie lesen.
+@nativ
+funktion nt_mmio_glocke32(adresse: u64, wert: u32) -> void:
+    unsicher:
+        schreibbarriere()
+        setze p: ptr[u32] auf zeiger(adresse)
+        volatile_schreiben(p, wert)
+
+@nativ
+funktion nt_status_lesen(mmio: u64) -> u32:
+    unsicher:
+        gib_zurück registerfeld_lesen(NtRegKopf, status, mmio)
+
+# DD-Bit (Bit 0) im Statusbyte eines Deskriptors (DMA-RAM, vom Geraet
+# geschrieben). Ist es gesetzt, trennt die Lesebarriere es von den folgenden
+# Lesezugriffen auf Laenge und Puffer.
+@nativ
+funktion nt_desk_fertig(status_adresse: u64) -> bool:
+    unsicher:
+        setze p: ptr[u8] auf zeiger(status_adresse)
+        wenn (volatile_lesen(p) & 1) == 0:
+            gib_zurück falsch
+        lesebarriere()
+        gib_zurück wahr
+
+# PCI-Konfigurationsmechanismus #1 (Port CF8/CFC), adresse inkl. Bit 31.
+# Reine Hardwarekoerper (nur Intrinsics), seit P7-T22 dynamisch aufrufbar.
+@nativ
+funktion nt_cfg_lese32(adresse: u32) -> u32:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        gib_zurück port_lese32(u16(0xCFC))
+
+@nativ
+funktion nt_cfg_schreibe32(adresse: u32, wert: u32) -> void:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        port_schreibe32(u16(0xCFC), wert)
 #
 # ZUSTAND je nic (192 Byte): 0 Typ, 8 MMIO, 16 bdf, 24 MAC 0-3, 32 MAC 4-5,
 #   40 TX-Ring, 48 TX-Puffer, 56 TX-Ende, 64 RX-Ring, 72 RX-Puffer, 80 RX-naechster,
@@ -98,18 +162,16 @@ funktion pci_lese32(pci, bdf, off):
     unsicher:
         setze basis auf speicher_lesen(pci, 8)
         wenn basis != 0:
-            gib_zurück speicher_lesen(basis + (bdf << 12) + off, 4)
-        kern_outl(0xCF8, 0x80000000 | (bdf << 8) | (off & 0xFC))
-        gib_zurück kern_inl(0xCFC)
+            gib_zurück nt_mmio_lese32(basis + (bdf << 12) + off)
+        gib_zurück nt_cfg_lese32(0x80000000 | (bdf << 8) | (off & 0xFC))
 
 funktion pci_schreibe32(pci, bdf, off, wert):
     unsicher:
         setze basis auf speicher_lesen(pci, 8)
         wenn basis != 0:
-            speicher_schreiben(basis + (bdf << 12) + off, wert, 4)
+            nt_mmio_schreibe32(basis + (bdf << 12) + off, wert)
         sonst:
-            kern_outl(0xCF8, 0x80000000 | (bdf << 8) | (off & 0xFC))
-            kern_outl(0xCFC, wert)
+            nt_cfg_schreibe32(0x80000000 | (bdf << 8) | (off & 0xFC), wert)
 
 # ACPI: RSDP -> XSDT (oder RSDT) -> Tabelle mit Signatur "MCFG". 0 = keine.
 funktion nt_acpi_mcfg():
@@ -291,19 +353,29 @@ funktion nt_mac(nic, i):
             gib_zurück (speicher_lesen(nic + 24, 8) >> (i * 8)) & 255
         gib_zurück (speicher_lesen(nic + 32, 8) >> ((i - 4) * 8)) & 255
 
+# Registerzugriff ueber die @nativ-Schicht; nic + 8 ist RAM (Zustandsblock).
 funktion nt_reg(nic, reg):
     unsicher:
-        gib_zurück speicher_lesen(speicher_lesen(nic + 8, 8) + reg, 4)
+        gib_zurück nt_mmio_lese32(speicher_lesen(nic + 8, 8) + reg)
 
 funktion nt_reg_setze(nic, reg, wert):
     unsicher:
-        speicher_schreiben(speicher_lesen(nic + 8, 8) + reg, wert, 4)
+        nt_mmio_schreibe32(speicher_lesen(nic + 8, 8) + reg, wert)
+
+# Ende-Register (Tuerklingel) mit Schreibbarriere davor.
+funktion nt_reg_glocke(nic, reg, wert):
+    unsicher:
+        nt_mmio_glocke32(speicher_lesen(nic + 8, 8) + reg, wert)
+
+funktion nt_status(nic):
+    unsicher:
+        gib_zurück nt_status_lesen(speicher_lesen(nic + 8, 8))
 
 # STATUS (0x0008) Bit 1 = LU, bei e1000 (8254x SDM) und I210/I226 (DS:23550) gleich.
 funktion nt_link(nic):
     wenn nic == 0:
         gib_zurück falsch
-    gib_zurück (nt_reg(nic, 0x0008) & 2) != 0
+    gib_zurück (nt_status(nic) & 2) != 0
 
 # Geschwindigkeit in Mbit/s, 0 = kein Link. STATUS Bits 7:6: 00 10, 01 100,
 # 1x 1000; beim I226 zusaetzlich Bit 22 = 2500 (igc_defines.h:233).
@@ -311,7 +383,7 @@ funktion nt_tempo(nic):
     unsicher:
         wenn nic == 0:
             gib_zurück 0
-        setze s auf nt_reg(nic, 0x0008)
+        setze s auf nt_status(nic)
         wenn (s & 2) == 0:
             gib_zurück 0
         wenn speicher_lesen(nic, 8) == 2 und (s & 0x400000) != 0:
@@ -414,7 +486,7 @@ funktion nt_ring_senden(nic, quelle, laenge):
         speicher_schreiben(desk + 12, 0, 4)
         setze naechst auf (ende + 1) % 16
         speicher_schreiben(nic + 56, naechst, 8)
-        nt_reg_setze(nic, speicher_lesen(nic + 96, 8) + 0x18, naechst)
+        nt_reg_glocke(nic, speicher_lesen(nic + 96, 8) + 0x18, naechst)
         speicher_schreiben(nic + 120, speicher_lesen(nic + 120, 8) + 1, 8)
         # Kein Warten auf STA.DD: zurueckgewonnen wird beim naechsten Senden.
         gib_zurück wahr
@@ -424,13 +496,13 @@ funktion nt_ring_empfangen(nic, ziel):
         setze i auf speicher_lesen(nic + 80, 8)
         setze desk auf speicher_lesen(nic + 64, 8) + i * 16
         # STATUS @12: DD (Bit 0); Laenge @8 (16 Bit, ohne FCS wegen SECRC).
-        wenn (speicher_lesen(desk + 12, 1) & 1) == 0:
+        wenn nt_desk_fertig(desk + 12) == falsch:
             gib_zurück 0
         setze laenge auf speicher_lesen(desk + 8, 2)
         nt_kopiere(ziel, speicher_lesen(nic + 72, 8) + i * 2048, laenge)
         speicher_schreiben(desk + 12, 0, 4)
         # Deskriptor an die Hardware zurueckgeben (Ende-Register der RX-Queue).
-        nt_reg_setze(nic, speicher_lesen(nic + 88, 8) + 0x18, i)
+        nt_reg_glocke(nic, speicher_lesen(nic + 88, 8) + 0x18, i)
         speicher_schreiben(nic + 80, (i + 1) % 16, 8)
         gib_zurück laenge
 

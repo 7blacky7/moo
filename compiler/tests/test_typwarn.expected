@@ -1,0 +1,5 @@
+hinzufügen()/append() erwartet eine Liste, erhalten Zahl
+sortieren()/sort() erwartet eine Liste, erhalten Text
+gross()/upper() erwartet einen Text, erhalten Liste
+Anna
+[1, 2, 3]

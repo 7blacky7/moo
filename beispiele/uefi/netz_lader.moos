@@ -45,7 +45,7 @@ funktion feld_setzen(st, o, wert):
 
 funktion z(c):
     unsicher:
-        kern_outw(0x3F8, c)
+        port_schreibe16(0x3F8, c)
 
 funktion tb_anfang(st):
     feld_setzen(st, 8, 0)

@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include "../moo_3d.c"
 static int errors, backend_ok = 1, calls;
-int moo_error_flag = 0;
+MOO_TLS int moo_error_flag = 0;
 MooValue moo_error(const char* msg) { fputs(msg,stderr); abort(); }
 MooValue moo_none(void) { return (MooValue){.tag=MOO_NONE}; }
 MooValue moo_number(double x) { MooValue v={.tag=MOO_NUMBER}; memcpy(&v.data,&x,sizeof(x)); return v; }

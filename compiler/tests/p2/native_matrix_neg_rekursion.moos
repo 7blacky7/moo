@@ -1,5 +1,6 @@
-# P2-T9 B6: Rekursion im reinen @nativ-Pfad bleibt abgelehnt (ohne Kontrollfluss
-# nie terminierend; Plan 4500717b E5). Gilt jetzt auch fuer i64-Rueckgaben (A2).
+# P2-T9 B6 war: Rekursion im reinen @nativ-Pfad abgelehnt. Seit P2-T109 erlaubt
+# (Zyklus -> System-Emitter). Ohne Abbruchbedingung nie terminierend: zahlen/test.sh
+# prueft deshalb nur Kompilieren + IR-Verifikation, fuehrt NICHT aus (P2-T118).
 @nativ
 funktion f(a: i64) -> i64:
     gib_zurück f(a)

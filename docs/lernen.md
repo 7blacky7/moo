@@ -710,6 +710,178 @@ set message to ch.receive()
 show message
 ```
 
+### Threads starten und warten
+
+Regel: **Ein veränderlicher Wert gehört genau einem Thread.** Teilen friert ihn
+tief ein. Wer geteilt verändern will, braucht eine ausdrückliche Zelle (Atom oder
+Sperre). Stille Sperren gibt es nicht.
+
+`starte(funktion, a, b, ...)` / `spawn(...)` startet einen Thread und ruft die
+Funktion mit allen Argumenten danach auf (keins bis acht; jedes Argument wird
+nach derselben Regel geteilt, ein veränderlicher Wert ist im Thread also
+eingefroren). `t.warten()` / `t.wait()` liefert das Ergebnis. Ein Kanal als
+geteilte Konstante verbindet die Threads:
+
+```
+geteilt konstante K auf kanal(4)
+
+funktion arbeite(n):
+    K.senden(n * n)
+    gib_zurück n + 1
+
+setze t auf starte(arbeite, 7)
+zeige K.empfangen()     # 49
+zeige t.warten()        # 8
+```
+
+Das Ergebnis gehört dem **ersten Wartenden**. Wartet ein anderer Thread
+danach auf denselben Thread, wirft `warten` einen fangbaren Fehler („das Ergebnis
+gehört dem ersten Wartenden“); das Ergebnis dann per Kanal weitergeben. Der
+Thread, der zuerst gewartet hat, darf erneut warten und bekommt jedes Mal
+dasselbe Ergebnis:
+
+```
+funktion rechne(n):
+    gib_zurück n * 2
+
+funktion zweiter(t):
+    versuche:
+        t.warten()
+        gib_zurück 1
+    fange e:
+        gib_zurück 0
+
+setze t auf starte(rechne, 21)
+zeige t.warten()          # 42
+setze u auf starte(zweiter, t)
+zeige u.warten()          # 0 (fremder Wartender, Fehler gefangen)
+zeige t.warten()          # 42 (dasselbe Ergebnis)
+```
+
+Ein unbehandelter Fehler in einem Worker beendet den Prozess nicht sofort, wird aber
+gemeldet; das Programm endet am Schluss mit Exit-Code 1.
+
+### Globale gehören dem Hauptthread
+
+Code, der von `starte` aus erreichbar ist, darf keine veränderliche Globale lesen
+oder schreiben. Wo der Compiler das beweisen kann, ist es der Fehler `M-P001`:
+
+```
+setze stand auf 0
+
+funktion arbeite(n):
+    setze stand auf stand + n     # Fehler M-P001
+    gib_zurück stand
+
+setze t auf starte(arbeite, 1)
+t.warten()
+```
+
+Erlaubt ohne Markierung sind nur nie neu gesetzte `konstante`n mit Zahl, Text,
+Wahrheitswert oder `nichts`. Alles andere markierst du mit `geteilt` (nur auf oberster
+Ebene; englisch `shared`, z. B. `shared konstante GRENZE auf 3`).
+Der Wert wird bei der Initialisierung tief eingefroren und kann nicht mehr neu
+gesetzt werden (`M-P003`):
+
+```
+geteilt konstante GRENZE auf 3
+geteilt konstante NAMEN auf ["anna", "ben"]
+
+funktion pruefe(x):
+    gib_zurück x < GRENZE und länge(NAMEN) == 2
+
+setze t auf starte(pruefe, 2)
+zeige t.warten()        # wahr
+```
+
+Lässt sich der Zugriff nicht beweisen (Funktionswert, Methode), prüft das Programm
+zur Laufzeit und bricht mit Meldung ab; `--typ-streng` lehnt es stattdessen mit
+`M-P002` ab.
+
+### Atom und Sperre: geteilt verändern
+
+**Atom** (`atom` / `atomic`): eine Zahl, die Threads ohne Sperre ändern.
+Funktionen: `atom_laden`/`atomic_load`, `atom_speichern`/`atomic_store`,
+`atom_addieren`/`atomic_add` (liefert den alten Wert), `atom_tauschen`/`atomic_swap`,
+`atom_vergleichen_und_tauschen`/`atomic_compare_exchange` (wahr/falsch).
+
+```
+geteilt konstante Z auf atom(0)
+
+funktion zaehle(n):
+    setze i auf 0
+    solange i < 1000:
+        atom_addieren(Z, 1)
+        setze i auf i + 1
+    gib_zurück n
+
+setze t1 auf starte(zaehle, 1)
+setze t2 auf starte(zaehle, 2)
+t1.warten()
+t2.warten()
+zeige atom_laden(Z)                              # 2000
+zeige atom_vergleichen_und_tauschen(Z, 2000, 7)  # wahr
+zeige atomic_load(Z)                             # 7
+```
+
+**Sperre** (`sperre` / `lock`) schützt einen veränderlichen Inhalt. Zugriff nur im
+Block `mit S als k:` / `with S als k:`; die Sperre wird am Blockende, bei `wirf`
+und bei Fehlern in aufgerufenen Funktionen wieder freigegeben. `gib_zurück`,
+`stopp`/`abbrechen` und `weiter` aus dem Block heraus sind ein Compilefehler. Fangbare Fehler:
+verschachteltes `mit` auf dieselbe Sperre, Inhalt nach dem Block noch referenziert.
+
+```
+geteilt konstante KONTO auf sperre({"stand": 0})
+
+funktion buche(n):
+    setze i auf 0
+    solange i < 1000:
+        mit KONTO als k:
+            k["stand"] = k["stand"] + n
+        setze i auf i + 1
+    gib_zurück 0
+
+setze t1 auf starte(buche, 1)
+setze t2 auf starte(buche, 2)
+t1.warten()
+t2.warten()
+mit KONTO als k:
+    zeige k["stand"]        # 3000
+```
+
+### Besitz übergeben: übergib
+
+Ein Puffer kann ohne Kopie und ohne Einfrieren den Besitzer wechseln:
+`kanal.senden(übergib p)` (auch `uebergib` / `transfer`). Danach ist `p` beim Sender
+`nichts`. Der Empfänger darf ihn ändern. Hat der Puffer weitere Referenzen oder Sichten,
+ist das ein fangbarer Fehler und der Puffer bleibt beim Sender. `übergib` gilt nur für
+Puffer und nur als Argument von `senden`.
+
+```
+geteilt konstante HIN auf kanal(2)
+geteilt konstante ZURUECK auf kanal(2)
+
+funktion verdoppeln(x):
+    setze p auf HIN.empfangen()
+    setze i auf 0
+    solange i < länge(p):
+        p[i] = p[i] * 2
+        setze i auf i + 1
+    ZURUECK.senden(übergib p)
+    gib_zurück 0
+
+setze p auf puffer_erstellen(i32, 4)
+p[0] = 21
+setze t auf starte(verdoppeln, 0)
+HIN.senden(übergib p)
+zeige p                  # nichts
+t.warten()
+setze q auf ZURUECK.empfangen()
+zeige q[0]               # 42
+```
+
+Englisch: `spawn`, `wait`, `atomic(...)`, `lock(...)`, `with S as k:`, `transfer`.
+
 ---
 
 ## Klassen & Objekte
@@ -811,9 +983,9 @@ fange fehler:
 
 ### Unbehandelte Fehler
 
-Wird ein Fehler nirgends mit `versuche:` gefangen, stürzt das Programm **nicht** ab.
-moo gibt einen Hinweis auf der Fehlerausgabe (stderr) aus und läuft weiter. Der
-Rückgabewert des Programms ändert sich dadurch nicht.
+Wird ein Fehler nirgends mit `versuche:` gefangen, beendet moo das Programm sofort
+mit Rückgabewert (Exit-Code) **1** und einer Meldung auf der Fehlerausgabe (stderr).
+Ein Fehler wird nie still verschluckt; Skripte und CI erkennen ihn am Exit-Code.
 
 ```
 funktion lade():
@@ -826,14 +998,17 @@ funktion start():
 start()
 ```
 
-Ausgabe (der Hinweis steht auf stderr):
+Ausgabe (auf stderr, Exit-Code 1; „weiter geht's“ erscheint nicht):
 
 ```
-Hinweis: unbehandelter Fehler „Datei fehlt“
+Unbehandelter Fehler: Datei fehlt
   geworfen in lade (programm.moos:2)
-  nicht behandelt: kein versuche: im Aufrufpfad – das Programm läuft weiter
-weiter geht's
+  nicht behandelt: kein versuche: im Aufrufpfad – Abbruch mit Exit-Code 1
 ```
+
+Dasselbe gilt für Laufzeitfehler, z. B. eine Listenmethode auf einem Text
+(`"abc".sortieren()`) oder eine Textmethode auf einer Liste (`[1].gross()`).
+`teste_alle()` endet mit Exit-Code 1, wenn mindestens ein Test FAIL meldet.
 
 Gibt es weiter außen ein `versuche:`, fängt es den Fehler wie gewohnt. Eine
 Funktion dazwischen, die selbst kein `versuche:` hat, läuft nach dem Fehler aber
@@ -846,13 +1021,14 @@ Hinweis: unbehandelter Fehler „Datei fehlt“
 ```
 
 - Jeder Fehler wird nur einmal gemeldet, auch wenn er durch mehrere Funktionen läuft.
-- Tritt derselbe Fehler in einer Schleife immer wieder auf, erscheint der Hinweis
+- Tritt derselbe Fehler dabei in einer Schleife immer wieder auf, erscheint der Hinweis
   einmal. Am Programmende steht dann, wie oft es insgesamt passiert ist.
 - `nichts` als Rückgabe (z. B. „nichts gefunden“) ist kein Fehler und erzeugt keinen Hinweis.
 
-**Streng-Modus:** Mit der Umgebungsvariablen `MOO_STRENG=1` bricht das Programm bei
-einem unbehandelten Fehler mit Rückgabewert 1 ab (`Unbehandelter Fehler: …`). Das ist
-nützlich für Tests und CI, im Normalbetrieb aber aus.
+**Streng-Modus:** Mit `MOO_STRENG=1` bricht das Programm zusätzlich schon an der
+Zwischenstelle ab (die Funktion ohne eigenes `versuche:`), auch wenn weiter außen
+ein `versuche:` den Fehler fangen würde. Unbehandelte Fehler beenden das Programm
+dagegen immer mit Exit-Code 1, mit und ohne `MOO_STRENG`.
 
 ```bash
 MOO_STRENG=1 ./programm
@@ -873,7 +1049,8 @@ programm.moos:2:15: Fehler M-S001: Doppelpunkt ':' erwartet, aber Zeilenende gef
 
 `moo-compiler pruefe programm.moos` prüft nur (ohne Binary), `--diagnose=json` liefert
 dieselben Diagnosen maschinenlesbar, `moo-compiler erklaere M-S001` erklärt einen Code.
-Hinweise (`Hinweis M-H…`) brechen nichts ab. Katalog und JSON-Format: `docs/AI_WITH_MOO.md`, Abschnitt 9.
+Hinweise (`Hinweis M-H…`) brechen nichts ab. Zu den Sprachmitteln für Threads
+gehören `M-P001` bis `M-P003` (Globale und `geteilt`, siehe „Multithreading“). Katalog und JSON-Format: `docs/AI_WITH_MOO.md`, Abschnitt 9.
 
 ## Match / Switch
 
@@ -1210,6 +1387,33 @@ die aus C aufgerufen werden) gibt es keinen fangbaren Fehler: dort hält ein
 Laufzeitfehler die CPU sofort an (`llvm.trap`), damit kein falscher Wert
 weiterverwendet wird. Die bestehenden Builtins `als_u8` bis `als_u64` für
 dynamischen Code bleiben unverändert (Bitmuster-Konversion).
+
+### Hardware-Syntax (Bare-Metal/UEFI)
+
+Hardwarezugriff steht typisiert in `@nativ`-Funktionen, innerhalb von `unsicher:`:
+`volatile_lesen`/`volatile_schreiben`, Barrieren, `port_lese`/`port_lese16`/`port_lese32`,
+`port_schreibe`/`port_schreibe16`/`port_schreibe32` (EN `port_in*`/`port_out*`),
+`assembler`, `@unterbrechung`, `@nackt`, `@aufrufkonvention`. Port-Operanden dürfen
+Umwandlungen wie `u16(0xCF8)` sein; passt der Typ nicht, nennt die Meldung den erwarteten Typ.
+
+```moo
+@nativ
+funktion pci_lese(adresse: u32) -> u32:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        gib_zurück port_lese32(u16(0xCFC))
+```
+
+Das Beispiel läuft nur im Bare-/UEFI-Profil (`--no-stdlib --target x86_64-bare`); auf
+dem Host meldet der Compiler „Hardware-Intrinsics sind nur im Bare-Profil verfügbar“.
+Ein reiner Hardwarekörper mit skalarer Signatur ist auch aus dynamischem Moo aufrufbar
+(Beleg: `compiler/tests/p7/nativ_uefi_dyn.moos`). Nicht aufrufbar sind `@unterbrechung`,
+`@nackt`, fremde `@aufrufkonvention` und `ptr[T]`-Parameter; die Meldung nennt den Grund.
+
+**Veraltet:** `kern_inw`/`kern_outw`/`kern_inl`/`kern_outl` sind Übergangsaliase
+für `port_lese16`/`port_schreibe16`/`port_lese32`/`port_schreibe32`; sie melden den
+Hinweis `M-H008` und entfallen später. `speicher_lesen`/`speicher_schreiben` bleiben
+(Rohzugriff auf gewöhnlichen Speicher; Geräteregister über `volatile_*`).
 
 ---
 

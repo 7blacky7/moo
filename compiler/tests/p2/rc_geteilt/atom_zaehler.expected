@@ -1,0 +1,8 @@
+500000
+500000
+wahr
+falsch
+7
+1
+kein Atom: atom_laden erwartet ein Atom, erhalten: Zahl
+keine Zahl: atom erwartet eine Zahl, erhalten: Text

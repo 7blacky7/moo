@@ -261,6 +261,10 @@ pub enum Stmt {
         name: std::string::String,
         ty: Option<TypeRef>,
         value: Expr,
+        /// P2-T114 Phase C: `geteilt konstante X auf w` / `geteilt setze X auf w`.
+        /// Die Globale wird bei der Initialisierung tief eingefroren und darf
+        /// von Threads gelesen, aber nie neu gesetzt werden.
+        geteilt: bool,
     },
     CompoundAssignment {
         zeile: usize,

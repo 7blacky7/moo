@@ -1,0 +1,109 @@
+# P7-T17: @nativ-Systemkoerper im UEFI-Profil mit echten Variablen.
+# Gate: MOO_UEFI_PRUEFUNG=nativ bash scripts/uefi-smoke.sh
+# COM1-Zeilen "N <wert>": -12345, 213, 1152921504606846984,
+# -6000000000000000001, 1 (bool), dann "N 999" als Ende.
+# Die Dezimalausgabe rechnet in Moo mit / und % auf den exakten
+# 64-Bit-Werten (Bare-Runtime, Tag 30/31).
+@nativ
+funktion bare_i16(x: i16) -> i16:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion bare_u8(x: u8) -> u8:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion hoch64(x: u64) -> u64:
+    unsicher:
+        gib_zurück x + 1
+
+@nativ
+funktion runter64(x: i64) -> i64:
+    unsicher:
+        gib_zurück x - 1
+
+# Erzeugt 2^60 + 7 exakt (u64-Rueckgabe -> Tag 31).
+@nativ
+funktion gross64(k: u64) -> u64:
+    unsicher:
+        gib_zurück (k << 60) | 7
+
+@nativ
+funktion bare_bool(b: bool) -> bool:
+    unsicher:
+        gib_zurück b
+
+# P7-T22: reine Hardwarekoerper (nur Intrinsics) aus dynamischem Moo,
+# Port-Operanden auch als Umwandlung u16(...). PCI CF8/CFC liest Vendor/
+# Device des q35-Host-Bridge (0x29C08086), 0x3FF ist das Scratch-Register
+# von COM1 (8 Bit, liest den geschriebenen Wert zurueck).
+@nativ
+funktion hw_cfg_lese32(adresse: u32) -> u32:
+    unsicher:
+        port_schreibe32(u16(0xCF8), adresse)
+        gib_zurück port_lese32(u16(0xCFC))
+
+@nativ
+funktion hw_kratz_schreibe(wert: u8) -> void:
+    unsicher:
+        port_schreibe(u16(0x3FF), wert)
+
+@nativ
+funktion hw_kratz_lese() -> u8:
+    unsicher:
+        gib_zurück port_lese(0x3FF)
+
+@nativ
+funktion hw_lesebarriere() -> void:
+    unsicher:
+        lesebarriere()
+
+funktion z(c):
+    unsicher:
+        port_schreibe16(0x3F8, c)
+
+funktion ziffern(w):
+    setze rest auf w % 10
+    setze vorne auf (w - rest) / 10
+    wenn vorne > 0:
+        ziffern(vorne)
+    z(48 + rest)
+
+funktion zeile(w):
+    z(78)
+    z(32)
+    wenn w < 0:
+        z(45)
+        setze w auf 0 - w
+    ziffern(w)
+    z(10)
+
+# Einstieg aus uefi_entry.c (wie netz_e1000.moos); Aufrufe also in einer
+# benannten Funktion, nicht in main.
+funktion moo_efi_haupt():
+    setze a auf 0 - 12345
+    setze b auf 200 + 13
+    unsicher:
+        setze gross auf gross64(1)
+        zeile(bare_i16(a))
+        zeile(bare_u8(b))
+        zeile(hoch64(gross))
+        setze m auf runter64(-5)
+        setze m auf m * 1000000000000000000
+        zeile(runter64(m))
+        wenn bare_bool(a < 0):
+            zeile(1)
+        # P7-T19: u64 aus @nativ an C-Builtins (uefi_entry.c). Vor T19 las
+        # moo_uefi_zahl Tag 31 als double -> Laenge 0 und Zieladresse ~0.
+        setze puffer auf kern_alloc(64)
+        zeile(kern_text_in_puffer("MOO", puffer, hoch64(2)))
+        kern_text_in_puffer("Z", hoch64(puffer - 1), 1)
+        zeile(speicher_lesen(puffer, 1))
+        # P7-T22: N 700481670 (0x29C08086), N 165 (Scratch-Register)
+        zeile(hw_cfg_lese32(0x80000000))
+        hw_kratz_schreibe(165)
+        hw_lesebarriere()
+        zeile(hw_kratz_lese())
+        zeile(999)

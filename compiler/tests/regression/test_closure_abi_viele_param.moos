@@ -1,0 +1,18 @@
+# P2-T117: Closure-Trampolin (MooFunc* env, MooValue...) wird aus C gerufen.
+# Ab dem 3. Parameter lag das MooValue fuer C ganz auf dem Stack, LLVM las
+# es aufgeteilt (Register + Stack). Hier jeder Parameter mit eigenem Typ.
+funktion fabrik3(p):
+    gib_zurück (a, b, c) => p + ":" + text(a) + "," + text(b) + "," + text(c)
+
+funktion fabrik5(p):
+    gib_zurück (a, b, c, d, e) => p + ":" + text(a) + "," + text(b) + "," + text(c) + "," + text(d) + "," + text(e)
+
+funktion fabrik8(p):
+    gib_zurück (a, b, c, d, e, f, g, h) => p + ":" + text(a) + "," + text(b) + "," + text(c) + "," + text(d) + "," + text(e) + "," + text(f) + "," + text(g) + "," + text(h)
+
+setze f3 auf fabrik3("drei")
+setze f5 auf fabrik5("fuenf")
+setze f8 auf fabrik8("acht")
+zeige f3("x", wahr, 3)
+zeige f5(1, "zwei", falsch, 4, wahr)
+zeige f8(1, 2, "drei", wahr, 5, falsch, "sieben", 8)

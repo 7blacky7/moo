@@ -1,6 +1,7 @@
 #include "moo_runtime.h"
 #include "moo_surface_core.h"
 #include "moo_font_aa.h"
+#include "moo_bare_wert.h"
 
 #include <limits.h>
 #include <math.h>
@@ -23,8 +24,11 @@ struct MooSurface {
 static bool moo_surface_number_i32(MooValue value, int32_t* out) {
     double number;
     int32_t converted;
-    if (!out || value.tag != MOO_NUMBER) return false;
-    number = MV_NUM(value);
+    if (!out) return false;
+    /* P7-T19: im Bare/UEFI-Profil kommen auch exakte i64/u64 (Tag 30/31). */
+    if (moo_wert_breit((uint64_t)value.tag)) number = moo_wert_double((uint64_t)value.tag, (uint64_t)value.data);
+    else if (value.tag != MOO_NUMBER) return false;
+    else number = MV_NUM(value);
     if (!isfinite(number) ||
         number < (double)INT32_MIN || number > (double)INT32_MAX) return false;
     converted = (int32_t)number;

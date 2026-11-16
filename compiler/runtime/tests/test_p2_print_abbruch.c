@@ -152,31 +152,36 @@ int main(void) {
     moo_release(k2);
     assert(live_strings == 0);
 
-    /* Unbehandelt mit MOO_STRENG=1 (P2-T95): moo_throw druckt die Meldung ueber
-     * moo_print, obwohl das Flag beim Eintritt schon gesetzt ist; Exitcode 1. */
+    /* Unbehandelt (P2-T117, mit und ohne MOO_STRENG): moo_throw schreibt die
+     * Diagnose mit Fehlertext auf stderr, stdout bleibt leer; Exitcode 1. */
     int fd[2];
     assert(pipe(fd) == 0);
     pid_t kind = fork();
     assert(kind >= 0);
     if (kind == 0) {
         close(fd[0]);
-        dup2(fd[1], 1);
+        dup2(fd[1], 2);
         int nichts = open("/dev/null", O_WRONLY);
-        if (nichts >= 0) dup2(nichts, 2);
-        setenv("MOO_STRENG", "1", 1);
+        if (nichts >= 0) dup2(nichts, 1);
         grenze = INT32_MAX;
         moo_throw(moo_string_new("Unbehandelt-Erstfehler"));
         _exit(99);
     }
     close(fd[1]);
-    char puffer[128];
-    ssize_t n = read(fd[0], puffer, sizeof(puffer) - 1);
-    assert(n > 0);
-    puffer[n] = '\0';
+    char puffer[512];
+    size_t gelesen = 0;
+    for (;;) {
+        ssize_t n = read(fd[0], puffer + gelesen, sizeof(puffer) - 1 - gelesen);
+        if (n <= 0) break;
+        gelesen += (size_t)n;
+        if (gelesen == sizeof(puffer) - 1) break;
+    }
+    assert(gelesen > 0);
+    puffer[gelesen] = '\0';
     close(fd[0]);
     int status = 0;
     assert(waitpid(kind, &status, 0) == kind);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 1);
-    assert(strcmp(puffer, "Unbehandelt-Erstfehler\n") == 0);
+    assert(strncmp(puffer, "Unbehandelter Fehler: Unbehandelt-Erstfehler\n", 45) == 0);
     return 0;
 }

@@ -15,5 +15,9 @@ MooBufferStatus moo_buffer_value_borrow(MooValue value, MooBufferScalarType expe
  * on success out owns a view sharing storage, on failure it is NONE. */
 MooBufferStatus moo_buffer_value_view(MooValue value, MooBufferScalarType expected,
                                       size_t start, size_t len, MooValue* out);
+/* P2-T114 B (übergib): 1, wenn value ein ungeteilter Puffer im Alleinbesitz
+ * ist: genau eine Referenz, keine Sicht, Speicher ohne weitere Halter, keine
+ * Sichten und keine Pins. */
+int moo_buffer_alleinbesitz(MooValue value);
 
 #endif

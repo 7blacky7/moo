@@ -1901,6 +1901,5 @@ mise run -C skripte/p2/testnetz legacy-ir-selftest
 mise run -C skripte/p2/testnetz legacy-ir \
   --output build/p2-ir/root-gate.json \
   --baseline skripte/p2/testnetz/legacy-ir-baseline.json \
-  --profiles skripte/p2/testnetz/testmanifest.json \
-  --allow-baseline-failures
+  --profiles skripte/p2/testnetz/testmanifest.json
 '''

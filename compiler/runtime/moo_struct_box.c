@@ -2,6 +2,7 @@
 #include "moo_buffer.h"
 #include "moo_struct_value.h"
 #include "moo_struct_typed.h"
+#include "moo_rc.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,8 +125,8 @@ MooStructStatus moo_struct_value_borrow(MooValue value, const MooStructDescripto
 
 MooStructStatus moo_struct_box_retain(MooStructBox* b) {
     if (!b) return MOO_STRUCT_INVALID;
-    if (b->refcount == INT32_MAX) return MOO_STRUCT_OVERFLOW;
-    ++b->refcount;
+    if (moo_rc_voll(&b->refcount)) return MOO_STRUCT_OVERFLOW;
+    moo_rc_inc(&b->refcount);
     return MOO_STRUCT_OK;
 }
 void moo_struct_box_free(void* ptr) {
@@ -138,7 +139,14 @@ void moo_struct_box_free(void* ptr) {
     if (besitzer) moo_struct_box_drop(besitzer);
 }
 void moo_struct_box_drop(MooStructBox* b) {
-    if (b && --b->refcount == 0) moo_struct_box_free(b);
+    if (b && moo_rc_dec(&b->refcount)) moo_struct_box_free(b);
+}
+/* P2-T112: Eine geteilte Sicht gibt ihre Wurzelreferenz evtl. aus einem anderen
+   Thread ab, also die Wurzel mitmarkieren (vom moo_teilen der Sicht gerufen). */
+void moo_struct_box_teilen(void* ptr) {
+    MooStructBox* b = ptr;
+    if (b && b->besitzer && moo_rc_lesen(&b->besitzer->refcount) > 0)
+        moo_rc_bit_setzen(&b->besitzer->refcount);
 }
 MooStructStatus moo_struct_box_copy(const MooStructBox* b, const MooStructDescriptor* t, void* out) {
     if (!b || !t || !out) return MOO_STRUCT_INVALID;

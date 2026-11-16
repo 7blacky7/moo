@@ -16,9 +16,47 @@ case "$HOST_UNAME" in
     MINGW*|MSYS*|CYGWIN*) EXE_SUFFIX=".exe" ;;
     *)                    EXE_SUFFIX="" ;;
 esac
-COMPILER="$COMPILER_DIR/target/release/moo-compiler${EXE_SUFFIX}"
+# CARGO_TARGET_DIR wird respektiert (eigene Build-Verzeichnisse paralleler Agenten).
+COMPILER="${CARGO_TARGET_DIR:-$COMPILER_DIR/target}/release/moo-compiler${EXE_SUFFIX}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/moo_core_tests.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
+# Modulsuche (importiere mathe/mini/ui_moo_surface) laeuft relativ zum
+# Arbeitsverzeichnis (./stdlib). Unabhaengig vom Aufrufort immer vom
+# Repo-Root aus kompilieren, wie es mise run test-compiler ohnehin tut.
+cd "$COMPILER_DIR/.."
+
+# ============================================================
+# P2-T116: Deklarierte Sonderfaelle. Eine .moos OHNE .expected, die in
+# keiner dieser Listen steht, ist FAIL (kein stilles Ueberspringen mehr).
+# ============================================================
+# Modulfragmente: werden nur von anderen Tests importiert, kein eigener Test.
+declare -A MODULFRAGMENT=(
+    [test_import_bug_modul]="importiert von test_import_bug_main"
+    [test_import_bug2_modul]="importiert von test_import_bug2_main/test_import_von_main"
+    [test_import_diamond_a]="importiert von test_import_diamond"
+    [test_import_diamond_b]="importiert von test_import_diamond"
+    [test_import_diamond_shared]="importiert von test_import_diamond*/test_import_combined"
+    [test_import_doppelt_a]="importiert von test_import_doppelt_main"
+    [test_import_doppelt_lib]="importiert von test_import_doppelt_main"
+    [test_import_vars_modul]="importiert von test_import_vars/test_import_combined"
+    [test_modul_mathe]="importiert von test_modul_main/test_modul_from"
+)
+# Nur kompilieren (Lauf hier nicht aussagekraeftig/moeglich).
+declare -A NUR_KOMPILIEREN=(
+    [test_http_with_headers_client]="braucht Live-Netz"
+    [test_uim_surface_clip_diff_diag]="Diagnosewerkzeug, braucht MOO_SURFACE_DIFF_GOLDEN/_STATE"
+)
+# Nur laufen: Ausgabe nicht deterministisch (Zufall/Umgebung). Bestanden =
+# Exit 0 und kein unbehandelter Laufzeitfehler in der Ausgabe.
+declare -A NUR_LAUFEN=(
+    [test_crypto]="sichere_zufall() ist zufaellig"
+    [test_kern]="gibt HOME aus"
+)
+# P2-T117: Erwarteter Exit-Code ungleich 0 (Ausgabe wird trotzdem verglichen).
+# Alle anderen Tests muessen mit Exit 0 enden.
+declare -A ERWARTETER_EXIT=(
+    [test_framework_fail]=1
+)
 
 # Native Windows-Programme interpretieren den Literalpfad /tmp als Wurzel des
 # aktuellen Laufwerks (z. B. D:\tmp), nicht als Git-Bashs internes /tmp.
@@ -95,6 +133,8 @@ echo "P2-Strukturbox-Harness: PASS"
 for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DIR"/p2/test_p2_dispatch.moos "$SCRIPT_DIR"/p2/methode_vorrang.moos "$SCRIPT_DIR"/p2/klasse_eltern_konstruktor.moos "$SCRIPT_DIR"/p2/nichts_hinzufuegen.moos "$SCRIPT_DIR"/p2/test_p2_frontend_legacy.moos "$SCRIPT_DIR"/p2/ffi_deklaration.moos "$SCRIPT_DIR"/p2/struktur_layout.moos; do
     [[ -f "$moo_file" ]] || continue
     test_name="$(basename "$moo_file" .moos)"
+    # gfx_* laufen im eigenen GPU-Abschnitt weiter unten.
+    [[ "$test_name" == gfx_* ]] && continue
     test_dir="$(dirname "$moo_file")"
     expected_file="${test_dir}/${test_name}.expected"
 
@@ -106,10 +146,40 @@ for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DI
         continue
     fi
 
-    # Ohne .expected ueberspringen
-    if [[ ! -f "$expected_file" ]]; then
+    if [[ -n "${MODULFRAGMENT[$test_name]:-}" ]]; then
         skip=$((skip + 1))
-        echo -e "${YELLOW}SKIP${NC} $test_name (keine .expected Datei)"
+        echo -e "${YELLOW}SKIP${NC} $test_name (Modulfragment: ${MODULFRAGMENT[$test_name]})"
+        continue
+    fi
+
+    if [[ -n "${NUR_KOMPILIEREN[$test_name]:-}" || -n "${NUR_LAUFEN[$test_name]:-}" ]]; then
+        tmp_binary="$WORK_DIR/moo_test_${test_name}${EXE_SUFFIX}"
+        if ! compile_output=$("$COMPILER" compile "$moo_file" -o "$tmp_binary" 2>&1); then
+            fail=$((fail + 1))
+            errors="${errors}\n  ${test_name}: Kompilierung fehlgeschlagen: ${compile_output}"
+            echo -e "${RED}FAIL${NC} $test_name (Kompilierung fehlgeschlagen)"
+            continue
+        fi
+        if [[ -n "${NUR_KOMPILIEREN[$test_name]:-}" ]]; then
+            pass=$((pass + 1))
+            echo -e "${GREEN}PASS${NC} $test_name (nur kompiliert: ${NUR_KOMPILIEREN[$test_name]})"
+        elif run_output=$("$tmp_binary" 2>&1) && [[ "$run_output" != *"unbehandelte"* && "$run_output" != *"Unbehandelter Fehler"* ]]; then
+            pass=$((pass + 1))
+            echo -e "${GREEN}PASS${NC} $test_name (nur Lauf geprueft: ${NUR_LAUFEN[$test_name]})"
+        else
+            fail=$((fail + 1))
+            errors="${errors}\n  ${test_name}: Lauf fehlgeschlagen oder unbehandelter Fehler"
+            echo -e "${RED}FAIL${NC} $test_name (Lauf)"
+        fi
+        rm -f "$tmp_binary"
+        continue
+    fi
+
+    # Ohne .expected und ohne Deklaration: Gate-Luecke -> FAIL
+    if [[ ! -f "$expected_file" ]]; then
+        fail=$((fail + 1))
+        errors="${errors}\n  ${test_name}: keine .expected und nicht in run_all.sh deklariert"
+        echo -e "${RED}FAIL${NC} $test_name (keine .expected, nicht deklariert)"
         continue
     fi
 
@@ -122,14 +192,17 @@ for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DI
         continue
     }
 
-    # Ausfuehren
-    actual_output=$("$tmp_binary" 2>&1) || {
+    # Ausfuehren (P2-T117: erwarteter Exit-Code je Test, Standard 0)
+    run_rc=0
+    actual_output=$("$tmp_binary" 2>&1) || run_rc=$?
+    want_rc="${ERWARTETER_EXIT[$test_name]:-0}"
+    if [[ "$run_rc" -ne "$want_rc" ]]; then
         fail=$((fail + 1))
-        errors="${errors}\n  ${test_name}: Laufzeitfehler (Exit Code $?)"
-        echo -e "${RED}FAIL${NC} $test_name (Laufzeitfehler)"
+        errors="${errors}\n  ${test_name}: Exit Code $run_rc statt $want_rc"
+        echo -e "${RED}FAIL${NC} $test_name (Exit $run_rc statt $want_rc)"
         rm -f "$tmp_binary"
         continue
-    }
+    fi
 
     # Vergleichen
     expected_output=$(cat "$expected_file")
@@ -191,6 +264,50 @@ for st in "${SELFTESTS[@]}"; do
         errors="${errors}\n  ${st_name}: Selftest-Kompilierung fehlgeschlagen"
     fi
     rm -f "$st_bin"
+done
+
+# ============================================================
+# P2-T116: GPU-Tests (gfx_*). Immer Compile-Gate. Lauf nur mit xvfb-run
+# und Software-Renderer (llvmpipe); bestanden = Exit 0, letzte Zeile
+# enthaelt PASS, kein unbehandelter Laufzeitfehler. Ohne xvfb-run oder bei
+# MOO_GFX_NUR_KOMPILIEREN=1: nur kompiliert. gfx_frame_statistics braucht
+# die BMP-Fixture aus runtime/test-gfx-roi.sh und wird hier nur kompiliert.
+# ============================================================
+echo ""
+echo "--------------------------------"
+echo "GPU-Tests (gfx_*: Compile-Gate, Lauf ueber xvfb/llvmpipe)"
+gfx_lauf=1
+if ! command -v xvfb-run >/dev/null 2>&1 || [[ "${MOO_GFX_NUR_KOMPILIEREN:-0}" == "1" ]]; then
+    gfx_lauf=0
+fi
+for gfx_file in "$SCRIPT_DIR"/gfx_*.moos; do
+    [[ -f "$gfx_file" ]] || continue
+    gfx_name="$(basename "$gfx_file" .moos)"
+    gfx_bin="$WORK_DIR/moo_gfx_${gfx_name}${EXE_SUFFIX}"
+    if ! compile_output=$("$COMPILER" compile "$gfx_file" -o "$gfx_bin" 2>&1); then
+        fail=$((fail + 1))
+        errors="${errors}\n  ${gfx_name}: Kompilierung fehlgeschlagen: ${compile_output}"
+        echo -e "${RED}FAIL${NC} $gfx_name (Kompilierung fehlgeschlagen)"
+        continue
+    fi
+    if [[ "$gfx_lauf" == "0" || "$gfx_name" == "gfx_frame_statistics" ]]; then
+        pass=$((pass + 1))
+        echo -e "${GREEN}PASS${NC} $gfx_name (nur kompiliert)"
+        rm -f "$gfx_bin"
+        continue
+    fi
+    if gfx_output=$(env -u WAYLAND_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe \
+            timeout 120 xvfb-run -a -s "-screen 0 1280x720x24" "$gfx_bin" 2>&1) \
+        && [[ "$(printf '%s\n' "$gfx_output" | tail -n 1)" == *PASS* ]] \
+        && [[ "$gfx_output" != *"unbehandelte"* ]]; then
+        pass=$((pass + 1))
+        echo -e "${GREEN}PASS${NC} $gfx_name (llvmpipe)"
+    else
+        fail=$((fail + 1))
+        errors="${errors}\n  ${gfx_name}: GPU-Lauf (llvmpipe): $(printf '%s\n' "$gfx_output" | tail -n 3)"
+        echo -e "${RED}FAIL${NC} $gfx_name (llvmpipe-Lauf)"
+    fi
+    rm -f "$gfx_bin"
 done
 
 # REG-G1: Frische-Receiver-Leak-Gate — 1M-vs-4M-Heap-Skalierung fuer

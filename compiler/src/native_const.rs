@@ -373,8 +373,9 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
             Stmt::Assignment { zeile, name, ty, value } => Stmt::Assignment {
                 zeile: *zeile, name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
             },
-            Stmt::ConstAssignment { zeile, name, ty, value } => Stmt::ConstAssignment {
+            Stmt::ConstAssignment { zeile, name, ty, value, geteilt } => Stmt::ConstAssignment {
                 zeile: *zeile, name: name.clone(), ty: ty.clone(), value: self.expr(value, shadow)?,
+                geteilt: *geteilt,
             },
             // P2-T48: auch Ziel und Wert von p[i] = …, p.feld = …, x += … und zeige
             // falten; sonst bleibt z. B. `q[0] = KONST` ein unbekannter Bezeichner.
@@ -428,6 +429,11 @@ fn text_length(ty: &TypeRef, value: &Expr) -> TypeRef {
     ty.clone()
 }
 
+/// P7-T6: `@nativ statisch` (Parser setzt das interne Decorator "statisch").
+fn decorators_statisch(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::NativeConst { decorators, .. } if decorators.iter().any(|d| d.name == "statisch"))
+}
+
 /// Faltet Layoutabfragen und skalare native Konstanten in `@nativ`-Koerpern
 /// und nativen Konstanten. Dynamische Moo-Funktionen bleiben unveraendert.
 pub(crate) fn fold_program<'ctx>(
@@ -452,6 +458,13 @@ pub(crate) fn fold_program<'ctx>(
         if let Stmt::NativeConst { name, ty, value, .. } = stmt {
             if !names.insert(name.clone()) {
                 return Err(format!("Native Konstante '{name}' ist doppelt definiert"));
+            }
+            if decorators_statisch(stmt) {
+                // P7-T6: beschreibbar, also nie falten; Zugriff ueber adresse_von.
+                if integer_type(ty).is_some() || float_oder_bool(ty).is_some() {
+                    return Err(format!("Statischer Speicher '{name}': braucht einen Array- oder Strukturtyp (Zugriff ueber adresse_von/speicher_*)"));
+                }
+                continue;
             }
             if let Some(scalar) = integer_type(ty) {
                 let folded = folder.expr(value, &empty)
@@ -637,7 +650,7 @@ pub(crate) fn emit_constants<'ctx>(
     for (name, ty, _, decorators) in &constants {
         for decorator in decorators.iter() {
             // Layout-Decorators (2A) wertet codegen::apply_native_layout_decorators aus.
-            let known = (matches!(decorator.name.as_str(), "nativ" | "native") && decorator.args.is_empty())
+            let known = (matches!(decorator.name.as_str(), "nativ" | "native" | "statisch") && decorator.args.is_empty())
                 || matches!(decorator.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "benutzt" | "used");
             if !known {
                 return Err(format!("Native Konstante '{name}': Decorator @{} nicht unterstuetzt", decorator.name));
@@ -650,11 +663,23 @@ pub(crate) fn emit_constants<'ctx>(
         }
         let llvm = registry.field_type(context, target, ty)
             .map_err(|e| format!("Native Konstante '{name}': {e}"))?;
+        let statisch = decorators.iter().any(|d| d.name == "statisch");
         let global = module.add_global(llvm, None, name);
-        global.set_constant(true);
-        globals.push(global);
+        // P7-T6: @nativ statisch ist beschreibbar (.data/.bss), Konstanten nicht.
+        global.set_constant(!statisch);
+        globals.push((global, llvm, statisch));
     }
-    for ((name, ty, value, _), global) in constants.iter().zip(globals) {
+    for ((name, ty, value, _), (global, llvm, statisch)) in constants.iter().zip(globals) {
+        // P7-T6: `auf 0` nullt statischen Speicher jeden Typs (landet in .bss).
+        let null = statisch && match value {
+            Expr::NativeNumber { text, .. } => text.trim_start_matches("0x").trim_start_matches('0').is_empty(),
+            Expr::Number(n) => *n == 0.0,
+            _ => false,
+        };
+        if null {
+            global.set_initializer(&llvm.const_zero());
+            continue;
+        }
         let init = emitter.value(ty, value).map_err(|e| format!("Native Konstante '{name}': {e}"))?;
         global.set_initializer(&init);
     }

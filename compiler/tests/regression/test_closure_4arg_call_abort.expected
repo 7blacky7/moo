@@ -1,0 +1,5 @@
+ALPHA | k=k1 c=wahr s=falsch a=falsch
+ALPHA | k=k2 c=wahr s=falsch a=falsch
+ALPHA | k=k3 c=wahr s=falsch a=falsch
+BETA | k=m1 c=falsch s=wahr a=falsch
+BETA | k=m2 c=falsch s=wahr a=falsch

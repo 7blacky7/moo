@@ -51,6 +51,11 @@ elif [ "$PRUEFUNG" = "lader" ]; then
 elif [ "$PRUEFUNG" = "netz-kern" ]; then
   # P7-T5: N100-Weg; Stick-App ist der Netz-Lader (Ablauf s. u.).
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_lader.moos}"
+elif [ "$PRUEFUNG" = "nativ" ]; then
+  # P7-T17: @nativ-Aufruf mit dynamischen Werten (eigene App, Negativfall s. u.).
+  MOO_SRC="${MOO_UEFI_APP:-$ROOT/compiler/tests/p7/nativ_uefi_dyn.moos}"
+elif [ "$PRUEFUNG" = "nativ-trap" ]; then
+  MOO_SRC="${MOO_UEFI_APP:-$ROOT/compiler/tests/p7/nativ_uefi_dyn_trap.moos}"
 elif [ "$PRUEFUNG" = "kern" ]; then
   # P7-T5: Moo-UEFI-Loader + Moo-Kern (eigener Ablauf vor den C-Phasen, s. u.).
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/moo_lader.moos}"
@@ -166,7 +171,11 @@ if [ "$PRUEFUNG" = "kern" ]; then
            "MOO-LADER KERN-DATEI " "MOO-LADER SEGMENT " "MOO-LADER KERN-EINSTIEG " \
            "MOO-LADER KERN-PHYSISCH " "MOO-LADER SEITENTABELLE " \
            "MOO-LADER EXITBOOTSERVICES OK " "MOO-LADER KARTE " "MOO-LADER SPRUNG " \
-           "MOO-KERNEL START" "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL RSDP-SIG 0000000000000001" "MOO-KERNEL SURFACE 0000000000000001" "MOO-KERNEL OK"; do
+           "MOO-KERNEL START" "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL RSP FFFFFFFF8" \
+           "MOO-KERNEL GDT CS 0000000000000008" "MOO-KERNEL PAGING EIGEN CR3 " \
+           "MOO-KERNEL PRESENT-FORMATE 0000000000000005" "MOO-KERNEL RSDP-SIG 0000000000000001" \
+           "MOO-KERNEL SURFACE 0000000000000001" "MOO-KONSOLE: SURFACE-PRESENT AUF GOP" \
+           "MOO-KONSOLE: GDT, PAGING, STACK IN MOO" "MOO-KERNEL MESS PRESENT-TAKTE " "MOO-KERNEL OK"; do
     grep -aqF -- "$m" "$OUT/serial.log" || fail "Marker fehlt: '$m'"
   done
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
@@ -201,7 +210,12 @@ if [ "$PRUEFUNG" = "kern" ]; then
     case "$LUECKE" in *"255,196,64"*) ;; *) fail "Zeichenluecke (106,100) ist '$LUECKE' statt Balkenfarbe" ;; esac
     case "$ZEILE2" in *"240,240,240"*) ;; *) fail "Zeile 2 (66,236) ist '$ZEILE2' statt srgb(240,240,240)" ;; esac
     echo "      OK: Pixel Hintergrund $HG, Balken $BALKEN, Glyphe $GLYPHE, Luecke $LUECKE, Zeile 2 $ZEILE2"
+    # P7-T6: Textkonsole (Surface-Text, Farbe 200,230,255) ab y=300 per Present sichtbar.
+    KON="$(magick "$OUT/screenshot.png" -crop 2000x200+0+296 +repage -format %c histogram:info:- 2>/dev/null | awk '/\(200,230,255/{print $1}' | tr -d ':')"
+    [ -n "$KON" ] && [ "$KON" -gt 200 ] || fail "Konsolentext (200,230,255) im Bereich y=296..496 fehlt ('$KON' Pixel)"
+    echo "      OK: Konsolentext $KON Pixel in der Konsolenfarbe"
   fi
+  tr -d '\000\r' <"$OUT/serial.log" | grep -aE "MOO-KERNEL (MESS|TSC)" | sed 's/^/      Messung: /'
   if command -v tesseract >/dev/null 2>&1; then
     # Nur Info: die 3x5-Pixelschrift liest tesseract unzuverlaessig (M -> H/W).
     echo "      Info OCR: $(tesseract "$OUT/screenshot.png" - --psm 6 2>/dev/null | tr '\n' ' ')"
@@ -319,6 +333,7 @@ TREIBER="${MOO_UEFI_TREIBER-$ROOT/build/p7-ipxe/intel.efidrv}"
 [ "$PRUEFUNG" = "e1000" ] && TREIBER=""
 [ "$PRUEFUNG" = "lader" ] && TREIBER=""
 [ "$PRUEFUNG" = "netz-kern" ] && TREIBER=""
+[ "${PRUEFUNG#nativ}" != "$PRUEFUNG" ] && TREIBER=""
 NIC_ROM=""
 TREIBER_ERWARTET="FEHLT"
 if [ -n "$TREIBER" ] && [ -f "$TREIBER" ]; then
@@ -343,7 +358,10 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   # P7-T14: Moo-e1000-Treiber (beispiele/uefi/netz_treiber.moos). q35 hat ECAM
   # (ACPI-MCFG); die NIC laeuft ohne Option-ROM, OVMF bindet sie also nicht.
   # slirp beantwortet die ARP-Anfrage nach 10.0.2.2 -> Empfangsbeweis.
-  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 -machine q35 \
+  # P7-T18: MOO_UEFI_KVM=1 startet mit KVM (Messlaeufe); Standard bleibt TCG.
+  KVM_OPT=""
+  [ "${MOO_UEFI_KVM:-0}" = "1" ] && KVM_OPT="-enable-kvm -cpu host"
+  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 -machine q35 $KVM_OPT \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
       -drive format=raw,file="$DISK" \
@@ -385,6 +403,7 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   grep -q "MOO-E1000-LINK 1" "$SERIAL_LOG" || fail "kein Link"
   grep -q "MOO-E1000-TX 2" "$SERIAL_LOG" || fail "Senden: nicht beide Rahmen fertig (STA.DD)"
   grep -q "MOO-E1000-ARP 1" "$SERIAL_LOG" || fail "Empfang: keine ARP-Antwort von 10.0.2.2"
+  grep -aq "MOO-E1000-MESS .* 01adb0" "$SERIAL_LOG" || fail "Messzeile MESS fehlt oder Link-Zaehler != 110000"
   [ -s "$OUT/net.pcap" ] || fail "kein net.pcap"
   HALLO=$(grep -a -c "MOO-E1000-HALLO" "$OUT/net.pcap")
   [ "$HALLO" -ge 1 ] || fail "UDP-Rahmen 'MOO-E1000-HALLO' fehlt im pcap"
@@ -395,6 +414,62 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   echo "############################################################"
   echo "# ERGEBNIS: e1000-Pruefung gruen (Moo-Treiber sendet und empfaengt in QEMU)."
   echo "############################################################"
+  exit 0
+fi
+if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
+  # P7-T17: @nativ-Systemkoerper mit dynamischen Werten im UEFI-Profil.
+  # Die App schreibt Zeilen "N <wert>" auf COM1. nativ: alle Werte exakt
+  # (u64 2^60+8, i64 -6e18-1), danach ruft sie sich als nativ-trap mit dem
+  # Negativfall auf (256 an u8 -> Trap, keine Folgezeile).
+  timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 -machine q35 \
+      -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
+      -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
+      -drive format=raw,file="$DISK" \
+      -m 256M -vga std -display none -no-reboot -monitor none -net none \
+      -serial file:"$SERIAL_LOG" \
+      -debugcon file:"$DEBUG_LOG" -global isa-debugcon.iobase=0xe9 \
+      >"$OUT/qemu.log" 2>&1 &
+  QPID=$!
+  ENDE="N 999"; [ "$PRUEFUNG" = "nativ-trap" ] && ENDE="N 111"
+  for ((i = 0; i < WAIT_S + 20; i++)); do
+    tr -d '\r' <"$SERIAL_LOG" 2>/dev/null | grep -qax "$ENDE" && break
+    kill -0 "$QPID" 2>/dev/null || break
+    sleep 1
+  done
+  # Negativfall: Zeit fuer (verbotene) Folgezeilen nach dem Trap.
+  [ "$PRUEFUNG" = "nativ-trap" ] && sleep 5
+  kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
+  tr -d '\r' <"$SERIAL_LOG" | grep -a '^N ' | sed 's/^/      | /'
+  if [ "$PRUEFUNG" = "nativ" ]; then
+    # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
+    # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 999"; do
+      tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
+    done
+    echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"
+    MOO_UEFI_PRUEFUNG=nativ-trap MOO_UEFI_APP="$ROOT/compiler/tests/p7/nativ_uefi_dyn_trap.moos" \
+      MOO_UEFI_OUT="$OUT/trap" bash "$0" >"$OUT/trap.log" 2>&1 \
+      || { sed 's/^/      | /' "$OUT/trap.log" | tail -20; fail "Negativfall (Trap) nicht gruen"; }
+    grep -q "ERGEBNIS: nativ-trap gruen" "$OUT/trap.log" \
+      || { sed 's/^/      | /' "$OUT/trap.log" | tail -20; fail "Negativfall ohne Ergebniszeile (SKIP?)"; }
+    echo "      OK: Negativfall: 256 an u8 -> Trap, keine Folgezeile"
+    # P7-T19: Typfehler an einem C-Builtin (Text statt Zahl) -> Trap.
+    MOO_UEFI_PRUEFUNG=nativ-trap MOO_UEFI_APP="$ROOT/compiler/tests/p7/nativ_uefi_typ_trap.moos" \
+      MOO_UEFI_OUT="$OUT/typ" bash "$0" >"$OUT/typ.log" 2>&1 \
+      || { sed 's/^/      | /' "$OUT/typ.log" | tail -20; fail "Negativfall Typfehler nicht gruen"; }
+    grep -q "ERGEBNIS: nativ-trap gruen" "$OUT/typ.log" \
+      || { sed 's/^/      | /' "$OUT/typ.log" | tail -20; fail "Negativfall Typfehler ohne Ergebniszeile"; }
+    echo "      OK: Negativfall: Text an kern_warte_us -> Trap, keine Folgezeile"
+    echo "############################################################"
+    echo "# ERGEBNIS: nativ-Pruefung gruen (Positiv- und Negativfall in OVMF)."
+    echo "############################################################"
+    exit 0
+  fi
+  tr -d '\r' <"$SERIAL_LOG" | grep -qax "N 111" || fail "Zeile 'N 111' vor dem Trap fehlt"
+  for m in "N 222" "N 999"; do
+    tr -d '\r' <"$SERIAL_LOG" | grep -qax "$m" && fail "Zeile '$m' nach dem Trap erschienen"
+  done
+  echo "# ERGEBNIS: nativ-trap gruen (Trap haelt die App an)."
   exit 0
 fi
 if [ "$PRUEFUNG" = "lader" ]; then

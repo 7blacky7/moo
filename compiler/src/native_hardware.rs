@@ -263,7 +263,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             }
             Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, false)?.value.into_int_value()),
-            _ => Err("Hardwarezugriff: Operand muss ein typisierter Parameter oder ein Integerliteral sein".into()),
+            // P7-T22: Typumwandlung wie im ADR, z. B. port_lese32(u16(0xCFC)).
+            Expr::FunctionCall { name, args, .. } if NType::from_name(name).is_some_and(is_integer) => {
+                let ty = NType::from_name(name).ok_or("Typname fehlt")?;
+                if ty != expected {
+                    return Err(format!("Hardwarezugriff: {name}(...) liefert {ty:?}, erwartet ist {expected:?}"));
+                }
+                match args.as_slice() {
+                    [inner] => self.scalar(inner, expected),
+                    _ => Err(format!("Hardwarezugriff: {name}(...) erwartet genau ein Argument")),
+                }
+            }
+            _ => Err(format!("Hardwarezugriff: Operand muss ein Parameter vom Typ {expected:?}, ein Integerliteral oder eine Umwandlung wie {}(0x10) sein", format!("{expected:?}").to_lowercase())),
         }
     }
 

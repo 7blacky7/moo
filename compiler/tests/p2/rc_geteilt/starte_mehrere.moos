@@ -1,0 +1,39 @@
+# P2-T119: starte mit beliebig vielen Argumenten (jedes nach der Teilen-Regel),
+# EN-Alias shared fuer geteilt, erneutes warten des ersten Wartenden.
+shared konstante K auf kanal(8)
+shared konstante FAKTOR auf [10]
+
+funktion summe(a, b, c):
+    K.senden(a + b + c)
+    gib_zurück a * b * c
+
+funktion ohne():
+    gib_zurück "ohne"
+
+funktion zaehle(liste, start, schritt, n):
+    setze s auf start
+    setze i auf 0
+    solange i < n:
+        setze s auf s + liste[0] * schritt
+        setze i auf i + 1
+    gib_zurück s
+
+funktion aendere(liste, wert):
+    versuche:
+        liste.hinzufügen(wert)
+        gib_zurück "veraendert"
+    fange e:
+        gib_zurück "eingefroren"
+
+setze t1 auf starte(summe, 2, 3, 4)
+setze t2 auf starte(ohne)
+setze t3 auf starte(zaehle, FAKTOR, 1, 2, 100000)
+setze daten auf [1, 2]
+setze t4 auf starte(aendere, daten, 3)
+zeige K.empfangen()
+zeige t1.warten()
+zeige t2.warten()
+zeige t3.warten()
+zeige t4.warten()
+zeige t1.warten()
+zeige "Ende"

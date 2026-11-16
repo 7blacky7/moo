@@ -1,0 +1,84 @@
+# P2-T114 Phase A: Ein geteilter Wert ist eingefroren. Setter auf geteilte
+# Listen, Woerterbuecher und Objekte werfen einen fangbaren Moo-Fehler.
+# Ungeteilte Werte bleiben veraenderbar; ein ungeteiltes Thread-Ergebnis
+# gehoert nach warten dem Wartenden und ist danach veraenderbar.
+klasse Punkt:
+    funktion erstelle(x):
+        selbst.x = x
+
+funktion laenge_von(x):
+    gib_zurück länge(x)
+
+funktion x_von(p):
+    gib_zurück p.x
+
+funktion frische_liste(n):
+    setze r auf []
+    setze i auf 0
+    solange i < n:
+        r.hinzufügen(i)
+        setze i auf i + 1
+    gib_zurück r
+
+funktion empfange_und_aendere(k):
+    setze ys auf k.empfangen()
+    versuche:
+        ys.hinzufügen(9)
+        gib_zurück "FALSCH: Kanal-Liste veraendert"
+    fange e:
+        gib_zurück "Kanal: " + e
+
+funktion haupt():
+    setze xs auf [1, 2, 3]
+    setze t auf starte(laenge_von, xs)
+    zeige t.warten()
+    versuche:
+        xs.hinzufügen(4)
+        zeige "FALSCH: hinzufügen"
+    fange e:
+        zeige "hinzufügen: " + e
+    versuche:
+        xs[0] = 7
+        zeige "FALSCH: Index setzen"
+    fange e:
+        zeige "Index setzen: " + e
+    zeige xs
+
+    setze d auf {"a": 1}
+    setze t2 auf starte(laenge_von, d)
+    zeige t2.warten()
+    versuche:
+        d["b"] = 2
+        zeige "FALSCH: Wörterbuch"
+    fange e:
+        zeige "Wörterbuch: " + e
+    zeige länge(d)
+
+    setze p auf neu Punkt(5)
+    setze t3 auf starte(x_von, p)
+    zeige t3.warten()
+    versuche:
+        p.x = 6
+        zeige "FALSCH: Objekt"
+    fange e:
+        zeige "Objekt: " + e
+    zeige p.x
+
+    # Ungeteilt bleibt veraenderbar.
+    setze frei auf [1]
+    frei.hinzufügen(2)
+    zeige frei
+
+    # Ungeteiltes Thread-Ergebnis gehoert dem Wartenden.
+    setze t4 auf starte(frische_liste, 3)
+    setze r auf t4.warten()
+    r.hinzufügen(99)
+    zeige r
+
+    # Per Kanal gesendete Liste ist geteilt, auch beim Empfaenger.
+    setze k auf kanal(1)
+    setze t5 auf starte(empfange_und_aendere, k)
+    k.senden([1, 2])
+    zeige t5.warten()
+
+haupt()

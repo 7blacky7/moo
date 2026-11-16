@@ -265,6 +265,12 @@ MooValue kern_seriell_zeichen(MooValue ascii) {
 }
 
 MooValue kern_seriell_dez(MooValue n) {
+    if (moo_wert_breit(n.tag)) {
+        uint64_t b = n.data;
+        if (n.tag == MOO_WERT_TAG_I64 && (int64_t)b < 0) { kern_seriell_zeichen_c('-'); b = UINT64_C(0) - b; }
+        kern_seriell_dez_u64(b);
+        return moo_none();
+    }
     double d = kern_as_double(n);
     if (d < 0) { kern_seriell_zeichen_c('-'); d = -d; }
     kern_seriell_dez_u64((uint64_t)d);
@@ -272,7 +278,7 @@ MooValue kern_seriell_dez(MooValue n) {
 }
 
 MooValue kern_seriell_hex(MooValue n) {
-    kern_seriell_hex_u64((uint64_t)(int64_t)kern_as_double(n));
+    kern_seriell_hex_u64(moo_wert_breit(n.tag) ? n.data : (uint64_t)(int64_t)kern_as_double(n));
     return moo_none();
 }
 
@@ -281,10 +287,17 @@ MooValue kern_seriell_hex(MooValue n) {
  * Gibt auf BEIDEN Kanaelen aus (seriell + VGA), mit Zeilenumbruch.
  * ====================================================================== */
 void moo_print(MooValue v) {
-    if (v.tag == MOO_NUMBER) {
-        double d = kern_as_double(v);
-        if (d < 0) { kern_seriell_zeichen_c('-'); vga_putc('-'); d = -d; }
-        uint64_t n = (uint64_t)d;
+    if (moo_wert_ist_zahl(v.tag)) {
+        uint64_t n;
+        if (v.tag == MOO_NUMBER) {
+            double d = kern_as_double(v);
+            if (d < 0) { kern_seriell_zeichen_c('-'); vga_putc('-'); d = -d; }
+            n = (uint64_t)d;
+        } else {
+            /* P7-T17: exakte 64-Bit-Werte ohne double. */
+            n = v.data;
+            if (v.tag == MOO_WERT_TAG_I64 && (int64_t)n < 0) { kern_seriell_zeichen_c('-'); vga_putc('-'); n = UINT64_C(0) - n; }
+        }
         /* dez auf beide Kanaele */
         char buf[20];
         int i = 0;

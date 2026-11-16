@@ -7,7 +7,8 @@ timeout 30s "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -Icompiler/runtime -c
 ar rcs "$out/libp2_m1_error.a" "$out/error.o"
 timeout 120s compiler/target/release/moo-compiler compile compiler/tests/p2/m1_foreign_error.moos --lib-pfad "$out" -o "$out/probe"
 set +e
-timeout 30s "$out/probe" > "$out/out.txt" 2> "$out/err.txt"
+# P2-T95: Abbruch nur mit MOO_STRENG=1; Standard laeuft mit Hinweis weiter.
+MOO_STRENG=1 timeout 30s "$out/probe" > "$out/out.txt" 2> "$out/err.txt"
 rc=$?
 set -e
 if [[ $rc -eq 0 || $rc -eq 124 || $rc -ge 128 ]]; then

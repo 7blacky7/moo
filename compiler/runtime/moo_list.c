@@ -1,6 +1,20 @@
 #include "moo_runtime.h"
+#include "moo_rc.h"
+
 #include <stdio.h>
 #include <string.h>
+
+// P2-T114: Eine geteilte Liste ist eingefroren. Ein Lade+Test wie vorher
+// LISTE_TEILT (P2-T112), nur jetzt vor der Aenderung statt danach.
+#define LISTE_GESPERRT(l) MOO_RC_SELTEN((l)->frozen || moo_rc_ist_geteilt(&(l)->refcount))
+#define LISTE_GETEILT(l) MOO_RC_SELTEN(moo_rc_ist_geteilt(&(l)->refcount))
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((cold, noinline))
+#endif
+static void liste_gesperrt_werfen(const MooList* l) {
+    moo_throw(moo_string_new(l->frozen ? "Liste ist eingefroren!" : MOO_GETEILT_TEXT));
+}
 
 MooValue moo_list_new(int32_t initial_capacity) {
     if (initial_capacity < 4) initial_capacity = 4;
@@ -51,6 +65,8 @@ void moo_list_append(MooValue list, MooValue item) {
     MooList* l = MV_LIST(list);
     if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return; }
     if (l->length >= l->capacity) {
+        // Wachsen ist schon eine Aenderung (realloc), also vorher pruefen.
+        if (LISTE_GETEILT(l)) { liste_gesperrt_werfen(l); return; }
         list_grow(l);
         // list_grow kann werfen (Kapazitaetslimit). moo_throw kehrt im try-
         // Kontext zurueck -> dann ist die Kapazitaet NICHT gewachsen; ein Write
@@ -59,6 +75,9 @@ void moo_list_append(MooValue list, MooValue item) {
     }
     // Transfer-Semantik: Caller uebergibt item mit refcount=1, Liste
     // uebernimmt die Referenz. Kein retain hier.
+    // P2-T114: geteilt = eingefroren (Stelle wie LISTE_TEILT in P2-T112,
+    // damit der schnelle Pfad dieselbe Codeform behaelt).
+    if (LISTE_GETEILT(l)) { liste_gesperrt_werfen(l); return; }
     l->items[l->length++] = item;
 }
 
@@ -79,10 +98,18 @@ void moo_list_set(MooValue list, MooValue index, MooValue value) {
     int32_t i = (int32_t)moo_as_number(index);
     if (i < 0) i += l->length;
     if (i >= 0 && i < l->length) {
+        // P2-T114: geteilt = eingefroren. Steht vor jeder Aenderung an der
+        // Stelle von LISTE_TEILT (P2-T112), damit der schnelle Pfad dieselbe
+        // Codeform behaelt; value wird wie beim Einfrieren nicht uebernommen.
+        if (LISTE_GETEILT(l)) { liste_gesperrt_werfen(l); return; }
         // Transfer: Caller-Ref uebernehmen, alten Slot-Wert freigeben.
         moo_release(l->items[i]);
         l->items[i] = value;
     } else {
+        // P2-T114 Phase C: auch ausserhalb der Grenzen ist das Setzen auf
+        // eine geteilte Liste ein Fehler statt eines stillen No-ops. Liegt im
+        // kalten Zweig, der heisse In-Bounds-Pfad bleibt unveraendert.
+        if (LISTE_GETEILT(l)) { liste_gesperrt_werfen(l); return; }
         // Out-of-bounds: value wird nicht aufgenommen, also die vom
         // Caller uebergebene Referenz wieder freigeben.
         moo_release(value);
@@ -94,9 +121,19 @@ MooValue moo_list_length(MooValue list) {
     return moo_number((double)MV_LIST(list)->length);
 }
 
+/* P2-T117: Listenmethode auf Fremdtyp (z. B. text.sort()) war ein Zugriff
+   ueber MV_LIST auf fremden Speicher bzw. still wirkungslos. Jetzt fangbarer
+   Fehler wie bei append. Kalter Pfad. */
+static void liste_falscher_typ(const char* methode, MooValue wert) {
+    char text[128];
+    snprintf(text, sizeof(text), "%s erwartet eine Liste, erhalten %s", methode, moo_type_name(wert));
+    moo_throw(moo_error(text));
+}
+
 MooValue moo_list_pop(MooValue list) {
+    if (list.tag != MOO_LIST) { liste_falscher_typ("pop()", list); return moo_none(); }
     MooList* l = MV_LIST(list);
-    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    if (LISTE_GESPERRT(l)) { liste_gesperrt_werfen(l); return moo_none(); }
     if (l->length == 0) return moo_none();
     // Transfer: der Slot-Refcount geht direkt an den Caller, kein retain.
     // RB5: Slot auf MOO_NONE ruecksetzen, damit spaeteres free_list nicht
@@ -111,7 +148,7 @@ MooValue moo_list_pop(MooValue list) {
 MooValue moo_list_clear(MooValue list) {
     if (list.tag != MOO_LIST) { moo_throw(moo_string_new("leeren: nur fuer Listen")); return moo_none(); }
     MooList* l = MV_LIST(list);
-    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    if (LISTE_GESPERRT(l)) { liste_gesperrt_werfen(l); return moo_none(); }
     for (int32_t i = 0; i < l->length; i++) {
         moo_release(l->items[i]);
         l->items[i] = moo_none();
@@ -125,7 +162,7 @@ MooValue moo_list_clear(MooValue list) {
 MooValue moo_list_remove_at(MooValue list, MooValue index) {
     if (list.tag != MOO_LIST) { moo_throw(moo_string_new("entfernen: nur fuer Listen")); return moo_none(); }
     MooList* l = MV_LIST(list);
-    if (l->frozen) { moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    if (LISTE_GESPERRT(l)) { liste_gesperrt_werfen(l); return moo_none(); }
     double d = moo_as_number(index);
     if (!(d >= -(double)l->length && d < (double)l->length)) return moo_none();
     int32_t i = (int32_t)d;
@@ -142,7 +179,7 @@ MooValue moo_list_remove_at(MooValue list, MooValue index) {
 MooValue moo_list_insert(MooValue list, MooValue index, MooValue item) {
     if (list.tag != MOO_LIST) { moo_release(item); moo_throw(moo_string_new("einfuegen: nur fuer Listen")); return moo_none(); }
     MooList* l = MV_LIST(list);
-    if (l->frozen) { moo_release(item); moo_throw(moo_string_new("Liste ist eingefroren!")); return moo_none(); }
+    if (LISTE_GESPERRT(l)) { moo_release(item); liste_gesperrt_werfen(l); return moo_none(); }
     double d = moo_as_number(index);
     if (d < 0.0) d += l->length;
     if (!(d >= 0.0)) d = 0.0;
@@ -159,6 +196,7 @@ MooValue moo_list_insert(MooValue list, MooValue index, MooValue item) {
 }
 
 MooValue moo_list_contains(MooValue list, MooValue item) {
+    if (list.tag != MOO_LIST) { liste_falscher_typ("enthält()/contains()", list); return moo_bool(false); }
     MooList* l = MV_LIST(list);
     for (int32_t i = 0; i < l->length; i++) {
         MooValue eq = moo_eq(l->items[i], item);
@@ -168,7 +206,10 @@ MooValue moo_list_contains(MooValue list, MooValue item) {
 }
 
 MooValue moo_list_reverse(MooValue list) {
+    if (list.tag != MOO_LIST) { liste_falscher_typ("umkehren()/reverse()", list); return list; }
     MooList* l = MV_LIST(list);
+    // P2-T114: aendert in place; nur das Teilen sperrt (frozen war hier nie geprueft).
+    if (MOO_RC_SELTEN(moo_rc_ist_geteilt(&l->refcount))) { liste_gesperrt_werfen(l); return list; }
     for (int32_t i = 0; i < l->length / 2; i++) {
         MooValue tmp = l->items[i];
         l->items[i] = l->items[l->length - 1 - i];
@@ -191,7 +232,9 @@ static int moo_sort_compare(const void* a, const void* b) {
 }
 
 MooValue moo_list_sort(MooValue list) {
+    if (list.tag != MOO_LIST) { liste_falscher_typ("sortieren()/sort()", list); return list; }
     MooList* l = MV_LIST(list);
+    if (MOO_RC_SELTEN(moo_rc_ist_geteilt(&l->refcount))) { liste_gesperrt_werfen(l); return list; }
     qsort(l->items, l->length, sizeof(MooValue), moo_sort_compare);
     return list;
 }

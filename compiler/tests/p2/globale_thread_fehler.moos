@@ -1,0 +1,14 @@
+# P2-T114 Phase C: Globale gehoeren dem Hauptthread. arbeite() laeuft per
+# starte auf einem eigenen Thread und erreicht ueber zaehle() die
+# veraenderliche Globale 'gegner' -> Compilefehler M-P001 mit Abhilfe
+# (Kanal, starte-Argument, 'geteilt', Sperre/Atom).
+setze gegner auf [1, 2, 3]
+
+funktion zaehle():
+    gib_zurück länge(gegner)
+
+funktion arbeite(n):
+    gib_zurück zaehle() + n
+
+setze t auf starte(arbeite, 1)
+zeige t.warten()

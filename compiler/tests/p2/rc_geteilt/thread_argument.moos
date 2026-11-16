@@ -1,0 +1,12 @@
+funktion langsam(x):
+    schlafe(0.002)
+    gib_zurück länge(x)
+funktion lauf():
+    setze s auf "abcdef"
+    setze t auf starte(langsam, s)
+    setze s auf nichts
+    zeige t.warten()
+setze i auf 0
+solange i < 30:
+    lauf()
+    setze i auf i + 1

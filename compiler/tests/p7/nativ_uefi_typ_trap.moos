@@ -1,0 +1,21 @@
+# P7-T19 Negativfall UEFI: kern_warte_us verlangt eine Zahl; ein Text ist
+# ein Typfehler -> Trap im gemeinsamen Zugriff (moo_uefi_zahl ->
+# moo_bare_wert.h). Erwartet auf COM1: "N 111", aber weder "N 222" noch "N 999".
+funktion z(c):
+    unsicher:
+        port_schreibe16(0x3F8, c)
+
+funktion zeile3(a, b, c):
+    z(78)
+    z(32)
+    z(a)
+    z(b)
+    z(c)
+    z(10)
+
+funktion moo_efi_haupt():
+    unsicher:
+        zeile3(49, 49, 49)
+        kern_warte_us("x")
+        zeile3(50, 50, 50)
+        zeile3(57, 57, 57)

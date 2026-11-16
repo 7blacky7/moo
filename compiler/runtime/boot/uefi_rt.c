@@ -17,7 +17,9 @@
 #include <stdint.h>
 typedef struct { int64_t tag; int64_t data; } MooValue;
 
-static double as_num(MooValue v) { union { int64_t i; double d; } u; u.i = v.data; return u.d; }
+/* P7-T19: gemeinsamer tag-kundiger Zahlzugriff; kein Zahlwert -> Trap. */
+#include "../moo_bare_wert.h"
+static double as_num(MooValue v) { return MOO_WERT_ZAHL(v); }
 
 MooValue moo_number(double n) { union { int64_t i; double d; } u; u.d = n; MooValue v = {0, u.i}; return v; }
 MooValue moo_none(void) { MooValue v = {3, 0}; return v; }

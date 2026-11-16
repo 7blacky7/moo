@@ -1,0 +1,10 @@
+teilen()/split() erwartet einen Text, erhalten Liste
+teilstring()/slice()/[a..b] erwartet einen Text, erhalten Liste
+teilstring()/slice()/[a..b] erwartet einen Text, erhalten Liste
+ersetzen()/replace() erwartet einen Text, erhalten Liste
+teilen()/split() erwartet einen Text als Argument, erhalten Zahl
+text_enthält()/str_contains() erwartet einen Text, erhalten Liste
+["a", "b"]
+al
+falsch
+abab

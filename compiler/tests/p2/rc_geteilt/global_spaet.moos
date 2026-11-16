@@ -1,0 +1,51 @@
+# P2-T112/P2-T114: Die Daten entstehen ERST NACH starte. P2-T114: Globale
+# gehoeren dem Hauptthread, deshalb bekommen die Worker die Liste per Kanal
+# statt ueber die Globale. Der Hauptthread speichert sie zusaetzlich spaet
+# in einer Globalen und liest sie parallel mit (Global-Store nach starte).
+# Erwartet: 8000000
+# P2-T114 Phase C: lese() liest die Globale 'start' auf dem Worker, dafuer
+# muss sie 'geteilt' markiert sein (sonst Compilefehler M-P001).
+geteilt setze start auf kanal(8)
+setze daten auf nichts
+
+funktion lese(x):
+    setze xs auf start.empfangen()
+    setze n auf 0
+    setze r auf 0
+    solange r < 400:
+        setze i auf 0
+        solange i < 2500:
+            setze w auf xs[i]
+            setze n auf n + länge(w)
+            setze i auf i + 1
+        setze r auf r + 1
+    gib_zurück n
+
+funktion baue():
+    setze liste auf []
+    setze i auf 0
+    solange i < 2500:
+        liste.hinzufügen("w" + text(i % 10))
+        setze i auf i + 1
+    gib_zurück liste
+
+setze t1 auf starte(lese, 0)
+setze t2 auf starte(lese, 0)
+setze t3 auf starte(lese, 0)
+setze t4 auf starte(lese, 0)
+setze daten auf baue()
+start.senden(daten)
+start.senden(daten)
+start.senden(daten)
+start.senden(daten)
+# Hauptthread liest parallel mit.
+setze m auf 0
+setze r auf 0
+solange r < 400:
+    setze i auf 0
+    solange i < 2500:
+        setze w auf daten[i]
+        setze m auf m + länge(w)
+        setze i auf i + 1
+    setze r auf r + 1
+zeige t1.warten() + t2.warten() + t3.warten() + t4.warten()

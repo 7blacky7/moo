@@ -1,0 +1,4 @@
+# P7-T6 Negativfall: @nativ statisch braucht Array- oder Strukturtyp.
+# Erwartet: Compilefehler "Statischer Speicher 'zaehler': braucht einen Array- oder Strukturtyp".
+@nativ
+statisch zaehler: u64 auf 0

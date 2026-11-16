@@ -1,0 +1,37 @@
+# ============================================================
+# moo_bootvertrag.moos — P7-T5: Vertrag Moo-UEFI-Loader -> Moo-Kern
+# ============================================================
+# Eine Quelle fuer beide Seiten: beispiele/uefi/moo_lader.moos schreibt die
+# Boot-Info, beispiele/kernel/uefi_kern.moos liest sie. Beide importieren
+# dieses Modul, damit Layout und Magie nicht auseinanderlaufen koennen.
+# Alle Adressen physisch.
+# P7-T6: fb_maske_* = GOP PixelInformation (nur fuer fb_format 2 = Bitmaske).
+
+struktur MooBootInfo:
+    magie: u64
+    version: u64
+    fb_basis: u64
+    fb_groesse: u64
+    fb_breite: u32
+    fb_hoehe: u32
+    fb_stride: u32
+    fb_format: u32
+    karte: u64
+    karte_groesse: u64
+    deskriptor_groesse: u64
+    deskriptor_version: u64
+    acpi_rsdp: u64
+    kern_basis: u64
+    kern_ende: u64
+    arbeit: u64
+    arbeit_groesse: u64
+    kern_virtuell: u64
+    seitentabelle: u64
+    fb_maske_rot: u32
+    fb_maske_gruen: u32
+    fb_maske_blau: u32
+    fb_maske_reserviert: u32
+
+# "MOOBOOT1" little-endian
+@nativ
+konstante BOOT_MAGIE: u64 auf 0x31544F4F424F4F4D

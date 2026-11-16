@@ -1,0 +1,77 @@
+# P2-T114 Phase B: Sperre mit mit-als-Block. Vier Threads buchen unter der
+# Sperre; der Inhalt bleibt veraenderbar (nicht eingefroren). Die Sperre wird
+# auch bei wirf und Laufzeitfehlern im Block freigegeben (sonst haengt das
+# naechste mit). Entkommen, verschachteltes mit und fremd referenzierter
+# Inhalt sind fangbare Fehler.
+geteilt konstante KONTO auf sperre({"stand": 0, "log": []})
+
+funktion buche(n):
+    setze i auf 0
+    solange i < 20000:
+        mit KONTO als k:
+            k["stand"] = k["stand"] + n
+        setze i auf i + 1
+    gib_zurück 0
+
+setze t1 auf starte(buche, 1)
+setze t2 auf starte(buche, 2)
+setze t3 auf starte(buche, 3)
+setze t4 auf starte(buche, 4)
+t1.warten()
+t2.warten()
+t3.warten()
+t4.warten()
+mit KONTO als k:
+    zeige k["stand"]
+
+versuche:
+    mit KONTO als k:
+        k["log"].hinzufügen("a")
+        wirf "absichtlich"
+    zeige "FALSCH: nach wirf"
+fange e:
+    zeige "gefangen: " + e
+mit KONTO als k:
+    zeige länge(k["log"])
+
+funktion kaputt():
+    wirf "aus Funktion"
+versuche:
+    mit KONTO als k:
+        kaputt()
+        zeige "FALSCH: nach kaputt"
+fange e:
+    zeige "Funktionsfehler gefangen: " + e
+mit KONTO als k:
+    zeige "frei"
+
+setze raus auf nichts
+versuche:
+    mit KONTO als k:
+        setze raus auf k
+    zeige "FALSCH: entkommen"
+fange e:
+    zeige "entkommen erkannt"
+setze raus auf nichts
+
+versuche:
+    mit KONTO als a:
+        mit KONTO als b:
+            zeige "FALSCH: verschachtelt"
+fange e:
+    zeige "verschachtelt erkannt"
+
+setze d auf {"x": 1}
+versuche:
+    setze s2 auf sperre(d)
+    zeige "FALSCH: sperre(d)"
+fange e:
+    zeige "sperre(d) abgelehnt"
+
+funktion summe_unter_sperre(s):
+    setze r auf 0
+    with s als inhalt:
+        setze r auf inhalt["stand"]
+    gib_zurück r
+zeige summe_unter_sperre(KONTO)
+zeige "Ende"

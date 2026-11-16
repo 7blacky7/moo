@@ -203,28 +203,9 @@ struktur Elf64Programmkopf:
     ph_ausrichtung: u64
 
 # ---------------- Vertrag Loader -> Kern ----------------
-# Gleiches Layout in beispiele/kernel/uefi_kern.moos. Alle Adressen physisch
-# (UEFI bildet identisch ab; die Seitentabellen der Firmware bleiben aktiv).
-struktur MooBootInfo:
-    magie: u64
-    version: u64
-    fb_basis: u64
-    fb_groesse: u64
-    fb_breite: u32
-    fb_hoehe: u32
-    fb_stride: u32
-    fb_format: u32
-    karte: u64
-    karte_groesse: u64
-    deskriptor_groesse: u64
-    deskriptor_version: u64
-    acpi_rsdp: u64
-    kern_basis: u64
-    kern_ende: u64
-    arbeit: u64
-    arbeit_groesse: u64
-    kern_virtuell: u64
-    seitentabelle: u64
+# Eine Quelle fuer Loader und Kern (beispiele/kernel/moo_bootvertrag.moos).
+# Alle Adressen physisch (UEFI bildet identisch ab; Firmware-Seitentabellen bleiben aktiv).
+aus "../kernel/moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 
 # Optionaler LoadOptions-Block eines startenden Images (z. B. Netz-Lader):
 # Kern liegt bereits im Speicher.
@@ -232,9 +213,6 @@ struktur MooKernUebergabe:
     ku_magie: u64
     ku_adresse: u64
     ku_laenge: u64
-
-@nativ
-konstante BOOT_MAGIE: u64 auf 0x31544F4F424F4F4D
 
 @nativ
 konstante KERN_UEBERGABE_MAGIE: u64 auf 0x314E52454B4F4F4D
@@ -714,6 +692,11 @@ funktion efi_main(bild: u64, st: u64) -> u64:
             speicher_schreiben(bi + versatz_von(MooBootInfo, fb_hoehe), speicher_lesen(info + versatz_von(EfiGopInfo, gi_hoehe), 4), 4)
             speicher_schreiben(bi + versatz_von(MooBootInfo, fb_stride), speicher_lesen(info + versatz_von(EfiGopInfo, gi_pixel_pro_zeile), 4), 4)
             speicher_schreiben(bi + versatz_von(MooBootInfo, fb_format), speicher_lesen(info + versatz_von(EfiGopInfo, gi_format), 4), 4)
+            # P7-T6: Bitmasken (nur bei Format 2 = PixelBitMask gueltig) an den Kern.
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_maske_rot), speicher_lesen(info + versatz_von(EfiGopInfo, gi_maske_rot), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_maske_gruen), speicher_lesen(info + versatz_von(EfiGopInfo, gi_maske_gruen), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_maske_blau), speicher_lesen(info + versatz_von(EfiGopInfo, gi_maske_blau), 4), 4)
+            speicher_schreiben(bi + versatz_von(MooBootInfo, fb_maske_reserviert), speicher_lesen(info + versatz_von(EfiGopInfo, gi_maske_reserviert), 4), 4)
             meldung(adresse_von(T_GOP), speicher_lesen(bi + versatz_von(MooBootInfo, fb_basis), 8))
             meldung(adresse_von(T_BREITE), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_breite), 4)))
             meldung(adresse_von(T_HOEHE), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_hoehe), 4)))

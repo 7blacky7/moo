@@ -1,0 +1,15 @@
+# P7-T20: Leistungsmessung der Bare-Zahlarithmetik mit echtem Moo-Code.
+# Gleiche Schleife wie compiler/runtime/tests/bench_bare_zahl.c
+# (lt + truthy + mul + 2x add), aber vom Moo-Compiler erzeugt und im
+# Kernel unter QEMU/KVM ausgefuehrt. Der Host misst die Zeit zwischen den
+# seriellen Zeilen 111 (Start) und 999 (Ende):
+#   skripte/p7/bench_bare_kvm.py
+# Die Zeile nach 999 ist die Pruefsumme (muss fuer alle Varianten gleich sein).
+zeige 111
+setze i auf 0
+setze s auf 0
+solange i < 200000000:
+    setze s auf s + i * 3
+    setze i auf i + 1
+zeige 999
+zeige s

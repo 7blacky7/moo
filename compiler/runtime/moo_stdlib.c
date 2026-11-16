@@ -429,7 +429,11 @@ MooValue moo_func_call_8(MooValue func, MooValue a0, MooValue a1, MooValue a2, M
 // env->captured[i] und ruft die eigentliche Inner-Function mit
 // (user_args..., captures...).
 //
-// Captures werden retain-t — sie gehoeren dem MooFunc.
+// P2-T118 Ownership: caps[i] sind owning +1 (der Codegen laedt sie per
+// load_var, das retaint). Diese Referenzen gehen an den MooFunc ueber und
+// werden beim Freigeben des MooFunc einmal released. Frueher wurde hier
+// zusaetzlich retain-t -> jede erzeugte Closure leckte ihre Captures
+// (LSan: skripte/p2/runtime/closure_leck_lsan.sh).
 // caps darf ein temporaeres Array sein (wir kopieren es intern).
 MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
                                 const char* name,
@@ -443,7 +447,6 @@ MooValue moo_func_with_captures(void* tramp_ptr, int32_t arity,
         f->captured = (MooValue*)moo_alloc(sizeof(MooValue) * n);
         for (int32_t i = 0; i < n; i++) {
             f->captured[i] = caps[i];
-            moo_retain(caps[i]);
         }
         f->n_captured = n;
     } else {

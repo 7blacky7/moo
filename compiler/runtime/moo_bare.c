@@ -92,18 +92,115 @@ MooValue moo_none(void) {
 }
 
 // === Arithmetik (direkt, kein malloc) ===
-static inline double as_num(MooValue v) { return bare_as_double(v); }
+// === P7-T17: exakte 64-Bit-Ganzzahlen (Tag 30 i64 / Tag 31 u64) ===
+// Der Codegen boxt i64/u64-Rueckgaben nativer Funktionen und als_u64 mit
+// diesen Tags; data traegt die Bits direkt (kein double, kein Verlust ueber
+// 2^53). moo_runtime.h reserviert 30/31. Rechnet ein solcher Wert mit einem
+// ganzzahligen Partner, gilt Wrapping modulo 2^64 (Zweierkomplement wie
+// C/Rust); Ergebnis u64, sobald ein Operand u64 ist, sonst i64. Division und
+// Rest sind dann ganzzahlig. Ein nicht ganzzahliger Partner faellt auf den
+// double-Weg zurueck. Reine Zahlen (Tag 0) laufen unveraendert.
+// P7-T19: Tag-Wissen zentral in moo_bare_wert.h (gemeinsam mit kern_*, UEFI).
+#include "moo_bare_wert.h"
+#define BARE_TAG_I64 MOO_WERT_TAG_I64
+#define BARE_TAG_U64 MOO_WERT_TAG_U64
+static inline bool bare_breit(MooValue v) { return moo_wert_breit(v.tag); }
+static inline double as_num(MooValue v) { return MOO_WERT_DOUBLE(v); }
+static inline MooValue bare_wert64(uint64_t bits, uint64_t tag) {
+    MooValue v;
+    v.tag = tag;
+    v.data = bits;
+    return v;
+}
+/* Ganzzahlsicht: true fuer 64-Bit-Werte und ganzzahlige Zahlen in
+ * [-2^63, 2^64). *bits = Zweierkomplement, *neg = mathematisch negativ.
+ * Bereich vor jedem Cast (kein UB). */
+static inline bool bare_ganz(MooValue v, uint64_t* bits, bool* neg) {
+    return moo_wert_ganz(v.tag, v.data, bits, neg);
+}
+/* Ganzzahlweg, wenn mindestens ein Operand breit ist und beide ganzzahlig
+ * sind. Der Normalfall (zwei Zahlen) kostet nur den ersten Tagvergleich. */
+static inline bool bare_paar(MooValue a, MooValue b, uint64_t* x, uint64_t* y,
+                             bool* nx, bool* ny, uint64_t* tag) {
+    if (!MOO_WERT_VIELLEICHT_BREIT(a.tag) && !MOO_WERT_VIELLEICHT_BREIT(b.tag)) return false;
+    if (!bare_ganz(a, x, nx) || !bare_ganz(b, y, ny)) return false;
+    *tag = (a.tag == BARE_TAG_U64 || b.tag == BARE_TAG_U64) ? BARE_TAG_U64 : BARE_TAG_I64;
+    return true;
+}
+/* Mathematischer Vergleich -1/0/1 (negativ < nicht negativ, sonst Bits). */
+static inline int bare_vergleich(uint64_t x, bool nx, uint64_t y, bool ny) {
+    if (nx != ny) return nx ? -1 : 1;
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+/* Adresse/Wert fuer MMIO: breite Werte exakt, Zahlen wie bisher. */
+static inline uint64_t bare_bits(MooValue v) {
+    return bare_breit(v) ? v.data : (uint64_t)as_num(v);
+}
+#define BARE_PAAR uint64_t x, y, t; bool nx, ny
 
-MooValue moo_add(MooValue a, MooValue b) { return moo_number(as_num(a) + as_num(b)); }
-MooValue moo_sub(MooValue a, MooValue b) { return moo_number(as_num(a) - as_num(b)); }
-MooValue moo_mul(MooValue a, MooValue b) { return moo_number(as_num(a) * as_num(b)); }
-MooValue moo_div(MooValue a, MooValue b) { return moo_number(as_num(a) / as_num(b)); }
-MooValue moo_mod(MooValue a, MooValue b) {
+/* P7-T19 Schnellweg: Gemessen kostete der T17-Stand die Zaehlschleife
+ * (lt/truthy/mul/2x add) +57..87 % gegenueber vorher (Bench
+ * compiler/runtime/tests/bench_bare_zahl.c). Darum: sind beide Operanden
+ * Tag 0 (Normalfall), genuegt EIN Vergleich ((a.tag|b.tag)==0) und die
+ * reine double-Rechnung wie vor T17. Alles andere (64-Bit-Tags, Bool, ...)
+ * laeuft im kalten, nicht eingebetteten *_kalt-Pfad mit T17-Semantik. */
+#define BARE_ZWEI_ZAHLEN(a, b) __builtin_expect(((a).tag | (b).tag) == MOO_NUMBER, 1)
+#define BARE_SCHNELL(name, ausdruck) \
+    static MooValue name##_kalt(MooValue a, MooValue b) __attribute__((noinline, cold)); \
+    MooValue name(MooValue a, MooValue b) { \
+        if (BARE_ZWEI_ZAHLEN(a, b)) { \
+            double x_ = bare_as_double(a), y_ = bare_as_double(b); \
+            return ausdruck; \
+        } \
+        return name##_kalt(a, b); \
+    }
+BARE_SCHNELL(moo_add, moo_number(x_ + y_))
+BARE_SCHNELL(moo_sub, moo_number(x_ - y_))
+BARE_SCHNELL(moo_mul, moo_number(x_ * y_))
+BARE_SCHNELL(moo_div, moo_number(x_ / y_))
+BARE_SCHNELL(moo_mod, moo_number(x_ - (double)(int64_t)(x_ / y_) * y_))
+
+static MooValue moo_add_kalt(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x + y, t);
+    return moo_number(as_num(a) + as_num(b));
+}
+static MooValue moo_sub_kalt(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x - y, t);
+    return moo_number(as_num(a) - as_num(b));
+}
+static MooValue moo_mul_kalt(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x * y, t);
+    return moo_number(as_num(a) * as_num(b));
+}
+static MooValue moo_div_kalt(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t) && y != 0) {
+        if (t == BARE_TAG_U64) return bare_wert64(x / y, t);
+        /* INT64_MIN / -1 waere UB: Wrap-Ergebnis ist INT64_MIN. */
+        if (x == UINT64_C(0x8000000000000000) && y == UINT64_MAX) return bare_wert64(x, t);
+        return bare_wert64((uint64_t)((int64_t)x / (int64_t)y), t);
+    }
+    return moo_number(as_num(a) / as_num(b));
+}
+static MooValue moo_mod_kalt(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t) && y != 0) {
+        if (t == BARE_TAG_U64) return bare_wert64(x % y, t);
+        if (y == UINT64_MAX) return bare_wert64(0, t);
+        return bare_wert64((uint64_t)((int64_t)x % (int64_t)y), t);
+    }
     double bv = as_num(b);
     double av = as_num(a);
     return moo_number(av - (double)(int64_t)(av / bv) * bv);
 }
-MooValue moo_neg(MooValue v) { return moo_number(-as_num(v)); }
+MooValue moo_neg(MooValue v) {
+    if (__builtin_expect(v.tag == MOO_NUMBER, 1)) return moo_number(-bare_as_double(v));
+    if (bare_breit(v)) return bare_wert64(UINT64_C(0) - v.data, BARE_TAG_I64);
+    return moo_number(-as_num(v));
+}
 
 // === Vergleiche ===
 /* P7-T2: Der Bare-Pfad kann Strings tragen (UEFI-Surface-Pfad liefert
@@ -128,19 +225,42 @@ static bool bare_eq(MooValue a, MooValue b) {
         return a.tag == b.tag && bare_str_eq(a, b);
     if (a.tag == MOO_NONE || b.tag == MOO_NONE) return a.tag == b.tag;
     if (a.tag == MOO_BOOL && b.tag == MOO_BOOL) return (bool)a.data == (bool)b.data;
+    {
+        BARE_PAAR;
+        if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_vergleich(x, nx, y, ny) == 0;
+    }
     return as_num(a) == as_num(b);
 }
-MooValue moo_eq(MooValue a, MooValue b) { return moo_bool(bare_eq(a, b)); }
-MooValue moo_neq(MooValue a, MooValue b) { return moo_bool(!bare_eq(a, b)); }
-MooValue moo_lt(MooValue a, MooValue b) { return moo_bool(as_num(a) < as_num(b)); }
-MooValue moo_gt(MooValue a, MooValue b) { return moo_bool(as_num(a) > as_num(b)); }
-MooValue moo_lte(MooValue a, MooValue b) { return moo_bool(as_num(a) <= as_num(b)); }
-MooValue moo_gte(MooValue a, MooValue b) { return moo_bool(as_num(a) >= as_num(b)); }
+MooValue moo_eq(MooValue a, MooValue b) {
+    if (BARE_ZWEI_ZAHLEN(a, b)) return moo_bool(bare_as_double(a) == bare_as_double(b));
+    return moo_bool(bare_eq(a, b));
+}
+MooValue moo_neq(MooValue a, MooValue b) {
+    if (BARE_ZWEI_ZAHLEN(a, b)) return moo_bool(bare_as_double(a) != bare_as_double(b));
+    return moo_bool(!bare_eq(a, b));
+}
+#define BARE_VERGLEICH(name, op) \
+    static MooValue name##_kalt(MooValue a, MooValue b) { \
+        BARE_PAAR; \
+        if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) \
+            return moo_bool(bare_vergleich(x, nx, y, ny) op 0); \
+        return moo_bool(as_num(a) op as_num(b)); \
+    }
+BARE_SCHNELL(moo_lt, moo_bool(x_ < y_))
+BARE_SCHNELL(moo_gt, moo_bool(x_ > y_))
+BARE_SCHNELL(moo_lte, moo_bool(x_ <= y_))
+BARE_SCHNELL(moo_gte, moo_bool(x_ >= y_))
+BARE_VERGLEICH(moo_lt, <)
+BARE_VERGLEICH(moo_gt, >)
+BARE_VERGLEICH(moo_lte, <=)
+BARE_VERGLEICH(moo_gte, >=)
+#undef BARE_VERGLEICH
 
 // === Logik ===
 bool moo_is_truthy(MooValue v) {
-    if (v.tag == MOO_NUMBER) return as_num(v) != 0.0;
+    if (v.tag == MOO_NUMBER) return bare_as_double(v) != 0.0;
     if (v.tag == MOO_BOOL) return (bool)v.data;
+    if (bare_breit(v)) return v.data != 0;
     if (v.tag == BARE_TAG_STRING) {
         const BareString* s = (const BareString*)(uintptr_t)v.data;
         return s && s->length > 0;
@@ -152,10 +272,25 @@ MooValue moo_or(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) || mo
 MooValue moo_not(MooValue v) { return moo_bool(!moo_is_truthy(v)); }
 
 // === Bitwise ===
-MooValue moo_bitand(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) & (int64_t)as_num(b))); }
-MooValue moo_bitor(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) | (int64_t)as_num(b))); }
-MooValue moo_bitxor(MooValue a, MooValue b) { return moo_number((double)((int64_t)as_num(a) ^ (int64_t)as_num(b))); }
-MooValue moo_bitnot(MooValue v) { return moo_number((double)(~(int64_t)as_num(v))); }
+MooValue moo_bitand(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x & y, t);
+    return moo_number((double)((int64_t)as_num(a) & (int64_t)as_num(b)));
+}
+MooValue moo_bitor(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x | y, t);
+    return moo_number((double)((int64_t)as_num(a) | (int64_t)as_num(b)));
+}
+MooValue moo_bitxor(MooValue a, MooValue b) {
+    BARE_PAAR;
+    if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x ^ y, t);
+    return moo_number((double)((int64_t)as_num(a) ^ (int64_t)as_num(b)));
+}
+MooValue moo_bitnot(MooValue v) {
+    if (bare_breit(v)) return bare_wert64(~v.data, v.tag);
+    return moo_number((double)(~(int64_t)as_num(v)));
+}
 // P007-U3: Shift-UB analog zu moo_ops.c #7 vermeiden. Bare-Metal hat KEIN
 // Error-Handling (moo_throw ist hier ein No-Op, kein moo_error/snprintf),
 // daher kann der ungueltige Count nicht geworfen werden — wir maskieren ihn
@@ -164,11 +299,21 @@ MooValue moo_bitnot(MooValue v) { return moo_number((double)(~(int64_t)as_num(v)
 // arithmetisch, wie auf den Zielplattformen). Damit ist der Embedded-Pfad
 // UB-frei; eine Voll-Validierung mit Fehlerwurf bleibt dem Hosted-Pfad (ops.c).
 MooValue moo_lshift(MooValue a, MooValue b) {
+    if (bare_breit(a)) {
+        unsigned n = (unsigned)(bare_bits(b) & 63u);
+        return bare_wert64(a.data << n, a.tag);
+    }
     uint64_t ua = (uint64_t)(int64_t)as_num(a);
     unsigned cnt = (unsigned)((int64_t)as_num(b) & 63);
     return moo_number((double)(int64_t)(ua << cnt));
 }
 MooValue moo_rshift(MooValue a, MooValue b) {
+    if (bare_breit(a)) {
+        unsigned n = (unsigned)(bare_bits(b) & 63u);
+        /* i64: arithmetisch (wie oben dokumentiert), u64: logisch. */
+        if (a.tag == BARE_TAG_U64) return bare_wert64(a.data >> n, a.tag);
+        return bare_wert64((uint64_t)((int64_t)a.data >> n), a.tag);
+    }
     int64_t sa = (int64_t)as_num(a);
     unsigned cnt = (unsigned)((int64_t)as_num(b) & 63);
     return moo_number((double)(sa >> cnt));
@@ -187,18 +332,21 @@ MooValue moo_rshift(MooValue a, MooValue b) {
 //     2^53-Grenze. Wo das nicht reicht: zwei 32-bit-Zugriffe.
 //   - Ungueltige Breite: read -> moo_none, write -> no-op (kein Trap).
 MooValue moo_mem_read(MooValue addr, MooValue size) {
-    uintptr_t a = (uintptr_t)as_num(addr);
+    uintptr_t a = (uintptr_t)bare_bits(addr);
     int s = (int)as_num(size);
     if (s == 1) return moo_number((double)(*(volatile uint8_t*)a));
     if (s == 2) return moo_number((double)(*(volatile uint16_t*)a));
     if (s == 4) return moo_number((double)(*(volatile uint32_t*)a));
+    /* Bewusst weiter als Zahl (Bestand): C-Abnehmer ausserhalb dieser Datei
+     * (uefi_rt/surface) lesen MooValue als double. Exakte 64-Bit-Register
+     * gehen ueber typisierte @nativ-Intrinsics (ADR P7-T3, Variante A). */
     if (s == 8) return moo_number((double)(*(volatile uint64_t*)a));
     return moo_none();
 }
 
 void moo_mem_write(MooValue addr, MooValue value, MooValue size) {
-    uintptr_t a = (uintptr_t)as_num(addr);
-    uint64_t v = (uint64_t)as_num(value);
+    uintptr_t a = (uintptr_t)bare_bits(addr);
+    uint64_t v = bare_bits(value);
     int s = (int)as_num(size);
     if (s == 1) *(volatile uint8_t*)a = (uint8_t)v;
     else if (s == 2) *(volatile uint16_t*)a = (uint16_t)v;

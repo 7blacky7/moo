@@ -1,4 +1,4 @@
-# P2-T95 Fall A: nirgends versuche: -> Hinweis, Fehler verworfen, Programm laeuft weiter.
+# P2-T95 Fall A, seit P2-T117: nirgends versuche: -> Diagnose auf stderr, Exit 1.
 funktion g():
     wirf "kaputt in g"
 

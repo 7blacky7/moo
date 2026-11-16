@@ -40,7 +40,7 @@ for case_name in dynamisch funktionswert; do
         exit 1
     fi
 done
-rg -q -F 'Nativer Zeigerfunktionsaufruf' "$out/dynamisch.log"
+rg -q -F 'aus dynamischem Moo nicht aufrufbar: Zeigerparameter' "$out/dynamisch.log"
 rg -q -F 'Nativer Funktionswert' "$out/funktionswert.log"
 if "$compiler" compile compiler/tests/p2/zeiger_lesen.moos --no-stdlib --emit-ir --target i686-bare -o "$out/i686.ll" >"$out/i686.log" 2>&1; then
     echo 'Nicht freigegebenes Pointer-Ziel unerwartet akzeptiert' >&2

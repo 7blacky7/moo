@@ -2,7 +2,7 @@
 #include "../moo_ki_gpu_api.h"
 #include <stdio.h>
 #include <math.h>
-int moo_error_flag=0; MooValue moo_last_error; int moo_try_depth=0; jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
+MOO_TLS int moo_error_flag=0; MOO_TLS MooValue moo_last_error; MOO_TLS int moo_try_depth=0; jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 void moo_throw(MooValue e){moo_error_flag=1;if(e.tag==MOO_ERROR)free(moo_val_as_ptr(e));}
 #define STUB(n) void n(void*p){(void)p;}
 STUB(moo_socket_free) STUB(moo_thread_free) STUB(moo_channel_free) STUB(moo_db_free)

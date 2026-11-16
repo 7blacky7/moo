@@ -8,6 +8,18 @@ Tensoren, Autograd, neuronale Netze bis zum Transformer, Training auf CPU oder
 Vulkan-GPU, Tokenizer (Zeichen, BPE, deutsche Silben) und Trainingsmethoden wie
 SFT, Distillation, DPO und Evaluation.
 
+moo unterstützt deutsche und englische Schlüsselwörter gleichberechtigt (`zeige` / `show`,
+`setze … auf` / `set … to`, `solange` / `while`, `funktion` / `func`), und die
+meisten eingebauten Funktionen und Methoden haben auch englische Aliase (siehe Abschnitt 6).
+Deutsche und englische Schlüsselwörter/Aliase dürfen in derselben Datei gemischt werden:
+
+```moo
+set x to tensor_from_list([[1, 2], [3, 4]])
+setze y auf tensor_einsen([2, 2])
+set z to x + y
+zeige "Gemischt: " + str(z.zu_liste())   # -> Gemischt: [2, 3, 4, 5]
+```
+
 Alle Befehle werden aus dem Wurzelverzeichnis des Repositorys ausgeführt.
 
 ---
@@ -371,6 +383,107 @@ Viele Funktionen haben zusätzlich englische Aliasse (z. B. `tensor_from_list`,
 - `stdlib/ki_bild_easy.moos` – High-Level-Klasse `BildModell` („Bild → Text“).
 - [docs/kip/](kip/) – Design- und Vertragsdokumente zum KI-Stack (Dtypes, GPU-Residenz,
   verteiltes Training, Serving, Post-Training).
+
+## 9. Compiler-Diagnosen für Agenten
+
+Jede Compiler-Diagnose hat einen Code, einen Schweregrad, einen Ort und eine deutsche Meldung.
+Der Compiler sammelt **alle** Lexer- und Syntaxfehler eines Laufs, statt beim ersten
+abzubrechen.
+
+```bash
+moo-compiler pruefe datei.moos                    # Alias: check – Lexer, Parser, Importe, Codegen, LLVM-Verify; kein Binary
+moo-compiler pruefe datei.moos --diagnose=json    # genau ein JSON-Objekt auf stderr
+moo-compiler erklaere M-S001                      # Alias: explain – Katalogeintrag; ohne Code: alle auflisten
+```
+
+`--diagnose=text|json` gilt für `pruefe`, `compile`, `run`, `ast` und `layout`.
+Exit-Code: 1 bei mindestens einem Fehler, 0 bei nur Hinweisen.
+
+Menschliches Format (Standard):
+
+```
+datei.moos:2:15: Fehler M-S001: Doppelpunkt ':' erwartet, aber Zeilenende gefunden. Nach Bedingungen ...
+    2 |     wenn x > 1
+      |               ^
+    erwartet: Doppelpunkt ':' | gefunden: Zeilenende
+1 Fehler
+```
+
+JSON-Format (Schlüssel englisch, Meldungen deutsch, unbekannte Werte sind `null`):
+
+```json
+{"schema":1,"diagnostics":[{"code":"M-C001","severity":"error","file":"datei.moos","line":4,"column":null,
+  "end_column":null,"function":null,"message":"Funktion 'rechen' nicht gefunden. Meintest du 'rechne'?",
+  "expected":null,"found":"rechen","suggestion":"Meintest du 'rechne'?"}],"errors":1,"hints":0}
+```
+
+Ablauf für Agenten: `pruefe --diagnose=json` ausführen, jede Diagnose an `file:line:column`
+beheben (`expected`/`found`/`suggestion` nutzen), wiederholen bis `errors == 0`. Hinweise
+(`severity: hint`) blockieren den Build nicht.
+
+Diagnosekatalog (maßgeblich: `compiler/src/diagnose.rs`, `moo-compiler erklaere`):
+
+| Code | Bedeutung |
+|------|-----------|
+| M-L001 / M-L002 / M-L003 / M-L004 | Unbekanntes Zeichen / Text nicht abgeschlossen / f-String: `}` fehlt / f-String nicht abgeschlossen |
+| M-S001 | Token erwartet (`expected`, `found`, `suggestion` gefüllt) |
+| M-S002 | Name/Bezeichner erwartet |
+| M-S004 | Zu tief verschachtelt (Klammern, Blöcke, Operator-/Aufruf-/Indexketten zählen zusammen). Die Grenze hängt vom Stack des Compiler-Threads ab: normal 1000 Ebenen (512 MiB), unter Speicherlimit (`ulimit -v`) 250 (128 MiB) oder 62 (32 MiB); die Meldung nennt die aktive Grenze |
+| M-S000 | Sonstiger Syntaxfehler |
+| M-I001 / M-I002 / M-I003 / M-I000 | Modul nicht gefunden / Modul definiert den Namen nicht / Datei nicht lesbar / sonstiger Importfehler |
+| M-C001 / M-C002 | Unbekannte Funktion / unbekannte Methode (mit Vorschlag „Meintest du ...?“) |
+| M-C003 / M-C004 | Zu wenige Argumente für ein Builtin (exakte oder Mindestzahl, beim Build aus dem Codegenerator abgeleitet; `moo-compiler builtins` listet sie) / Hinweis: überzählige Argumente werden nicht ausgewertet |
+| M-C999 | Interner Compilerfehler (abgefangene Rust-Panic, oder der Compiler-Thread konnte nicht starten); ein Compilerfehler, kein Programmfehler |
+| M-C000 / M-N000 | Sonstiger Codegen-Fehler / Fehler in nativem Code (`@nativ`, Strukturen) – Ort: Datei + Funktion, Zeile wenn bekannt |
+| M-N001 | Eine `@nativ`-Funktion wird als Wert benutzt (`setze f auf name`, `liste.map(name)`, Rückruf-Argument), obwohl das für sie nicht geht: Parameter oder Ergebnis sind keine Zahlen oder Wahrheitswerte (Strukturen, Zeiger, Puffer), sie hat einen Systemkörper (`unsicher:`) oder ist ein C-Export. Ausnahme: ein skalarer gehosteter Wrapper, dessen `unsicher:`-Körper nur eine `extern "C"`-Funktion aufruft, ist als Wert erlaubt; andere `unsicher:`-Körper nicht. Direkt aufrufen oder eine Moo-Funktion als Wrapper nehmen |
+| M-N002 | Nativer Funktionswert im Bare-Metal-/UEFI-Profil (der Katalog nennt auch `wasm`): nur der direkte Aufruf der `@nativ`-Funktion ist möglich |
+| M-N003 | Eine mit `extern "C"` deklarierte Funktion wird als Wert benutzt; sie ist kein moo-Wert; den C-Aufruf in eine skalare `@nativ`-Funktion verpacken (siehe Ausnahme bei M-N001) |
+| M-N004 | Eine `@nativ`-Funktion wird direkt (aus dynamischem oder nativem Code) mit einer anderen Argumentzahl aufgerufen, als ihre Signatur hat; die Meldung nennt erwartete und übergebene Zahl. Bei einem nativen *Funktionswert* prüft stattdessen die Laufzeit und meldet einen fangbaren Fehler |
+| M-H001 … M-H005 | Hinweise: Typkonflikt bei einer Methode, eigene Struktur verdeckt einen eingebauten Typ, Modul-Alias verdeckt, Gleitkomma-Literal rundet auf null, unbekanntes Ziel |
+| M-H006 / M-H007 | Hinweise: unsinniger Operator zwischen Zahl und Text (`--typpruefung`) / Zahl-Literal ohne Ziffern oder über u64 |
+| M-H008 | Hinweis: veralteter Name (Übergangsalias). `kern_inw`/`kern_outw`/`kern_inl`/`kern_outl` → `port_lese16`/`port_schreibe16`/`port_lese32`/`port_schreibe32` (EN `port_in16`/`port_out16`/`port_in32`/`port_out32`); gleiche Wirkung, Namen ersetzen. In stdlib-Modulen still |
+| M-P001 | Compilefehler: eine aus `starte`/`spawn` erreichbare Funktion, Methode oder ein Lambda liest oder schreibt eine Top-Level-Variable, die nicht `geteilt` (EN `shared`) markiert ist. Ohne Markierung erlaubt: eine nie neu gesetzte `konstante` mit Zahl, Text, Wahrheitswert oder `nichts`. Abhilfe: den Wert per Kanal senden oder als `starte`-Argument übergeben (`starte(f, a, b, ...)`, bis zu acht Argumente, jedes geteilt und tief eingefroren wie jeder geteilte Wert), die Globale als `geteilt konstante NAME auf wert` markieren (tief eingefroren) oder Sperre/Atom verwenden. Die Meldung nennt die Aufrufkette |
+| M-P002 | Zugriff in Code, der nur *vielleicht* aus einem Thread erreichbar ist (Funktionswert, Methode nach Namen, unbekannter `starte`-Wert). Nur mit `--typ-streng` ein Fehler; sonst in jedem Build von Programmen mit `starte` zur Laufzeit geprüft (Verstoß: Meldung und Exit 1, nicht fangbar) |
+| M-P003 | Eine `geteilt`-Globale wird neu gesetzt, oder `geteilt` steht unterhalb der obersten Ebene. Geteilte Globale werden bei der Initialisierung tief eingefroren. Abhilfe: unmarkierte Globale, die nur der Hauptthread ändert, oder Sperre/Atom |
+| M-T001 … M-T005 | Typprüfung (`--typpruefung`, Fehler mit `--typ-streng`): Annotationskonflikt / Argumenttyp / Rückgabetyp / Argumentzahl (Hinweis) / Element- oder Feldtyp |
+| M-F001 / M-F002 | Hinweise (Fehler mit `--typ-streng`): ein Aufruf einer Funktion, die wirft, oder eines fehlbaren Builtins (Netz, Datenbank, Datei laden) steht nicht in `versuche:`. Abhilfe: den Aufruf in `versuche:` einschließen |
+| M-W000 | Werkzeug- oder Kommandozeilenfehler (außerhalb der Quelle) |
+
+Nebenläufigkeit in Kürze (Regel: ein veränderbarer Wert gehört genau einem Thread; Teilen friert ihn tief ein):
+
+```
+geteilt konstante Z auf atom(0)                 # geteilte Zelle; EN: shared
+geteilt konstante KONTO auf sperre({"stand": 0})
+
+funktion arbeite(n):                            # EN: func, spawn, wait, atomic_*, lock, with
+    atom_addieren(Z, n)                         # liefert den ALTEN Wert
+    mit KONTO als k:                            # EN: with KONTO als k:
+        k["stand"] = k["stand"] + n
+    gib_zurück n
+
+setze t auf starte(arbeite, 5)                  # bis zu acht Argumente: starte(f, a, b, ...)
+zeige t.warten()                                # das Ergebnis gehört dem ersten Wartenden
+```
+
+Atom-Funktionen: `atom_laden|atomic_load`, `atom_speichern|atomic_store`, `atom_addieren|atomic_add`, `atom_tauschen|atomic_swap`, `atom_vergleichen_und_tauschen|atomic_compare_exchange`. Ruft ein zweiter Thread `warten` auf denselben Thread auf, bekommt er einen fangbaren Fehler. `kanal.senden(übergib p)` / `transfer p` gibt einen Puffer ohne Kopie und ohne Einfrieren an den Empfänger weiter (die Variable des Senders wird `nichts`; weitere Referenzen oder Sichten sind ein fangbarer Fehler). Hardware-Syntax (`@nativ` + `unsicher:`): `port_lese*`/`port_schreibe*` (EN `port_in*`/`port_out*`) sind die kanonischen Namen; `kern_in*`/`kern_out*` sind veraltet (M-H008). Am Compiler geprüfte Beispiele: `docs/lernen.md`, Abschnitt „Multithreading“.
+
+Native Funktionswerte: in gehosteten Programmen lässt sich eine `@nativ`-Funktion in einer Variable speichern (`setze f auf quadrat`), als Argument übergeben, in `map`/`filter` nutzen, aus einem Modul importieren und als Thread starten (`starte(quadrat, 6)`; der Thread ruft sie mit den Argumenten nach der Funktion auf, und ein nativer Wert prüft deren Zahl vor dem Start). Der erste Thread, der wartet, besitzt das Ergebnis: jedes weitere `warten` dieses Threads liefert dasselbe Ergebnis erneut, jeder andere wartende Thread bekommt einen fangbaren Fehler. Ein Aufruf über den Wert prüft Argumentzahl und Argumenttypen vor dem nativen Aufruf: falsche Zahl, falscher Typ, ein nicht ganzzahliger Wert für einen Integer-Parameter oder ein Wert außerhalb des Bereichs (z. B. `300` für `i8`) ist ein Laufzeitfehler, den `versuche:` fangen kann, und das Programm läuft normal weiter. Was nicht geht, meldet der Compiler: M-N001 (siehe Tabelle), M-N002 (Bare/UEFI), M-N003 (`extern "C"` als Wert). Belege: die Fixtures `compiler/tests/p2/native_wert_*`.
+
+Native Aufrufe: ein direkter Aufruf einer `@nativ`-Funktion mit falscher Argumentzahl ist der Compilefehler M-N004 (mit Zeilennummer, wenn der Aufruf in dynamischem Code oder in einer nativen Funktion mit Kontrollfluss, also einem Systemkörper, steht; ein direkter Aufruf zwischen einfachen nativen Funktionen wird ohne Zeile gemeldet; Belege: `compiler/tests/p2/native_call_arity*`). Rekursive und wechselseitig rekursive `@nativ`-Funktionen werden unterstützt, auch ein rein nativer Aufrufer einer rekursiven Funktion (Belege: `compiler/tests/p2/native_call_rekursion_*`). `moo-compiler erklaere M-N004` gibt den Katalogeintrag aus.
+
+Reservierte Bereiche: `M-T` Typprüfung, `M-M` Speicher, `M-F` Fehlerpfade, `M-P` Threads und geteilter Zustand (P2-T114).
+Laufzeithinweise für unbehandelte Fehler (`Hinweis: unbehandelter Fehler ...`) gibt das
+laufende Programm aus, nicht der Compiler.
+
+Exit-Code: ein unbehandeltes `wirf` (kein `versuche:` im Aufrufpfad) schreibt
+`Unbehandelter Fehler: <text>` und die Wurfstelle nach **stderr** und endet mit Code 1,
+unabhängig von `MOO_STRENG`. Ein unbehandelter Fehler in einem Worker-Thread beendet den
+Prozess nicht sofort (Thread-Isolation), wird aber gemeldet, und der Prozess endet am
+Schluss mit 1. `teste_alle()` endet mit 1, wenn ein Test fehlschlägt.
+
+Bekannte Grenzen: der Codegen stoppt beim ersten Fehler (Lexer und Parser sammeln alle);
+eine fehlende `)` wird bei der nächsten Anweisung gemeldet, weil Zeilenumbrüche in Klammern
+zusammengezogen werden.
 
 ## 8. Wichtig: Daten und Modelle sind nicht im Repo
 

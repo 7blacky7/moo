@@ -75,13 +75,44 @@ MooValue moo_string_compare(MooValue a, MooValue b) {
     return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) == 0);
 }
 
+/* P2-T118: Textmethoden auf Fremdtyp (Empfaenger oder Textargument) waren
+   still wirkungslos und lieferten einen Leerwert. Jetzt fangbarer Fehler wie
+   P2-T117 (trim/upper/lower); Rueckgabewert und Ownership bleiben wie zuvor.
+   Die Pruefung steht inline im Aufrufer, der Wurf liegt in einem kalten,
+   nicht inlinten Helfer: der heisse Pfad bleibt so schlank wie vorher. */
+#if defined(__GNUC__) || defined(__clang__)
+#define MOO_TEXT_KALT __attribute__((cold, noinline))
+#define MOO_TEXT_SELTEN(x) __builtin_expect(!!(x), 0)
+#else
+#define MOO_TEXT_KALT
+#define MOO_TEXT_SELTEN(x) (x)
+#endif
+
+/* Wirft fuer den Empfaenger s, falls er kein Text ist, sonst fuer *arg. */
+static MOO_TEXT_KALT void text_typfehler(const char* methode, MooValue s, const MooValue* arg) {
+    int beim_arg = (s.tag == MOO_STRING && arg != NULL);
+    MooValue wert = beim_arg ? *arg : s;
+    char text[160];
+    snprintf(text, sizeof(text), "%s erwartet %s, erhalten %s", methode,
+             beim_arg ? "einen Text als Argument" : "einen Text", moo_type_name(wert));
+    moo_throw(moo_error(text));
+}
+
 MooValue moo_string_contains(MooValue haystack, MooValue needle) {
-    if (haystack.tag != MOO_STRING || needle.tag != MOO_STRING) return moo_bool(false);
+    if (MOO_TEXT_SELTEN(haystack.tag != MOO_STRING)) {
+        text_typfehler("text_enthält()/str_contains()", haystack, NULL);
+        return moo_bool(false);
+    }
+    /* Eine Nicht-Text-Nadel ist in keinem Text enthalten ("abc".enthält(5)). */
+    if (needle.tag != MOO_STRING) return moo_bool(false);
     return moo_bool(strstr(MV_STR(haystack)->chars, MV_STR(needle)->chars) != NULL);
 }
 
 MooValue moo_string_split(MooValue s, MooValue delim) {
-    if (s.tag != MOO_STRING || delim.tag != MOO_STRING) return moo_list_new(0);
+    if (MOO_TEXT_SELTEN(s.tag != MOO_STRING || delim.tag != MOO_STRING)) {
+        text_typfehler("teilen()/split()", s, &delim);
+        return moo_list_new(0);
+    }
     MooValue result = moo_list_new(4);
     char* str = strdup(MV_STR(s)->chars);
     char* token = strtok(str, MV_STR(delim)->chars);
@@ -94,8 +125,10 @@ MooValue moo_string_split(MooValue s, MooValue delim) {
 }
 
 MooValue moo_string_replace(MooValue s, MooValue old_s, MooValue new_s) {
-    if (s.tag != MOO_STRING || old_s.tag != MOO_STRING || new_s.tag != MOO_STRING)
+    if (MOO_TEXT_SELTEN(s.tag != MOO_STRING || old_s.tag != MOO_STRING || new_s.tag != MOO_STRING)) {
+        text_typfehler("ersetzen()/replace()", s, old_s.tag != MOO_STRING ? &old_s : &new_s);
         return s;
+    }
     char* src = MV_STR(s)->chars;
     char* find = MV_STR(old_s)->chars;
     char* repl = MV_STR(new_s)->chars;
@@ -149,8 +182,17 @@ MooValue moo_string_replace(MooValue s, MooValue old_s, MooValue new_s) {
     return result;
 }
 
+/* P2-T117: Textmethode auf Fremdtyp (z. B. liste.upper()) war still
+   wirkungslos. Jetzt fangbarer Fehler; Rueckgabe bleibt der Empfaenger. */
+static MooValue text_falscher_typ(const char* methode, MooValue wert) {
+    char text[128];
+    snprintf(text, sizeof(text), "%s erwartet einen Text, erhalten %s", methode, moo_type_name(wert));
+    moo_throw(moo_error(text));
+    return wert;
+}
+
 MooValue moo_string_trim(MooValue s) {
-    if (s.tag != MOO_STRING) return s;
+    if (s.tag != MOO_STRING) return text_falscher_typ("trimmen()/trim()", s);
     char* start = MV_STR(s)->chars;
     char* end = start + MV_STR(s)->length - 1;
     while (start <= end && (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r')) start++;
@@ -166,7 +208,7 @@ MooValue moo_string_trim(MooValue s) {
 }
 
 MooValue moo_string_upper(MooValue s) {
-    if (s.tag != MOO_STRING) return s;
+    if (s.tag != MOO_STRING) return text_falscher_typ("gross()/upper()", s);
     char* buf = strdup(MV_STR(s)->chars);
     for (int i = 0; buf[i]; i++)
         if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
@@ -176,7 +218,10 @@ MooValue moo_string_upper(MooValue s) {
 }
 
 MooValue moo_string_repeat(MooValue s, MooValue count) {
-    if (s.tag != MOO_STRING) return s;
+    if (MOO_TEXT_SELTEN(s.tag != MOO_STRING)) {
+        text_typfehler("Text-Wiederholung (* / repeat)", s, NULL);
+        return s;
+    }
     int32_t n = (int32_t)moo_as_number(count);
     if (n <= 0) return moo_string_new("");
     int32_t len = MV_STR(s)->length;
@@ -198,7 +243,10 @@ MooValue moo_string_repeat(MooValue s, MooValue count) {
 }
 
 MooValue moo_string_slice(MooValue s, MooValue start, MooValue end) {
-    if (s.tag != MOO_STRING) return moo_string_new("");
+    if (MOO_TEXT_SELTEN(s.tag != MOO_STRING)) {
+        text_typfehler("teilstring()/slice()/[a..b]", s, NULL);
+        return moo_string_new("");
+    }
     int32_t len = MV_STR(s)->length;
     int32_t a = (int32_t)moo_as_number(start);
     int32_t b = (int32_t)moo_as_number(end);
@@ -217,7 +265,7 @@ MooValue moo_string_slice(MooValue s, MooValue start, MooValue end) {
 }
 
 MooValue moo_string_lower(MooValue s) {
-    if (s.tag != MOO_STRING) return s;
+    if (s.tag != MOO_STRING) return text_falscher_typ("klein()/lower()", s);
     char* buf = strdup(MV_STR(s)->chars);
     for (int i = 0; buf[i]; i++)
         if (buf[i] >= 'A' && buf[i] <= 'Z') buf[i] += 32;

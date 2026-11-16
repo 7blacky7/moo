@@ -1,0 +1,4 @@
+60000
+hinzufügen: Wert ist zwischen Threads geteilt und damit eingefroren
+ausserhalb: Wert ist zwischen Threads geteilt und damit eingefroren
+3

@@ -30,9 +30,9 @@
 #include <sys/types.h>
 
 /* --- Test-throw-Modell ---------------------------------------------------- */
-int moo_error_flag = 0;
-MooValue moo_last_error;
-int moo_try_depth = 0;
+MOO_TLS int moo_error_flag = 0;
+MOO_TLS MooValue moo_last_error;
+MOO_TLS int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 void moo_throw(MooValue error) {
     moo_release(error);

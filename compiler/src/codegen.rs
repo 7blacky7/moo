@@ -37,6 +37,17 @@ pub mod moo_tag {
 }
 use moo_tag as tag;
 
+/// P7-T20: Art des Bare-Inline-Schnellwegs (siehe CodeGen::bare_schnellweg).
+#[derive(Clone, Copy)]
+enum BareSchnell {
+    /// 0 = add, 1 = sub, 2 = mul, 3 = div
+    Rechnen(u8),
+    Vergleich(inkwell::FloatPredicate),
+    Wahrheit,
+    /// moo_number(double): nur Tag 0 + Bits, ohne kalten Pfad
+    Zahl,
+}
+
 /// P2-T85 (Plan 983e8a9c E1): Art des aktuellen Codegen-Rahmens. Native Aufrufe
 /// mit Argumentadaptern brauchen einen dynamischen Standardrahmen (MooValue-
 /// Rueckgabe, Ende ueber emit_defers + release_function_locals).
@@ -207,6 +218,10 @@ pub struct CodeGen<'ctx> {
     used_globals: Vec<PointerValue<'ctx>>,
     /// P2-T28 (Plan 607b20ba B1): per @sektion belegte Sektionen (Name, Deklaration).
     sektionen: Vec<(String, String)>,
+    /// P2-T114 Phase C: Laufzeitpruefung der Globalen (typpruefung::globale_pruefen).
+    global_pruefplan: crate::typpruefung::GlobalePruefplan,
+    /// P2-T114 B: Besitzer-Pruefung je Funktion einmal am Eintritt (i1 fremd).
+    global_fremd_cache: std::cell::RefCell<HashMap<String, inkwell::values::IntValue<'ctx>>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -303,6 +318,8 @@ impl<'ctx> CodeGen<'ctx> {
             bare_mode: false,
             used_globals: Vec::new(),
             sektionen: Vec::new(),
+            global_pruefplan: Default::default(),
+            global_fremd_cache: Default::default(),
         })
     }
 
@@ -477,6 +494,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?;
         self.call_rt(self.rt.moo_number, &[back.into()], "cast_num")
     }
+
 
     /// P011-A3: Compile-Zeit-Konstantenfaltung fuer RawData-Werte.
     /// Unterstuetzt: Number-Literale, unaeres Minus, +,-,*,/,%,** auf
@@ -915,6 +933,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+
         // Pre-Scan: Alle restlichen Variablennamen vorab im Entry-Block allokieren
         // Verhindert dass alloca in bedingten Bloecken/Schleifen erzeugt wird
         let var_names = Self::collect_all_var_names(&program.statements);
@@ -974,8 +993,17 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("{e}"))?.into_struct_value();
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_main_mcall")?;
             }
-            self.builder.build_return(Some(&i32_type.const_int(0, false)))
-                .map_err(|e| format!("Return-Fehler: {e}"))?;
+            // P2-T117: hat teste_alle() ein FAIL gemeldet, endet main mit 1.
+            if self.module.get_global("__moo_tests_fehlgeschlagen").is_some() {
+                let merker = self.tests_fehlgeschlagen_global();
+                let code = self.builder.build_load(i32_type, merker, "tests.exit_code")
+                    .map_err(|e| format!("{e}"))?.into_int_value();
+                self.builder.build_return(Some(&code))
+                    .map_err(|e| format!("Return-Fehler: {e}"))?;
+            } else {
+                self.builder.build_return(Some(&i32_type.const_int(0, false)))
+                    .map_err(|e| format!("Return-Fehler: {e}"))?;
+            }
         }
 
         // P011-A1: llvm.used emittieren — @benutzt/@einstieg-Funktionen vor DCE schuetzen.
@@ -1240,6 +1268,34 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                         }
                         self.native_functions.insert(name.clone(), fun);
+                        // P7-T22: reine Hardwarekoerper (nur Intrinsics) mit skalarer
+                        // Signatur sind wie Bare-Systemkoerper aus dynamischem Moo
+                        // aufrufbar (Aufrufstelle: unsicher:, main/Funktion, kein
+                        // versuche:). Die Emission bleibt beim Hardware-Emitter.
+                        let skalar: Option<Vec<NType>> = sig.params.iter().map(|p| match p {
+                            crate::codegen_native::NativeParameter::Scalar(ty) => Some(*ty),
+                            _ => None,
+                        }).collect();
+                        let dyn_grund = if interrupt.is_some() {
+                            Some("Unterbrechungsbehandler (@unterbrechung) ruft nur die CPU auf")
+                        } else if naked {
+                            Some("@nackt-Koerper haben keinen Aufrufrahmen; aus nativem Code oder per Adresse aufrufen")
+                        } else if convention != 0 {
+                            Some("fremde @aufrufkonvention; aus nativem Code aufrufen")
+                        } else if skalar.is_none() {
+                            Some("Zeigerparameter (ptr[T]) gibt es in dynamischem Moo nicht; die Adresse als u64 uebergeben und im Koerper mit zeiger(adresse) umwandeln")
+                        } else {
+                            None
+                        };
+                        match (dyn_grund, skalar) {
+                            (None, Some(params)) => {
+                                self.hosted_system_functions.push(fun);
+                                self.native_signatures.insert(name.clone(), NSignature { params, result: sig.result });
+                            }
+                            (grund, _) => {
+                                self.native_dyn_sperre.insert(name.clone(), grund.unwrap_or("Signatur ohne dynamische Form").to_string());
+                            }
+                        }
                         hardware_functions.insert(name.clone(), (fun, sig));
                         continue;
                     }
@@ -1473,6 +1529,9 @@ impl<'ctx> CodeGen<'ctx> {
                         Some(inkwell::module::Linkage::Internal));
                     if convention != 0 { fun.set_call_conventions(convention); }
                     self.native_functions.insert(name.clone(), fun);
+                    // P7-T22: klare Meldung statt "noch nicht unterstuetzt".
+                    self.native_dyn_sperre.insert(name.clone(),
+                        "Zeigerparameter oder -rueckgabe (ptr[T]) gibt es in dynamischem Moo nicht; die Adresse als u64 uebergeben und im Koerper mit zeiger(adresse) umwandeln (unsicher:-Systemkoerper)".to_string());
                     pointer_functions.insert(name.clone(), (fun, sig));
                     continue;
                 }
@@ -1909,7 +1968,9 @@ impl<'ctx> CodeGen<'ctx> {
             && matches!(triple_str.as_str(), "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
                 | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
                 | "aarch64-unknown-linux-gnu");
-        if (freestanding_native || win64_no_stdlib || hosted_x86_system) && !self.native_functions.is_empty() {
+        let o2_laeuft = (freestanding_native || win64_no_stdlib || hosted_x86_system)
+            && !self.native_functions.is_empty();
+        if o2_laeuft {
             use inkwell::attributes::{Attribute, AttributeLoc};
             use inkwell::values::AsValueRef;
             let shield_kinds = ["optnone", "noinline"].map(Attribute::get_named_enum_kind_id);
@@ -1941,6 +2002,12 @@ impl<'ctx> CodeGen<'ctx> {
             }
             self.module.verify()
                 .map_err(|e| format!("LLVM-IR nach O2 ungueltig: {e}"))?;
+        } else if self.bare_mode {
+            // P7-T20: Ohne O2 (Bare ohne @nativ) bettet nur dieser Pass die
+            // alwaysinline-Schnellwege (bare_schnellweg) ein. Er aendert
+            // sonst nichts am Code.
+            self.module.run_passes("always-inline", &machine, PassBuilderOptions::create())
+                .map_err(|e| format!("LLVM always-inline fehlgeschlagen: {e}"))?;
         }
 
         machine
@@ -1977,6 +2044,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<StructValue<'ctx>, String>
     {
+        let func = self.bare_schnellweg(func);
         if self.windows_x64_abi() && func.get_type().get_return_type().is_none() {
             // MSVC x64 ABI: 16-Byte-MooValue wird via verstecktem sret-Puffer
             // als erstem Argument zurueckgegeben.
@@ -2055,6 +2123,12 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt_void(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<(), String>
     {
+        // P7-T20: moo_retain/moo_release sind in allen Bare-Runtimes
+        // (moo_bare.c, boot/uefi_rt.c, boot/stage2_rt.c) No-ops. Der Aufruf
+        // kostet nur Zeit, weil der Compiler den externen Rumpf nicht sieht.
+        if self.bare_mode && (func == self.rt.moo_release || func == self.rt.moo_retain) {
+            return Ok(());
+        }
         if self.windows_x64_abi() {
             let mut win_args = Vec::with_capacity(args.len());
             for (index, arg) in args.iter().enumerate() {
@@ -2089,6 +2163,7 @@ impl<'ctx> CodeGen<'ctx> {
         args: &[BasicMetadataValueEnum<'ctx>],
         name: &str,
     ) -> Result<inkwell::values::CallSiteValue<'ctx>, String> {
+        let func = self.bare_schnellweg(func);
         if self.windows_x64_abi() {
             let mut win_args = Vec::with_capacity(args.len());
             for (index, arg) in args.iter().enumerate() {
@@ -2114,6 +2189,178 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
 
+    /// P7-T20: Inline-Schnellweg der Bare-Zahlarithmetik.
+    ///
+    /// Seit P7-T17 (Tags 30/31 fuer exakte i64/u64) muss moo_bare.c den Tag
+    /// pruefen. Als externer Aufruf kostete das +8..25 % gegenueber dem Stand
+    /// vor T17 (Thought fc5a3ec3). Hier entsteht je Operator eine interne
+    /// alwaysinline-Funktion: Sind beide Operanden Tag 0 (Zahl), rechnet sie
+    /// direkt in double, mit derselben Semantik wie der Schnellweg in
+    /// moo_bare.c (fadd/fsub/fmul/fdiv, fcmp o** bzw. une fuer !=). Jeder
+    /// andere Tag ruft die Runtime auf (kalter Pfad, T17-Semantik unveraendert).
+    /// moo_mod bleibt beim Runtime-Aufruf: (int64_t)-Cast ausserhalb des
+    /// Bereichs waere in IR poison statt des C-Verhaltens der Runtime.
+    /// Nur im Bare-Profil und nicht unter MSVC-ABI (dort indirekte Argumente).
+    fn bare_schnellweg(&self, func: FunctionValue<'ctx>) -> FunctionValue<'ctx> {
+        if !self.bare_mode || self.windows_x64_abi() {
+            return func;
+        }
+        use inkwell::FloatPredicate as P;
+        let name = match func.get_name().to_str() {
+            Ok(n) => n.to_string(),
+            Err(_) => return func,
+        };
+        let art = match name.as_str() {
+            "moo_add" => BareSchnell::Rechnen(0),
+            "moo_sub" => BareSchnell::Rechnen(1),
+            "moo_mul" => BareSchnell::Rechnen(2),
+            "moo_div" => BareSchnell::Rechnen(3),
+            "moo_lt" => BareSchnell::Vergleich(P::OLT),
+            "moo_gt" => BareSchnell::Vergleich(P::OGT),
+            "moo_lte" => BareSchnell::Vergleich(P::OLE),
+            "moo_gte" => BareSchnell::Vergleich(P::OGE),
+            "moo_eq" => BareSchnell::Vergleich(P::OEQ),
+            "moo_neq" => BareSchnell::Vergleich(P::UNE),
+            "moo_is_truthy" => BareSchnell::Wahrheit,
+            "moo_number" => BareSchnell::Zahl,
+            _ => return func,
+        };
+        let name_schnell = format!("{name}.bare_schnell");
+        if let Some(f) = self.module.get_function(&name_schnell) {
+            return f;
+        }
+        let f = self.module.add_function(
+            &name_schnell, func.get_type(), Some(inkwell::module::Linkage::Internal));
+        let kind = inkwell::attributes::Attribute::get_named_enum_kind_id("alwaysinline");
+        f.add_attribute(inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(kind, 0));
+        match self.baue_bare_schnellweg(func, f, art) {
+            Ok(()) => f,
+            Err(_) => {
+                // Unvollstaendigen Rumpf verwerfen; dann bleibt der Runtime-Aufruf.
+                unsafe { f.delete(); }
+                func
+            }
+        }
+    }
+
+    fn baue_bare_schnellweg(
+        &self,
+        func: FunctionValue<'ctx>,
+        f: FunctionValue<'ctx>,
+        art: BareSchnell,
+    ) -> Result<(), String> {
+        // Tags wie BareTag in moo_bare.c: 0 = Zahl, 2 = bool.
+        const TAG_ZAHL: u64 = 0;
+        const TAG_BOOL: u64 = 2;
+        let b = self.context.create_builder();
+        let i64t = self.context.i64_type();
+        let f64t = self.context.f64_type();
+        let fehler = |e: inkwell::builder::BuilderError| format!("{e}");
+        let start = self.context.append_basic_block(f, "start");
+        if let BareSchnell::Zahl = art {
+            // Wie moo_number in moo_bare.c/stage2_rt.c/uefi_rt.c: {0, Bits}.
+            b.position_at_end(start);
+            let d = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?
+                .into_float_value();
+            let bits = b.build_bit_cast(d, i64t, "bits").map_err(fehler)?.into_int_value();
+            let v = b.build_insert_value(self.mv_type().get_undef(),
+                i64t.const_int(TAG_ZAHL, false), 0, "v0").map_err(fehler)?;
+            let v = b.build_insert_value(v, bits, 1, "v").map_err(fehler)?;
+            b.build_return(Some(&v.into_struct_value())).map_err(fehler)?;
+            return Ok(());
+        }
+        let schnell = self.context.append_basic_block(f, "schnell");
+        let kalt = self.context.append_basic_block(f, "kalt");
+        let params: Vec<BasicMetadataValueEnum<'ctx>> =
+            f.get_param_iter().map(|p| p.into()).collect();
+        let a = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?
+            .into_struct_value();
+        let zahl = |v: StructValue<'ctx>, n: &str| -> Result<inkwell::values::FloatValue<'ctx>, String> {
+            let bits = b.build_extract_value(v, 1, n).map_err(fehler)?.into_int_value();
+            Ok(b.build_bit_cast(bits, f64t, n).map_err(fehler)?.into_float_value())
+        };
+
+        b.position_at_end(start);
+        let tag_a = b.build_extract_value(a, 0, "tag_a").map_err(fehler)?.into_int_value();
+        match art {
+            BareSchnell::Wahrheit => {
+                let ret_t = func.get_type().get_return_type()
+                    .ok_or("moo_is_truthy ohne Rueckgabe")?.into_int_type();
+                let als_ret = |v: inkwell::values::IntValue<'ctx>| -> Result<inkwell::values::IntValue<'ctx>, String> {
+                    if ret_t.get_bit_width() == 1 { Ok(v) }
+                    else { b.build_int_z_extend(v, ret_t, "w").map_err(fehler) }
+                };
+                let pruef_bool = self.context.append_basic_block(f, "pruef_bool");
+                let ist_bool = self.context.append_basic_block(f, "ist_bool");
+                let ist_zahl = b.build_int_compare(inkwell::IntPredicate::EQ, tag_a,
+                    i64t.const_int(TAG_ZAHL, false), "ist_zahl").map_err(fehler)?;
+                b.build_conditional_branch(ist_zahl, schnell, pruef_bool).map_err(fehler)?;
+
+                b.position_at_end(schnell);
+                let x = zahl(a, "x")?;
+                let w = b.build_float_compare(inkwell::FloatPredicate::UNE, x,
+                    f64t.const_zero(), "w").map_err(fehler)?;
+                b.build_return(Some(&als_ret(w)?)).map_err(fehler)?;
+
+                b.position_at_end(pruef_bool);
+                let ist_b = b.build_int_compare(inkwell::IntPredicate::EQ, tag_a,
+                    i64t.const_int(TAG_BOOL, false), "ist_b").map_err(fehler)?;
+                b.build_conditional_branch(ist_b, ist_bool, kalt).map_err(fehler)?;
+
+                b.position_at_end(ist_bool);
+                let daten = b.build_extract_value(a, 1, "d").map_err(fehler)?.into_int_value();
+                let w = b.build_int_compare(inkwell::IntPredicate::NE, daten,
+                    i64t.const_zero(), "wb").map_err(fehler)?;
+                b.build_return(Some(&als_ret(w)?)).map_err(fehler)?;
+            }
+            BareSchnell::Zahl => unreachable!("oben behandelt"),
+            BareSchnell::Rechnen(_) | BareSchnell::Vergleich(_) => {
+                let bb = f.get_nth_param(1).ok_or("bare_schnellweg: Parameter fehlt")?
+                    .into_struct_value();
+                let tag_b = b.build_extract_value(bb, 0, "tag_b").map_err(fehler)?.into_int_value();
+                let beide = b.build_or(tag_a, tag_b, "tags").map_err(fehler)?;
+                let ist_zahl = b.build_int_compare(inkwell::IntPredicate::EQ, beide,
+                    i64t.const_int(TAG_ZAHL, false), "zwei_zahlen").map_err(fehler)?;
+                b.build_conditional_branch(ist_zahl, schnell, kalt).map_err(fehler)?;
+
+                b.position_at_end(schnell);
+                let x = zahl(a, "x")?;
+                let y = zahl(bb, "y")?;
+                let (tag, daten) = match art {
+                    BareSchnell::Rechnen(op) => {
+                        let r = match op {
+                            0 => b.build_float_add(x, y, "r"),
+                            1 => b.build_float_sub(x, y, "r"),
+                            2 => b.build_float_mul(x, y, "r"),
+                            _ => b.build_float_div(x, y, "r"),
+                        }.map_err(fehler)?;
+                        let bits = b.build_bit_cast(r, i64t, "bits").map_err(fehler)?.into_int_value();
+                        (TAG_ZAHL, bits)
+                    }
+                    BareSchnell::Vergleich(pred) => {
+                        let c = b.build_float_compare(pred, x, y, "c").map_err(fehler)?;
+                        (TAG_BOOL, b.build_int_z_extend(c, i64t, "cb").map_err(fehler)?)
+                    }
+                    BareSchnell::Wahrheit | BareSchnell::Zahl => unreachable!(),
+                };
+                let mv = self.mv_type();
+                let v = b.build_insert_value(mv.get_undef(), i64t.const_int(tag, false), 0, "v0")
+                    .map_err(fehler)?;
+                let v = b.build_insert_value(v, daten, 1, "v").map_err(fehler)?;
+                b.build_return(Some(&v.into_struct_value())).map_err(fehler)?;
+            }
+        }
+
+        b.position_at_end(kalt);
+        let r = b.build_call(func, &params, "kalt").map_err(fehler)?;
+        match r.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => { b.build_return(Some(&v)).map_err(fehler)?; }
+            _ => return Err("bare_schnellweg: Runtime ohne Rueckgabe".to_string()),
+        }
+        Ok(())
+    }
+
     /// Erzeugt fuer einen internen Moo-Funktionstyp einen Adapter, den die
     /// C-Runtime unter MSVC x64 sicher als MooValue(*)(MooValue...) aufrufen kann.
     fn windows_callable_wrapper(
@@ -2122,7 +2369,7 @@ impl<'ctx> CodeGen<'ctx> {
         source_name: &str,
     ) -> Result<FunctionValue<'ctx>, String> {
         if !self.windows_x64_abi() {
-            return Ok(function);
+            return self.c_aufteilungs_wrapper(function, source_name);
         }
 
         let wrapper_name = format!("{source_name}.__moo_winabi");
@@ -2183,6 +2430,140 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(wrapper)
     }
 
+    /// P2-T117: C ruft Moo-Funktionen ueber Funktionszeiger (moo_func_call_N,
+    /// Closure-Trampolin `(MooFunc* env, MooValue...)`). Fuer C ist ein MooValue
+    /// ein 16-Byte-Struct aus zwei Integern: SysV x86-64 und AAPCS64 legen es
+    /// GANZ auf den Stack, sobald keine zwei Integerregister mehr frei sind.
+    /// LLVM teilt ein first-class `{i64, i64}` dagegen auf (letztes Register +
+    /// Stack). Beim Trampolin belegt env ein Register; ab dem dritten MooValue
+    /// las die Funktion deshalb Muell (test_closure_4arg_call_abort: SIGSEGV,
+    /// `falsch` kam als Zahl 9.88e-324 an). Der Wrapper nimmt genau diese
+    /// Parameter wie clang entgegen (x86-64: `ptr byval`, AArch64: `[2 x i64]`)
+    /// und reicht sie an die unveraenderte Funktion weiter. Wuerde kein
+    /// Parameter aufgeteilt, bleibt die Funktion unveraendert (kein IR-Diff).
+    fn c_aufteilungs_wrapper(
+        &self,
+        function: FunctionValue<'ctx>,
+        source_name: &str,
+    ) -> Result<FunctionValue<'ctx>, String> {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Art { Direkt, Byval, Feld }
+        let triple = self.module.get_triple().as_str().to_string_lossy().to_string();
+        let (x86, a64) = if triple.is_empty() {
+            (cfg!(target_arch = "x86_64"), cfg!(target_arch = "aarch64"))
+        } else {
+            (triple.starts_with("x86_64"), triple.starts_with("aarch64"))
+        };
+        if !(x86 || a64) || triple.contains("windows") {
+            return Ok(function);
+        }
+        let mv = self.mv_type();
+        let param_types = function.get_type().get_param_types();
+        let mut frei: u32 = if x86 { 6 } else { 8 };
+        let mut arten = Vec::with_capacity(param_types.len());
+        for t in &param_types {
+            match t {
+                BasicMetadataTypeEnum::StructType(st) if *st == mv => {
+                    if frei >= 2 {
+                        frei -= 2;
+                        arten.push(Art::Direkt);
+                    } else if x86 {
+                        // SysV: Struct in den Speicher, Restregister bleibt frei.
+                        arten.push(Art::Byval);
+                    } else {
+                        // AAPCS64 C.11: NGRN = 8, alles Weitere auf den Stack.
+                        frei = 0;
+                        arten.push(Art::Feld);
+                    }
+                }
+                BasicMetadataTypeEnum::IntType(_) | BasicMetadataTypeEnum::PointerType(_) => {
+                    frei = frei.saturating_sub(1);
+                    arten.push(Art::Direkt);
+                }
+                _ => arten.push(Art::Direkt),
+            }
+        }
+        if arten.iter().all(|a| *a == Art::Direkt) {
+            return Ok(function);
+        }
+
+        let wrapper_name = format!("{source_name}.__moo_cabi");
+        if let Some(existing) = self.module.get_function(&wrapper_name) {
+            return Ok(existing);
+        }
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let feld_type = self.context.i64_type().array_type(2);
+        let wrapper_params: Vec<BasicMetadataTypeEnum<'ctx>> = param_types.iter().zip(&arten)
+            .map(|(t, a)| match a {
+                Art::Direkt => *t,
+                Art::Byval => ptr_type.into(),
+                Art::Feld => feld_type.into(),
+            })
+            .collect();
+        let wrapper_type = match function.get_type().get_return_type() {
+            Some(ret) => inkwell::types::BasicType::fn_type(&ret, &wrapper_params, false),
+            None => self.context.void_type().fn_type(&wrapper_params, false),
+        };
+        let wrapper = self.module.add_function(&wrapper_name, wrapper_type, None);
+        {
+            use inkwell::attributes::{Attribute, AttributeLoc};
+            let byval = Attribute::get_named_enum_kind_id("byval");
+            let align = Attribute::get_named_enum_kind_id("align");
+            for (i, a) in arten.iter().enumerate() {
+                if *a == Art::Byval {
+                    let mv_any = inkwell::types::AnyType::as_any_type_enum(&mv);
+                    wrapper.add_attribute(AttributeLoc::Param(i as u32),
+                        self.context.create_type_attribute(byval, mv_any));
+                    wrapper.add_attribute(AttributeLoc::Param(i as u32),
+                        self.context.create_enum_attribute(align, 8));
+                }
+            }
+        }
+        let entry = self.context.append_basic_block(wrapper, "entry");
+        let previous_block = self.builder.get_insert_block();
+        self.builder.position_at_end(entry);
+
+        let mut inner_args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(arten.len());
+        for (i, a) in arten.iter().enumerate() {
+            let p = wrapper.get_nth_param(i as u32)
+                .ok_or_else(|| format!("C-ABI-Wrapper '{source_name}': Argument fehlt"))?;
+            match a {
+                Art::Direkt => inner_args.push(p.into()),
+                Art::Byval => {
+                    let v = self.builder.build_load(mv, p.into_pointer_value(), &format!("arg{i}"))
+                        .map_err(|e| format!("{e}"))?;
+                    inner_args.push(v.into());
+                }
+                Art::Feld => {
+                    let feld = p.into_array_value();
+                    let lo = self.builder.build_extract_value(feld, 0, &format!("arg{i}.0"))
+                        .map_err(|e| format!("{e}"))?;
+                    let hi = self.builder.build_extract_value(feld, 1, &format!("arg{i}.1"))
+                        .map_err(|e| format!("{e}"))?;
+                    let v = self.builder.build_insert_value(mv.get_undef(), lo, 0, &format!("arg{i}.a"))
+                        .map_err(|e| format!("{e}"))?;
+                    let v = self.builder.build_insert_value(v, hi, 1, &format!("arg{i}"))
+                        .map_err(|e| format!("{e}"))?;
+                    inner_args.push(v.into_struct_value().into());
+                }
+            }
+        }
+        let call = self.builder.build_call(function, &inner_args, "inner")
+            .map_err(|e| format!("{e}"))?;
+        match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => {
+                self.builder.build_return(Some(&v)).map_err(|e| format!("{e}"))?;
+            }
+            _ => {
+                self.builder.build_return(None).map_err(|e| format!("{e}"))?;
+            }
+        }
+        if let Some(block) = previous_block {
+            self.builder.position_at_end(block);
+        }
+        Ok(wrapper)
+    }
+
     fn store_var(&mut self, name: &str, val: StructValue<'ctx>) -> Result<(), String> {
         let ptr = if let Some(existing) = self.variables.get(name) {
             // Release alten Wert bevor wir ueberschreiben
@@ -2190,12 +2571,13 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("{e}"))?.into_struct_value();
             self.call_rt_void(self.rt.moo_release, &[old.into()], "release_old")?;
             *existing
-        } else if let Some(global_ptr) = self.globals.get(name) {
+        } else if let Some(global_ptr) = self.globals.get(name).copied() {
             // Zuweisung auf globale Variable (z.B. aus einer Funktion heraus)
-            let old = self.builder.build_load(self.mv_type(), *global_ptr, "old_g")
+            self.global_zugriff_pruefen(name)?;
+            let old = self.builder.build_load(self.mv_type(), global_ptr, "old_g")
                 .map_err(|e| format!("{e}"))?.into_struct_value();
             self.call_rt_void(self.rt.moo_release, &[old.into()], "release_old_g")?;
-            *global_ptr
+            global_ptr
         } else {
             let func = self.current_function.unwrap();
             let entry = func.get_first_basic_block().unwrap();
@@ -2225,10 +2607,168 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    /// P2-T114 Phase C: setzt den Pruefplan der Effektpruefung
+    /// (typpruefung::globale_pruefen). Leer fuer Programme ohne starte.
+    pub fn set_global_pruefplan(&mut self, plan: crate::typpruefung::GlobalePruefplan) {
+        self.global_pruefplan = plan;
+    }
+
+    /// P2-T114 Phase C: gehostet (nicht bare, nicht wasm) - nur dort gibt es
+    /// Moo-Threads und die Runtime-Funktionen moo_teilen/moo_global_pruefen.
+    fn rc_gehostet(&self) -> bool {
+        !self.bare_mode && !self.module.get_triple().as_str().to_str()
+            .map(|t| t.starts_with("wasm")).unwrap_or(true)
+    }
+
+    /// P2-T114 Phase C: Globale gehoeren dem Hauptthread. In Code, den die
+    /// Effektpruefung als vielleicht thread-erreichbar, aber nicht beweisbar
+    /// eingestuft hat (Funktionswerte, Methoden), prueft moo_global_pruefen
+    /// vor dem Zugriff, ob ein Moo-Thread zugreift. Sonst kein Code.
+    fn global_zugriff_pruefen(&self, name: &str) -> Result<(), String> {
+        let plan = &self.global_pruefplan;
+        if plan.funktionen.is_empty() && !plan.lambdas {
+            return Ok(());
+        }
+        if plan.geteilt.contains(name) || !self.rc_gehostet() {
+            return Ok(());
+        }
+        let Some(funktion) = self.current_function else { return Ok(()) };
+        let fname = funktion.get_name().to_str().unwrap_or("");
+        if !plan.funktionen.contains(fname) && !(plan.lambdas && fname.starts_with("__lambda_")) {
+            return Ok(());
+        }
+        // P2-T114 B: gehoben. Die Thread-Kennung wird einmal am Funktionseintritt
+        // gelesen (Linux: TLS-Laden wie moo_error_flag, sonst ein Aufruf); je
+        // Zugriff bleibt ein Sprung auf einen Registerwert, schleifeninvariant.
+        // Semantik wie zuvor: Abbruch nur beim tatsaechlichen Zugriff.
+        let fremd = self.global_fremd_flag(funktion, fname)?;
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let abbruch = match self.module.get_function("moo_global_fremdzugriff") {
+            Some(f) => f,
+            None => {
+                let f = self.module.add_function("moo_global_fremdzugriff",
+                    self.context.void_type().fn_type(&[ptr_ty.into()], false), None);
+                for attr in ["noreturn", "cold", "nounwind"] {
+                    let kind = inkwell::attributes::Attribute::get_named_enum_kind_id(attr);
+                    f.add_attribute(inkwell::attributes::AttributeLoc::Function,
+                        self.context.create_enum_attribute(kind, 0));
+                }
+                f
+            }
+        };
+        let fail = self.context.append_basic_block(funktion, "global.fremd");
+        let ok = self.context.append_basic_block(funktion, "global.ok");
+        self.builder.build_conditional_branch(fremd, fail, ok).map_err(|e| format!("{e}"))?;
+        self.builder.position_at_end(fail);
+        let text = self.make_global_str(name, "global_name")?;
+        self.builder.build_call(abbruch, &[text.into()], "").map_err(|e| format!("{e}"))?;
+        self.builder.build_unreachable().map_err(|e| format!("{e}"))?;
+        self.builder.position_at_end(ok);
+        Ok(())
+    }
+
+    /// P2-T114 B: i1 "laeuft auf einem Moo-Worker", einmal je Funktion am
+    /// Anfang des Eintrittsblocks erzeugt (dominiert jeden Zugriff).
+    fn global_fremd_flag(&self, funktion: FunctionValue<'ctx>, fname: &str) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        use inkwell::values::AsValueRef;
+        let fname = format!("{fname}@{:p}", funktion.as_value_ref());
+        if let Some(v) = self.global_fremd_cache.borrow().get(&fname) {
+            return Ok(*v);
+        }
+        let entry = funktion.get_first_basic_block().ok_or("Funktion ohne Eintrittsblock")?;
+        let b = self.context.create_builder();
+        match entry.get_first_instruction() {
+            Some(i) => b.position_before(&i),
+            None => b.position_at_end(entry),
+        }
+        let i8_t = self.context.i8_type();
+        let elf_tls = self.module.get_triple().as_str().to_string_lossy().contains("linux");
+        let wert = if elf_tls {
+            let g = self.module.get_global("moo_ist_moo_worker").unwrap_or_else(|| {
+                let g = self.module.add_global(i8_t, None, "moo_ist_moo_worker");
+                g.set_thread_local_mode(Some(inkwell::ThreadLocalMode::LocalExecTLSModel));
+                g
+            });
+            b.build_load(i8_t, g.as_pointer_value(), "global.worker").map_err(|e| format!("{e}"))?.into_int_value()
+        } else {
+            let f = match self.module.get_function("moo_global_fremd") {
+                Some(f) => f,
+                None => self.module.add_function("moo_global_fremd", i8_t.fn_type(&[], false), None),
+            };
+            match b.build_call(f, &[], "global.worker").map_err(|e| format!("{e}"))?.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("moo_global_fremd liefert keinen Wert".into()),
+            }
+        };
+        let fremd = b.build_int_compare(inkwell::IntPredicate::NE, wert, i8_t.const_zero(), "global.fremd")
+            .map_err(|e| format!("{e}"))?;
+        self.global_fremd_cache.borrow_mut().insert(fname.to_string(), fremd);
+        Ok(fremd)
+    }
+
+    /// P2-T114 B: Runtime-Funktion (MooValue^n) -> MooValue erst bei Nutzung
+    /// deklarieren, damit das IR von Programmen ohne Atom/Sperre gleich bleibt.
+    /// Windows x64: sret-Puffer und Aggregate per Zeiger (wie decl_mv_mv!).
+    fn rt_mv_lazy(&self, symbol: &str, n: usize) -> FunctionValue<'ctx> {
+        if let Some(f) = self.module.get_function(symbol) {
+            return f;
+        }
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        if self.windows_x64_abi() {
+            let params: Vec<BasicMetadataTypeEnum<'ctx>> = (0..=n).map(|_| ptr.into()).collect();
+            self.module.add_function(symbol, self.context.void_type().fn_type(&params, false), None)
+        } else {
+            let params: Vec<BasicMetadataTypeEnum<'ctx>> = (0..n).map(|_| self.mv_type().into()).collect();
+            self.module.add_function(symbol, self.mv_type().fn_type(&params, false), None)
+        }
+    }
+
+    /// P2-T114 B: atom(z), atom_*(a, ...), sperre(w) und die Hilfen des
+    /// `mit s als k:`-Blocks (Parser-Entzuckerung). Argumente geliehen und
+    /// danach freigegeben; sperre(w) uebernimmt w (owning).
+    fn sync_builtin(&mut self, name: &str, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        if !self.rc_gehostet() {
+            return Err(format!("'{name}' gibt es nur gehostet; in @nativ/Bare die atom_*-Intrinsics auf ptr[T] verwenden"));
+        }
+        let (symbol, n, uebernimmt) = match name {
+            "atom" | "atomic" => ("moo_atom_neu", 1, false),
+            "atom_laden" | "atomic_load" => ("moo_atom_laden", 1, false),
+            "atom_speichern" | "atomic_store" => ("moo_atom_speichern", 2, false),
+            "atom_addieren" | "atomic_add" => ("moo_atom_addieren", 2, false),
+            "atom_tauschen" | "atomic_swap" => ("moo_atom_tauschen", 2, false),
+            "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => ("moo_atom_vergleichen_und_tauschen", 3, false),
+            "sperre" | "lock" => ("moo_sperre_neu", 1, true),
+            "__moo_sperre_betreten" => ("moo_sperre_betreten", 1, false),
+            _ => ("moo_sperre_verlassen", 2, false),
+        };
+        if args.len() != n {
+            return Err(format!("{name} erwartet {n} Argument(e), erhalten {}", args.len()));
+        }
+        let mut werte = Vec::with_capacity(n);
+        for a in args {
+            let v = self.compile_expr(a)?;
+            werte.push(v);
+        }
+        let f = self.rt_mv_lazy(symbol, n);
+        let call_args: Vec<BasicMetadataValueEnum<'ctx>> = werte.iter().map(|v| (*v).into()).collect();
+        let r = self.call_rt(f, &call_args, "sync")?;
+        if !uebernimmt {
+            for v in &werte {
+                self.call_rt_void(self.rt.moo_release, &[(*v).into()], "sync_rel")?;
+            }
+        }
+        Ok(r)
+    }
+
     fn load_var(&self, name: &str) -> Result<StructValue<'ctx>, String> {
-        let ptr = self.variables.get(name)
-            .or_else(|| self.globals.get(name))
-            .ok_or(format!("Variable '{name}' nicht gefunden"))?;
+        let ptr = match self.variables.get(name) {
+            Some(p) => p,
+            None => {
+                let p = self.globals.get(name).ok_or(format!("Variable '{name}' nicht gefunden"))?;
+                self.global_zugriff_pruefen(name)?;
+                p
+            }
+        };
         let val = self.builder.build_load(self.mv_type(), *ptr, name)
             .map_err(|e| format!("{e}"))?.into_struct_value();
         // Clone-Semantik: load liefert einen eigenen owning-ref, damit
@@ -2294,6 +2834,19 @@ impl<'ctx> CodeGen<'ctx> {
                 // P2-T74: Direktpfad wie bei zeige (native_try_direct_root).
                 let val = self.compile_statement_expr_direct(value)?;
                 self.guard_local_expr_error(&[val])?;
+                // P2-T114 Phase C: `geteilt` markierte Globale werden bei der
+                // Initialisierung tief eingefroren (geteilt = eingefroren).
+                // P2-T114 B: ebenso unveraenderliche Text-Konstanten, die Threads
+                // ohne Markierung lesen (atomarer Zaehler statt Rennen).
+                let text_teilen = matches!(stmt, Stmt::ConstAssignment { name: n, geteilt: false, .. }
+                    if self.global_pruefplan.text_teilen.contains(n));
+                if (text_teilen || matches!(stmt, Stmt::ConstAssignment { geteilt: true, .. })) && self.rc_gehostet() {
+                    let teilen = match self.module.get_function("moo_teilen") {
+                        Some(f) => f,
+                        None => self.module.add_function("moo_teilen", self.rt.moo_release.get_type(), None),
+                    };
+                    self.call_rt_void(teilen, &[val.into()], "geteilt")?;
+                }
                 self.store_var(name, val)
             }
             Stmt::CompoundAssignment { name, op, value, .. } => {
@@ -2808,7 +3361,33 @@ impl<'ctx> CodeGen<'ctx> {
         let s5 = self.call_rt(self.rt.moo_string_concat, &[s4.into(), t3_val.into()], "s5")?;
         self.call_rt_void(self.rt.moo_print, &[s5.into()], "print_result")?;
 
+        // P2-T117: Ein FAIL darf nicht still Exit 0 ergeben. teste_alle() merkt
+        // FAIL in einem internen Global (kein sofortiger Abbruch: Programme
+        // rufen teste_alle() auch mehrfach); main liefert am Ende Exit-Code 1.
+        let merker = self.tests_fehlgeschlagen_global();
+        let hat_fail = self.builder.build_int_compare(inkwell::IntPredicate::NE,
+            final_fail, i32_type.const_zero(), "tests.hat_fail")
+            .map_err(|e| format!("{e}"))?;
+        let bisher = self.builder.build_load(i32_type, merker, "tests.bisher")
+            .map_err(|e| format!("{e}"))?.into_int_value();
+        let neu = self.builder.build_select(hat_fail, i32_type.const_int(1, false), bisher, "tests.merker")
+            .map_err(|e| format!("{e}"))?;
+        self.builder.build_store(merker, neu).map_err(|e| format!("{e}"))?;
+
         self.call_rt(self.rt.moo_none, &[], "none")
+    }
+
+    /// P2-T117: interner Merker "ein teste_alle()-Test meldete FAIL" (i32, 0/1).
+    /// Nur Programme mit teste_alle() legen ihn an; main gibt ihn als Exit-Code.
+    fn tests_fehlgeschlagen_global(&self) -> PointerValue<'ctx> {
+        if let Some(g) = self.module.get_global("__moo_tests_fehlgeschlagen") {
+            return g.as_pointer_value();
+        }
+        let i32_type = self.context.i32_type();
+        let g = self.module.add_global(i32_type, None, "__moo_tests_fehlgeschlagen");
+        g.set_initializer(&i32_type.const_zero());
+        g.set_linkage(inkwell::module::Linkage::Internal);
+        g.as_pointer_value()
     }
 
     fn compile_guard(&mut self, condition: &Expr, else_body: &[Stmt]) -> Result<(), String> {
@@ -5090,6 +5669,22 @@ impl<'ctx> CodeGen<'ctx> {
     /// Zu wenige: Fehler M-C003 (der Arm laese sonst ueber das Ende der
     /// Argumente). Zu viele, nur bei exakter Anzahl: Hinweis M-C004 (der Rest
     /// wird nicht ausgewertet), still in importierten stdlib-Modulen.
+    /// P7-T22: Hinweis M-H008, wenn ein Uebergangsalias statt des kanonischen
+    /// Namens benutzt wird (still in stdlib-Modulen, je Meldung einmal).
+    fn veralteter_name(&mut self, name: &str, alt: &str, neu: &str) {
+        if name != alt { return; }
+        let d = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-H008", format!(
+            "'{alt}' ist veraltet; kanonischer Name ist '{neu}' (gleiche Wirkung).")))
+            .gefunden(alt.to_string())
+            .vorschlag(format!("'{alt}' durch '{neu}' ersetzen."));
+        let stdlib_modul = d.datei.as_deref().is_some_and(|datei| {
+            Some(datei) != self.quelldatei.as_deref() && crate::fehlerpfade::ist_stdlib(datei)
+        });
+        if !stdlib_modul && !self.warnings.contains(&d) {
+            self.warnings.push(d);
+        }
+    }
+
     fn builtin_aritaet_pruefen(&mut self, name: &str, erwartet: usize, exakt: bool, anzahl: usize) -> Result<(), String> {
         let wort = |n: usize| if n == 1 { "Argument" } else { "Argumente" };
         let mindestens = if exakt { "" } else { "mindestens " };
@@ -5232,6 +5827,51 @@ impl<'ctx> CodeGen<'ctx> {
         let gesetzt = self.builder.build_int_compare(inkwell::IntPredicate::NE, ergebnis,
             self.context.i32_type().const_zero(), "nw_fehler_gesetzt").map_err(|e| e.to_string())?;
         Ok(Some(gesetzt))
+    }
+
+    /// P2-T113: Fehlerzustand des aktuellen Threads fuer die nativen
+    /// Argument-Adapter. Rueckgabe (Tiefe, Flag), je ungleich 0 genau dann,
+    /// wenn gesetzt. ELF/Linux: direkte thread-lokale Loads (local-exec wie
+    /// MOO_TLS in moo_runtime.h: je ein %fs:off-Laden) - billiger als der
+    /// fruehere Global-Load plus moo_try_check-Aufruf. Andere Ziele (MinGW-GCC: emutls, LLVM dort
+    /// natives TLS - nicht verknuepfbar): EIN Aufruf moo_fehler_zustand()
+    /// mit Bit 0 = Fehler anstehend, Bit 1 = Handler aktiv.
+    fn fehler_zustand_laden(&self, name: &str)
+        -> Result<(inkwell::values::IntValue<'ctx>, inkwell::values::IntValue<'ctx>), String> {
+        let i32_t = self.context.i32_type();
+        let elf_tls = self.module.get_triple().as_str().to_string_lossy().contains("linux");
+        if elf_tls {
+            let tls_global = |sym: &str| {
+                let g = self.module.get_global(sym).unwrap_or_else(|| {
+                    let g = self.module.add_global(i32_t, None, sym);
+                    g.set_thread_local_mode(Some(inkwell::ThreadLocalMode::LocalExecTLSModel));
+                    g
+                });
+                g.as_pointer_value()
+            };
+            let tiefe = self.builder.build_load(i32_t, tls_global("moo_try_depth"), "native.arg.handler_tiefe")
+                .map_err(|e| e.to_string())?.into_int_value();
+            let flag = self.builder.build_load(i32_t, tls_global("moo_error_flag"), name)
+                .map_err(|e| e.to_string())?.into_int_value();
+            return Ok((tiefe, flag));
+        }
+        let zustand_fn = match self.module.get_function("moo_fehler_zustand") {
+            Some(f) => f,
+            None => self.module.add_function("moo_fehler_zustand",
+                self.context.i32_type().fn_type(&[], false), None),
+        };
+        let wert = self.builder.build_call(zustand_fn, &[], name)
+            .map_err(|e| e.to_string())?.try_as_basic_value();
+        let zustand = match wert {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("moo_fehler_zustand liefert keinen Wert".into()),
+        };
+        let i32_t = self.context.i32_type();
+        let tiefe = self.builder.build_and(zustand, i32_t.const_int(2, false), "native.arg.handler_bit")
+            .map_err(|e| e.to_string())?;
+        let flag = self.builder.build_and(zustand, i32_t.const_int(1, false), "native.arg.fehler_bit")
+            .map_err(|e| e.to_string())?;
+        Ok((tiefe, flag))
     }
 
     fn nativer_wert_ausgang_vorhanden(&self) -> bool {
@@ -5432,16 +6072,7 @@ impl<'ctx> CodeGen<'ctx> {
         let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
         let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
         let state_error = self.context.append_basic_block(function, "native.arg.state_error");
-        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
-            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
-        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending = match pending {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_value, pending) = self.fehler_zustand_laden("native.arg.zustand")?;
         let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
@@ -5456,14 +6087,7 @@ impl<'ctx> CodeGen<'ctx> {
         let value = self.compile_expr(expr)?;
         let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
         let value_error = self.context.append_basic_block(function, "native.arg.value_error");
-        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending_after = match pending_after {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_after, pending_after) = self.fehler_zustand_laden("native.arg.zustand_after")?;
         let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
@@ -5542,16 +6166,7 @@ impl<'ctx> CodeGen<'ctx> {
         let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
         let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
         let state_error = self.context.append_basic_block(function, "native.arg.state_error");
-        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
-            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
-        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending = match pending {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_value, pending) = self.fehler_zustand_laden("native.arg.zustand")?;
         let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
@@ -5566,14 +6181,7 @@ impl<'ctx> CodeGen<'ctx> {
         let value = self.compile_expr(expr)?;
         let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
         let value_error = self.context.append_basic_block(function, "native.arg.value_error");
-        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending_after = match pending_after {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_after, pending_after) = self.fehler_zustand_laden("native.arg.zustand_after")?;
         let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
@@ -6329,16 +6937,7 @@ impl<'ctx> CodeGen<'ctx> {
         let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
         let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
         let state_error = self.context.append_basic_block(function, "native.arg.state_error");
-        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
-            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
-        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending = match pending {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_value, pending) = self.fehler_zustand_laden("native.arg.zustand")?;
         let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
@@ -6353,14 +6952,7 @@ impl<'ctx> CodeGen<'ctx> {
         let value = self.compile_expr(expr)?;
         let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
         let value_error = self.context.append_basic_block(function, "native.arg.value_error");
-        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending_after = match pending_after {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_after, pending_after) = self.fehler_zustand_laden("native.arg.zustand_after")?;
         let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
@@ -6426,16 +7018,7 @@ impl<'ctx> CodeGen<'ctx> {
         let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
         let state_ok = self.context.append_basic_block(function, "native.arg.state_ok");
         let state_error = self.context.append_basic_block(function, "native.arg.state_error");
-        let depth = self.module.get_global("moo_try_depth").unwrap_or_else(||
-            self.module.add_global(self.context.i32_type(), None, "moo_try_depth"));
-        let depth_value = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.try_depth")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending = match pending {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_value, pending) = self.fehler_zustand_laden("native.arg.zustand")?;
         let has_depth = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_value,
             self.context.i32_type().const_zero(), "native.arg.has_handler").map_err(|e| e.to_string())?;
         let has_error = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending,
@@ -6450,14 +7033,7 @@ impl<'ctx> CodeGen<'ctx> {
         let value = self.compile_expr(expr)?;
         let value_ok = self.context.append_basic_block(function, "native.arg.value_ok");
         let value_error = self.context.append_basic_block(function, "native.arg.value_error");
-        let depth_after = self.builder.build_load(self.context.i32_type(), depth.as_pointer_value(), "native.arg.depth_after")
-            .map_err(|e| e.to_string())?.into_int_value();
-        let pending_after = self.builder.build_call(self.rt.moo_try_check, &[], "native.arg.pending_after")
-            .map_err(|e| e.to_string())?.try_as_basic_value();
-        let pending_after = match pending_after {
-            inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
-            _ => return Err("moo_try_check liefert keinen Wert".into()),
-        };
+        let (depth_after, pending_after) = self.fehler_zustand_laden("native.arg.zustand_after")?;
         let has_depth_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, depth_after,
             self.context.i32_type().const_zero(), "native.arg.has_handler_after").map_err(|e| e.to_string())?;
         let has_error_after = self.builder.build_int_compare(inkwell::IntPredicate::NE, pending_after,
@@ -6570,6 +7146,142 @@ impl<'ctx> CodeGen<'ctx> {
         let platzhalter = self.context.f64_type().const_float(0.0);
         phi.add_incoming(&[(&number, success_bb), (&platzhalter, failure_bb)]);
         Ok(phi.as_basic_value().into_float_value())
+    }
+
+    /// P7-T17: MooValue-Tags der Bare-Runtime fuer exakte 64-Bit-Ganzzahlen
+    /// (moo_bare.c BARE_TAG_I64/U64; in moo_runtime.h reserviert). data traegt
+    /// die Bits direkt, kein double-Umweg.
+    const BARE_TAG_I64: u64 = 30;
+    const BARE_TAG_U64: u64 = 31;
+
+    /// P7-T17: i64/u64-Bits als exakten Bare-Wert boxen (reine IR).
+    fn bare_box_wide(&mut self, bits: inkwell::values::IntValue<'ctx>, unsigned: bool) -> Result<StructValue<'ctx>, String> {
+        let tag = self.context.i64_type().const_int(if unsigned { Self::BARE_TAG_U64 } else { Self::BARE_TAG_I64 }, false);
+        let leer = self.mv_type().get_undef();
+        let mit_tag = self.builder.build_insert_value(leer, tag, 0, "bare.wide.tag").map_err(|e| e.to_string())?;
+        let wert = self.builder.build_insert_value(mit_tag, bits, 1, "bare.wide.bits").map_err(|e| e.to_string())?;
+        Ok(wert.into_struct_value())
+    }
+
+    /// P7-T17: Trap im Bare-Profil (kein fangbarer Fehlerkanal, Vertrag P2-T73).
+    fn bare_trap(&mut self) -> Result<(), String> {
+        let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
+        let trap = intrinsic.get_declaration(&self.module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
+        self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+        self.builder.build_unreachable().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// P7-T17: Konvertiert einen dynamischen Moo-Wert im Bare/UEFI-Profil
+    /// geprueft in einen nativen Ganzzahl- oder bool-Parameter.
+    /// Zahl (Tag 0): endlich, ganzzahlig, im Zielbereich (wie hosted).
+    /// Exakte 64-Bit-Werte (Tag 30 i64 / 31 u64): Bits direkt, nur
+    /// Bereichspruefung als Ganzzahl - kein double, kein Praezisionsverlust.
+    /// bool: nur Tag 2. Alles andere und jeder Bereichsfehler: llvm.trap.
+    /// Werte dieser Tags tragen keinen Heap, daher kein release noetig.
+    fn compile_bare_native_argument(&mut self, expr: &Expr, ty: crate::codegen_native::NType) -> Result<BasicMetadataValueEnum<'ctx>, String> {
+        use crate::codegen_native::NType;
+        let function = self.current_function.ok_or("Nativer Aufruf ohne Funktion")?;
+        let i64t = self.context.i64_type();
+        let f64t = self.context.f64_type();
+        let value = self.compile_expr(expr)?;
+        let tag = self.builder.build_extract_value(value, 0, "bare.arg.tag")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let bits = self.builder.build_extract_value(value, 1, "bare.arg.bits")
+            .map_err(|e| e.to_string())?.into_int_value();
+        let trap_bb = self.context.append_basic_block(function, "bare.arg.trap");
+        if ty == NType::Bool {
+            let ok_bb = self.context.append_basic_block(function, "bare.arg.bool");
+            let ist_bool = self.builder.build_int_compare(inkwell::IntPredicate::EQ, tag,
+                i64t.const_int(2, false), "bare.arg.is_bool").map_err(|e| e.to_string())?;
+            self.builder.build_conditional_branch(ist_bool, ok_bb, trap_bb).map_err(|e| e.to_string())?;
+            self.builder.position_at_end(trap_bb);
+            self.bare_trap()?;
+            self.builder.position_at_end(ok_bb);
+            let flag = self.builder.build_int_compare(inkwell::IntPredicate::NE, bits,
+                i64t.const_zero(), "bare.arg.flag").map_err(|e| e.to_string())?;
+            return Ok(flag.into());
+        }
+        let (minimum, maximum, breite): (i128, i128, u32) = match ty {
+            NType::I8 => (i8::MIN as i128, i8::MAX as i128, 8),
+            NType::U8 => (0, u8::MAX as i128, 8),
+            NType::I16 => (i16::MIN as i128, i16::MAX as i128, 16),
+            NType::U16 => (0, u16::MAX as i128, 16),
+            NType::I32 => (i32::MIN as i128, i32::MAX as i128, 32),
+            NType::U32 => (0, u32::MAX as i128, 32),
+            NType::I64 => (i64::MIN as i128, i64::MAX as i128, 64),
+            NType::U64 => (0, u64::MAX as i128, 64),
+            _ => return Err("Nicht unterstuetzter nativer Parametertyp im Bare-Profil".into()),
+        };
+        let zahl_bb = self.context.append_basic_block(function, "bare.arg.zahl");
+        let wandel_bb = self.context.append_basic_block(function, "bare.arg.wandel");
+        let signed_bb = self.context.append_basic_block(function, "bare.arg.i64");
+        let unsigned_bb = self.context.append_basic_block(function, "bare.arg.u64");
+        let fertig_bb = self.context.append_basic_block(function, "bare.arg.fertig");
+        self.builder.build_switch(tag, trap_bb, &[
+            (i64t.const_zero(), zahl_bb),
+            (i64t.const_int(Self::BARE_TAG_I64, false), signed_bb),
+            (i64t.const_int(Self::BARE_TAG_U64, false), unsigned_bb),
+        ]).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(trap_bb);
+        self.bare_trap()?;
+        // Zahl: Bereich vor der Konversion (kein LLVM-Poison), dann Rundreise.
+        self.builder.position_at_end(zahl_bb);
+        let zahl = self.builder.build_bit_cast(bits, f64t, "bare.arg.f64")
+            .map_err(|e| e.to_string())?.into_float_value();
+        let (unten, oben, oben_inklusiv) = match ty {
+            NType::I64 => (-9223372036854775808.0_f64, 9223372036854775808.0_f64, false),
+            NType::U64 => (0.0_f64, 18446744073709551616.0_f64, false),
+            _ => (minimum as f64, maximum as f64, true),
+        };
+        let unten_ok = self.builder.build_float_compare(inkwell::FloatPredicate::OGE, zahl,
+            f64t.const_float(unten), "bare.arg.unten").map_err(|e| e.to_string())?;
+        let oben_ok = self.builder.build_float_compare(
+            if oben_inklusiv { inkwell::FloatPredicate::OLE } else { inkwell::FloatPredicate::OLT },
+            zahl, f64t.const_float(oben), "bare.arg.oben").map_err(|e| e.to_string())?;
+        let im_bereich = self.builder.build_and(unten_ok, oben_ok, "bare.arg.bereich").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(im_bereich, wandel_bb, trap_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(wandel_bb);
+        let ganz = if ty == NType::U64 {
+            self.builder.build_float_to_unsigned_int(zahl, i64t, "bare.arg.ganz")
+        } else {
+            self.builder.build_float_to_signed_int(zahl, i64t, "bare.arg.ganz")
+        }.map_err(|e| e.to_string())?;
+        let zurueck = if ty == NType::U64 {
+            self.builder.build_unsigned_int_to_float(ganz, f64t, "bare.arg.zurueck")
+        } else {
+            self.builder.build_signed_int_to_float(ganz, f64t, "bare.arg.zurueck")
+        }.map_err(|e| e.to_string())?;
+        let ganzzahlig = self.builder.build_float_compare(inkwell::FloatPredicate::OEQ, zahl, zurueck,
+            "bare.arg.ganzzahlig").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(ganzzahlig, fertig_bb, trap_bb).map_err(|e| e.to_string())?;
+        // Exaktes i64 (Tag 30): vorzeichenbehafteter Bereichsvergleich.
+        self.builder.position_at_end(signed_bb);
+        let s_min = minimum.max(i64::MIN as i128) as i64;
+        let s_max = maximum.min(i64::MAX as i128) as i64;
+        let s_unten = self.builder.build_int_compare(inkwell::IntPredicate::SGE, bits,
+            i64t.const_int(s_min as u64, true), "bare.arg.s_unten").map_err(|e| e.to_string())?;
+        let s_oben = self.builder.build_int_compare(inkwell::IntPredicate::SLE, bits,
+            i64t.const_int(s_max as u64, true), "bare.arg.s_oben").map_err(|e| e.to_string())?;
+        let s_ok = self.builder.build_and(s_unten, s_oben, "bare.arg.s_ok").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(s_ok, fertig_bb, trap_bb).map_err(|e| e.to_string())?;
+        // Exaktes u64 (Tag 31): vorzeichenloser Vergleich gegen das Maximum.
+        self.builder.position_at_end(unsigned_bb);
+        let u_max = maximum.min(u64::MAX as i128) as u64;
+        let u_ok = self.builder.build_int_compare(inkwell::IntPredicate::ULE, bits,
+            i64t.const_int(u_max, false), "bare.arg.u_ok").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(u_ok, fertig_bb, trap_bb).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(fertig_bb);
+        let phi = self.builder.build_phi(i64t, "bare.arg.wert").map_err(|e| e.to_string())?;
+        phi.add_incoming(&[(&ganz, wandel_bb), (&bits, signed_bb), (&bits, unsigned_bb)]);
+        let wert = phi.as_basic_value().into_int_value();
+        let ziel = match breite {
+            8 => self.builder.build_int_truncate(wert, self.context.i8_type(), "bare.arg.i8").map_err(|e| e.to_string())?,
+            16 => self.builder.build_int_truncate(wert, self.context.i16_type(), "bare.arg.i16").map_err(|e| e.to_string())?,
+            32 => self.builder.build_int_truncate(wert, self.context.i32_type(), "bare.arg.i32").map_err(|e| e.to_string())?,
+            _ => wert,
+        };
+        Ok(ziel.into())
     }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<StructValue<'ctx>, String> {
@@ -6865,7 +7577,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Some(signature) => signature,
                         None => return Err(match self.native_dyn_sperre.get(name) {
                             Some(grund) => format!("Native Funktion '{name}' ist aus dynamischem Moo nicht aufrufbar: {grund}"),
-                            None => format!("Nativer Zeigerfunktionsaufruf '{name}' ist noch nicht unterstützt"),
+                            None => format!("Native Funktion '{name}' ist aus dynamischem Moo nicht aufrufbar: ihre Signatur hat keine dynamische Form; aus nativem Code aufrufen oder eine @nativ-Huelle mit Ganzzahl-/bool-Parametern schreiben"),
                         }),
                     };
                     // P2-T66 Stufe 2a: hosted Systemkoerper rechnen C-artig (Zeiger,
@@ -6954,28 +7666,24 @@ impl<'ctx> CodeGen<'ctx> {
                             crate::codegen_native::aritaet_meldung(name, erwartet, args.len())));
                     }
                     if self.bare_mode {
-                        // P2-T43 (#37326): runtime-frei nur Systemkoerper mit Literal-/
-                        // bool-Literal-Argumenten (Konstantenpfad unten) und einer
-                        // Rueckgabe, die moo_bare.c boxen kann (moo_none/moo_bool/
-                        // moo_number). Dynamische Werte, 64-Bit und Float-Argumente
-                        // braeuchten Adapter mit Moo-Runtime und bleiben gesperrt.
-                        let literal = |arg: &Expr| match arg {
-                            Expr::Number(_) => true,
-                            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } =>
-                                matches!(operand.as_ref(), Expr::Number(_)),
-                            _ => false,
-                        };
-                        let args_ok = args.iter().zip(&signature.params).all(|(arg, ty)| match ty {
-                            crate::codegen_native::NType::Bool => matches!(arg, Expr::Boolean(_)),
-                            crate::codegen_native::NType::I8 | crate::codegen_native::NType::U8
+                        // P2-T43 (#37326) / P7-T17: runtime-frei nur Systemkoerper.
+                        // Ganzzahl- und bool-Argumente duerfen beliebige Ausdruecke
+                        // sein: Literale bleiben Konstanten, alles andere laeuft durch
+                        // compile_bare_native_argument (Tagpruefung, Bereich, exakte
+                        // 64-Bit-Tags 30/31 ohne double, Trap bei Fehler - das
+                        // Bare-Profil hat keinen fangbaren Fehlerkanal). i64/u64-
+                        // Rueckgaben werden exakt als Tag 30/31 geboxt. Float-, Puffer-,
+                        // Griff- und Strukturargumente bleiben gesperrt.
+                        let ohne_puffer = self.native_buffer_params.get(name)
+                            .is_none_or(|p| p.iter().all(|e| e.is_none()));
+                        let args_ok = ohne_puffer && signature.params.iter().all(|ty| matches!(ty,
+                            crate::codegen_native::NType::Bool
+                            | crate::codegen_native::NType::I8 | crate::codegen_native::NType::U8
                             | crate::codegen_native::NType::I16 | crate::codegen_native::NType::U16
-                            | crate::codegen_native::NType::I32 | crate::codegen_native::NType::U32 => literal(arg),
-                            _ => false,
-                        });
-                        let result_ok = !matches!(signature.result,
-                            Some(crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64));
-                        if !(system_call && args_ok && result_ok) {
-                            return Err("Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt (erlaubt: unsicher:-Systemkoerper mit Literal-Argumenten bis 32 Bit/bool, Rueckgabe ohne 64 Bit)".into());
+                            | crate::codegen_native::NType::I32 | crate::codegen_native::NType::U32
+                            | crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64));
+                        if !(system_call && args_ok) {
+                            return Err("Dynamische native Aufrufe sind im Bare-Profil noch nicht unterstützt (erlaubt: unsicher:-Systemkoerper mit Ganzzahl-/bool-Argumenten; keine Float-, Puffer-, Griff- oder Strukturargumente)".into());
                         }
                     }
                     // P2-T78: Nicht-Direktform (Aufruf in Argumentposition oder
@@ -7051,6 +7759,23 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                             native_args.push(self.context.i8_type().const_zero().into());
                             continue;
+                        }
+                        // P7-T17: Bare/UEFI - Literale bis 32 Bit und wahr/falsch nehmen
+                        // weiter den Konstantenpfad unten, alles andere den Bare-Adapter.
+                        if self.bare_mode {
+                            let int_literal = matches!(ty,
+                                crate::codegen_native::NType::I8 | crate::codegen_native::NType::U8
+                                | crate::codegen_native::NType::I16 | crate::codegen_native::NType::U16
+                                | crate::codegen_native::NType::I32 | crate::codegen_native::NType::U32)
+                                && (matches!(arg, Expr::Number(_))
+                                    || matches!(arg, Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand }
+                                        if matches!(operand.as_ref(), Expr::Number(_))));
+                            let bool_literal = matches!(ty, crate::codegen_native::NType::Bool)
+                                && matches!(arg, Expr::Boolean(_));
+                            if !int_literal && !bool_literal {
+                                native_args.push(self.compile_bare_native_argument(arg, *ty)?);
+                                continue;
+                            }
                         }
                         if matches!(ty, crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64) {
                             let local_catch = adapter_catch;
@@ -7192,6 +7917,11 @@ impl<'ctx> CodeGen<'ctx> {
                         // P2-T34: bool-Ergebnis wird ein Moo-Wahrheitswert, kein Zahlenumweg.
                         if let (Some(crate::codegen_native::NType::Bool), BasicValueEnum::IntValue(flag)) = (signature.result, value) {
                             self.call_rt(self.rt.moo_bool_fn, &[flag.into()], "native.bool")?
+                        } else if let (true, Some(wide @ (crate::codegen_native::NType::I64 | crate::codegen_native::NType::U64)), BasicValueEnum::IntValue(bits))
+                            = (self.bare_mode, signature.result, value)
+                        {
+                            // P7-T17: exakt, ohne double und ohne Laufzeitfunktion.
+                            self.bare_box_wide(bits, wide == crate::codegen_native::NType::U64)?
                         } else {
                             let boxed = match (signature.result, value) {
                                 (Some(crate::codegen_native::NType::I64), BasicValueEnum::IntValue(value)) =>
@@ -7298,6 +8028,25 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Builtin-Funktionen pruefen
                 match name.as_str() {
+                    // P2-T114 Phase B: Atom (atomare Zahl) und Sperre. Gehostet;
+                    // in @nativ gibt es dieselben atom_*-Namen auf ptr[T].
+                    "atom" | "atomic" | "atom_laden" | "atomic_load" | "atom_speichern" | "atomic_store"
+                    | "atom_addieren" | "atomic_add" | "atom_tauschen" | "atomic_swap"
+                    | "atom_vergleichen_und_tauschen" | "atomic_compare_exchange"
+                    | "sperre" | "lock" | "__moo_sperre_betreten" | "__moo_sperre_verlassen"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return self.sync_builtin(name, args);
+                    }
+                    "übergib" | "uebergib" | "transfer"
+                        if !self.variables.contains_key(name)
+                            && !self.globals.contains_key(name)
+                            && !self.lambda_names.contains_key(name) =>
+                    {
+                        return Err("übergib ist nur als Argument von senden erlaubt: kanal.senden(übergib puffer)".into());
+                    }
                     // P2-T50: typisierter Puffer. Eigene Funktionen gleichen Namens
                     // haben oben schon Vorrang; Variable/Global/Lambda verschatten
                     // das Builtin ebenfalls (indirekter Aufruf weiter unten).
@@ -8317,9 +9066,26 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_dir_list, &[arg.into()], "dir_list");
                     }
                     "starte" | "spawn" => {
+                        // P2-T119: beliebig viele Argumente. Genau eines: bisheriger
+                        // Weg (IR unveraendert); sonst als Liste an moo_thread_spawn_n
+                        // (nur bei Bedarf deklariert), jedes Element nach der Teilen-Regel.
+                        if args.len() == 2 {
+                            let func = self.compile_expr(&args[0])?;
+                            let arg = self.compile_expr(&args[1])?;
+                            return self.call_rt(self.rt.moo_thread_spawn, &[func.into(), arg.into()], "spawn");
+                        }
+                        if args.is_empty() || args.len() > 9 {
+                            return Err(format!(
+                                "'{name}' braucht eine Funktion und hoechstens 8 Argumente fuer sie, bekommen {} Argumente.",
+                                args.len()));
+                        }
                         let func = self.compile_expr(&args[0])?;
-                        let arg = self.compile_expr(&args[1])?;
-                        return self.call_rt(self.rt.moo_thread_spawn, &[func.into(), arg.into()], "spawn");
+                        let liste = self.compile_expr(&Expr::List(args[1..].to_vec()))?;
+                        let spawn_n = match self.module.get_function("moo_thread_spawn_n") {
+                            Some(f) => f,
+                            None => self.module.add_function("moo_thread_spawn_n", self.rt.moo_thread_spawn.get_type(), None),
+                        };
+                        return self.call_rt(spawn_n, &[func.into(), liste.into()], "spawn_n");
                     }
                     "kanal" | "channel" => {
                         if args.is_empty() {
@@ -8525,13 +9291,18 @@ impl<'ctx> CodeGen<'ctx> {
                     // --erlaube-kern) zu. Alle MooValue-returning.
                     // P011-B1: 16/32-bit Port-I/O (require_bare — im Gegensatz
                     // zu den 8-bit-Altarmen port_lese/port_in oben; Folgepunkt).
+                    // P7-T22: kanonisch port_lese*/port_schreibe* (EN port_in*/port_out*),
+                    // gleiche Namen wie die typisierten @nativ-Intrinsics; kern_in*/
+                    // kern_out* sind Uebergangsaliase mit Hinweis M-H008.
                     "kern_inw" | "port_in16" | "port_lese16" => {
                         self.require_bare(name)?;
+                        self.veralteter_name(name, "kern_inw", "port_lese16");
                         let port = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_io_inw, &[port.into()], "io_inw");
                     }
                     "kern_outw" | "port_out16" | "port_schreibe16" => {
                         self.require_bare(name)?;
+                        self.veralteter_name(name, "kern_outw", "port_schreibe16");
                         let port = self.compile_expr(&args[0])?;
                         let val = self.compile_expr(&args[1])?;
                         self.call_rt_void(self.rt.moo_io_outw, &[port.into(), val.into()], "io_outw")?;
@@ -8539,11 +9310,13 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     "kern_inl" | "port_in32" | "port_lese32" => {
                         self.require_bare(name)?;
+                        self.veralteter_name(name, "kern_inl", "port_lese32");
                         let port = self.compile_expr(&args[0])?;
                         return self.call_rt(self.rt.moo_io_inl, &[port.into()], "io_inl");
                     }
                     "kern_outl" | "port_out32" | "port_schreibe32" => {
                         self.require_bare(name)?;
+                        self.veralteter_name(name, "kern_outl", "port_schreibe32");
                         let port = self.compile_expr(&args[0])?;
                         let val = self.compile_expr(&args[1])?;
                         self.call_rt_void(self.rt.moo_io_outl, &[port.into(), val.into()], "io_outl")?;
@@ -11661,6 +12434,23 @@ impl<'ctx> CodeGen<'ctx> {
                         return self.call_rt(self.rt.moo_thread_done, &[obj.into()], "thread_done");
                     }
                     "senden" | "send" => {
+                        // P2-T114 B: k.senden(übergib p) - Besitzuebergabe eines
+                        // Puffers ohne Kopie und ohne Einfrieren. p ist danach
+                        // nichts; scheitert die Pruefung (Alleinbesitz), bleibt p.
+                        if let Some(Expr::FunctionCall { name: u, args: ua, .. }) = args.first() {
+                            if matches!(u.as_str(), "übergib" | "uebergib" | "transfer") {
+                                let Some(Expr::Identifier(var)) = ua.first().filter(|_| ua.len() == 1) else {
+                                    return Err("übergib erwartet genau einen Variablennamen: kanal.senden(übergib puffer)".into());
+                                };
+                                let val = self.load_var(var)?;
+                                let nichts = self.call_rt(self.rt.moo_none, &[], "none")?;
+                                self.store_var(var, nichts)?;
+                                let f = self.rt_mv_lazy("moo_channel_uebergeben", 2);
+                                let rest = self.call_rt(f, &[obj.into(), val.into()], "chan_uebergeben")?;
+                                self.store_var(var, rest)?;
+                                return self.call_rt(self.rt.moo_none, &[], "none");
+                            }
+                        }
                         let val = self.compile_expr(&args[0])?;
                         self.call_rt_void(self.rt.moo_channel_send,
                             &[obj.into(), val.into()], "chan_send")?;
@@ -13427,7 +14217,7 @@ impl<'ctx> CodeGen<'ctx> {
     /// - Erster Zugriff ist ein Read im RHS einer anderen Anweisung
     ///   → Some(false): liest globalen Wert vor Schreiben
     /// - Name kommt nicht vor → None
-    fn first_use_is_local_write(stmts: &[Stmt], name: &str) -> Option<bool> {
+    pub(crate) fn first_use_is_local_write(stmts: &[Stmt], name: &str) -> Option<bool> {
         for stmt in stmts {
             // Pruefe direkt-zuweisende Statements zuerst
             match stmt {
@@ -13544,7 +14334,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn collect_all_var_names(stmts: &[Stmt]) -> Vec<String> {
+    pub(crate) fn collect_all_var_names(stmts: &[Stmt]) -> Vec<String> {
         let mut names = Vec::new();
         for stmt in stmts {
             match stmt {

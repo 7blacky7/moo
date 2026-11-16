@@ -1,0 +1,34 @@
+# P2-T114 Phase C: 'geteilt' markierte Globale werden bei der
+# Initialisierung tief eingefroren und sind von Threads lesbar (auch ein
+# Kanal). Aendern wirft wie bei jedem geteilten Wert.
+geteilt konstante TABELLE auf ["a", "bb", "ccc"]
+geteilt setze START auf kanal(4)
+
+funktion lese(n):
+    setze xs auf START.empfangen()
+    setze s auf 0
+    setze r auf 0
+    solange r < 2000:
+        setze i auf 0
+        solange i < länge(TABELLE):
+            setze s auf s + länge(TABELLE[i]) * n + länge(xs)
+            setze i auf i + 1
+        setze r auf r + 1
+    gib_zurück s
+
+setze t1 auf starte(lese, 1)
+setze t2 auf starte(lese, 2)
+START.senden([1, 2])
+START.senden([1, 2])
+zeige t1.warten() + t2.warten()
+versuche:
+    TABELLE.hinzufügen("d")
+    zeige "FALSCH: hinzufügen"
+fange e:
+    zeige "hinzufügen: " + e
+versuche:
+    TABELLE[5] = "x"
+    zeige "FALSCH: Setzen ausserhalb der Grenzen"
+fange e:
+    zeige "ausserhalb: " + e
+zeige länge(TABELLE)

@@ -1,38 +1,24 @@
 # ============================================================
-# uefi_kern.moos — P7-T5: minimaler Moo-Kern hinter dem Moo-UEFI-Loader
+# uefi_kern.moos — P7-T5/T6: Moo-Kern hinter dem Moo-UEFI-Loader
 # ============================================================
-# Einsprung moo_kern_start (@nackt): cli, eigener Stack, kern_haupt(boot_info).
-# Der Loader (beispiele/uefi/moo_lader.moos) hat ExitBootServices schon
-# gerufen; hier gibt es keine Firmwaredienste mehr, nur Ports und Speicher.
-# kern_haupt prueft die Boot-Info, meldet Framebuffer, Speicherkarte und
-# ACPI-RSDP auf COM1 (und debugcon 0xE9), fuellt den GOP-Framebuffer und
-# schreibt mit dem vorhandenen Surface-Kern (moo_surface_core, freestanding)
-# "MOO-KERNEL OK" auf den Bildschirm. Danach hlt-Schleife.
+# Einsprung moo_kern_start (@nackt): cli, eigener Stack (KERN_STAPEL, in Moo),
+# kern_haupt(boot_info). Der Loader (beispiele/uefi/moo_lader.moos) hat
+# ExitBootServices schon gerufen; hier gibt es keine Firmwaredienste mehr.
+# P7-T6 (alles in Moo, C nur der vorhandene Surface-Kern moo_surface_core.c):
+#   - eigene GDT (64-Bit-Code/Daten), lgdt + Segmentneuladen
+#   - eigene Seitentabellen: Identitaet 0..N GiB (2-MiB-Seiten), Framebuffer,
+#     Kern in der oberen Haelfte (4-KiB-Seiten) -> CR3
+#   - Zeichnen NUR in den Surface-Rueckpuffer (RGBA8888, moo_surface_core),
+#     Present auf den GOP-Framebuffer mit Pixelformat-Umsetzung:
+#     0 = RGBX, 1 = BGRX, 2 = Bitmaske (beliebige Masken), 3 = BltOnly -> nur COM1
+#   - Textkonsole ueber Surface-Text (3x5-Schrift), Scrollen, Zeilen-Present
+#   - COM1 (0x3F8) + debugcon (0xE9) als zweiter Kanal fuer jede Konsolenzeile
+#   - Selbsttest der Formatumsetzung und Messung (TSC, ueber PIT kalibriert)
 # Bau:  moo compile beispiele/kernel/uefi_kern.moos --no-stdlib --target x86_64-bare \
 #           --kernel --linker-script beispiele/kernel/linker-uefi.ld -o kern.elf
-# Bruecke zu P7-T6 (Kernel-Einstieg + Framebuffer-Konsole in Moo).
 
-# Vertrag Loader -> Kern, gleiches Layout wie in beispiele/uefi/moo_lader.moos.
-struktur MooBootInfo:
-    magie: u64
-    version: u64
-    fb_basis: u64
-    fb_groesse: u64
-    fb_breite: u32
-    fb_hoehe: u32
-    fb_stride: u32
-    fb_format: u32
-    karte: u64
-    karte_groesse: u64
-    deskriptor_groesse: u64
-    deskriptor_version: u64
-    acpi_rsdp: u64
-    kern_basis: u64
-    kern_ende: u64
-    arbeit: u64
-    arbeit_groesse: u64
-    kern_virtuell: u64
-    seitentabelle: u64
+# Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
+aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -42,17 +28,116 @@ struktur EfiSpeicherDeskriptor:
     sd_seiten: u64
     sd_attribute: u64
 
-@nativ
-konstante BOOT_MAGIE: u64 auf 0x31544F4F424F4F4D
+# Zustand der Textkonsole (liegt in KONSOLE, Zugriff ueber versatz_von).
+struktur Konsole:
+    k_x: u64
+    k_y: u64
+    k_links: u64
+    k_oben: u64
+    k_rechts: u64
+    k_unten: u64
+    k_skala: u64
+    k_farbe: u64
+    k_grund: u64
+    k_aktiv: u64
+    k_schmutz_oben: u64
+    k_schmutz_unten: u64
+
+# Present-Ziel (GOP) und Rueckpuffer.
+struktur Schirm:
+    s_fb: u64
+    s_breite: u64
+    s_hoehe: u64
+    s_ziel_stride: u64
+    s_format: u64
+    s_mr: u64
+    s_mg: u64
+    s_mb: u64
+    s_puffer: u64
+    s_puffer_stride: u64
+    s_kern: u64
+    s_tsc_us: u64
 
 # "RSD PTR " als u64 (little endian)
 @nativ
 konstante RSDP_SIGNATUR: u64 auf 0x2052545020445352
 
+# ---------------- Statischer Speicher (P7-T6: @nativ statisch) ----------------
+# Stack des Kerns (vorher im Linkerskript).
+@nativ
+@ausrichten(16)
+statisch KERN_STAPEL: [u8; 65536] auf 0
+
+# Rueckpuffer RGBA8888 bis 3840x2160 (bss, der Loader nullt ihn).
+@nativ
+@ausrichten(4096)
+statisch BILD: [u8; 33177600] auf 0
+
+# MooSurfaceCore (C-Struktur, < 1 KiB) und Kleinkram.
+@nativ
+@ausrichten(16)
+statisch SURFACE_KERN: [u8; 1024] auf 0
+
+@nativ
+statisch ZEICHEN: [u8; 8] auf 0
+
+@nativ
+statisch KONSOLE: Konsole auf 0
+
+@nativ
+statisch SCHIRM: Schirm auf 0
+
+# GDT: Null, 64-Bit-Code (0x08), Daten (0x10). Zeiger = limit:u16 + basis:u64.
+@nativ
+@ausrichten(16)
+statisch GDT: [u64; 4] auf [0, 0x00AF9A000000FFFF, 0x00CF92000000FFFF, 0]
+
+@nativ
+@ausrichten(16)
+statisch GDT_ZEIGER: [u8; 16] auf 0
+
+# Seitentabellen: Identitaet bis 64 GiB (2-MiB-Seiten), 2 GiB Framebuffer-Fenster
+# fuer FB oberhalb davon, Kern bis 64 MiB (4-KiB-Seiten).
+@nativ
+@ausrichten(4096)
+statisch PML4: [u64; 512] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PDPT_IDENT: [u64; 512] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PD_IDENT: [u64; 32768] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PD_FB: [u64; 1024] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PDPT_KERN: [u64; 512] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PD_KERN: [u64; 512] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PT_KERN: [u64; 16384] auf 0
+
+# Selbsttest der Formatumsetzung: 3 Pixel RGBA (r=12 g=34 b=56 a=FF).
+@nativ
+statisch TEST_QUELLE: [u32; 4] auf [0xFF563412, 0xFF563412, 0xFF563412, 0]
+
+@nativ
+statisch TEST_ZIEL: [u32; 4] auf [0, 0, 0, 0]
+
 # Vorhandener Surface-Kern (compiler/runtime/moo_surface_core.c, RGBA8888,
 # stride in Bytes). bool-Ergebnis als u8; MooSurfaceColor {r,g,b,a} wird als
 # u32 = r | g<<8 | b<<16 | a<<24 uebergeben (SysV: beide INTEGER in einem Register).
 extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
+extern "C" funktion moo_surface_core_clear(kern: ptr[u8], farbe: u32) -> u8
 extern "C" funktion moo_surface_core_rect(kern: ptr[u8], x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8
 extern "C" funktion moo_surface_core_text_3x5(kern: ptr[u8], x: i32, y: i32, skala: i32, text: ptr[u8], laenge: u64, farbe: u32) -> u8
 
@@ -69,6 +154,21 @@ konstante T_FB: [u8; _] auf "MOO-KERNEL FB "
 konstante T_RIP: [u8; _] auf "MOO-KERNEL RIP "
 
 @nativ
+konstante T_RSP: [u8; _] auf "MOO-KERNEL RSP "
+
+@nativ
+konstante T_GDT: [u8; _] auf "MOO-KERNEL GDT CS "
+
+@nativ
+konstante T_PAGING: [u8; _] auf "MOO-KERNEL PAGING EIGEN CR3 "
+
+@nativ
+konstante T_PAGING_NEIN: [u8; _] auf "MOO-KERNEL PAGING FIRMWARE (GRENZE) "
+
+@nativ
+konstante T_MAXPHYS: [u8; _] auf "MOO-KERNEL MAXPHYS "
+
+@nativ
 konstante T_BREITE: [u8; _] auf "MOO-KERNEL BREITE "
 
 @nativ
@@ -79,6 +179,12 @@ konstante T_STRIDE: [u8; _] auf "MOO-KERNEL STRIDE "
 
 @nativ
 konstante T_FORMAT: [u8; _] auf "MOO-KERNEL FORMAT "
+
+@nativ
+konstante T_MASKEN: [u8; _] auf "MOO-KERNEL MASKE-RGB "
+
+@nativ
+konstante T_KEIN_FB: [u8; _] auf "MOO-KERNEL KEIN LINEARER FRAMEBUFFER, NUR COM1 "
 
 @nativ
 konstante T_KARTE: [u8; _] auf "MOO-KERNEL KARTE-ANZ "
@@ -96,6 +202,27 @@ konstante T_RSDP_OK: [u8; _] auf "MOO-KERNEL RSDP-SIG "
 konstante T_SURFACE: [u8; _] auf "MOO-KERNEL SURFACE "
 
 @nativ
+konstante T_FORMATE: [u8; _] auf "MOO-KERNEL PRESENT-FORMATE "
+
+@nativ
+konstante T_TSC: [u8; _] auf "MOO-KERNEL TSC-PRO-US "
+
+@nativ
+konstante T_ALT: [u8; _] auf "MOO-KERNEL MESS ALT-DIREKT-TAKTE "
+
+@nativ
+konstante T_NEU: [u8; _] auf "MOO-KERNEL MESS PRESENT-TAKTE "
+
+@nativ
+konstante T_ALT_US: [u8; _] auf "MOO-KERNEL MESS ALT-DIREKT-US "
+
+@nativ
+konstante T_NEU_US: [u8; _] auf "MOO-KERNEL MESS PRESENT-US "
+
+@nativ
+konstante T_ZEILE_US: [u8; _] auf "MOO-KERNEL MESS KONSOLENZEILE-US "
+
+@nativ
 konstante T_OK: [u8; _] auf "MOO-KERNEL OK\n"
 
 @nativ
@@ -103,6 +230,12 @@ konstante T_SCHIRM: [u8; _] auf "MOO-KERNEL OK"
 
 @nativ
 konstante T_SCHIRM2: [u8; _] auf "MOO LADER UND KERN OHNE C"
+
+@nativ
+konstante T_KON1: [u8; _] auf "MOO-KONSOLE: SURFACE-PRESENT AUF GOP\n"
+
+@nativ
+konstante T_KON2: [u8; _] auf "MOO-KONSOLE: GDT, PAGING, STACK IN MOO\n"
 
 # ---------------- Einsprung ----------------
 # Vom Loader per call (SysV) mit rdi = Boot-Info erreicht. rdi bleibt
@@ -112,7 +245,42 @@ konstante T_SCHIRM2: [u8; _] auf "MOO LADER UND KERN OHNE C"
 @einstieg
 funktion moo_kern_start() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="cli; leaq kern_stapel_ende(%rip), %rsp; xorl %ebp, %ebp; call kern_haupt; 1: hlt; jmp 1b", clobber=[])
+        assembler(ziel="x86_64", code="cli; leaq KERN_STAPEL+65536(%rip), %rsp; xorl %ebp, %ebp; call kern_haupt; 1: hlt; jmp 1b", clobber=[])
+
+# ---------------- Ports, Takt ----------------
+@nativ
+funktion aus8(port: u16, wert: u8) -> void:
+    unsicher:
+        port_schreibe(port, wert)
+
+@nativ
+funktion ein8(port: u16) -> u8:
+    unsicher:
+        gib_zurück port_lese(port)
+
+@nativ
+funktion takt() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="rdtsc; shlq $$32, %rdx; orq %rdx, %rax", ausgang="={rax}", clobber=["rdx"])
+
+# TSC-Takte je Mikrosekunde ueber PIT-Kanal 2 (50 ms, Modus 0). 0 = unbekannt.
+@nativ
+funktion tsc_kalibrieren() -> u64:
+    unsicher:
+        setze v: u8 auf ein8(0x61) & 0xFC
+        setze n: u64 auf 0
+        setze t0: u64 auf 0
+        aus8(0x61, v)
+        aus8(0x43, 0xB0)
+        aus8(0x42, 0x0B)
+        aus8(0x42, 0xE9)
+        setze t0 auf takt()
+        aus8(0x61, v | 1)
+        solange (ein8(0x61) & 0x20) == 0 und n < 100000000:
+            setze n auf n + 1
+        wenn n >= 100000000:
+            gib_zurück 0
+        gib_zurück (takt() - t0) / 50000
 
 # ---------------- COM1 + debugcon ----------------
 @nativ
@@ -127,13 +295,227 @@ funktion seriell_init() -> void:
         port_schreibe(0x3FC, 3)
 
 @nativ
-funktion zeichen(z: u8) -> void:
+funktion seriell(z: u8) -> void:
     unsicher:
         setze n: u32 auf 0
         solange (port_lese(0x3FD) & 0x20) == 0 und n < 100000:
             setze n auf n + 1
         port_schreibe(0x3F8, z)
         port_schreibe(0xE9, z)
+
+# ---------------- Present: Rueckpuffer -> GOP ----------------
+# Lage des niedrigsten gesetzten Bits und Bitbreite einer Maske.
+@nativ
+funktion maske_lage(m: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        wenn m == 0:
+            gib_zurück 0
+        solange ((m >> i) & 1) == 0:
+            setze i auf i + 1
+        gib_zurück i
+
+@nativ
+funktion maske_breite(m: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        setze b: u64 auf 0
+        solange i < 32:
+            setze b auf b + ((m >> i) & 1)
+            setze i auf i + 1
+        gib_zurück b
+
+# 8-Bit-Kanal auf Maskenbreite skalieren und an die Maskenlage schieben.
+@nativ
+funktion kanal(c: u64, lage: u64, breite: u64) -> u64:
+    unsicher:
+        wenn breite == 0:
+            gib_zurück 0
+        wenn breite >= 8:
+            gib_zurück (c << (breite - 8)) << lage
+        gib_zurück (c >> (8 - breite)) << lage
+
+# Zeilen y0..y1 (halboffen) aus quelle (RGBA8888, Stride qs Bytes) nach ziel
+# (32 Bit je Pixel, Stride zs Pixel) im GOP-Format umsetzen.
+@nativ
+funktion praesentieren(quelle: u64, qs: u64, ziel: u64, zs: u64, breite: u64, y0: u64, y1: u64, format: u64, mr: u64, mg: u64, mb: u64) -> void:
+    unsicher:
+        setze y: u64 auf y0
+        setze x: u64 auf 0
+        setze q: u64 auf 0
+        setze z: u64 auf 0
+        setze v: u64 auf 0
+        setze paare: u64 auf breite / 2
+        setze lr: u64 auf maske_lage(mr)
+        setze lg: u64 auf maske_lage(mg)
+        setze lb: u64 auf maske_lage(mb)
+        setze br: u64 auf maske_breite(mr)
+        setze bg: u64 auf maske_breite(mg)
+        setze bb: u64 auf maske_breite(mb)
+        solange y < y1:
+            setze q auf quelle + y * qs
+            setze z auf ziel + y * zs * 4
+            setze x auf 0
+            wenn format == 0:
+                # RGBX = Bytefolge R,G,B,X: wie RGBA, zwei Pixel je 64-Bit-Zugriff.
+                solange x < paare:
+                    speicher_schreiben(z + x * 8, speicher_lesen(q + x * 8, 8), 8)
+                    setze x auf x + 1
+                wenn (breite & 1) != 0:
+                    speicher_schreiben(z + (breite - 1) * 4, speicher_lesen(q + (breite - 1) * 4, 4), 4)
+            sonst wenn format == 1:
+                # BGRX: R und B tauschen, zwei Pixel je 64-Bit-Zugriff.
+                solange x < paare:
+                    setze v auf speicher_lesen(q + x * 8, 8)
+                    speicher_schreiben(z + x * 8, ((v & 0x000000FF000000FF) << 16) | (v & 0x0000FF000000FF00) | ((v >> 16) & 0x000000FF000000FF), 8)
+                    setze x auf x + 1
+                wenn (breite & 1) != 0:
+                    setze v auf u64(speicher_lesen(q + (breite - 1) * 4, 4))
+                    speicher_schreiben(z + (breite - 1) * 4, u32(((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF)), 4)
+            sonst:
+                # Bitmaske: jeden Kanal auf Breite/Lage seiner Maske umsetzen.
+                solange x < breite:
+                    setze v auf u64(speicher_lesen(q + x * 4, 4))
+                    speicher_schreiben(z + x * 4, u32(kanal(v & 0xFF, lr, br) | kanal((v >> 8) & 0xFF, lg, bg) | kanal((v >> 16) & 0xFF, lb, bb)), 4)
+                    setze x auf x + 1
+            setze y auf y + 1
+
+# Zeilen y0..y1 des Rueckpuffers auf den Schirm bringen.
+@nativ
+funktion schirm_zeilen(y0: u64, y1: u64) -> void:
+    unsicher:
+        setze s: u64 auf adresse_von(SCHIRM)
+        wenn speicher_lesen(s + versatz_von(Schirm, s_fb), 8) == 0:
+            gib_zurück
+        praesentieren(speicher_lesen(s + versatz_von(Schirm, s_puffer), 8), speicher_lesen(s + versatz_von(Schirm, s_puffer_stride), 8), speicher_lesen(s + versatz_von(Schirm, s_fb), 8), speicher_lesen(s + versatz_von(Schirm, s_ziel_stride), 8), speicher_lesen(s + versatz_von(Schirm, s_breite), 8), y0, y1, speicher_lesen(s + versatz_von(Schirm, s_format), 8), speicher_lesen(s + versatz_von(Schirm, s_mr), 8), speicher_lesen(s + versatz_von(Schirm, s_mg), 8), speicher_lesen(s + versatz_von(Schirm, s_mb), 8))
+
+# Selbsttest: Formate 0, 1 und drei Bitmasken (8-8-8, 10-10-10, 5-6-5).
+@nativ
+funktion formate_pruefen() -> u64:
+    unsicher:
+        setze q: u64 auf adresse_von(TEST_QUELLE)
+        setze z: u64 auf adresse_von(TEST_ZIEL)
+        setze ok: u64 auf 0
+        praesentieren(q, 16, z, 4, 3, 0, 1, 0, 0, 0, 0)
+        wenn (speicher_lesen(z, 4) & 0x00FFFFFF) == 0x563412 und (speicher_lesen(z + 8, 4) & 0x00FFFFFF) == 0x563412:
+            setze ok auf ok + 1
+        praesentieren(q, 16, z, 4, 3, 0, 1, 1, 0, 0, 0)
+        wenn (speicher_lesen(z, 4) & 0x00FFFFFF) == 0x123456 und (speicher_lesen(z + 8, 4) & 0x00FFFFFF) == 0x123456:
+            setze ok auf ok + 1
+        praesentieren(q, 16, z, 4, 3, 0, 1, 2, 0xFF0000, 0xFF00, 0xFF)
+        wenn speicher_lesen(z, 4) == 0x123456 und speicher_lesen(z + 8, 4) == 0x123456:
+            setze ok auf ok + 1
+        praesentieren(q, 16, z, 4, 3, 0, 1, 2, 0x3FF00000, 0xFFC00, 0x3FF)
+        wenn speicher_lesen(z, 4) == 0x04834158 und speicher_lesen(z + 8, 4) == 0x04834158:
+            setze ok auf ok + 1
+        praesentieren(q, 16, z, 4, 3, 0, 1, 2, 0xF800, 0x7E0, 0x1F)
+        wenn speicher_lesen(z, 4) == 0x11AA und speicher_lesen(z + 8, 4) == 0x11AA:
+            setze ok auf ok + 1
+        gib_zurück ok
+
+# ---------------- Textkonsole ueber Surface-Text ----------------
+@nativ
+funktion kon(feld: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(KONSOLE) + feld, 8)
+
+@nativ
+funktion kon_setze(feld: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(KONSOLE) + feld, wert, 8)
+
+@nativ
+funktion kon_schmutz(y0: u64, y1: u64) -> void:
+    unsicher:
+        wenn y0 < kon(versatz_von(Konsole, k_schmutz_oben)):
+            kon_setze(versatz_von(Konsole, k_schmutz_oben), y0)
+        wenn y1 > kon(versatz_von(Konsole, k_schmutz_unten)):
+            kon_setze(versatz_von(Konsole, k_schmutz_unten), y1)
+
+# Geaenderte Zeilen praesentieren.
+@nativ
+funktion kon_zeigen() -> void:
+    unsicher:
+        setze o: u64 auf kon(versatz_von(Konsole, k_schmutz_oben))
+        setze u: u64 auf kon(versatz_von(Konsole, k_schmutz_unten))
+        wenn u > o:
+            schirm_zeilen(o, u)
+        kon_setze(versatz_von(Konsole, k_schmutz_oben), 0xFFFFFFFF)
+        kon_setze(versatz_von(Konsole, k_schmutz_unten), 0)
+
+# Konsolenbereich um eine Textzeile nach oben schieben (im Rueckpuffer).
+@nativ
+funktion kon_rollen() -> void:
+    unsicher:
+        setze s: u64 auf adresse_von(SCHIRM)
+        setze puffer: u64 auf speicher_lesen(s + versatz_von(Schirm, s_puffer), 8)
+        setze ps: u64 auf speicher_lesen(s + versatz_von(Schirm, s_puffer_stride), 8)
+        setze links: u64 auf kon(versatz_von(Konsole, k_links))
+        setze rechts: u64 auf kon(versatz_von(Konsole, k_rechts))
+        setze oben: u64 auf kon(versatz_von(Konsole, k_oben))
+        setze unten: u64 auf kon(versatz_von(Konsole, k_unten))
+        setze h: u64 auf 6 * kon(versatz_von(Konsole, k_skala))
+        setze y: u64 auf oben
+        setze x: u64 auf 0
+        setze w: u64 auf (rechts - links) / 2
+        solange y + h < unten:
+            setze x auf 0
+            solange x < w:
+                speicher_schreiben(puffer + y * ps + links * 4 + x * 8, speicher_lesen(puffer + (y + h) * ps + links * 4 + x * 8, 8), 8)
+                setze x auf x + 1
+            setze y auf y + 1
+        moo_surface_core_rect(zeiger(speicher_lesen(s + versatz_von(Schirm, s_kern), 8)), i32(links), i32(y), i32(rechts - links), i32(unten - y), u32(kon(versatz_von(Konsole, k_grund))))
+        kon_schmutz(oben, unten)
+
+@nativ
+funktion kon_neue_zeile() -> void:
+    unsicher:
+        setze h: u64 auf 6 * kon(versatz_von(Konsole, k_skala))
+        kon_setze(versatz_von(Konsole, k_x), kon(versatz_von(Konsole, k_links)))
+        kon_setze(versatz_von(Konsole, k_y), kon(versatz_von(Konsole, k_y)) + h)
+        wenn kon(versatz_von(Konsole, k_y)) + h > kon(versatz_von(Konsole, k_unten)):
+            kon_rollen()
+            kon_setze(versatz_von(Konsole, k_y), kon(versatz_von(Konsole, k_y)) - h)
+
+# Ein Zeichen auf beide Kanaele: COM1/0xE9 immer, Schirm wenn aktiv.
+@nativ
+funktion zeichen(z: u8) -> void:
+    unsicher:
+        setze skala: u64 auf 0
+        setze x: u64 auf 0
+        setze y: u64 auf 0
+        seriell(z)
+        wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
+            gib_zurück
+        setze skala auf kon(versatz_von(Konsole, k_skala))
+        wenn z == 10:
+            kon_neue_zeile()
+            kon_zeigen()
+            gib_zurück
+        setze x auf kon(versatz_von(Konsole, k_x))
+        setze y auf kon(versatz_von(Konsole, k_y))
+        speicher_schreiben(adresse_von(ZEICHEN), z, 1)
+        moo_surface_core_text_3x5(zeiger(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8)), i32(x), i32(y), i32(skala), zeiger(adresse_von(ZEICHEN)), 1, u32(kon(versatz_von(Konsole, k_farbe))))
+        kon_schmutz(y, y + 5 * skala)
+        kon_setze(versatz_von(Konsole, k_x), x + 4 * skala)
+        wenn x + 7 * skala > kon(versatz_von(Konsole, k_rechts)):
+            kon_neue_zeile()
+
+@nativ
+funktion konsole_starten(links: u64, oben: u64, rechts: u64, unten: u64, skala: u64, farbe: u64, grund: u64) -> void:
+    unsicher:
+        kon_setze(versatz_von(Konsole, k_links), links)
+        kon_setze(versatz_von(Konsole, k_oben), oben)
+        kon_setze(versatz_von(Konsole, k_rechts), rechts)
+        kon_setze(versatz_von(Konsole, k_unten), unten)
+        kon_setze(versatz_von(Konsole, k_skala), skala)
+        kon_setze(versatz_von(Konsole, k_farbe), farbe)
+        kon_setze(versatz_von(Konsole, k_grund), grund)
+        kon_setze(versatz_von(Konsole, k_x), links)
+        kon_setze(versatz_von(Konsole, k_y), oben)
+        kon_setze(versatz_von(Konsole, k_schmutz_oben), 0xFFFFFFFF)
+        kon_setze(versatz_von(Konsole, k_schmutz_unten), 0)
+        kon_setze(versatz_von(Konsole, k_aktiv), 1)
 
 @nativ
 funktion text(adr: u64) -> void:
@@ -168,8 +550,90 @@ funktion anhalten() -> void:
         solange wahr:
             assembler(ziel="x86_64", code="cli; hlt", clobber=[])
 
-# ---------------- Framebuffer ----------------
-# GOP-Pixel als u32: Format 1 (BGRX) = b | g<<8 | r<<16, Format 0 (RGBX) = r | g<<8 | b<<16.
+# ---------------- GDT ----------------
+@nativ
+funktion gdt_laden(zeiger_adr: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="lgdt ($0); pushq $$0x08; leaq 1f(%rip), %rax; pushq %rax; lretq; 1: movw $$0x10, %ax; movw %ax, %ds; movw %ax, %es; movw %ax, %ss; movw %ax, %fs; movw %ax, %gs", eingaenge={"r": zeiger_adr}, clobber=["rax", "memory"])
+
+@nativ
+funktion gdt_einrichten() -> u64:
+    unsicher:
+        setze z: u64 auf adresse_von(GDT_ZEIGER)
+        speicher_schreiben(z, u16(4 * 8 - 1), 2)
+        speicher_schreiben(z + 2, adresse_von(GDT), 8)
+        gdt_laden(z)
+        gib_zurück assembler(ziel="x86_64", code="movq %cs, $0", ausgang="=r", clobber=[])
+
+# ---------------- Paging ----------------
+@nativ
+funktion cr3_laden(wert: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq $0, %cr3", eingaenge={"r": wert}, clobber=["memory"])
+
+# Virtuelle Kernadresse -> physisch (der Kern liegt zusammenhaengend).
+@nativ
+funktion physisch(bi: u64, v: u64) -> u64:
+    unsicher:
+        gib_zurück v - speicher_lesen(bi + versatz_von(MooBootInfo, kern_virtuell), 8) + speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8)
+
+# Eigene 4-Level-Tabellen: Identitaet 0..max (2 MiB), FB-Fenster, Kern oben.
+# Ergebnis: neues CR3 oder 0 (dann bleiben die Tabellen des Loaders aktiv).
+@nativ
+funktion paging_einrichten(bi: u64, max_phys: u64, fb: u64, fb_groesse: u64) -> u64:
+    unsicher:
+        setze gib: u64 auf (max_phys + 0x3FFFFFFF) / 0x40000000
+        setze kb: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8)
+        setze seiten: u64 auf (speicher_lesen(bi + versatz_von(MooBootInfo, kern_ende), 8) - kb) / 4096
+        setze pml4: u64 auf adresse_von(PML4)
+        setze pdpt: u64 auf adresse_von(PDPT_IDENT)
+        setze pd: u64 auf adresse_von(PD_IDENT)
+        setze pdfb: u64 auf adresse_von(PD_FB)
+        setze pdptk: u64 auf adresse_von(PDPT_KERN)
+        setze pdk: u64 auf adresse_von(PD_KERN)
+        setze ptk: u64 auf adresse_von(PT_KERN)
+        setze i: u64 auf 0
+        setze fbg: u64 auf fb / 0x40000000
+        setze fbe: u64 auf (fb + fb_groesse + 0x3FFFFFFF) / 0x40000000
+        wenn gib < 4:
+            setze gib auf 4
+        wenn gib > 64 oder seiten > 16384 oder seiten == 0:
+            gib_zurück 0
+        # Framebuffer oberhalb des Identitaetsbereichs: hoechstens 2 GiB-Fenster.
+        wenn fb != 0 und fbe > gib und (fbe - fbg > 2 oder fbe > 512):
+            gib_zurück 0
+        solange i < gib * 512:
+            speicher_schreiben(pd + i * 8, (i * 0x200000) | 0x83, 8)
+            setze i auf i + 1
+        setze i auf 0
+        solange i < gib:
+            speicher_schreiben(pdpt + i * 8, physisch(bi, pd + i * 4096) | 3, 8)
+            setze i auf i + 1
+        wenn fb != 0 und fbe > gib:
+            setze i auf 0
+            solange i < (fbe - fbg) * 512:
+                speicher_schreiben(pdfb + i * 8, ((fbg * 0x40000000) + i * 0x200000) | 0x83, 8)
+                setze i auf i + 1
+            setze i auf 0
+            solange i < fbe - fbg:
+                speicher_schreiben(pdpt + (fbg + i) * 8, physisch(bi, pdfb + i * 4096) | 3, 8)
+                setze i auf i + 1
+        speicher_schreiben(pml4, physisch(bi, pdpt) | 3, 8)
+        # Kern: PML4[511] -> PDPT[510] -> PD[k] -> PT_k (wie der Loader, aber eigene Tabellen).
+        setze i auf 0
+        solange i < seiten:
+            speicher_schreiben(ptk + i * 8, (kb + i * 4096) | 3, 8)
+            setze i auf i + 1
+        setze i auf 0
+        solange i < (seiten + 511) / 512:
+            speicher_schreiben(pdk + i * 8, physisch(bi, ptk + i * 4096) | 3, 8)
+            setze i auf i + 1
+        speicher_schreiben(pdptk + 510 * 8, physisch(bi, pdk) | 3, 8)
+        speicher_schreiben(pml4 + 511 * 8, physisch(bi, pdptk) | 3, 8)
+        cr3_laden(physisch(bi, pml4))
+        gib_zurück physisch(bi, pml4)
+
+# ---------------- Alter Weg (nur Messung): direkt in den Framebuffer ----------------
 @nativ
 funktion pixel(format: u64, r: u32, g: u32, b: u32) -> u32:
     unsicher:
@@ -191,6 +655,12 @@ funktion fuellen(fb: u64, breite: u64, hoehe: u64, stride: u64, wert: u32) -> vo
                 setze x auf x + 1
             setze y auf y + 1
 
+# RGBA im Rueckpuffer.
+@nativ
+funktion rgba(r: u64, g: u64, b: u64) -> u32:
+    unsicher:
+        gib_zurück u32(r | (g << 8) | (b << 16) | 0xFF000000)
+
 # ---------------- Kern ----------------
 @nativ
 @einstieg
@@ -205,20 +675,32 @@ funktion kern_haupt(bi: u64) -> void:
         setze schritt: u64 auf 0
         setze anzahl: u64 auf 0
         setze frei: u64 auf 0
+        setze maxphys: u64 auf 0
+        setze typ: u64 auf 0
         setze i: u64 auf 0
         setze d: u64 auf 0
         setze rsdp: u64 auf 0
         setze kern: u64 auf 0
+        setze s: u64 auf adresse_von(SCHIRM)
         setze ok: u8 auf 0
         setze rip: u64 auf 0
+        setze cr3: u64 auf 0
+        setze tsc: u64 auf 0
+        setze t0: u64 auf 0
+        setze t_alt: u64 auf 0
+        setze t_neu: u64 auf 0
+        setze t_zeile: u64 auf 0
+        setze schirm_ok: bool auf falsch
         seriell_init()
         text(adresse_von(T_START))
-        # Laeuft der Kern wirklich in der oberen Haelfte? RIP direkt lesen.
+        # Laeuft der Kern wirklich in der oberen Haelfte? RIP und RSP direkt lesen.
         setze rip auf assembler(ziel="x86_64", code="leaq 0(%rip), $0", ausgang="=r", clobber=[])
         meldung(adresse_von(T_RIP), rip)
+        meldung(adresse_von(T_RSP), assembler(ziel="x86_64", code="movq %rsp, $0", ausgang="=r", clobber=[]))
         wenn speicher_lesen(bi + versatz_von(MooBootInfo, magie), 8) != BOOT_MAGIE:
             meldung(adresse_von(T_MAGIE), speicher_lesen(bi, 8))
             anhalten()
+        meldung(adresse_von(T_GDT), gdt_einrichten())
         setze fb auf speicher_lesen(bi + versatz_von(MooBootInfo, fb_basis), 8)
         setze breite auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_breite), 4))
         setze hoehe auf u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_hoehe), 4))
@@ -229,7 +711,9 @@ funktion kern_haupt(bi: u64) -> void:
         meldung(adresse_von(T_HOEHE), hoehe)
         meldung(adresse_von(T_STRIDE), stride)
         meldung(adresse_von(T_FORMAT), format)
-        # Speicherkarte: Deskriptoren zaehlen, EfiConventionalMemory (7) summieren.
+        wenn format == 2:
+            meldung(adresse_von(T_MASKEN), (u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_maske_rot), 4)) << 32) | u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_maske_blau), 4)))
+        # Speicherkarte: Deskriptoren zaehlen, EfiConventionalMemory (7) summieren, hoechste Adresse.
         setze karte auf speicher_lesen(bi + versatz_von(MooBootInfo, karte), 8)
         setze schritt auf speicher_lesen(bi + versatz_von(MooBootInfo, deskriptor_groesse), 8)
         wenn schritt >= groesse_von(EfiSpeicherDeskriptor):
@@ -238,22 +722,69 @@ funktion kern_haupt(bi: u64) -> void:
             setze d auf karte + i * schritt
             wenn speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_typ), 4) == 7:
                 setze frei auf frei + speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8)
+            # Hoechste RAM-Adresse: Typen 1..10 (Loader/Boot/Runtime/frei/ACPI), ohne MMIO (11/12).
+            setze typ auf u64(speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_typ), 4))
+            wenn typ >= 1 und typ <= 10 und speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_physisch), 8) + speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8) * 4096 > maxphys:
+                setze maxphys auf speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_physisch), 8) + speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8) * 4096
             setze i auf i + 1
         meldung(adresse_von(T_KARTE), anzahl)
         meldung(adresse_von(T_FREI), frei / 256)
+        meldung(adresse_von(T_MAXPHYS), maxphys)
+        # Eigene Seitentabellen (Firmware-Tabellen werden danach nicht mehr benutzt).
+        setze cr3 auf paging_einrichten(bi, maxphys, fb, speicher_lesen(bi + versatz_von(MooBootInfo, fb_groesse), 8))
+        wenn cr3 != 0:
+            meldung(adresse_von(T_PAGING), cr3)
+        sonst:
+            meldung(adresse_von(T_PAGING_NEIN), maxphys)
         setze rsdp auf speicher_lesen(bi + versatz_von(MooBootInfo, acpi_rsdp), 8)
         meldung(adresse_von(T_RSDP), rsdp)
         wenn rsdp != 0:
             meldung(adresse_von(T_RSDP_OK), u64(speicher_lesen(rsdp, 8) == RSDP_SIGNATUR))
-        # Bildschirm: Hintergrund direkt, Balken und Text ueber den Surface-Kern.
-        wenn fb != 0 und breite >= 160 und hoehe >= 200 und (format == 0 oder format == 1):
-            fuellen(fb, breite, hoehe, stride, pixel(format, 32, 96, 128))
-            setze kern auf speicher_lesen(bi + versatz_von(MooBootInfo, arbeit), 8)
-            setze ok auf moo_surface_core_init(zeiger(kern), zeiger(fb), stride * 4 * hoehe, i32(breite), i32(hoehe), stride * 4)
+        meldung(adresse_von(T_FORMATE), formate_pruefen())
+        setze tsc auf tsc_kalibrieren()
+        meldung(adresse_von(T_TSC), tsc)
+        # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
+        setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite
+        wenn nicht schirm_ok:
+            meldung(adresse_von(T_KEIN_FB), format)
+        wenn schirm_ok:
+            # Messung "vorher": alter Weg (P7-T5) fuellte den FB direkt.
+            wenn format <= 1:
+                setze t0 auf takt()
+                fuellen(fb, breite, hoehe, stride, pixel(format, 32, 96, 128))
+                setze t_alt auf takt() - t0
+            setze kern auf adresse_von(SURFACE_KERN)
+            speicher_schreiben(s + versatz_von(Schirm, s_fb), fb, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_breite), breite, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_hoehe), hoehe, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_ziel_stride), stride, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_format), format, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_mr), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_maske_rot), 4)), 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_mg), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_maske_gruen), 4)), 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_mb), u64(speicher_lesen(bi + versatz_von(MooBootInfo, fb_maske_blau), 4)), 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_puffer), adresse_von(BILD), 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_puffer_stride), breite * 4, 8)
+            speicher_schreiben(s + versatz_von(Schirm, s_kern), kern, 8)
+            setze ok auf moo_surface_core_init(zeiger(kern), zeiger(adresse_von(BILD)), breite * 4 * hoehe, i32(breite), i32(hoehe), breite * 4)
             meldung(adresse_von(T_SURFACE), u64(ok))
             wenn ok != 0:
-                moo_surface_core_rect(zeiger(kern), 40, 40, i32(breite) - 80, 140, pixel(format, 255, 196, 64) | 0xFF000000)
-                moo_surface_core_text_3x5(zeiger(kern), 64, 60, 12, zeiger(adresse_von(T_SCHIRM)), 13, pixel(format, 20, 20, 20) | 0xFF000000)
-                moo_surface_core_text_3x5(zeiger(kern), 64, 220, 6, zeiger(adresse_von(T_SCHIRM2)), 25, pixel(format, 240, 240, 240) | 0xFF000000)
+                moo_surface_core_clear(zeiger(kern), rgba(32, 96, 128))
+                moo_surface_core_rect(zeiger(kern), 40, 40, i32(breite) - 80, 140, rgba(255, 196, 64))
+                moo_surface_core_text_3x5(zeiger(kern), 64, 60, 12, zeiger(adresse_von(T_SCHIRM)), 13, rgba(20, 20, 20))
+                moo_surface_core_text_3x5(zeiger(kern), 64, 220, 6, zeiger(adresse_von(T_SCHIRM2)), 25, rgba(240, 240, 240))
+                setze t0 auf takt()
+                schirm_zeilen(0, hoehe)
+                setze t_neu auf takt() - t0
+                konsole_starten(40, 300, breite - 40, hoehe - 20, 2, u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                setze t0 auf takt()
+                text(adresse_von(T_KON1))
+                setze t_zeile auf takt() - t0
+                text(adresse_von(T_KON2))
+                meldung(adresse_von(T_ALT), t_alt)
+                meldung(adresse_von(T_NEU), t_neu)
+                wenn tsc != 0:
+                    meldung(adresse_von(T_ALT_US), t_alt / tsc)
+                    meldung(adresse_von(T_NEU_US), t_neu / tsc)
+                    meldung(adresse_von(T_ZEILE_US), t_zeile / tsc)
         text(adresse_von(T_OK))
         anhalten()

@@ -229,7 +229,11 @@ void kern_frei_c(void* p) {
 static bool kern_number_u64(MooValue value, uint64_t* out) {
     double number;
     uint64_t converted;
-    if (!out || value.tag != MOO_NUMBER) return false;
+    if (!out) return false;
+    /* P7-T19: exakte 64-Bit-Werte (Tag 30/31, z. B. u64 aus @nativ) direkt,
+     * ohne 2^53-Grenze; negative i64 -> false. */
+    if (moo_wert_breit(value.tag)) return moo_wert_u64(value.tag, value.data, out);
+    if (value.tag != MOO_NUMBER) return false;
     number = kern_as_double(value);
     /* NaN faellt ebenfalls durch !(number >= 0.0); +Inf und zu grosse Werte
      * werden vor der float->int-Konversion abgefangen. */

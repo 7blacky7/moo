@@ -1,0 +1,20 @@
+# P7-T6: @nativ statisch = beschreibbarer statischer Speicher.
+# Erwartet im Objekt: PUFFER in .bss (Null, 4096 ausgerichtet), TABELLE in .data
+# (beschreibbar, Initialisierer erhalten), KONST weiter in .rodata.
+@nativ
+@ausrichten(4096)
+statisch PUFFER: [u8; 8192] auf 0
+
+@nativ
+statisch TABELLE: [u64; 2] auf [7, 9]
+
+@nativ
+konstante KONST: [u64; 2] auf [1, 2]
+
+@nativ
+@benutzt
+funktion schreiben(wert: u64) -> u64:
+    unsicher:
+        speicher_schreiben(adresse_von(TABELLE) + 8, wert, 8)
+        speicher_schreiben(adresse_von(PUFFER) + 4095, 1, 1)
+        gib_zurück speicher_lesen(adresse_von(TABELLE), 8) + speicher_lesen(adresse_von(KONST), 8)

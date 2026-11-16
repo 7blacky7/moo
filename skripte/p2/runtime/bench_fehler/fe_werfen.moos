@@ -1,0 +1,10 @@
+# P2-T113 Messung: werfen/fangen (Flag setzen/loeschen, try_enter/leave)
+setze n auf 0
+setze i auf 0
+solange i < 1000000:
+    versuche:
+        wirf i
+    fange e:
+        setze n auf n + 1
+    setze i auf i + 1
+zeige n

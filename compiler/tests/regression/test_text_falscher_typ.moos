@@ -1,0 +1,32 @@
+# P2-T118: Textmethoden auf Fremdtyp gaben still einen Leerwert zurueck.
+# Jetzt fangbarer Fehler (wie trim/upper/lower seit P2-T117).
+setze liste auf [1, 2, 3]
+versuche:
+    zeige liste.teilen(",")
+fange e:
+    zeige e
+versuche:
+    zeige liste.teilstring(0, 1)
+fange e:
+    zeige e
+versuche:
+    zeige liste[0..1]
+fange e:
+    zeige e
+versuche:
+    zeige liste.ersetzen("a", "b")
+fange e:
+    zeige e
+versuche:
+    zeige "a,b".teilen(5)
+fange e:
+    zeige e
+versuche:
+    zeige liste.text_enthält("a")
+fange e:
+    zeige e
+# Gueltige Faelle unveraendert
+zeige "a,b".teilen(",")
+zeige "hallo"[1..3]
+zeige "abc".enthält(5)
+zeige "ab" * 2

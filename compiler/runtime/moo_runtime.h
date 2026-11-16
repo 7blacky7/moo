@@ -47,6 +47,10 @@ typedef enum {
     MOO_BUFFER = 27,
     MOO_STRUCT = 28,
     MOO_HANDLE = 29, /* P2-T23/T53: Griff auf fremden Zeiger (moo_handle.h) */
+    /* 30/31 reserviert (P7-T17): exakte i64/u64-Werte der Bare/UEFI-Runtime
+     * (moo_bare.c BARE_TAG_I64/U64). Nicht anderweitig vergeben. */
+    MOO_ATOM = 32,   /* P2-T114 B: atomare Zahl (moo_thread.c) */
+    MOO_SPERRE = 33, /* P2-T114 B: Wert hinter einer Sperre (moo_thread.c) */
 } MooTag;
 
 // === Forward Declarations ===
@@ -115,8 +119,51 @@ static inline void moo_val_set_bool(MooValue* v, bool b) { v->data = (uint64_t)b
 // moo_retain() erhoeht, moo_release() verringert und gibt bei 0 frei.
 void moo_retain(MooValue v);
 void moo_release(MooValue v);
+// P2-T112: Geteilt-Bit im Refcount (moo_rc.h). moo_teilen markiert tief;
+// P2-T114 Phase C: der Codegen ruft es fuer `geteilt` markierte Globale bei
+// der Initialisierung (tief eingefroren). Andere Globale gehoeren dem
+// Hauptthread und werden nicht geteilt.
+void moo_teilen(MooValue v);
+/* P2-T114: true, wenn v ein geteilter (und damit eingefrorener) Heap-Wert ist. */
+bool moo_ist_geteilt(MooValue v);
+/* P2-T114 B: Wert mit Referenzzaehler (Heap-Typ). */
+bool moo_ist_heap_wert(MooValue v);
+void moo_mt_aktivieren(void);
+/* P2-T114 Phase C: Laufzeitpruefung vor dem Zugriff auf eine Globale in Code,
+   dessen Thread der Compiler nicht beweisen kann (nur Programme mit starte).
+   Beendet das Programm mit Meldung, wenn ein Moo-Thread zugreift. */
+void moo_global_pruefen(const char* name);
+extern uint8_t moo_rc_mt_aktiv;
 void moo_thread_free(void* ptr);
 void moo_channel_free(void* ptr);
+/* P2-T114 Phase B: Atom (atomare Zahl) und Sperre (Wert hinter Mutex).
+   Alle Argumente geliehen, Ergebnisse owning. */
+MooValue moo_atom_neu(MooValue start);
+MooValue moo_atom_laden(MooValue atom);
+MooValue moo_atom_speichern(MooValue atom, MooValue wert);
+MooValue moo_atom_addieren(MooValue atom, MooValue wert);
+MooValue moo_atom_tauschen(MooValue atom, MooValue wert);
+MooValue moo_atom_vergleichen_und_tauschen(MooValue atom, MooValue erwartet, MooValue neu);
+/* sperre(wert): uebernimmt wert (owning); wert darf sonst nirgends referenziert sein. */
+MooValue moo_sperre_neu(MooValue wert);
+/* mit s als k: sperrt und liefert den Inhalt (+1). */
+MooValue moo_sperre_betreten(MooValue sperre);
+/* Ende des mit-Blocks: gibt frei. pruefen (Wahrheitswert): melden, wenn der
+   Inhalt ausserhalb der Sperre noch referenziert ist (entkommen). */
+MooValue moo_sperre_verlassen(MooValue sperre, MooValue pruefen);
+void moo_atom_free(void* ptr);
+void moo_sperre_free(void* ptr);
+/* Von moo_sperre_neu gesetzt; moo_memory.c gibt Sperren darueber frei. */
+extern void (*moo_sperre_freigabe_haken)(void*);
+/* k.senden(übergib p): Besitzuebergabe eines Puffers ohne Kopie und ohne
+   Einfrieren. wert owning. Liefert nichts bei Erfolg; sonst Fehler gesetzt und
+   wert zurueck (der Codegen legt ihn wieder in die Variable). */
+MooValue moo_channel_uebergeben(MooValue channel, MooValue wert);
+/* P2-T114 B: 1, wenn der aufrufende Thread ein Moo-Worker ist (nicht Besitzer
+   der Globalen). Fuer Ziele ohne TLS-Zugriff im IR. */
+uint8_t moo_global_fremd(void);
+/* Abbruch bei Globalzugriff aus einem Moo-Thread (kalt, kehrt nicht zurueck). */
+void moo_global_fremdzugriff(const char* name);
 void moo_db_free(void* ptr);
 void moo_db_stmt_free(void* ptr);
 void moo_window_free(void* ptr);
@@ -689,6 +736,13 @@ struct MooThread {
 #endif
     MooValue result;
     bool done;
+    /* P2-T114 B: Kennung des ersten Wartenden. Nur er bekommt das Ergebnis;
+       jedes weitere warten aus einem anderen Thread wirft. P2-T120: zeigt auf
+       das Postfach des Wartenden (+1), ueber das ein anderer Thread die letzte
+       Freigabe des Ergebnisses an ihn uebergibt (moo_thread.c). */
+    void* wartender;
+    /* P2-T120: Postfach des Worker-Threads (+1); der Joiner uebernimmt es. */
+    void* worker_post;
 #ifdef _WIN32
     CRITICAL_SECTION mutex;
 #else
@@ -723,6 +777,8 @@ struct MooChannel {
 
 // === Thread-Funktionen ===
 MooValue moo_thread_spawn(MooValue func, MooValue arg);
+// P2-T119: starte(f, a, b, ...): Argumente als Liste (0..8 Werte).
+MooValue moo_thread_spawn_n(MooValue func, MooValue liste);
 MooValue moo_thread_wait(MooValue thread);
 MooValue moo_thread_done(MooValue thread);
 
@@ -733,10 +789,32 @@ MooValue moo_channel_recv(MooValue channel);
 void moo_channel_close(MooValue channel);
 
 // === Fehlerbehandlung ===
+// P2-T113: Der Fehlerzustand (Flag, anstehender Fehler, Handler-Tiefe) gilt
+// je Thread: ein Fehler in einem Moo-Thread erreicht weder das versuche noch
+// die Fehlerpruefung eines anderen Threads. Die Bare-Runtime linkt
+// moo_error.c nicht und ist davon nicht beruehrt.
+#if defined(__cplusplus)
+#define MOO_TLS thread_local
+#elif defined(_MSC_VER)
+#define MOO_TLS __declspec(thread)
+#elif defined(__GNUC__) && defined(__ELF__)
+// local-exec: die Runtime wird mit -fPIC gebaut; ohne Modell erzeugt der
+// Compiler general-dynamic (__tls_get_addr-Aufruf, im Programm nur teilweise
+// entspannt: moo_try_check 6 statt 3 Befehle; initial-exec: 2 Befehle je
+// Zugriff). local-exec ist ein einziges %fs:off-Laden. Gueltig, weil die
+// Runtime auf ELF nur in ausfuehrbare Programme gelinkt wird (-shared gibt es
+// nur fuer Windows-DLLs, main.rs P2-T79). Ein kuenftiger Linux-.so-Bau
+// scheitert laut am Linker (R_X86_64_TPOFF32), nicht still. Der Codegen
+// liest moo_try_depth/moo_error_flag mit demselben Modell (codegen.rs
+// fehler_zustand_laden).
+#define MOO_TLS _Thread_local __attribute__((tls_model("local-exec")))
+#else
+#define MOO_TLS _Thread_local
+#endif
 #define MOO_TRY_STACK_SIZE 64
 extern jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
-extern int moo_try_depth;
-extern MooValue moo_last_error;
+extern MOO_TLS int moo_try_depth;
+extern MOO_TLS MooValue moo_last_error;
 
 // === Konstruktoren ===
 MooValue moo_number(double n);
@@ -924,7 +1002,8 @@ int moo_try_check(void);        // 1 = error occurred
 void moo_try_leave(void);       // leave try/catch
 MooValue moo_try_take_error(void); /* transfers +1 error, clears flag, keeps try depth */
 MooValue moo_get_error(void);   // get the caught error
-extern int moo_error_flag;
+int moo_fehler_zustand(void);   // Bit0 Fehler, Bit1 Handler aktiv (Codegen, je Thread)
+extern MOO_TLS int moo_error_flag;
 
 // === Speicher ===
 void* moo_alloc(size_t size);

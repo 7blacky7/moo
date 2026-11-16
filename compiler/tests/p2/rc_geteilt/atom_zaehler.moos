@@ -1,0 +1,36 @@
+# P2-T114 Phase B: Atom. Vier Threads addieren auf ein geteiltes Atom; ein
+# Atom darf geteilt sein, ohne eingefroren zu werden (jede Operation atomar).
+geteilt konstante Z auf atom(0)
+
+funktion arbeite(n):
+    setze i auf 0
+    solange i < 50000:
+        atom_addieren(Z, n)
+        setze i auf i + 1
+    gib_zurück 0
+
+setze t1 auf starte(arbeite, 1)
+setze t2 auf starte(arbeite, 2)
+setze t3 auf starte(arbeite, 3)
+setze t4 auf starte(arbeite, 4)
+t1.warten()
+t2.warten()
+t3.warten()
+t4.warten()
+zeige atom_laden(Z)
+zeige atom_tauschen(Z, 5)
+zeige atom_vergleichen_und_tauschen(Z, 5, 7)
+zeige atom_vergleichen_und_tauschen(Z, 5, 9)
+zeige atom_addieren(Z, 1)
+atomic_store(Z, 1)
+zeige atomic_load(Z)
+versuche:
+    atom_laden(5)
+    zeige "FALSCH: kein Atom"
+fange e:
+    zeige "kein Atom: " + e
+versuche:
+    atom("x")
+    zeige "FALSCH: keine Zahl"
+fange e:
+    zeige "keine Zahl: " + e

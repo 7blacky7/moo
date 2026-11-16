@@ -1,0 +1,9 @@
+# P7-T19 Negativfall Kernel: kern_seriell_dez verlangt eine Zahl. Ein Bool
+# ist ein Typfehler -> Trap (gemeinsamer Zugriff moo_bare_wert.h). Vor T19
+# wurde data=1 des Bools als double (5e-324) gelesen und still "0" ausgegeben.
+# (Text geht im Kernelprofil nicht: dort gibt es kein moo_string_new.)
+# Gate: KERNEL_MARKER="111" KERNEL_MARKER_FEHLT="222" scripts/kernel-smoke.sh <diese Datei>
+unsicher:
+    zeige 111
+    kern_seriell_dez(wahr)
+    zeige 222

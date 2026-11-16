@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include "moo_rc.h"
 #include "moo_struct_dyn.h" /* P2-T49: Feldzugriff auf Strukturwerte */
 
 MooValue moo_object_new(const char* class_name) {
@@ -79,6 +80,12 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
     }
     MooObject* obj = MV_OBJ(obj_val);
     if (obj->frozen) { moo_throw(moo_string_new("Objekt ist eingefroren!")); return; }
+    // P2-T114: Ein geteiltes Objekt ist eingefroren (derselbe Lade+Test wie
+    // die Mitmarkier-Pruefung aus P2-T112 an derselben Stelle).
+    if (MOO_RC_SELTEN(moo_rc_ist_geteilt(&obj->refcount))) {
+        moo_throw(moo_string_new(MOO_GETEILT_TEXT));
+        return;
+    }
     int32_t idx = find_property(obj, prop);
     if (idx >= 0) {
         // Transfer: neuen Caller-Ref uebernehmen, alten freigeben.
@@ -113,8 +120,14 @@ void moo_object_set(MooValue obj_val, const char* prop, MooValue value) {
 }
 
 void moo_object_set_parent(MooValue obj, MooValue parent) {
-    if (obj.tag == MOO_OBJECT && parent.tag == MOO_OBJECT)
+    if (obj.tag == MOO_OBJECT && parent.tag == MOO_OBJECT) {
+        // P2-T114: geteilte Objekte sind eingefroren, auch ihre Elternkette.
+        if (moo_rc_ist_geteilt(&MV_OBJ(obj)->refcount)) {
+            moo_throw(moo_string_new(MOO_GETEILT_TEXT));
+            return;
+        }
         MV_OBJ(obj)->parent = MV_OBJ(parent);
+    }
 }
 
 // Gibt den statischen Klassennamen eines Objekts zurueck ("" wenn kein Objekt).

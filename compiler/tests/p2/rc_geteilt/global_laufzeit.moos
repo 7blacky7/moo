@@ -1,0 +1,17 @@
+# P2-T114 Phase C: Laufzeitpruefung fuer nicht beweisbare Aufrufe. rufe()
+# laeuft per starte und ruft einen Funktionswert; welcher, weiss der Compiler
+# nicht. zaehle_global liest die Globale 'zaehler': im Hauptthread erlaubt,
+# auf dem Worker bricht moo_global_pruefen mit Meldung ab (Exit 1).
+# Mit --typ-streng ist das schon ein Compilefehler (M-P002).
+setze zaehler auf [0]
+
+funktion zaehle_global(x):
+    gib_zurück länge(zaehler) + x
+
+funktion rufe(f):
+    gib_zurück f(1)
+
+zeige rufe(zaehle_global)
+setze t auf starte(rufe, zaehle_global)
+zeige t.warten()
+zeige "FALSCH: Worker hat die Globale gelesen"

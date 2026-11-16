@@ -5,7 +5,15 @@
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <stdlib.h>
 #include <unistd.h>
+
+/* P2-T117: erwarteter Exit-Code der Kindprozesse (Standard 0). Programme mit
+   absichtlich fehlschlagendem teste_alle() enden mit 1: MOO_RSS_EXIT=1. */
+static int erwarteter_exit(void) {
+    const char *wert = getenv("MOO_RSS_EXIT");
+    return wert ? atoi(wert) : 0;
+}
 
 static int measure(const char *path, long *rss) {
     pid_t child = fork();
@@ -22,7 +30,7 @@ static int measure(const char *path, long *rss) {
     pid_t result;
     do { result = wait4(child, &status, 0, &usage); } while (result < 0 && errno == EINTR);
     if (result < 0) { perror("wait4"); return 1; }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != erwarteter_exit()) {
         fprintf(stderr, "Kindprozess %s fehlgeschlagen: status=%d\n", path, status);
         return 1;
     }

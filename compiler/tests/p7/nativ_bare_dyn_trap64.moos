@@ -1,0 +1,18 @@
+# P7-T17 Negativfall Kernel: u64-Wert 2^63 passt nicht in i64 -> Trap
+# (ganzzahliger Bereichsvergleich ohne double).
+# Erwartet: 111 erscheint, 222 nicht.
+@nativ
+funktion bit63(k: u64) -> u64:
+    unsicher:
+        gib_zurück k << 63
+
+@nativ
+funktion runter64(x: i64) -> i64:
+    unsicher:
+        gib_zurück x - 1
+
+unsicher:
+    setze w auf bit63(1)
+    zeige 111
+    zeige runter64(w)
+    zeige 222

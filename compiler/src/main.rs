@@ -2081,6 +2081,8 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     fehlerpfade::pruefe(&haupt_statements, &program, &file.display().to_string());
     typpruefung::ergebnis()?;
     fehlerpfade::ergebnis()?;
+    // P2-T114 Phase C: Globale gehoeren dem Hauptthread (Effektpruefung).
+    let global_pruefplan = typpruefung::globale_pruefen(&program, &file.display().to_string())?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     let libraries = ffi_link::libraries(&program.statements, &link_triple)?;
 
@@ -2097,6 +2099,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     // MUSS vor compile_program() gesetzt sein (Guard greift im Codegen).
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
     compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
+    compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)?;
     // P2-T43: MSVC-COFF traegt @bibliothek selbst (.drectve /DEFAULTLIB).
     compiler.embed_link_libraries(&libraries, &link_triple)?;
@@ -2532,6 +2535,7 @@ fn pruefe(file: &PathBuf, target: Option<&str>, lib_paths: &[PathBuf], no_stdlib
     fehlerpfade::pruefe(&haupt_statements, &program, &file.display().to_string());
     typpruefung::ergebnis()?;
     fehlerpfade::ergebnis()?;
+    let global_pruefplan = typpruefung::globale_pruefen(&program, &file.display().to_string())?;
     let link_triple = codegen::CodeGen::resolve_triple(target.unwrap_or("native"));
     ffi_link::libraries(&program.statements, &link_triple)?;
     let context = inkwell::context::Context::create();
@@ -2540,6 +2544,7 @@ fn pruefe(file: &PathBuf, target: Option<&str>, lib_paths: &[PathBuf], no_stdlib
     compiler.set_quelldatei(&file.display().to_string());
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
     compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
+    compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)
 }
 

@@ -1,0 +1,5 @@
+# P2-T114 Phase C: Eine 'geteilt' markierte Globale ist tief eingefroren
+# und darf nicht neu gesetzt werden -> Compilefehler M-P003.
+geteilt konstante GRENZEN auf [10, 20]
+zeige GRENZEN
+setze GRENZEN auf [1]

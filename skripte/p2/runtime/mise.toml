@@ -2,6 +2,18 @@
 description = "P2 Buffer- und Strukturbox-C-Harnesses mit ASan/UBSan"
 run = "bash sanitizer.sh"
 
+[tasks.closure-lsan]
+description = "P2-T118 Closure-Captures ohne Leck unter ASan/LSan (Compiler als 1. Argument, Standard compiler/target)"
+run = "bash closure_leck_lsan.sh"
+
+[tasks.warten-lsan]
+description = "P2-T120 Thread-Ergebnis ohne Leck, auch bei Freigabe durch einen Nicht-Wartenden (ASan/LSan; Compiler als 1. Argument)"
+run = "bash warten_leck_lsan.sh"
+
+[tasks.closure-abi-aarch64]
+description = "P2-T119 Closure-ABI (>=3 Parameter, __moo_cabi) unter qemu-aarch64; braucht MOO_AARCH64_ROOT (Standard build/leck-nacht/arm), Compiler als 1. Argument"
+run = "bash closure_abi_aarch64.sh"
+
 [tasks.bare-stack]
 description = "P2 Defer-Stack als freestanding x86-64 und AArch64 pruefen"
 run = "bash bare_stack.sh"
@@ -9,3 +21,12 @@ run = "bash bare_stack.sh"
 [tasks.cross-windows]
 description = "P2 Runtime und C++-Adapter fuer Windows x64 querkompilieren"
 run = "bash cross_windows.sh"
+
+
+[tasks.rc-geteilt-stress]
+description = "P2-T112 geteilte Heap-Werte: Stresstest 20x je Fixture (Projektcompiler)"
+run = "bash rc_geteilt_stress.sh ../../../compiler/target/release/moo-compiler ../../../build/p2-rc-geteilt/stress 20 projekt"
+
+[tasks.rc-geteilt-tsan]
+description = "P2-T112 geteilte Heap-Werte: TSan-Gate (Projektcompiler und -Runtime)"
+run = "bash rc_geteilt_tsan.sh ../../../compiler/target/release/moo-compiler ../../../compiler/runtime ../../../build/p2-rc-geteilt/tsan"

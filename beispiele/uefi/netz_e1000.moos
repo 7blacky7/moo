@@ -16,7 +16,7 @@ aus "./netz_treiber" importiere nt_pci_init, nt_suche, nt_finde, nt_oeffnen, nt_
 
 funktion z(c):
     unsicher:
-        kern_outw(0x3F8, c)
+        port_schreibe16(0x3F8, c)
 
 # "MOO-E1000-"
 funktion vorspann():
@@ -273,6 +273,37 @@ funktion moo_efi_haupt():
             setze versuche auf versuche + 1
         wort(65, 82, 80, 0, 0, 0)
         hex(arp, 1)
+        zeile_ende()
+        # P7-T18 Messung (Mikrosekunden, kern_ticks): MESS <RAM-Register 100000x>
+        # <MMIO STATUS 10000x> <2000 UDP-Rahmen senden>. Nur Ausgabe, kein Gate.
+        setze schein auf schein_nic(1, 2)
+        setze treffer auf 0
+        setze t0 auf kern_ticks()
+        setze k auf 0
+        solange k < 100000:
+            wenn nt_link(schein):
+                setze treffer auf treffer + 1
+            setze k auf k + 1
+        setze t1 auf kern_ticks()
+        setze k auf 0
+        solange k < 10000:
+            wenn nt_link(nic):
+                setze treffer auf treffer + 1
+            setze k auf k + 1
+        setze t2 auf kern_ticks()
+        setze k auf 0
+        solange k < 2000:
+            nt_udp_log(nic, rahmen, "MOO-E1000-MESS")
+            setze k auf k + 1
+        setze t3 auf kern_ticks()
+        wort(77, 69, 83, 83, 0, 0)
+        hex(t1 - t0, 8)
+        z(32)
+        hex(t2 - t1, 8)
+        z(32)
+        hex(t3 - t2, 8)
+        z(32)
+        hex(treffer, 6)
         zeile_ende()
         wort(69, 78, 68, 69, 0, 0)
         zeile_ende()

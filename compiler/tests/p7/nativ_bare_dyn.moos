@@ -1,0 +1,57 @@
+# P7-T17: @nativ-Systemkoerper im Bare-Profil mit echten Variablen.
+# Erwartete serielle Ausgabe (scripts/kernel-smoke.sh, KERNEL_MARKER):
+#   -12345 / 213            i16/u8 aus Variablen (Zahl, geprueft)
+#   1152921504606846984     u64 hin und zurueck, 2^60+8: als double nicht
+#                           exakt darstellbar -> Beleg fuer den Weg ohne double
+#   -6000000000000000001    i64-Rueckgabe exakt, i64-Argument aus i64-Wert
+#   wahr                    bool aus einem Vergleich
+#   4096                    u64 aus speicher-artigem Wert zurueck in u32
+@nativ
+funktion bare_i16(x: i16) -> i16:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion bare_u8(x: u8) -> u8:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion bare_u32(x: u32) -> u32:
+    unsicher:
+        gib_zurück x
+
+@nativ
+funktion hoch64(x: u64) -> u64:
+    unsicher:
+        gib_zurück x + 1
+
+@nativ
+funktion runter64(x: i64) -> i64:
+    unsicher:
+        gib_zurück x - 1
+
+# Erzeugt 2^60 + 7 exakt (u64-Rueckgabe -> Tag 31).
+@nativ
+funktion gross64(k: u64) -> u64:
+    unsicher:
+        gib_zurück (k << 60) | 7
+
+@nativ
+funktion bare_bool(b: bool) -> bool:
+    unsicher:
+        gib_zurück b
+
+setze a auf 0 - 12345
+setze b auf 200 + 13
+unsicher:
+    setze gross auf gross64(1)
+    zeige bare_i16(a)
+    zeige bare_u8(b)
+    zeige hoch64(gross)
+    setze m auf runter64(-5)
+    setze m auf m * 1000000000000000000
+    zeige runter64(m)
+    zeige bare_bool(a < 0)
+    setze seite auf hoch64(4095)
+    zeige bare_u32(seite)

@@ -1,0 +1,26 @@
+# P7-T17 Negativfall UEFI: 256 passt nicht in u8 -> Trap am Aufruf.
+# Erwartet auf COM1: "N 111", aber weder "N 222" noch "N 999".
+@nativ
+funktion bare_u8(x: u8) -> u8:
+    unsicher:
+        gib_zurück x
+
+funktion z(c):
+    unsicher:
+        port_schreibe16(0x3F8, c)
+
+funktion zeile3(a, b, c):
+    z(78)
+    z(32)
+    z(a)
+    z(b)
+    z(c)
+    z(10)
+
+funktion moo_efi_haupt():
+    setze w auf 255 + 1
+    unsicher:
+        zeile3(49, 49, 49)
+        setze r auf bare_u8(w)
+        zeile3(50, 50, 50)
+        zeile3(57, 57, 57)

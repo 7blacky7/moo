@@ -1,0 +1,9 @@
+
+=== moo Tests ===
+  teste "Mathe OK"...
+    OK
+  teste "Absichtlich falsch"...
+  FEHLGESCHLAGEN: Erwartung nicht erfuellt
+    FAIL
+=== Ergebnis ===
+2 Tests: 1 OK, 1 FAIL

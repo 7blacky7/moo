@@ -1,0 +1,35 @@
+# P2-T120: Ein anderer Thread als der erste Wartende gibt den Thread-Wert
+# zuletzt frei (warten_mehrfach Fall 1, aber lokal, damit der Thread-Wert
+# wirklich freigegeben wird). Das ungeteilte Ergebnis darf nicht lecken und
+# wird an den Wartenden bzw. dessen Erben (Joiner) uebergeben.
+funktion rechne(n):
+    gib_zurück [n, n + 1, "text-" + n]
+
+funktion erster(t):
+    gib_zurück t.warten()[0]
+
+# Variante mit mehreren starte-Argumenten und einem Kanal: der Wartende
+# haelt t ueber die Argumentliste; freigegeben wird t erst im Hauptthread.
+funktion haelt(t, k):
+    setze r auf t.warten()
+    k.empfangen()
+    gib_zurück r[1]
+
+funktion runde(i):
+    setze t auf starte(rechne, i)
+    setze u auf starte(erster, t)
+    gib_zurück u.warten()
+
+funktion runde_lebend(i):
+    setze k auf kanal(1)
+    setze t auf starte(rechne, i)
+    setze u auf starte(haelt, t, k)
+    k.senden(1)
+    gib_zurück u.warten()
+
+setze s auf 0
+setze i auf 0
+solange i < 200:
+    setze s auf s + runde(i) + runde_lebend(i)
+    setze i auf i + 1
+zeige s

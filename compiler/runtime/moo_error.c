@@ -1,30 +1,75 @@
 #include "moo_runtime.h"
+#if defined(_WIN32)
+#include <process.h>  /* _exit (P2-T117) */
+#else
+#include <unistd.h>   /* _exit (P2-T117) */
+#endif
 
 #include <stdlib.h>
 #include <string.h>
 
-int moo_error_flag = 0;
-MooValue moo_last_error = { MOO_NONE, 0 };
-int moo_try_depth = 0;
+/* P2-T113: Fehlerzustand je Thread (siehe moo_runtime.h). */
+MOO_TLS int moo_error_flag = 0;
+MOO_TLS MooValue moo_last_error = { MOO_NONE, 0 };
+MOO_TLS int moo_try_depth = 0;
 jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
 
 /* P2-T95: Wurfort des anstehenden Fehlers und ob er schon gemeldet ist. */
-static const MooFehlerOrt* moo_fehler_ort = NULL;
-static int moo_fehler_gemeldet = 0;
+static MOO_TLS const MooFehlerOrt* moo_fehler_ort = NULL;
+static MOO_TLS int moo_fehler_gemeldet = 0;
+
+/* P2-T113: Windows-Waechter fuer den heissen Pfad. MinGW-GCC legt
+   _Thread_local als emutls an (jeder Zugriff ruft __emutls_get_address);
+   moo_try_check laeuft aber nach jedem Statement im versuche. Es liest dort
+   zuerst die prozessweite Zahl der Threads mit gesetztem Flag und greift nur
+   bei >0 auf den Thread-Zustand zu. Geschrieben wird der Zaehler nur beim
+   Setzen/Loeschen des Flags (selten). Ein Thread, der mit gesetztem Flag
+   endet, laesst ihn >0 stehen: dann nur langsamer, nie falsch (der eigene
+   Thread-Zustand entscheidet). ELF (Linux/BSD): der Linker entspannt den
+   TLS-Zugriff im Programm zu einem %fs-relativen Laden, gleich teuer wie
+   vorher das globale Flag; dort waere der Waechter Mehrarbeit. */
+#if defined(_WIN32)
+#define MOO_FEHLER_WAECHTER 1
+#if defined(_MSC_VER)
+#include <intrin.h>
+static volatile long moo_fehler_waechter = 0;
+#define MOO_WAECHTER_PLUS() _InterlockedIncrement(&moo_fehler_waechter)
+#define MOO_WAECHTER_MINUS() _InterlockedDecrement(&moo_fehler_waechter)
+#define MOO_WAECHTER_LESEN() (moo_fehler_waechter)
+#else
+static long moo_fehler_waechter = 0;
+#define MOO_WAECHTER_PLUS() __atomic_add_fetch(&moo_fehler_waechter, 1, __ATOMIC_RELAXED)
+#define MOO_WAECHTER_MINUS() __atomic_sub_fetch(&moo_fehler_waechter, 1, __ATOMIC_RELAXED)
+#define MOO_WAECHTER_LESEN() __atomic_load_n(&moo_fehler_waechter, __ATOMIC_RELAXED)
+#endif
+#else
+#define MOO_FEHLER_WAECHTER 0
+#endif
+
+static inline void fehler_flag_setzen(int wert) {
+#if MOO_FEHLER_WAECHTER
+    if (wert != moo_error_flag) {
+        if (wert) MOO_WAECHTER_PLUS();
+        else MOO_WAECHTER_MINUS();
+    }
+#endif
+    moo_error_flag = wert;
+}
 
 static void clear_last_error(void) {
     /* moo_throw darf jeden MooValue konsumieren. Der zentrale Release-Dispatch
        ist fuer Nicht-Heap-Tags ein No-op und gibt Heap-Werte passend frei. */
     moo_release(moo_last_error);
     moo_last_error = moo_none();
-    moo_error_flag = 0;
+    fehler_flag_setzen(0);
     moo_fehler_ort = NULL;
     moo_fehler_gemeldet = 0;
 }
 
 /* ---- P2-T95: Hinweise statt Abbruch -------------------------------------- */
 
-static int moo_streng_wert = -1;
+/* Je Thread einmal aus der Umgebung gelesen (kein geteilter Zwischenspeicher). */
+static MOO_TLS int moo_streng_wert = -1;
 
 int moo_fehler_streng(void) {
     if (moo_streng_wert < 0) {
@@ -82,6 +127,19 @@ static int moo_hinweis_belegt = 0;
 static int64_t moo_hinweis_ueberlauf = 0;
 static int moo_hinweis_atexit = 0;
 
+/* P2-T113: Die Zaehltabelle ist prozessweit (Zusammenfassung am Ende); Hinweise
+   aus mehreren Threads greifen nur unter dieser Sperre zu (selten, kalt). */
+#if defined(_MSC_VER)
+#include <intrin.h>
+static volatile long moo_hinweis_sperre = 0;
+#define MOO_HINWEIS_SPERREN() while (_InterlockedExchange(&moo_hinweis_sperre, 1)) {}
+#define MOO_HINWEIS_FREIGEBEN() _InterlockedExchange(&moo_hinweis_sperre, 0)
+#else
+static int moo_hinweis_sperre = 0;
+#define MOO_HINWEIS_SPERREN() while (__atomic_exchange_n(&moo_hinweis_sperre, 1, __ATOMIC_ACQUIRE)) {}
+#define MOO_HINWEIS_FREIGEBEN() __atomic_store_n(&moo_hinweis_sperre, 0, __ATOMIC_RELEASE)
+#endif
+
 static uint64_t text_hash(const char* text) {
     uint64_t h = UINT64_C(1469598103934665603);
     for (const unsigned char* p = (const unsigned char*)text; p && *p; p++) {
@@ -92,6 +150,7 @@ static uint64_t text_hash(const char* text) {
 }
 
 static void hinweise_zusammenfassen(void) {
+    MOO_HINWEIS_SPERREN();
     fflush(stdout);
     for (int i = 0; i < moo_hinweis_belegt; i++) {
         if (moo_hinweise[i].anzahl > 1) {
@@ -103,11 +162,12 @@ static void hinweise_zusammenfassen(void) {
         fprintf(stderr, "Hinweis: %lld weitere Hinweise an anderen Stellen nicht einzeln ausgegeben\n",
                 (long long)moo_hinweis_ueberlauf);
     }
+    MOO_HINWEIS_FREIGEBEN();
 }
 
 /* 1 = erster Fall dieser Stelle (ausgeben), 0 = nur gezaehlt. Schluessel NULL:
    Stelle ueber den Text (Laufzeitfehler ohne Wurfort). */
-static int hinweis_zaehlen(const void* schluessel, const char* text, const char* zusammenfassung) {
+static int hinweis_zaehlen_gesperrt(const void* schluessel, const char* text, const char* zusammenfassung) {
     uint64_t hash = schluessel ? 0 : text_hash(text);
     for (int i = 0; i < moo_hinweis_belegt; i++) {
         if (moo_hinweise[i].schluessel == schluessel && moo_hinweise[i].text_hash == hash) {
@@ -131,6 +191,13 @@ static int hinweis_zaehlen(const void* schluessel, const char* text, const char*
     return 1;
 }
 
+static int hinweis_zaehlen(const void* schluessel, const char* text, const char* zusammenfassung) {
+    MOO_HINWEIS_SPERREN();
+    int erster = hinweis_zaehlen_gesperrt(schluessel, text, zusammenfassung);
+    MOO_HINWEIS_FREIGEBEN();
+    return erster;
+}
+
 void moo_fehler_hinweis(const void* schluessel, const char* zusammenfassung, const char* text) {
     if (hinweis_zaehlen(schluessel, text ? text : "", zusammenfassung)) {
         fprintf(stderr, "Hinweis: %s\n", text ? text : "");
@@ -138,44 +205,39 @@ void moo_fehler_hinweis(const void* schluessel, const char* zusammenfassung, con
     }
 }
 
-/* Tiefe 0: niemand kann den Fehler mehr fangen. Hinweis (bzw. MOO_STRENG-
-   Abbruch wie vor P2-T95), dann Fehler verwerfen und weiterlaufen. */
+/* Tiefe 0: niemand kann den Fehler mehr fangen. P2-T117 (Koordinator-
+   Entscheid, korrigiert P2-T95): Diagnose auf stderr und IMMER Exit 1, auch
+   ohne MOO_STRENG. Kalter Pfad; der heisse Pfad (moo_try_check) ist
+   unberuehrt. */
+static int moo_ist_hauptthread(void);
+static void moo_nebenthread_fehler_merken(void);
+
 static void unbehandelt_ohne_versuche(MooValue error) {
-    if (moo_fehler_streng()) {
-        fprintf(stderr, "Unbehandelter Fehler: ");
-        moo_print(error);
-        fflush(stdout);
-        fprintf(stderr, "Abbruch, weil MOO_STRENG=1 gesetzt ist\n");
-        clear_last_error();
-        exit(1);
-    }
     char text[256];
     fehler_text(error, text, sizeof text);
-    char ort[512];
-    char zusammenfassung[192];
-    if (moo_fehler_ort) {
-        ort_text(moo_fehler_ort->datei, moo_fehler_ort->zeile, ort, sizeof ort);
-        /* Ortsangabe begrenzt: die Zusammenfassung ist ohnehin auf 192 Zeichen
-         * gekappt; ohne Grenze bricht -Werror=format-truncation das Sanitizer-Gate. */
-        snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Fehler in %s%.120s",
-                 moo_fehler_ort->funktion ? moo_fehler_ort->funktion : "Hauptprogramm", ort);
-    } else {
-        snprintf(zusammenfassung, sizeof zusammenfassung, "der unbehandelte Laufzeitfehler „%.120s“", text);
-    }
-    if (hinweis_zaehlen(moo_fehler_ort, text, zusammenfassung)) {
-        fflush(stdout);
-        fprintf(stderr, "Hinweis: unbehandelter Fehler „%s“\n", text);
-        wurfort_drucken();
-        fprintf(stderr, "  nicht behandelt: kein versuche: im Aufrufpfad – das Programm läuft weiter\n");
+    fflush(stdout);
+    fprintf(stderr, "Unbehandelter Fehler: %s\n", text);
+    wurfort_drucken();
+    if (!moo_ist_hauptthread()) {
+        /* Nebenthread (P2-T113: Fehlerzustand je Thread): andere Threads
+           laufen weiter, der Fehler wird aber nicht verschluckt. Der
+           Prozess endet am Schluss mit Exit-Code 1 (atexit-Haken). */
+        fprintf(stderr, "  nicht behandelt im Nebenthread – das Programm endet mit Exit-Code 1\n");
         fflush(stderr);
+        moo_nebenthread_fehler_merken();
+        clear_last_error();
+        return;
     }
+    fprintf(stderr, "  nicht behandelt: kein versuche: im Aufrufpfad – Abbruch mit Exit-Code 1\n");
+    fflush(stderr);
     clear_last_error();
+    exit(1);
 }
 
 static void moo_throw_intern(MooValue error, const MooFehlerOrt* ort) {
     clear_last_error();
     moo_last_error = error;
-    moo_error_flag = 1;
+    fehler_flag_setzen(1);
     moo_fehler_ort = ort;
     if (moo_try_depth == 0) unbehandelt_ohne_versuche(error);
 }
@@ -227,7 +289,18 @@ void moo_try_enter(void) {
 }
 
 int moo_try_check(void) {
+#if MOO_FEHLER_WAECHTER
+    if (MOO_WAECHTER_LESEN() == 0) return 0;
+#endif
     return moo_error_flag;
+}
+
+/* P2-T113: Fehlerzustand des aktuellen Threads fuer die nativen Argument-
+   Adapter des Codegens in EINEM Aufruf: Bit 0 = Fehler anstehend, Bit 1 =
+   Handler aktiv (moo_try_depth != 0). Thread-lokaler Speicher (ELF-TLS,
+   Windows-TLS oder emutls) bleibt so allein Sache der C-Runtime. */
+int moo_fehler_zustand(void) {
+    return (moo_error_flag != 0) | ((moo_try_depth != 0) << 1);
 }
 
 void moo_try_leave(void) {
@@ -240,7 +313,7 @@ void moo_try_leave(void) {
 MooValue moo_try_take_error(void) {
     MooValue error = moo_last_error;
     moo_last_error = moo_none();
-    moo_error_flag = 0;
+    fehler_flag_setzen(0);
     return error;
 }
 
@@ -287,10 +360,10 @@ void moo_native_abbruch(const char* text) {
     exit(1);
 }
 
-/* P2-T21/T57 Batch D (Plan f4655d20 E5): fehlbare C-Rueckrufe beruehren den
-   globalen, nicht thread-lokalen Fehlerzustand (moo_error_flag,
-   moo_last_error, moo_try_depth). Sie sind deshalb nur auf Moo-Threads
-   erlaubt: dem Hauptthread (vor main per Konstruktor markiert, da der Codegen
+/* P2-T21/T57 Batch D (Plan f4655d20 E5): fehlbare C-Rueckrufe setzen den
+   Fehlerzustand (moo_error_flag, moo_last_error, moo_try_depth; seit P2-T113
+   je Thread). Auf einem fremden Thread prueft oder faengt ihn kein Moo-
+   Aufrufer; sie sind deshalb nur auf Moo-Threads erlaubt: dem Hauptthread (vor main per Konstruktor markiert, da der Codegen
    keinen garantierten Runtime-Einstieg ruft) und den per moo_thread_spawn
    gestarteten Threads (thread_runner_common). Fehlerfreie Rueckrufe rufen
    diese Pruefung nicht und bleiben threadneutral wie C. Grenze: wird die
@@ -308,9 +381,35 @@ void moo_native_thread_markieren(void) {
     moo_ist_moo_thread = 1;
 }
 
+/* P2-T117: Hauptthread-Kennung und Merker fuer unbehandelte Fehler in
+   Nebenthreads. Der atexit-Haken wird im Konstruktor (vor allen anderen
+   atexit-Registrierungen der Runtime) angemeldet und laeuft deshalb zuletzt. */
+static MOO_RUECKRUF_TLS int moo_hauptthread_kennung = 0;
+static volatile int moo_nebenthread_fehler = 0;
+
+static int moo_ist_hauptthread(void) {
+    return moo_hauptthread_kennung;
+}
+
+static void moo_nebenthread_fehler_merken(void) {
+    moo_nebenthread_fehler = 1;
+}
+
+static void moo_nebenthread_fehler_exit(void) {
+    if (!moo_nebenthread_fehler) return;
+    fflush(NULL);
+    _exit(1);
+}
+
+static void moo_hauptthread_einrichten(void) {
+    moo_native_thread_markieren();
+    moo_hauptthread_kennung = 1;
+    atexit(moo_nebenthread_fehler_exit);
+}
+
 #if defined(_MSC_VER)
 static int moo_native_hauptthread_markieren_(void) {
-    moo_native_thread_markieren();
+    moo_hauptthread_einrichten();
     return 0;
 }
 __pragma(section(".CRT$XCU", read))
@@ -319,7 +418,7 @@ static int (*moo_native_hauptthread_ptr_)(void) = moo_native_hauptthread_markier
 #else
 static void moo_native_hauptthread_markieren_(void) __attribute__((constructor));
 static void moo_native_hauptthread_markieren_(void) {
-    moo_native_thread_markieren();
+    moo_hauptthread_einrichten();
 }
 #endif
 

@@ -1,0 +1,11 @@
+# P2-T113 Messung: native Argument-Adapter (liest Handler-Tiefe je Argument)
+@nativ
+funktion plus(a: i64, b: i64) -> i64:
+    gib_zurück a + b
+
+setze s auf 0
+setze i auf 0
+solange i < 3000000:
+    setze s auf plus(s, i)
+    setze i auf i + 1
+zeige s

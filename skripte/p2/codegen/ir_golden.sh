@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # P2-T9/T11: strukturelles LLVM-Golden; kein Nachweis der Guard-Dominanz.
+# Akzeptiert @p2_* und die interne Benennung @__moo_native.p2_* (P2-T115).
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 check_ir() {
@@ -22,8 +23,9 @@ check_ir() {
         expected["p2_shl"]="shl"; expected["p2_ashr"]="ashr"; expected["p2_lshr"]="lshr"
         guard["p2_div"]=guard["p2_rem"]=guard["p2_shl"]=guard["p2_ashr"]=guard["p2_lshr"]=1
     }
-    /^define[[:space:]]/ && match($0, /@"?p2_[A-Za-z0-9_]+/) {
-        name=substr($0,RSTART+1,RLENGTH-1); gsub(/"/,"",name)
+    # P2-T19/T56 D1: native Koerper heissen intern @__moo_native.<name>.
+    /^define[[:space:]]/ && match($0, /@"?(__moo_native\.)?p2_[A-Za-z0-9_]+/) {
+        name=substr($0,RSTART+1,RLENGTH-1); gsub(/"/,"",name); sub(/^__moo_native\./,"",name)
         count=bad=icmp=branch=zero=minus=min=limit=0; next
     }
     name != "" && /^}/ { finish(); name=""; next }

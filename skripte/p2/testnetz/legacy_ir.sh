@@ -53,8 +53,11 @@ trap 'rm -rf -- "$work"' EXIT
 filter_local_examples() {
     local file
     while IFS= read -r -d '' file; do
+        # Lokale, gitignorte Beispiele (.gitignore: beispiele/p6_wissensmix/,
+        # ui_snapshot_smoke, kernel_test_builtins) existieren nur im Arbeitsbaum;
+        # ohne Filter haengt das Inventar vom Checkout ab (P2-T115).
         case "$file" in
-          beispiele/p6_wissensmix/feintuning_*.moos|beispiele/p6_wissensmix/*_import.moos) ;;
+          beispiele/p6_wissensmix/*|beispiele/ui_snapshot_smoke.moos|beispiele/domain/system/kernel_test_builtins.moos) ;;
           *) printf '%s\0' "$file" ;;
         esac
     done

@@ -68,6 +68,8 @@ const char* moo_type_name(MooValue v) {
         case MOO_BUFFER: return "Puffer";
         case MOO_STRUCT: return "Struktur";
         case MOO_HANDLE: return "Griff";
+        case MOO_ATOM:   return "Atom";
+        case MOO_SPERRE: return "Sperre";
         default:         return "Unbekannt";
     }
 }

@@ -12,10 +12,12 @@ for name in i64_input_out u64_input_out i64_inexact u64_inexact i64_nearmin_inex
     timeout 120s "$compiler" compile "compiler/tests/p2/ffi_${name}.moos" --lib-pfad "$out" -o "$out/$name"
     # P2-T95: Abbruch nur mit MOO_STRENG=1; Standard laeuft mit Hinweis weiter.
     if MOO_STRENG=1 timeout 30s "$out/$name" >"$out/$name.log" 2>&1; then printf 'Grenzfehler fehlt: %s\n' "$name" >&2; exit 1; fi
-    timeout 30s "$out/$name" >"$out/$name.standard.log" 2>&1 \
-        || { printf 'Grenzfehler (Standard) beendet das Programm: %s\n' "$name" >&2; exit 1; }
-    grep -Fq 'Hinweis: unbehandelter Fehler' "$out/$name.standard.log" \
-        || { printf 'Grenzfehler (Standard) ohne Hinweis: %s\n' "$name" >&2; exit 1; }
+    # P2-T117: auch ohne MOO_STRENG beendet der unbehandelte Grenzfehler mit RC 1.
+    if timeout 30s "$out/$name" >"$out/$name.standard.log" 2>&1; then
+        printf 'Grenzfehler (Standard) endet mit RC 0: %s\n' "$name" >&2; exit 1
+    fi
+    grep -Fq 'Unbehandelter Fehler' "$out/$name.standard.log" \
+        || { printf 'Grenzfehler (Standard) ohne Diagnose: %s\n' "$name" >&2; exit 1; }
     grep -Fq 'Native Funktion' "$out/$name.log"
     if grep -Fq DARF_NICHT_ERREICHT_WERDEN "$out/$name.log"; then exit 1; fi
     case "$name" in

@@ -33,7 +33,7 @@
 #
 # WICHTIG: Im UEFI-Boot-Services-Environment ist SSE bereits aktiv (die
 # Firmware nutzt es selbst). Serielle Ausgabe geht ueber COM1-Port-I/O
-# (kern_outw, P011-B1); OVMF/QEMU haben COM1.
+# (port_schreibe16, P011-B1); OVMF/QEMU haben COM1.
 
 aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma, nt_dez
 
@@ -48,7 +48,7 @@ funktion netz_log(ports, puf, text):
 
 funktion sende(c):
     unsicher:
-        kern_outw(0x3F8, c)
+        port_schreibe16(0x3F8, c)
 
 # Gemeinsamer Marker-Vorspann 'MOO-UEFI-'.
 funktion marker_vorspann():

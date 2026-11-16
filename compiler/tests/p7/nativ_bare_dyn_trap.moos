@@ -1,0 +1,13 @@
+# P7-T17 Negativfall Kernel: 256 passt nicht in u8 -> Trap am Aufruf.
+# Erwartet: 111 erscheint, 222 und 333 nicht (KERNEL_MARKER_FEHLT).
+@nativ
+funktion bare_u8(x: u8) -> u8:
+    unsicher:
+        gib_zurück x
+
+setze w auf 255 + 1
+unsicher:
+    zeige 111
+    zeige bare_u8(w)
+    zeige 222
+    zeige 333

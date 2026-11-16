@@ -37,10 +37,13 @@ typedef struct {
 } MooValue;
 
 /* === Wert-Helper (inline, kein libc) === */
+/* P7-T19: gemeinsamer Zahlzugriff (Tag 0 / 30 i64 / 31 u64, moo_bare_wert.h).
+ * kern_*-Builtins verlangen laut Vertrag eine Zahl: kein Zahlwert -> Trap
+ * (Bare hat keinen fangbaren Fehlerkanal). moo_print/alloc pruefen den Tag
+ * selbst vorher. */
+#include "moo_bare_wert.h"
 static inline double kern_as_double(MooValue v) {
-    double d;
-    __builtin_memcpy(&d, &v.data, sizeof(double));
-    return d;
+    return MOO_WERT_ZAHL(v);
 }
 static inline void kern_set_double(MooValue* v, double d) {
     __builtin_memcpy(&v->data, &d, sizeof(double));

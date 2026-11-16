@@ -1,0 +1,49 @@
+# P7-T20: Der Codegen rechnet Zahl-op-Zahl (Tag 0) im Bare-Profil inline.
+# Diese Datei prueft Ergebnisse, Vergleiche (auch NaN), Wahrheitswerte von
+# Zahl und bool sowie den kalten Pfad mit einem i64-Wert (Tag 30) aus @nativ.
+# Gate: KERNEL_MARKER="9 5 14 7 101 102 103 104 105 107 -4 106 108 777"
+#       KERNEL_MARKER_FEHLT="999 998 997 996" scripts/kernel-smoke.sh <diese Datei>
+@nativ
+funktion vz64(x: i64) -> i64:
+    unsicher:
+        gib_zurück x + 0
+
+setze a auf 7
+setze b auf 2
+zeige a + b
+zeige a - b
+zeige a * b
+zeige a * b / b
+wenn a > b:
+    zeige 101
+wenn a < b:
+    zeige 999
+wenn a == 7:
+    zeige 102
+wenn a != b:
+    zeige 103
+wenn a >= 7:
+    wenn b <= 2:
+        zeige 104
+setze w auf a < b
+wenn nicht w:
+    zeige 105
+setze n auf 0
+wenn n:
+    zeige 998
+setze z auf 0
+setze q auf z / z
+wenn q == q:
+    zeige 997
+wenn q != q:
+    zeige 107
+unsicher:
+    setze g auf vz64(-5)
+zeige g + 1
+wenn g < 0:
+    zeige 106
+wenn g == 5:
+    zeige 996
+wenn a:
+    zeige 108
+zeige 777

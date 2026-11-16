@@ -1,0 +1,10 @@
+
+=== moo Tests ===
+  teste "Addition"...
+    OK
+  teste "Strings"...
+    OK
+  teste "Listen"...
+    OK
+=== Ergebnis ===
+3 Tests: 3 OK, 0 FAIL

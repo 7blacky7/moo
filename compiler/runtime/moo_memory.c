@@ -1,4 +1,5 @@
 #include "moo_runtime.h"
+#include "moo_rc.h"
 
 // === Reference Counting ===
 
@@ -11,8 +12,14 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_VOXELWORLD || tag == MOO_FRAME || tag == MOO_GIF ||
            tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
            tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT ||
-           tag == MOO_HANDLE;
+           tag == MOO_HANDLE || tag == MOO_ATOM || tag == MOO_SPERRE;
 }
+
+bool moo_ist_heap_wert(MooValue v) {
+    return is_heap_type(v.tag);
+}
+
+void (*moo_sperre_freigabe_haken)(void*) = NULL;
 
 extern void moo_socket_free(void* ptr);
 extern void moo_buffer_free(void* ptr);
@@ -26,12 +33,22 @@ static inline int32_t* get_refcount_ptr(MooValue v) {
     return (int32_t*)ptr;
 }
 
-void moo_retain(MooValue v) {
+// P2-T112: retain/release sind die heissesten Runtime-Funktionen (ein Aufruf je
+// Variablenlesen). Ausrichtung auf eine Cache-Zeile haelt den schnellen Pfad in
+// EINER Zeile; ohne sie entschied die zufaellige Linklage ueber bis zu 9 %
+// Takte im refcount-dichten Fall (gleiche Instruktionszahl, gemessen).
+#if defined(__GNUC__) || defined(__clang__)
+#define MOO_HEISS __attribute__((aligned(64)))
+#else
+#define MOO_HEISS
+#endif
+
+MOO_HEISS void moo_retain(MooValue v) {
     if (!is_heap_type(v.tag)) return;
     int32_t* rc = get_refcount_ptr(v);
-    if (rc && *rc > 0) {
-        (*rc)++;
-    }
+    // P2-T112: atomar nur bei geteilten Werten (moo_rc.h).
+    if (MOO_RC_SELTEN(!rc)) return;
+    moo_rc_inc(rc);
 }
 
 // Forward-Deklaration fuer rekursives Release
@@ -40,13 +57,10 @@ static void free_list(MooList* l);
 static void free_dict(MooDict* d);
 static void free_object(MooObject* o);
 
-void moo_release(MooValue v) {
+MOO_HEISS void moo_release(MooValue v) {
     if (!is_heap_type(v.tag)) return;
     int32_t* rc = get_refcount_ptr(v);
-    if (!rc || *rc <= 0) return;
-
-    (*rc)--;
-    if (*rc > 0) return;
+    if (MOO_RC_SELTEN(!rc) || !moo_rc_dec(rc)) return;
 
     // refcount == 0 → freigeben
     switch (v.tag) {
@@ -139,6 +153,16 @@ void moo_release(MooValue v) {
         case MOO_STRUCT:
             moo_struct_box_free(moo_val_as_ptr(v));
             break;
+        case MOO_ATOM:
+            /* P2-T114 B: Atom besitzt nichts weiter; direkt freigeben, damit
+               Harnesses mit fester Quellliste ohne moo_thread.c linkbar bleiben. */
+            free(moo_val_as_ptr(v));
+            break;
+        case MOO_SPERRE:
+            /* Eine Sperre entsteht nur ueber moo_sperre_neu (moo_thread.c), das
+               den Haken setzt. */
+            if (moo_sperre_freigabe_haken) moo_sperre_freigabe_haken(moo_val_as_ptr(v));
+            break;
         case MOO_HANDLE:
             /* P2-T23/T53: die Griff-Box besitzt keine fremden Ressourcen (kein
                Finalizer); direkt freigeben, damit Harnesses mit fester
@@ -173,13 +197,8 @@ static void free_dict(MooDict* d) {
     for (int32_t i = 0; i < d->capacity; i++) {
         if (d->entries[i].occupied) {
             // Key-String freigeben
-            if (d->entries[i].key) {
-                if (d->entries[i].key->refcount > 0) {
-                    d->entries[i].key->refcount--;
-                    if (d->entries[i].key->refcount == 0) {
-                        free_string(d->entries[i].key);
-                    }
-                }
+            if (d->entries[i].key && moo_rc_dec(&d->entries[i].key->refcount)) {
+                free_string(d->entries[i].key);
             }
             moo_release(d->entries[i].value);
         }
@@ -200,6 +219,122 @@ static void free_object(MooObject* o) {
     if (o->properties) free(o->properties);
     if (o->class_name) free(o->class_name);
     free(o);
+}
+
+// === P2-T112: geteilte Werte (Geteilt-Bit, siehe moo_rc.h) ===
+
+// 1, sobald der erste Moo-Thread gestartet wurde. Wird nur vom startenden
+// Thread VOR pthread_create/CreateThread gesetzt und nie zurueckgesetzt;
+// P2-T114 Phase C: Globale gehoeren dem Hauptthread und werden nicht mehr
+// pauschal geteilt (moo_globale_anmelden/moo_global_geschrieben entfallen).
+uint8_t moo_rc_mt_aktiv = 0;
+
+extern void moo_struct_box_teilen(void* box);
+
+static void teilen_push(MooValue** stapel, MooValue* lokal, int32_t* n, int32_t* cap, MooValue v) {
+    if (!is_heap_type(v.tag)) return;
+    if (*n == *cap) {
+        int32_t neu = *cap * 2;
+        MooValue* s = (MooValue*)malloc(sizeof(MooValue) * (size_t)neu);
+        if (!s) { fprintf(stderr, "moo: Speicher voll!\n"); exit(1); }
+        memcpy(s, *stapel, sizeof(MooValue) * (size_t)*n);
+        if (*stapel != lokal) free(*stapel);
+        *stapel = s;
+        *cap = neu;
+    }
+    (*stapel)[(*n)++] = v;
+}
+
+// Markiert v und alles von v Erreichbare als geteilt. Bereits geteilte
+// Teilbaeume werden nicht erneut besucht (Invariante: geteilt => Kinder
+// geteilt), jedes Objekt wird also hoechstens einmal markiert. Darf nur vom
+// Thread aufgerufen werden, dem die ungeteilten Teile allein gehoeren.
+bool moo_ist_geteilt(MooValue v) {
+    if (!is_heap_type(v.tag)) return false;
+    int32_t* rc = get_refcount_ptr(v);
+    return rc && moo_rc_ist_geteilt(rc);
+}
+
+void moo_teilen(MooValue wurzel) {
+    if (!is_heap_type(wurzel.tag)) return;
+    MooValue lokal[64];
+    MooValue* stapel = lokal;
+    int32_t n = 0, cap = 64;
+    stapel[n++] = wurzel;
+    while (n > 0) {
+        MooValue v = stapel[--n];
+        int32_t* rc = get_refcount_ptr(v);
+        if (!rc) continue;
+        int32_t r = moo_rc_lesen(rc);
+        if (r <= 0) continue;  /* unsterblich oder schon geteilt */
+        moo_rc_bit_setzen(rc);
+        switch (v.tag) {
+            case MOO_LIST: {
+                MooList* l = MV_LIST(v);
+                for (int32_t i = 0; i < l->length; i++)
+                    teilen_push(&stapel, lokal, &n, &cap, l->items[i]);
+                break;
+            }
+            case MOO_DICT: {
+                MooDict* d = MV_DICT(v);
+                for (int32_t i = 0; i < d->capacity; i++) {
+                    if (!d->entries[i].occupied) continue;
+                    MooString* k = d->entries[i].key;
+                    if (k && moo_rc_lesen(&k->refcount) > 0) moo_rc_bit_setzen(&k->refcount);
+                    teilen_push(&stapel, lokal, &n, &cap, d->entries[i].value);
+                }
+                break;
+            }
+            case MOO_OBJECT: {
+                MooObject* o = MV_OBJ(v);
+                for (int32_t i = 0; i < o->prop_count; i++)
+                    teilen_push(&stapel, lokal, &n, &cap, o->properties[i].value);
+                if (o->parent) {
+                    MooValue p;
+                    p.tag = MOO_OBJECT;
+                    moo_val_set_ptr(&p, o->parent);
+                    teilen_push(&stapel, lokal, &n, &cap, p);
+                }
+                break;
+            }
+            case MOO_FUNC: {
+                MooFunc* f = MV_FUNC(v);
+                for (int32_t i = 0; f->captured && i < f->n_captured; i++)
+                    teilen_push(&stapel, lokal, &n, &cap, f->captured[i]);
+                break;
+            }
+            case MOO_THREAD: {
+                MooThread* t = (MooThread*)moo_val_as_ptr(v);
+                teilen_push(&stapel, lokal, &n, &cap, t->result);
+                teilen_push(&stapel, lokal, &n, &cap, t->halt_func);
+                teilen_push(&stapel, lokal, &n, &cap, t->halt_arg);
+                break;
+            }
+            case MOO_STRUCT:
+                // Sichten halten eine Referenz auf ihre Wurzelbox.
+                moo_struct_box_teilen(moo_val_as_ptr(v));
+                break;
+            case MOO_SPERRE:
+                // P2-T114 B: Der Inhalt einer Sperre wird nicht geteilt (und
+                // damit nicht eingefroren); er ist nur unter ihrem Mutex
+                // erreichbar (mit ... als).
+                break;
+            default:
+                // Uebrige Heap-Typen enthalten keine MooValues (Kanalinhalte
+                // werden beim Senden markiert).
+                break;
+        }
+    }
+    if (stapel != lokal) free(stapel);
+}
+
+// Vor dem ersten Thread-Start (moo_thread_spawn). P2-T114 Phase C: Globale
+// werden dabei nicht mehr geteilt. Sie gehoeren dem Hauptthread; der Compiler
+// lehnt beweisbare Zugriffe aus Thread-Code ab (typpruefung.rs, M-P001), der
+// Rest prueft zur Laufzeit (moo_global_pruefen, moo_thread.c). Ausdruecklich
+// `geteilt` markierte Globale teilt der Codegen bei der Initialisierung.
+void moo_mt_aktivieren(void) {
+    moo_rc_mt_aktiv = 1;
 }
 
 // === Allokation ===

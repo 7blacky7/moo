@@ -1,0 +1,23 @@
+# 4 Threads lesen dieselbe Liste von Strings (geteilte Heap-Werte, Refcount-Konkurrenz).
+funktion lese(xs):
+    setze n auf 0
+    setze r auf 0
+    solange r < 400:
+        setze i auf 0
+        solange i < 2500:
+            setze w auf xs[i]
+            setze n auf n + länge(w)
+            setze i auf i + 1
+        setze r auf r + 1
+    gib_zurück n
+
+setze geteilt auf []
+setze i auf 0
+solange i < 2500:
+    geteilt.hinzufügen("w" + text(i % 10))
+    setze i auf i + 1
+setze t1 auf starte(lese, geteilt)
+setze t2 auf starte(lese, geteilt)
+setze t3 auf starte(lese, geteilt)
+setze t4 auf starte(lese, geteilt)
+zeige t1.warten() + t2.warten() + t3.warten() + t4.warten()

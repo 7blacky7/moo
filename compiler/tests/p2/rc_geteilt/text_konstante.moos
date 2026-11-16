@@ -1,0 +1,20 @@
+# P2-T114 Phase B: unveraenderliche Text-Konstanten lesen Threads ohne
+# 'geteilt' (Texte sind unveraenderlich; der Codegen teilt sie bei der
+# Initialisierung, der Zaehler laeuft dann atomar).
+konstante GRUSS auf "hallo"
+konstante N auf 20000
+
+funktion zaehle(x):
+    setze s auf 0
+    setze i auf 0
+    solange i < N:
+        setze g auf GRUSS
+        setze s auf s + länge(g) * x
+        setze i auf i + 1
+    gib_zurück s
+
+setze t1 auf starte(zaehle, 1)
+setze t2 auf starte(zaehle, 2)
+setze t3 auf starte(zaehle, 3)
+zeige t1.warten() + t2.warten() + t3.warten()
+zeige GRUSS

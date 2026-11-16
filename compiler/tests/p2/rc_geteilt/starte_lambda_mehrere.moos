@@ -1,0 +1,24 @@
+# P2-T120: starte mit einem Lambda und mehreren Argumenten
+# (mit und ohne Captures, ab 3 Parametern ueber den __moo_cabi-Weg).
+# In einer Funktion, damit basis ein Capture und keine Globale ist.
+funktion lauf():
+    setze basis auf [100]
+    setze plus auf (a, b) => a + b
+    setze mit_capture auf (a, b, c) => basis[0] + a * b + c
+    setze vier auf (a, b, c, d) => a + b + c + d + basis[0]
+    setze text auf (vorne, hinten) => vorne + "-" + hinten
+
+    setze t1 auf starte(plus, 20, 22)
+    setze t2 auf starte(mit_capture, 3, 4, 5)
+    setze t3 auf starte(vier, 1, 2, 3, 4)
+    setze t4 auf starte(text, "links", "rechts")
+    setze t5 auf starte((x, y, z) => x * y * z, 2, 3, 7)
+    zeige t1.warten()
+    zeige t2.warten()
+    zeige t3.warten()
+    zeige t4.warten()
+    zeige t5.warten()
+    zeige t2.warten()
+    zeige "Ende"
+
+lauf()

@@ -1,0 +1,11 @@
+# P2-T113 Messung: moo_try_check nach jedem Statement im versuche (ohne Wurf)
+setze s auf 0
+setze i auf 0
+solange i < 3000000:
+    versuche:
+        setze s auf s + i
+        setze s auf s - 1
+    fange e:
+        zeige e
+    setze i auf i + 1
+zeige s

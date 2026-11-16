@@ -1,0 +1,27 @@
+# P7-T19: exakte u64/i64-Werte aus @nativ (Tag 30/31) an C-Builtins des
+# Kernels. Vor T19 lehnte kern_alloc/kern_frei Tag 31 ab (kern_number_u64
+# verlangte Tag 0) -> 4242/4343/4444 fehlten.
+# Gate: KERNEL_MARKER="4242 4343 4444 4545 777" scripts/kernel-smoke.sh <diese Datei>
+@nativ
+funktion als64(x: u64) -> u64:
+    unsicher:
+        gib_zurück x + 0
+
+@nativ
+funktion vz64(x: i64) -> i64:
+    unsicher:
+        gib_zurück x + 0
+
+unsicher:
+    setze a auf kern_alloc(als64(32))
+    wenn a > 0:
+        zeige 4242
+    wenn kern_frei(a):
+        zeige 4343
+    setze b auf kern_alloc(16)
+    wenn kern_frei(als64(b)):
+        zeige 4444
+    # negative i64-Adresse wird abgelehnt (kein Unsinn-Zugriff)
+    wenn nicht kern_frei(vz64(-16)):
+        zeige 4545
+    zeige 777

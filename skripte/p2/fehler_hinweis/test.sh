@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# P2-T95 (User-Entscheid 15.11.2026, Plan 04998ea4, Freigabe #38192):
-# unbehandelte Fehler -> Hinweis auf stderr und Weiterlauf (RC unveraendert);
-# Abbruch nur mit MOO_STRENG=1. Prueft stdout, stderr und RC je Fixture.
+# P2-T95 (Plan 04998ea4) mit Korrektur P2-T117 (Koordinator-Entscheid 16.11.2026):
+# Fehler ohne versuche: im gesamten Aufrufpfad -> Diagnose auf stderr und IMMER
+# Exit 1 (unabhaengig von MOO_STRENG). Fall B (aeusseres versuche: vorhanden) ->
+# Hinweis an der Zwischenstelle, Weiterlauf, aeusseres versuche: faengt; nur
+# MOO_STRENG=1 bricht dort zusaetzlich ab. Prueft stdout, stderr und RC je Fixture.
 set -uo pipefail
 cd "$(dirname "$0")/../../.."
 compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
@@ -28,24 +30,17 @@ out_ist() {
 }
 anzahl() { rg -c -F -- "$2" "$out/$1.0.err" || echo 0; }
 
-# A: ohne versuche:
-lauf ohne_versuche
-[ "$rc" -eq 0 ] || fail "ohne_versuche: RC $rc statt 0"
-out_ist ohne_versuche 'f laeuft weiter\n1\nende main\n'
-err_hat ohne_versuche 'Hinweis: unbehandelter Fehler „kaputt in g“'
-err_hat ohne_versuche "geworfen in g (ohne_versuche.moos:3)"
-err_hat ohne_versuche 'nicht behandelt: kein versuche: im Aufrufpfad – das Programm läuft weiter'
-lauf ohne_versuche 1
-[ "$rc" -eq 1 ] || fail "ohne_versuche STRENG: RC $rc statt 1"
-rg -q -F 'Unbehandelter Fehler' "$out/ohne_versuche.1.err" || fail "ohne_versuche STRENG: Diagnose fehlt"
-if rg -q -F 'f laeuft weiter' "$out/ohne_versuche.1.out"; then fail "ohne_versuche STRENG: lief weiter"; fi
-# Nur exakt MOO_STRENG=1 ist opt-in (Review 0e909538): andere Werte = Standard.
-for wert in 2 true ja; do
+# A: ohne versuche: -> Abbruch mit Exit 1 und Diagnose, egal welcher MOO_STRENG-Wert
+for wert in 0 1 2 true ja; do
   lauf ohne_versuche "$wert"
-  [ "$rc" -eq 0 ] || fail "ohne_versuche MOO_STRENG=$wert: RC $rc statt 0"
-  rg -q -F 'Hinweis: unbehandelter Fehler „kaputt in g“' "$out/ohne_versuche.$wert.err" \
-    || fail "ohne_versuche MOO_STRENG=$wert: Hinweis fehlt"
-  rg -q -F 'ende main' "$out/ohne_versuche.$wert.out" || fail "ohne_versuche MOO_STRENG=$wert: lief nicht weiter"
+  [ "$rc" -eq 1 ] || fail "ohne_versuche MOO_STRENG=$wert: RC $rc statt 1"
+  rg -q -F 'Unbehandelter Fehler: kaputt in g' "$out/ohne_versuche.$wert.err" \
+    || fail "ohne_versuche MOO_STRENG=$wert: Diagnose fehlt"
+  rg -q -F 'geworfen in g (ohne_versuche.moos:3)' "$out/ohne_versuche.$wert.err" \
+    || fail "ohne_versuche MOO_STRENG=$wert: Wurfort fehlt"
+  rg -q -F 'Abbruch mit Exit-Code 1' "$out/ohne_versuche.$wert.err" \
+    || fail "ohne_versuche MOO_STRENG=$wert: Abbruchhinweis fehlt"
+  [ -s "$out/ohne_versuche.$wert.out" ] && fail "ohne_versuche MOO_STRENG=$wert: lief weiter"
 done
 
 # B: aeusseres versuche:
@@ -70,12 +65,12 @@ lauf gefangen
 out_ist gefangen 'f faengt: kaputt in g\n2\n'
 [ -s "$out/gefangen.0.err" ] && { fail "gefangen: stderr nicht leer"; cat "$out/gefangen.0.err"; }
 
-# schleife: ein Hinweis + Zaehler, keine Flut
+# schleife ohne versuche: der erste Wurf beendet das Programm (keine Flut, RC 1)
 lauf schleife
-[ "$rc" -eq 0 ] || fail "schleife: RC $rc"
-out_ist schleife '5\nende main\n'
-[ "$(anzahl schleife 'Hinweis: unbehandelter Fehler')" -eq 1 ] || fail "schleife: Flut"
-err_hat schleife 'trat insgesamt 3 Mal auf'
+[ "$rc" -eq 1 ] || fail "schleife: RC $rc statt 1"
+out_ist schleife ''
+[ "$(anzahl schleife 'Unbehandelter Fehler')" -eq 1 ] || fail "schleife: nicht genau eine Diagnose"
+err_hat schleife 'Unbehandelter Fehler: gerade 0'
 
 # nichts gefunden: kein Hinweis
 lauf nichts
@@ -90,4 +85,4 @@ err_hat modul 'geworfen in werfe_im_modul (modul_werfer.moos:3)'
 err_hat modul "nicht behandelt in f beim Aufruf von werfe_im_modul (modul.moos:5)"
 
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T95 fehler_hinweis"; exit 1; fi
-echo "PASS P2-T95 fehler_hinweis: Hinweis + Weiterlauf (ohne/mit aeusserem versuche:), verschachtelt einmal, gefangen still, Schleife gezaehlt, nichts kein Fehler, Moduldatei, MOO_STRENG=1 RC 1, MOO_STRENG=2/true/ja Standard"
+echo "PASS P2-T95/T117 fehler_hinweis: ohne versuche: RC 1 + Diagnose (alle MOO_STRENG-Werte), aeusseres versuche: Hinweis + Weiterlauf, verschachtelt einmal, gefangen still, Schleife bricht beim ersten Wurf ab, nichts kein Fehler, Moduldatei"

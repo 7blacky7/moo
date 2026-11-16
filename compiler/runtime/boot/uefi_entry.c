@@ -655,11 +655,13 @@ MooValue kern_acpi_rsdp(void) {
     return moo_number((double)alt);
 }
 
-/* P7-T15: Hilfen fuer Treiber in Moo. Zahlen kommen als MooValue (double). */
+/* P7-T15: Hilfen fuer Treiber in Moo. P7-T19: Zahlen ueber den gemeinsamen
+ * tag-kundigen Zugriff (Tag 0 double, 30 i64, 31 u64; moo_bare_wert.h).
+ * Kein Zahlwert (Text, Bool, nichts) -> Trap statt Unsinn als Adresse. */
+#include "../moo_bare_wert.h"
 extern MooValue moo_string_new_len(const char *chars, int len);   /* boot/uefi_rt.c */
 static double moo_uefi_zahl(MooValue v) {
-    double d;
-    __builtin_memcpy(&d, &v.data, sizeof d);
+    double d = MOO_WERT_ZAHL(v);
     return d == d ? d : 0.0;     /* NaN -> 0 */
 }
 

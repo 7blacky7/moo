@@ -1,0 +1,66 @@
+# P2-T112/P2-T114: drei Veroeffentlichungswege ausser dem starte-Argument.
+#  a) Eine Liste wird NACH starte vollstaendig aufgebaut und erst dann per
+#     Kanal an die Worker gegeben (P2-T114: geteilt = eingefroren, Einfuegen
+#     in eine schon geteilte Liste ist ein Fehler).
+#  b) Eine frische Liste geht per Kanal an die Worker; der Hauptthread liest sie weiter.
+#  c) Ein Closure-Capture (Liste) wird von allen Threads gelesen.
+# Erwartet: 12000000
+funktion arbeite(paket):
+    setze kx auf paket[0]
+    setze k auf paket[1]
+    setze cl auf paket[2]
+    setze xs auf kx.empfangen()
+    setze ys auf k.empfangen()
+    setze n auf 0
+    setze r auf 0
+    solange r < 200:
+        setze i auf 0
+        solange i < 2500:
+            setze n auf n + länge(xs[i]) + länge(ys[i]) + cl(i)
+            setze i auf i + 1
+        setze r auf r + 1
+    gib_zurück n
+
+funktion haupt():
+    setze kx auf kanal(16)
+    setze k auf kanal(16)
+    setze cap auf []
+    setze i auf 0
+    solange i < 2500:
+        cap.hinzufügen("c" + text(i % 10))
+        setze i auf i + 1
+    setze cl auf (j) => länge(cap[j])
+    setze paket auf [kx, k, cl]
+    setze t1 auf starte(arbeite, paket)
+    setze t2 auf starte(arbeite, paket)
+    setze t3 auf starte(arbeite, paket)
+    setze t4 auf starte(arbeite, paket)
+    setze xs auf []
+    setze i auf 0
+    solange i < 2500:
+        xs.hinzufügen("x" + text(i % 10))
+        setze i auf i + 1
+    kx.senden(xs)
+    kx.senden(xs)
+    kx.senden(xs)
+    kx.senden(xs)
+    setze ys auf []
+    setze i auf 0
+    solange i < 2500:
+        ys.hinzufügen("y" + text(i % 10))
+        setze i auf i + 1
+    k.senden(ys)
+    k.senden(ys)
+    k.senden(ys)
+    k.senden(ys)
+    setze m auf 0
+    setze r auf 0
+    solange r < 200:
+        setze i auf 0
+        solange i < 2500:
+            setze m auf m + länge(ys[i]) + länge(xs[i]) + cl(i)
+            setze i auf i + 1
+        setze r auf r + 1
+    gib_zurück t1.warten() + t2.warten() + t3.warten() + t4.warten()
+
+zeige haupt()

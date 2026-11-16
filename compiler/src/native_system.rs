@@ -1496,13 +1496,26 @@ fn port_bits(name: &str) -> Option<(bool, u32)> {
 /// verschatten (main.rs definitionen_registrieren), sonst waere offen, ob
 /// `zeiger(x)` die eigene Funktion oder den Rohzugriff meint.
 pub(crate) fn ist_unsicheres_builtin(name: &str) -> bool {
-    port_bits(name).is_some() || barrier(name).is_some() || matches!(name,
+    port_bits(name).is_some() || barrier(name).is_some() || atom_art(name).is_some() || matches!(name,
         "zeiger" | "pointer" | "adresse_von" | "address_of" | "speicher_lesen" | "mem_read"
         | "speicher_schreiben" | "mem_write" | "puffer_zeiger" | "buffer_pointer"
         | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write"
         | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
         | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write"
         | "assembler")
+}
+
+/// P2-T114 Phase B: Atom-Intrinsics (DE kanonisch, EN-Alias). 0 laden,
+/// 1 speichern, 2 addieren, 3 tauschen, 4 vergleichen_und_tauschen.
+pub(crate) fn atom_art(name: &str) -> Option<u8> {
+    Some(match name {
+        "atom_laden" | "atomic_load" => 0,
+        "atom_speichern" | "atomic_store" => 1,
+        "atom_addieren" | "atomic_add" => 2,
+        "atom_tauschen" | "atomic_swap" => 3,
+        "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => 4,
+        _ => return None,
+    })
 }
 
 fn barrier(name: &str) -> Option<u8> {
@@ -3067,7 +3080,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 match name.as_str() {
                     "adresse_von" | "address_of" => return Some(STy::Int(NType::U64)),
                     "speicher_lesen" | "mem_read" => return args.get(1).and_then(|w| width_type(w).ok()).map(STy::Int),
-                    "volatile_lesen" | "volatile_read" => return args.first().and_then(|p| match self.infer(p) {
+                    "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => return Some(STy::Bool),
+                    "atom_laden" | "atomic_load" | "atom_addieren" | "atomic_add" | "atom_tauschen" | "atomic_swap"
+                    | "volatile_lesen" | "volatile_read" => return args.first().and_then(|p| match self.infer(p) {
                         Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. })) => STy::from_identity(&pointee).ok().flatten(),
                         _ => None,
                     }),
@@ -4232,6 +4247,62 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             "assembler" => return self.inline_asm(args, expected, statement),
             _ => {}
+        }
+        // P2-T114 Phase B: Atomics als LLVM-Instruktionen (seq_cst), hosted und
+        // Bare. Zeiger ptr[T] mit Integer-Zieltyp, natuerlich ausgerichtet
+        // (Vertrag des unsicheren Aufrufers). addieren/tauschen liefern den
+        // alten Wert, vergleichen_und_tauschen liefert bool (getauscht).
+        if let Some(op) = atom_art(name) {
+            use inkwell::AtomicOrdering::SequentiallyConsistent as SeqCst;
+            let arity = match op { 0 => 1, 4 => 3, _ => 2 };
+            if args.len() != arity {
+                return Err(format!("Systemkoerper: {name} erwartet {arity} Argument(e) (Zeiger zuerst)"));
+            }
+            let pty = self.infer(&args[0]).ok_or_else(|| format!("{name}: erster Operand muss ein ptr[T]-Ausdruck sein"))?;
+            let element = match &pty {
+                STy::Ptr(NativeTypeId::Pointer { pointee, .. }) => match STy::from_identity(pointee)? {
+                    Some(STy::Int(t)) => t,
+                    _ => return Err(format!("{name}: Atomics erfordern einen Integer-Zieltyp (u8..u64, i8..i64)")),
+                },
+                _ => return Err(format!("{name}: erster Operand muss ein ptr[T]-Ausdruck sein")),
+            };
+            let ptr = self.expr(&args[0], Some(&pty))?.value.into_pointer_value();
+            let llvm = element.llvm_type(self.context);
+            let alignment = self.target.get_abi_alignment(&llvm);
+            let mut operand = |this: &mut Self, i: usize| -> Result<IntValue<'ctx>, String> {
+                let v = this.expr(&args[i], Some(&STy::Int(element)))?;
+                this.expect(&v, &STy::Int(element), name)?;
+                Ok(v.value.into_int_value())
+            };
+            match op {
+                0 => {
+                    let value = self.builder.build_load(llvm, ptr, "sys.atom.laden").map_err(e)?;
+                    let ins = value.as_instruction_value().ok_or("Load fehlt")?;
+                    ins.set_alignment(alignment).map_err(e)?;
+                    ins.set_atomic_ordering(SeqCst).map_err(e)?;
+                    return Ok(Some(SVal { ty: STy::Int(element), value }));
+                }
+                1 => {
+                    let v = operand(self, 1)?;
+                    let store = self.builder.build_store(ptr, v).map_err(e)?;
+                    store.set_alignment(alignment).map_err(e)?;
+                    store.set_atomic_ordering(SeqCst).map_err(e)?;
+                    return Ok(None);
+                }
+                2 | 3 => {
+                    let v = operand(self, 1)?;
+                    let bin = if op == 2 { inkwell::AtomicRMWBinOp::Add } else { inkwell::AtomicRMWBinOp::Xchg };
+                    let old = self.builder.build_atomicrmw(bin, ptr, v, SeqCst).map_err(e)?;
+                    return Ok(Some(SVal { ty: STy::Int(element), value: old.into() }));
+                }
+                _ => {
+                    let cmp = operand(self, 1)?;
+                    let new = operand(self, 2)?;
+                    let pair = self.builder.build_cmpxchg(ptr, cmp, new, SeqCst, SeqCst).map_err(e)?;
+                    let ok = self.builder.build_extract_value(pair, 1, "sys.atom.ok").map_err(e)?;
+                    return Ok(Some(SVal { ty: STy::Bool, value: ok }));
+                }
+            }
         }
         if let Some((read, bits)) = port_bits(name) {
             if !self.x86 { return Err("Port-I/O gibt es nur auf x86_64".into()); }

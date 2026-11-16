@@ -1,9 +1,23 @@
 # Typ-Warnungen Test
+# Compilezeit: 3x M-H001. Laufzeit (P2-T117): jeder Fehlgriff wirft einen
+# fangbaren Fehler statt still nichts zu tun.
 setze x auf 42
-x.append(1)
+versuche:
+    x.append(1)
+fange e:
+    zeige e
 
 setze name auf "Anna"
-name.sort()
+versuche:
+    name.sort()
+fange e:
+    zeige e
 
 setze liste auf [1, 2, 3]
-liste.upper()
+versuche:
+    liste.upper()
+fange e:
+    zeige e
+
+zeige name
+zeige liste

@@ -1,0 +1,46 @@
+# P2-T114 Phase C: Spiel-Muster. Die globalen Listen gehoeren dem
+# Hauptthread und bleiben nach starte veraenderbar (bis Phase C wurden alle
+# Globalen beim ersten starte geteilt und damit eingefroren). Zwei Worker
+# rechnen ueber Kanaele; nur der Hauptthread fasst die Globalen an.
+setze gegner auf []
+setze treffer auf {}
+setze punkte auf 0
+
+funktion arbeiter(paket):
+    setze eingang auf paket[0]
+    setze ausgang auf paket[1]
+    setze laeuft auf wahr
+    solange laeuft:
+        setze auftrag auf eingang.empfangen()
+        wenn auftrag == nichts:
+            setze laeuft auf falsch
+        sonst:
+            ausgang.senden(auftrag * 2)
+    gib_zurück 0
+
+setze eingang auf kanal(64)
+setze ausgang auf kanal(64)
+setze w1 auf starte(arbeiter, [eingang, ausgang])
+setze w2 auf starte(arbeiter, [eingang, ausgang])
+setze bild auf 0
+solange bild < 50:
+    setze runde auf 0
+    solange runde < 20:
+        gegner.hinzufügen(runde)
+        eingang.senden(runde)
+        setze runde auf runde + 1
+    setze runde auf 0
+    solange runde < 20:
+        setze punkte auf punkte + ausgang.empfangen()
+        setze runde auf runde + 1
+    treffer[text(bild)] = punkte
+    gegner[0] = bild
+    setze bild auf bild + 1
+eingang.senden(nichts)
+eingang.senden(nichts)
+w1.warten()
+w2.warten()
+zeige länge(gegner)
+zeige gegner[0]
+zeige länge(treffer)
+zeige punkte

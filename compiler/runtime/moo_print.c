@@ -163,6 +163,10 @@ MooValue moo_to_string(MooValue v) {
             return moo_struct_text(v);
         case MOO_HANDLE:
             return moo_string_new(moo_handle_text(v));
+        case MOO_ATOM:
+            return moo_string_new("<Atom>");
+        case MOO_SPERRE:
+            return moo_string_new("<Sperre>");
         default:
             return moo_string_new("<unbekannt>");
     }
