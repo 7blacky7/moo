@@ -34,7 +34,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 #include <intrin.h>
 #define MOO_RC_INLINE static __forceinline
 #define MOO_RC_SELTEN(x) (x)

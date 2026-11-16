@@ -2,20 +2,11 @@
 #include "moo_buffer.h"
 #include "moo_struct_value.h"
 #include "moo_struct_typed.h"
+#include "moo_struct_box_priv.h"
 #include "moo_rc.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-struct MooStructBox {
-    int32_t refcount; /* Generic MooValue heap release requires first field. */
-    const MooStructDescriptor* type;
-    unsigned char* data;
-    /* P2-T49: Laufzeitbeschreibung v2 (NULL bei Alt-API) und, bei einer Sicht,
-     * die Wurzelbox, der data gehoert (NULL = eigene Daten). */
-    const MooStrukturTyp* typ;
-    MooStructBox* besitzer;
-};
 
 static int moo_struct_valid(const MooStructDescriptor* t) {
     if (!t || !t->name || !t->size || !t->alignment ||
@@ -140,13 +131,6 @@ void moo_struct_box_free(void* ptr) {
 }
 void moo_struct_box_drop(MooStructBox* b) {
     if (b && moo_rc_dec(&b->refcount)) moo_struct_box_free(b);
-}
-/* P2-T112: Eine geteilte Sicht gibt ihre Wurzelreferenz evtl. aus einem anderen
-   Thread ab, also die Wurzel mitmarkieren (vom moo_teilen der Sicht gerufen). */
-void moo_struct_box_teilen(void* ptr) {
-    MooStructBox* b = ptr;
-    if (b && b->besitzer && moo_rc_lesen(&b->besitzer->refcount) > 0)
-        moo_rc_bit_setzen(&b->besitzer->refcount);
 }
 MooStructStatus moo_struct_box_copy(const MooStructBox* b, const MooStructDescriptor* t, void* out) {
     if (!b || !t || !out) return MOO_STRUCT_INVALID;

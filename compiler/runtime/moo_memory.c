@@ -1,5 +1,6 @@
 #include "moo_runtime.h"
 #include "moo_rc.h"
+#include "moo_struct_box_priv.h"
 
 // === Reference Counting ===
 
@@ -20,7 +21,6 @@ bool moo_ist_heap_wert(MooValue v) {
 }
 
 void (*moo_sperre_freigabe_haken)(void*) = NULL;
-
 extern void moo_socket_free(void* ptr);
 extern void moo_buffer_free(void* ptr);
 extern void moo_struct_box_free(void* ptr);
@@ -229,8 +229,6 @@ static void free_object(MooObject* o) {
 // pauschal geteilt (moo_globale_anmelden/moo_global_geschrieben entfallen).
 uint8_t moo_rc_mt_aktiv = 0;
 
-extern void moo_struct_box_teilen(void* box);
-
 static void teilen_push(MooValue** stapel, MooValue* lokal, int32_t* n, int32_t* cap, MooValue v) {
     if (!is_heap_type(v.tag)) return;
     if (*n == *cap) {
@@ -311,8 +309,15 @@ void moo_teilen(MooValue wurzel) {
                 break;
             }
             case MOO_STRUCT:
-                // Sichten halten eine Referenz auf ihre Wurzelbox.
-                moo_struct_box_teilen(moo_val_as_ptr(v));
+                /* Sichten halten eine Referenz auf ihre Wurzelbox. Das
+                   private Layout ist in beiden Modulen identisch eingebunden,
+                   daher braucht der Kern kein Strukturbox-Symbol. */
+                {
+                    MooStructBox* box = moo_val_as_ptr(v);
+                    if (box && box->besitzer &&
+                        moo_rc_lesen(&box->besitzer->refcount) > 0)
+                        moo_rc_bit_setzen(&box->besitzer->refcount);
+                }
                 break;
             case MOO_SPERRE:
                 // P2-T114 B: Der Inhalt einer Sperre wird nicht geteilt (und
