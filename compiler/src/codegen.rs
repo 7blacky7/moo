@@ -1225,10 +1225,8 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     _ => return Err(format!("Native Funktion '{name}': @unterbrechung ist doppelt angegeben")),
                 };
-                if interrupt.is_some() && (naked || convention != 0
-                    || !matches!(crate::native_hardware::classify_body(body), crate::native_hardware::BodyKind::Hardware))
-                {
-                    return Err(format!("Native Funktion '{name}': @unterbrechung verlangt einen Hardwarekörper (unsicher: ...) ohne @nackt/@aufrufkonvention; Sonderfälle als @nackt-Trampolin"));
+                if interrupt.is_some() && (naked || convention != 0) {
+                    return Err(format!("Native Funktion '{name}': @unterbrechung verlangt einen unsicher:-Hardware- oder Systemkörper ohne @nackt/@aufrufkonvention; Sonderfälle als @nackt-Trampolin"));
                 }
                 // P2-T98 S3: Rohzugriff ausserhalb unsicher: ist M-M005 mit Zeile,
                 // fuer reine wie fuer Systemkoerper (vorher M-C000 ohne Zeile).
@@ -1417,13 +1415,20 @@ impl<'ctx> CodeGen<'ctx> {
                     let fun = self.module.add_function(&internal, fun_type,
                         Some(inkwell::module::Linkage::Internal));
                     if convention != 0 { fun.set_call_conventions(convention); }
+                    if let Some(vector) = interrupt {
+                        let triple = self.module.get_triple();
+                        let triple = triple.as_str().to_str().map_err(|e| e.to_string())?.to_string();
+                        crate::native_hardware::configure_interrupt_system(
+                            self.context, fun, &sig, vector, &triple,
+                        ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
+                    }
                     self.native_functions.insert(name.clone(), fun);
                     if sicher_system { self.safe_native_functions.insert(name.clone()); }
                     // P2-T43: Bare-Systemkoerper ebenfalls registrieren; die
                     // Aufrufstelle laesst im Bare-Profil nur runtime-freie
                     // Literal-Argumente zu (hosted_system_functions wird sonst
                     // nur bei !bare_mode ausgewertet, write_object).
-                    if hosted_system || sicher_system || self.bare_mode {
+                    if interrupt.is_none() && (hosted_system || sicher_system || self.bare_mode) {
                         self.hosted_system_functions.push(fun);
                         // P2-T66 Stufe 2a: rein skalare Signatur -> aus dynamischem
                         // Moo aufrufbar; die Aufrufstelle verlangt unsicher:/main/kein try.
@@ -1937,6 +1942,20 @@ impl<'ctx> CodeGen<'ctx> {
             RelocMode::PIC
         };
 
+        // P7-T7: Der x86_64-Kern liegt bei 0xFFFFFFFF80000000. Das
+        // Default/Small-Code-Model erzeugt fuer adresse_von(Funktion) R_X86_64_32
+        // und kann IDT-Ziele in der Hochhaelfte nicht darstellen. Kernel-Code-
+        // Model behaelt PC-relative Zugriffe und erlaubt signierte 32-Bit-
+        // Funktionsadressen im oberen 2-GiB-Fenster.
+        let code_model = if triple_str.starts_with("x86_64-")
+            && triple_str.contains("-none")
+            && self.bare_mode
+        {
+            CodeModel::Kernel
+        } else {
+            CodeModel::Default
+        };
+
         let machine = target_obj
             .create_target_machine(
                 &triple,
@@ -1944,7 +1963,7 @@ impl<'ctx> CodeGen<'ctx> {
                 &feat_str,
                 OptimizationLevel::Default,
                 reloc_mode,
-                CodeModel::Default,
+                code_model,
             )
             .ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
 

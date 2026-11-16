@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "651d637b4f07a6d0fc129695d6c4a855b6ef9964f2eccc9a5500e05d6beb6698",
+  "compiler_sha256": "63e698062fc4776089d39f85f61ab5033132970651618ab467ce9cae9da26861",
   "normalization": "module-header-root-v2",
   "batch": null,
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "c8d9034aeb97b026e67441a7f26cf2ed7a69c49d4c708b90de4a012d898b25e9",
+  "compiler_runtime_inventory_sha256": "385044f1d2bc863519d73784b6c47cc3d287d086cd4c06a2fd83dfef31ddda43",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -83,7 +83,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "cb77b471f5754cb0e81bd02dbb8c874845e20dab0001f07dcaab60f66e2c8aad",
+    "sha256": "d4bf59eb066219ad5a7c71c994b42061075bafca1b2f7f1e5e7b05bf82a4e816",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -207,12 +207,12 @@
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
-      "beispiele/kernel/moo_bootvertrag.moos": "6413d7619fb868967f8c0e348c15052aefbd31224f5241483c25c0e3de08cf10",
+      "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
-      "beispiele/kernel/uefi_kern.moos": "f1660f2af8485d0800e17834ec6f4291da4de99606ef94fc4b2c9d631273904a",
+      "beispiele/kernel/uefi_kern.moos": "c9c95fba9912c1894804f656eff0ab06be0acfbc45be03c8beabcad8648fff35",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
@@ -433,7 +433,7 @@
       "beispiele/tower_defense.moos": "55b7830a11d21ece90ab22b173bab1f3377f85d7405effa528b8b5826f32f7b2",
       "beispiele/tron.moos": "e66230b716ae7b74a12960476ff4ef21230ec66fe47c0ad35393402dcf13b83d",
       "beispiele/uefi/hallo_uefi.moos": "670eeac75a9db07ff572901d6f57b9d7bf409afff734ddaa35cedf6187ba2b87",
-      "beispiele/uefi/moo_lader.moos": "f1d018812e88571869a55442825db2486c93c23cfd4259c7cd07066e67160f0e",
+      "beispiele/uefi/moo_lader.moos": "26ebca8ceb5811959c9eb67a33611ca238e9ff94850fd83e414fa3bdaa3b45d1",
       "beispiele/uefi/netz_e1000.moos": "31a1108f82bfadc94f220fd379310146c288c8c88f5239c5a81d379b845f8a82",
       "beispiele/uefi/netz_lader.moos": "af71fd47df37ad5c2bd0d72c66bf783681cd8c0c0d6d234712457f74d8a6378b",
       "beispiele/uefi/netz_tftp.moos": "73d7cd57fcb36a8bd0ae3aaff5a48251dd45edd5e1c15b5be19f8955edd3b783",
@@ -559,7 +559,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "f3ccf62181e84a79b98d83f96309ac7761d76dc3a425277c378fe79af3b5282d",
+    "sha256": "f68c3b52eb4295e58b9cf900299c9fedd5992e0222e120ed948e3db9db2ae3cd",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -683,12 +683,12 @@
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
-      "beispiele/kernel/moo_bootvertrag.moos": "6413d7619fb868967f8c0e348c15052aefbd31224f5241483c25c0e3de08cf10",
+      "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
-      "beispiele/kernel/uefi_kern.moos": "f1660f2af8485d0800e17834ec6f4291da4de99606ef94fc4b2c9d631273904a",
+      "beispiele/kernel/uefi_kern.moos": "c9c95fba9912c1894804f656eff0ab06be0acfbc45be03c8beabcad8648fff35",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
@@ -909,7 +909,7 @@
       "beispiele/tower_defense.moos": "55b7830a11d21ece90ab22b173bab1f3377f85d7405effa528b8b5826f32f7b2",
       "beispiele/tron.moos": "e66230b716ae7b74a12960476ff4ef21230ec66fe47c0ad35393402dcf13b83d",
       "beispiele/uefi/hallo_uefi.moos": "670eeac75a9db07ff572901d6f57b9d7bf409afff734ddaa35cedf6187ba2b87",
-      "beispiele/uefi/moo_lader.moos": "f1d018812e88571869a55442825db2486c93c23cfd4259c7cd07066e67160f0e",
+      "beispiele/uefi/moo_lader.moos": "26ebca8ceb5811959c9eb67a33611ca238e9ff94850fd83e414fa3bdaa3b45d1",
       "beispiele/uefi/netz_e1000.moos": "31a1108f82bfadc94f220fd379310146c288c8c88f5239c5a81d379b845f8a82",
       "beispiele/uefi/netz_lader.moos": "af71fd47df37ad5c2bd0d72c66bf783681cd8c0c0d6d234712457f74d8a6378b",
       "beispiele/uefi/netz_tftp.moos": "73d7cd57fcb36a8bd0ae3aaff5a48251dd45edd5e1c15b5be19f8955edd3b783",
@@ -1686,6 +1686,7 @@
       "compiler/tests/p7/hardware/unterbrechung_nackt.moos": "480b5851a0bf0c93dc3a71519c065f1be71d8971b9066fc6aadcef2214e6a222",
       "compiler/tests/p7/hardware/unterbrechung_ohne_vektor.moos": "6bd019309c6cd7daf38f4a184d86ea699f623a44fc2cfd8e01019a160547d0de",
       "compiler/tests/p7/hardware/unterbrechung_rueckgabe.moos": "8e329d7b0014cc3e32aa09aa1540a050d8876efc591d38203005bf5804ff1c86",
+      "compiler/tests/p7/hardware/unterbrechung_system.moos": "0ffe5121921712999ef1b60955eaf3c1863ef98db4e1b5e83c5821e911d5b0c8",
       "compiler/tests/p7/hardware/versatz_unbekannt.moos": "a290a018e749be8849aa8e3561b9a32f84470825df2cc059074ae7bba94d93d1",
       "compiler/tests/p7/hardware/volatile_float.moos": "49a49a8d46e70dd8dabb99b61253a7ddd570a0fa07a1e70d61d65068b6059d08",
       "compiler/tests/p7/hardware/volatile_mmio.moos": "9a3cfe99b5821f65685c399ea8aaf5cbcac7dad45aae4add0563c8fb76f5bb08",
@@ -1850,7 +1851,7 @@
   },
   "toolchain_snapshot": {
     "contract": "legacy-ir-toolchain-v1",
-    "sha256": "79141903eb33962667fa197130a0d3296e8e2e0e4ab424d249f3ef9bffea25b3",
+    "sha256": "d0fab0fb33b7b6d06b51a9bee1ffe5b2c339e3ba7e0500cac54c681fabb47783",
     "entries": [
       "contract=legacy-ir-toolchain-v1",
       "uname=Linux 7.0.5-1-cachyos x86_64",
@@ -1866,8 +1867,8 @@
       "tool=realpath|sha256=0c3d9b257643524fb11a312289aa73d89945941b3db56dca09d606e039f8f5a8|version=realpath (GNU coreutils) 9.11",
       "tool=cmp|sha256=ec366a67754f3828c731a1c35ec7d32384a3446bf3291648f5eba9f9b4d4f8d8|version=cmp (GNU diffutils) 3.12",
       "tool=xargs|sha256=96fe0e46bbd11d9990db448e64ff73ed25c8cdd2d38caf2ac305c6e74d57cd5c|version=xargs (GNU findutils) 4.10.0-dirty",
-      "tool=rustc|sha256=08f8545bda844e92b78d03e3e4e17e44135cf034685fa8190965b9e978196c7e|version=rustc 1.96.1 (31fca3adb 2026-06-26)",
-      "tool=cargo|sha256=08f8545bda844e92b78d03e3e4e17e44135cf034685fa8190965b9e978196c7e|version=cargo 1.96.1 (356927216 2026-06-26)",
+      "tool=rustc|sha256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10|version=rustc 1.96.1 (31fca3adb 2026-06-26)",
+      "tool=cargo|sha256=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10|version=cargo 1.96.1 (356927216 2026-06-26)",
       "tool=cc|sha256=663c34c939a806e1535cf3383e414f572deef79aa5baa794aede74c26b67356c|version=cc (GCC) 16.1.1 20260430",
       "tool=ld|sha256=da7be7d2c53a5df8e93aa41f5b6e55ded7472e2a1b15ed2362ffae3c170d6e51|version=GNU ld (GNU Binutils) 2.46.0",
       "tool=llvm-config|sha256=44e168113673a345393172a6b6c0e57b6876271477d4c8891ed94e9d885ecf6e|version=22.1.3",
@@ -2385,7 +2386,7 @@
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "c636fd70c8480c19c0352a569e3f38fbf08939acfe0b918f9bd1c1899215140a"
+      "sha256": "7b38fd4436d254999b19b6eeccb9b8486b25ee32e7885ed0cfed4fa0dd243313"
     },
     "beispiele/ki_audio.moos": {
       "status": "ok",
@@ -3269,7 +3270,7 @@
     },
     "beispiele/uefi/moo_lader.moos": {
       "status": "ok",
-      "sha256": "23aff28c965f36431eb9a17912172bc00b6af4c1d3e9edf4fcde30ddfdb92872"
+      "sha256": "694c0b1f4468886d1faade3c17d2792baa1bd4d3f388bd78b14be1c4aef90233"
     },
     "beispiele/uefi/netz_e1000.moos": {
       "status": "ok",

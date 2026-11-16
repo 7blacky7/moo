@@ -1,0 +1,17 @@
+# P7-T7: @unterbrechung darf im Bare-Profil einen echten Systemkoerper
+# mit Local, Kontrollfluss, statischem Zustand und nativem Hilfsaufruf haben.
+@nativ
+statisch SYSTEM_TICKS: [u64; 1] auf [0]
+
+@nativ
+funktion irq_speichere(wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(SYSTEM_TICKS), wert, 8)
+
+@nativ
+@unterbrechung(64)
+funktion irq_system(rahmen: ptr[u64]) -> void:
+    unsicher:
+        setze rip: u64 auf volatile_lesen(rahmen, 0)
+        wenn rip != 0:
+            irq_speichere(rip)

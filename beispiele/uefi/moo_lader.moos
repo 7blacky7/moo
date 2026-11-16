@@ -604,6 +604,7 @@ funktion seitentabelle_bauen(bs: u64, bi: u64, physisch: u64, seitenzahl: u64) -
         setze cr3: u64 auf assembler(ziel="x86_64", code="movq %cr3, $0", ausgang="=r", clobber=[])
         setze cr4: u64 auf assembler(ziel="x86_64", code="movq %cr4, $0", ausgang="=r", clobber=[])
         setze alt: u64 auf cr3 & 0x000FFFFFFFFFF000
+        speicher_schreiben(bi + versatz_von(MooBootInfo, firmware_seitentabelle), alt, 8)
         setze pt_anzahl: u64 auf (seitenzahl + 511) / 512
         setze tabellen: u64 auf 0
         setze k: u64 auf 0
@@ -630,6 +631,7 @@ funktion seitentabelle_bauen(bs: u64, bi: u64, physisch: u64, seitenzahl: u64) -
             speicher_schreiben(tabellen + 12288 + k * 8, (physisch + k * 4096) | 3, 8)
             setze k auf k + 1
         speicher_schreiben(bi + versatz_von(MooBootInfo, seitentabelle), tabellen, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, seitentabelle_seiten), 3 + pt_anzahl, 8)
         meldung(adresse_von(T_SEITEN), tabellen)
         gib_zurück wahr
 
@@ -679,7 +681,7 @@ funktion efi_main(bild: u64, st: u64) -> u64:
             schirm(st, bs, adresse_von(W_F_SPEICHER), wahr)
             gib_zurück FEHLER_LADEN
         speicher_schreiben(bi + versatz_von(MooBootInfo, magie), BOOT_MAGIE, 8)
-        speicher_schreiben(bi + versatz_von(MooBootInfo, version), 1, 8)
+        speicher_schreiben(bi + versatz_von(MooBootInfo, version), 2, 8)
         speicher_schreiben(bi + versatz_von(MooBootInfo, arbeit), arbeit, 8)
         speicher_schreiben(bi + versatz_von(MooBootInfo, arbeit_groesse), 16 * 4096, 8)
         # GOP: LocateProtocol(&GOP_GUID, NULL, &gop)

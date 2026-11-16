@@ -1219,6 +1219,20 @@ pub(crate) struct SystemSignature {
 }
 
 impl SystemSignature {
+    /// P7-T7: Signaturvertrag fuer Interrupt-Systemkoerper. Der Rahmen ist
+    /// exakt ptr[u64], Fehlercode-Vektoren haben zusaetzlich u64, Ergebnis void.
+    pub(crate) fn is_interrupt_signature(&self, error_code: bool) -> bool {
+        let frame = matches!(self.params.first(),
+            Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. }))
+                if matches!(pointee.as_ref(), NativeTypeId::Scalar(ScalarType::U64)));
+        let params = match self.params.as_slice() {
+            [_] => frame && !error_code,
+            [_, STy::Int(NType::U64)] => frame && error_code,
+            _ => false,
+        };
+        params && self.result.is_none()
+    }
+
     /// P2-T66 Stufe 2a: rein skalare Signatur (Int/Float, seit P2-T34 auch
     /// bool) als NSignature fuer den dynamischen Aufruf-Wrapper. Zeiger und
     /// Strukturen -> None.

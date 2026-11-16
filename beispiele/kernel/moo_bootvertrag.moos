@@ -27,6 +27,8 @@ struktur MooBootInfo:
     arbeit_groesse: u64
     kern_virtuell: u64
     seitentabelle: u64
+    firmware_seitentabelle: u64
+    seitentabelle_seiten: u64
     fb_maske_rot: u32
     fb_maske_gruen: u32
     fb_maske_blau: u32

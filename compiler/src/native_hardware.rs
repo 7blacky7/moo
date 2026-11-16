@@ -557,6 +557,40 @@ pub(crate) fn configure_interrupt<'ctx>(
     Ok(())
 }
 
+/// P7-T7: derselbe x86-Interruptvertrag fuer einen Systemkoerper. Damit
+/// duerfen echte Handler Integerzustand, Kontrollfluss und native Hilfsaufrufe
+/// nutzen; Signatur, byval-Rahmen und general-regs-only bleiben identisch.
+pub(crate) fn configure_interrupt_system<'ctx>(
+    context: &'ctx Context,
+    function: FunctionValue<'ctx>,
+    signature: &crate::native_system::SystemSignature,
+    vector: u8,
+    triple: &str,
+) -> Result<(), String> {
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    use inkwell::types::AnyType;
+    if !matches!(triple, "x86_64-unknown-none" | "x86_64-unknown-uefi") {
+        return Err(format!("@unterbrechung an @nativ: Ziel '{triple}' nicht unterstützt (aarch64: @nackt-Trampolin mit assembler, 4B)"));
+    }
+    let error_code = matches!(vector, 8 | 10..=14 | 17 | 21 | 29 | 30);
+    if !signature.is_interrupt_signature(error_code) {
+        return Err(if error_code {
+            format!("@unterbrechung({vector}): Vektor legt einen Fehlercode ab, Signatur (rahmen: ptr[u64], fehlercode: u64) -> void")
+        } else {
+            format!("@unterbrechung({vector}): Vektor ohne Fehlercode, Signatur (rahmen: ptr[u64]) -> void")
+        });
+    }
+    function.set_call_conventions(83);
+    let byval = Attribute::get_named_enum_kind_id("byval");
+    let frame_type = context.i64_type().array_type(5).as_any_type_enum();
+    function.add_attribute(AttributeLoc::Param(0), context.create_type_attribute(byval, frame_type));
+    function.add_attribute(AttributeLoc::Function,
+        context.create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0));
+    function.add_attribute(AttributeLoc::Function,
+        context.create_string_attribute("target-features", "-mmx,-sse,-sse2,-avx,-x87"));
+    Ok(())
+}
+
 /// Koerper einer Hardwarefunktion ausgeben (Erkennung: classify_body).
 pub(crate) fn emit_hardware_function<'ctx>(
     context: &'ctx Context,

@@ -87,14 +87,42 @@ statisch KONSOLE: Konsole auf 0
 @nativ
 statisch SCHIRM: Schirm auf 0
 
-# GDT: Null, 64-Bit-Code (0x08), Daten (0x10). Zeiger = limit:u16 + basis:u64.
+# GDT: Null, 64-Bit-Code (0x08), Daten (0x10), TSS (0x18, zwei Slots).
 @nativ
 @ausrichten(16)
-statisch GDT: [u64; 4] auf [0, 0x00AF9A000000FFFF, 0x00CF92000000FFFF, 0]
+statisch GDT: [u64; 5] auf [0, 0x00AF9A000000FFFF, 0x00CF92000000FFFF, 0, 0]
 
 @nativ
 @ausrichten(16)
 statisch GDT_ZEIGER: [u8; 16] auf 0
+
+# 64-Bit-TSS mit IST1 fuer Double Fault sowie 256 IDT-Tore.
+@nativ
+@ausrichten(16)
+statisch TSS: [u8; 104] auf 0
+
+@nativ
+@ausrichten(16)
+statisch IST_DOPPELFEHLER: [u8; 16384] auf 0
+
+@nativ
+@ausrichten(16)
+statisch IDT: [u64; 512] auf 0
+
+@nativ
+@ausrichten(16)
+statisch IDT_ZEIGER: [u8; 16] auf 0
+
+# [letzter Vektor, Fehlercode, RIP]
+@nativ
+statisch AUSNAHME_ZUSTAND: [u64; 3] auf [0, 0, 0]
+
+# P7-T7 Hardwarezustand:
+# 0 PM-Port, 1 PM-Maske, 2 MADT, 3 LAPIC-Basis, 4 x2APIC, 5 APIC-ID,
+# 6 IOAPIC-Basis, 7 IOAPIC-GSI-Basis, 8 Tastatur-GSI, 9 ISO-Flags,
+# 10 Timer-Ticks, 11 erster Make-Scancode, 15 Timerquelle (1 PM, 2 TSC).
+@nativ
+statisch HARDWARE_ZUSTAND: [u64; 16] auf 0
 
 # Seitentabellen: Identitaet bis 64 GiB (2-MiB-Seiten), 2 GiB Framebuffer-Fenster
 # fuer FB oberhalb davon, Kern bis 64 MiB (4-KiB-Seiten).
@@ -125,6 +153,21 @@ statisch PD_KERN: [u64; 512] auf 0
 @nativ
 @ausrichten(4096)
 statisch PT_KERN: [u64; 16384] auf 0
+
+# P7-T7: Bitmap fuer 64 GiB / 4 KiB = 16.777.216 Frames = 2 MiB.
+# Ein gesetztes Bit bedeutet frei. Vor dem eigenen CR3 werden nur Typ-7-Seiten
+# eingetragen; Loader-/BootServices-Speicher folgt explizit danach.
+@nativ
+@ausrichten(4096)
+statisch PFA_BITS: [u8; 2097152] auf 0
+
+# [maximale Frames, freie Frames, Suchcursor]
+@nativ
+statisch PFA_ZUSTAND: [u64; 3] auf [0, 0, 0]
+
+# [Heap-Basis, Heap-Groesse]
+@nativ
+statisch HEAP_ZUSTAND: [u64; 2] auf [0, 0]
 
 # Selbsttest der Formatumsetzung: 3 Pixel RGBA (r=12 g=34 b=56 a=FF).
 @nativ
@@ -160,6 +203,21 @@ konstante T_RSP: [u8; _] auf "MOO-KERNEL RSP "
 konstante T_GDT: [u8; _] auf "MOO-KERNEL GDT CS "
 
 @nativ
+konstante T_IDT: [u8; _] auf "MOO-KERNEL IDT OK "
+
+@nativ
+konstante T_AUS_VEKTOR: [u8; _] auf "MOO-KERNEL AUSNAHME VEKTOR "
+
+@nativ
+konstante T_AUS_FEHLER: [u8; _] auf "MOO-KERNEL AUSNAHME FEHLERCODE "
+
+@nativ
+konstante T_AUS_RIP: [u8; _] auf "MOO-KERNEL AUSNAHME RIP "
+
+@nativ
+konstante T_AUS_TEST: [u8; _] auf "MOO-KERNEL AUSNAHME TEST "
+
+@nativ
 konstante T_PAGING: [u8; _] auf "MOO-KERNEL PAGING EIGEN CR3 "
 
 @nativ
@@ -193,6 +251,15 @@ konstante T_KARTE: [u8; _] auf "MOO-KERNEL KARTE-ANZ "
 konstante T_FREI: [u8; _] auf "MOO-KERNEL FREI-MIB "
 
 @nativ
+konstante T_PFA: [u8; _] auf "MOO-KERNEL PFA FREI-SEITEN "
+
+@nativ
+konstante T_HEAP: [u8; _] auf "MOO-KERNEL HEAP OK "
+
+@nativ
+konstante T_TABELLEN: [u8; _] auf "MOO-KERNEL TABELLEN FREI "
+
+@nativ
 konstante T_RSDP: [u8; _] auf "MOO-KERNEL RSDP "
 
 @nativ
@@ -203,6 +270,27 @@ konstante T_SURFACE: [u8; _] auf "MOO-KERNEL SURFACE "
 
 @nativ
 konstante T_FORMATE: [u8; _] auf "MOO-KERNEL PRESENT-FORMATE "
+
+@nativ
+konstante T_ACPI: [u8; _] auf "MOO-KERNEL ACPI FADT-MADT "
+
+@nativ
+konstante T_TIMER_QUELLE: [u8; _] auf "MOO-KERNEL TIMER QUELLE "
+
+@nativ
+konstante T_TIMER_INIT: [u8; _] auf "MOO-KERNEL TIMER STARTWERT "
+
+@nativ
+konstante T_TIMER_TICKS: [u8; _] auf "MOO-KERNEL TIMER TICKS "
+
+@nativ
+konstante T_TASTATUR_BEREIT: [u8; _] auf "MOO-KERNEL TASTATUR BEREIT "
+
+@nativ
+konstante T_TASTATUR_SCAN: [u8; _] auf "MOO-KERNEL TASTATUR SCAN "
+
+@nativ
+konstante T_TASTATUR_FEHLT: [u8; _] auf "MOO-KERNEL TASTATUR PS2 NICHT VERFUEGBAR\n"
 
 @nativ
 konstante T_TSC: [u8; _] auf "MOO-KERNEL TSC-PRO-US "
@@ -560,10 +648,658 @@ funktion gdt_laden(zeiger_adr: u64) -> void:
 funktion gdt_einrichten() -> u64:
     unsicher:
         setze z: u64 auf adresse_von(GDT_ZEIGER)
-        speicher_schreiben(z, u16(4 * 8 - 1), 2)
+        setze basis: u64 auf adresse_von(TSS)
+        setze niedrig: u64 auf 103 | ((basis & 0xFFFFFF) << 16) | (0x89 << 40) | (((basis >> 24) & 0xFF) << 56)
+        # RSP0 und IST1; I/O-Bitmap beginnt hinter dem 104-Byte-TSS.
+        speicher_schreiben(basis + 4, adresse_von(KERN_STAPEL) + 65536, 8)
+        speicher_schreiben(basis + 36, adresse_von(IST_DOPPELFEHLER) + 16384, 8)
+        speicher_schreiben(basis + 102, 104, 2)
+        speicher_schreiben(adresse_von(GDT) + 24, niedrig, 8)
+        speicher_schreiben(adresse_von(GDT) + 32, basis >> 32, 8)
+        speicher_schreiben(z, u16(5 * 8 - 1), 2)
         speicher_schreiben(z + 2, adresse_von(GDT), 8)
         gdt_laden(z)
+        tss_laden()
         gib_zurück assembler(ziel="x86_64", code="movq %cs, $0", ausgang="=r", clobber=[])
+
+# ---------------- TSS, IDT und Ausnahmen ----------------
+@nativ
+funktion tss_laden() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movw $$0x18, %ax; ltr %ax", clobber=["rax", "memory"])
+
+@nativ
+funktion idt_laden(zeiger_adr: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="lidt ($0)", eingaenge={"r": zeiger_adr}, clobber=["memory"])
+
+@nativ
+funktion idt_tor(vektor: u64, ziel: u64, ist: u64) -> void:
+    unsicher:
+        setze tor: u64 auf adresse_von(IDT) + vektor * 16
+        speicher_schreiben(tor, u16(ziel & 0xFFFF), 2)
+        speicher_schreiben(tor + 2, u16(0x08), 2)
+        speicher_schreiben(tor + 4, u8(ist & 7), 1)
+        speicher_schreiben(tor + 5, u8(0x8E), 1)
+        speicher_schreiben(tor + 6, u16((ziel >> 16) & 0xFFFF), 2)
+        speicher_schreiben(tor + 8, u32((ziel >> 32) & 0xFFFFFFFF), 4)
+        speicher_schreiben(tor + 12, 0, 4)
+
+@nativ
+funktion ausnahme_melden(vektor: u64, fehler: u64, rip: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND), vektor, 8)
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 8, fehler, 8)
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 16, rip, 8)
+        meldung(adresse_von(T_AUS_VEKTOR), vektor)
+        meldung(adresse_von(T_AUS_FEHLER), fehler)
+        meldung(adresse_von(T_AUS_RIP), rip)
+        wenn vektor != 3:
+            anhalten()
+
+@nativ
+@unterbrechung(0)
+funktion ausnahme_0(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(0, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(1)
+funktion ausnahme_1(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(1, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(2)
+funktion ausnahme_2(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(2, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(3)
+funktion ausnahme_3(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(3, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(4)
+funktion ausnahme_4(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(4, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(5)
+funktion ausnahme_5(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(5, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(6)
+funktion ausnahme_6(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(6, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(7)
+funktion ausnahme_7(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(7, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(8)
+funktion ausnahme_8(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(8, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(9)
+funktion ausnahme_9(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(9, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(10)
+funktion ausnahme_10(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(10, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(11)
+funktion ausnahme_11(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(11, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(12)
+funktion ausnahme_12(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(12, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(13)
+funktion ausnahme_13(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(13, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(14)
+funktion ausnahme_14(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(14, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(15)
+funktion ausnahme_15(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(15, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(16)
+funktion ausnahme_16(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(16, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(17)
+funktion ausnahme_17(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(17, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(18)
+funktion ausnahme_18(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(18, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(19)
+funktion ausnahme_19(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(19, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(20)
+funktion ausnahme_20(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(20, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(21)
+funktion ausnahme_21(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(21, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(22)
+funktion ausnahme_22(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(22, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(23)
+funktion ausnahme_23(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(23, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(24)
+funktion ausnahme_24(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(24, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(25)
+funktion ausnahme_25(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(25, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(26)
+funktion ausnahme_26(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(26, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(27)
+funktion ausnahme_27(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(27, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(28)
+funktion ausnahme_28(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(28, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(29)
+funktion ausnahme_29(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(29, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(30)
+funktion ausnahme_30(rahmen: ptr[u64], fehler: u64) -> void:
+    unsicher:
+        ausnahme_melden(30, fehler, volatile_lesen(rahmen, 0))
+
+@nativ
+@unterbrechung(31)
+funktion ausnahme_31(rahmen: ptr[u64]) -> void:
+    unsicher:
+        ausnahme_melden(31, 0, volatile_lesen(rahmen, 0))
+
+@nativ
+funktion idt_einrichten() -> bool:
+    unsicher:
+        setze z: u64 auf adresse_von(IDT_ZEIGER)
+        idt_tor(0, adresse_von(ausnahme_0), 0)
+        idt_tor(1, adresse_von(ausnahme_1), 0)
+        idt_tor(2, adresse_von(ausnahme_2), 0)
+        idt_tor(3, adresse_von(ausnahme_3), 0)
+        idt_tor(4, adresse_von(ausnahme_4), 0)
+        idt_tor(5, adresse_von(ausnahme_5), 0)
+        idt_tor(6, adresse_von(ausnahme_6), 0)
+        idt_tor(7, adresse_von(ausnahme_7), 0)
+        idt_tor(8, adresse_von(ausnahme_8), 1)
+        idt_tor(9, adresse_von(ausnahme_9), 0)
+        idt_tor(10, adresse_von(ausnahme_10), 0)
+        idt_tor(11, adresse_von(ausnahme_11), 0)
+        idt_tor(12, adresse_von(ausnahme_12), 0)
+        idt_tor(13, adresse_von(ausnahme_13), 0)
+        idt_tor(14, adresse_von(ausnahme_14), 0)
+        idt_tor(15, adresse_von(ausnahme_15), 0)
+        idt_tor(16, adresse_von(ausnahme_16), 0)
+        idt_tor(17, adresse_von(ausnahme_17), 0)
+        idt_tor(18, adresse_von(ausnahme_18), 0)
+        idt_tor(19, adresse_von(ausnahme_19), 0)
+        idt_tor(20, adresse_von(ausnahme_20), 0)
+        idt_tor(21, adresse_von(ausnahme_21), 0)
+        idt_tor(22, adresse_von(ausnahme_22), 0)
+        idt_tor(23, adresse_von(ausnahme_23), 0)
+        idt_tor(24, adresse_von(ausnahme_24), 0)
+        idt_tor(25, adresse_von(ausnahme_25), 0)
+        idt_tor(26, adresse_von(ausnahme_26), 0)
+        idt_tor(27, adresse_von(ausnahme_27), 0)
+        idt_tor(28, adresse_von(ausnahme_28), 0)
+        idt_tor(29, adresse_von(ausnahme_29), 0)
+        idt_tor(30, adresse_von(ausnahme_30), 0)
+        idt_tor(31, adresse_von(ausnahme_31), 0)
+        speicher_schreiben(z, u16(256 * 16 - 1), 2)
+        speicher_schreiben(z + 2, adresse_von(IDT), 8)
+        idt_laden(z)
+        gib_zurück wahr
+
+@nativ
+funktion ausnahme_pruefen() -> bool:
+    unsicher:
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND), 0xFFFFFFFFFFFFFFFF, 8)
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 8, 0, 8)
+        speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 16, 0, 8)
+        assembler(ziel="x86_64", code="int3", clobber=["memory"])
+        gib_zurück speicher_lesen(adresse_von(AUSNAHME_ZUSTAND), 8) == 3 und speicher_lesen(adresse_von(AUSNAHME_ZUSTAND) + 16, 8) != 0
+
+# ---------------- ACPI, LAPIC-Timer, IOAPIC und PS/2 ----------------
+@nativ
+funktion hw(index: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(HARDWARE_ZUSTAND) + index * 8, 8)
+
+@nativ
+funktion hw_setze(index: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(HARDWARE_ZUSTAND) + index * 8, wert, 8)
+
+@nativ
+funktion ein32(port: u16) -> u32:
+    unsicher:
+        gib_zurück port_in32(port)
+
+@nativ
+funktion msr_lesen(index: u32) -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="rdmsr; shlq $$32, %rdx; orq %rdx, %rax", ausgang="={rax}", eingaenge={"{ecx}": index}, clobber=["rdx"])
+
+@nativ
+funktion msr_schreiben_roh(index: u32, niedrig: u32, hoch: u32) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="wrmsr", eingaenge={"{ecx}": index, "{eax}": niedrig, "{edx}": hoch}, clobber=[])
+
+@nativ
+funktion msr_schreiben(index: u32, wert: u64) -> void:
+    unsicher:
+        msr_schreiben_roh(index, u32(wert & 0xFFFFFFFF), u32(wert >> 32))
+
+@nativ
+funktion acpi_pruefsumme(adr: u64, laenge: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        setze summe: u64 auf 0
+        wenn adr == 0 oder laenge == 0 oder laenge > 0x100000:
+            gib_zurück falsch
+        solange i < laenge:
+            setze summe auf (summe + u64(speicher_lesen(adr + i, 1))) & 0xFF
+            setze i auf i + 1
+        gib_zurück summe == 0
+
+@nativ
+funktion acpi_tabelle(rsdp: u64, signatur: u32) -> u64:
+    unsicher:
+        setze wurzel: u64 auf 0
+        setze schritt: u64 auf 0
+        setze laenge: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        setze tabelle: u64 auf 0
+        wenn rsdp == 0 oder speicher_lesen(rsdp, 8) != RSDP_SIGNATUR oder nicht acpi_pruefsumme(rsdp, 20):
+            gib_zurück 0
+        wenn u64(speicher_lesen(rsdp + 15, 1)) >= 2 und u64(speicher_lesen(rsdp + 20, 4)) >= 36 und acpi_pruefsumme(rsdp, u64(speicher_lesen(rsdp + 20, 4))):
+            setze wurzel auf speicher_lesen(rsdp + 24, 8)
+            setze schritt auf 8
+        sonst:
+            setze wurzel auf u64(speicher_lesen(rsdp + 16, 4))
+            setze schritt auf 4
+        wenn wurzel == 0:
+            gib_zurück 0
+        setze laenge auf u64(speicher_lesen(wurzel + 4, 4))
+        wenn laenge < 36 oder nicht acpi_pruefsumme(wurzel, laenge):
+            gib_zurück 0
+        setze anzahl auf (laenge - 36) / schritt
+        solange i < anzahl:
+            wenn schritt == 8:
+                setze tabelle auf speicher_lesen(wurzel + 36 + i * 8, 8)
+            sonst:
+                setze tabelle auf u64(speicher_lesen(wurzel + 36 + i * 4, 4))
+            wenn tabelle != 0 und speicher_lesen(tabelle, 4) == signatur:
+                setze laenge auf u64(speicher_lesen(tabelle + 4, 4))
+                wenn laenge >= 36 und acpi_pruefsumme(tabelle, laenge):
+                    gib_zurück tabelle
+            setze i auf i + 1
+        gib_zurück 0
+
+@nativ
+funktion madt_auswerten(madt: u64) -> void:
+    unsicher:
+        setze laenge: u64 auf u64(speicher_lesen(madt + 4, 4))
+        setze pos: u64 auf 44
+        setze typ: u64 auf 0
+        setze eintrag_laenge: u64 auf 0
+        setze gsi: u64 auf 1
+        setze flags: u64 auf 0
+        hw_setze(3, u64(speicher_lesen(madt + 36, 4)))
+        hw_setze(6, 0)
+        hw_setze(7, 0)
+        hw_setze(8, 1)
+        hw_setze(9, 0)
+        solange pos + 2 <= laenge:
+            setze typ auf u64(speicher_lesen(madt + pos, 1))
+            setze eintrag_laenge auf u64(speicher_lesen(madt + pos + 1, 1))
+            wenn eintrag_laenge < 2 oder pos + eintrag_laenge > laenge:
+                gib_zurück
+            wenn typ == 1 und eintrag_laenge >= 12 und hw(6) == 0:
+                hw_setze(6, u64(speicher_lesen(madt + pos + 4, 4)))
+                hw_setze(7, u64(speicher_lesen(madt + pos + 8, 4)))
+            sonst wenn typ == 2 und eintrag_laenge >= 10 und speicher_lesen(madt + pos + 3, 1) == 1:
+                setze gsi auf u64(speicher_lesen(madt + pos + 4, 4))
+                setze flags auf u64(speicher_lesen(madt + pos + 8, 2))
+                hw_setze(8, gsi)
+                hw_setze(9, flags)
+            sonst wenn typ == 5 und eintrag_laenge >= 12:
+                hw_setze(3, speicher_lesen(madt + pos + 4, 8))
+            setze pos auf pos + eintrag_laenge
+
+@nativ
+funktion acpi_starten(rsdp: u64) -> u64:
+    unsicher:
+        setze fadt: u64 auf acpi_tabelle(rsdp, 0x50434146)
+        setze madt: u64 auf acpi_tabelle(rsdp, 0x43495041)
+        setze port: u64 auf 0
+        setze gas: u64 auf 0
+        setze laenge: u64 auf 0
+        setze ergebnis: u64 auf 0
+        wenn fadt != 0:
+            setze laenge auf u64(speicher_lesen(fadt + 4, 4))
+            wenn laenge >= 80:
+                setze port auf u64(speicher_lesen(fadt + 76, 4))
+            # ACPI 2+: X_PM_TMR_BLK ist ein GAS bei Offset 208. Nur System-I/O
+            # ist hier zulaessig; Memory-GAS wird nicht als Port missdeutet.
+            wenn laenge >= 220:
+                setze gas auf fadt + 208
+                wenn speicher_lesen(gas, 1) == 1 und speicher_lesen(gas + 2, 1) == 0 und speicher_lesen(gas + 4, 8) <= 0xFFFF und speicher_lesen(gas + 4, 8) != 0:
+                    setze port auf speicher_lesen(gas + 4, 8)
+            wenn port != 0 und port <= 0xFFFF:
+                hw_setze(0, port)
+                wenn laenge >= 116 und (u64(speicher_lesen(fadt + 112, 4)) & 0x100) != 0:
+                    hw_setze(1, 0xFFFFFFFF)
+                sonst:
+                    hw_setze(1, 0xFFFFFF)
+                setze ergebnis auf ergebnis | 1
+        wenn madt != 0:
+            hw_setze(2, madt)
+            madt_auswerten(madt)
+            setze ergebnis auf ergebnis | 2
+        gib_zurück ergebnis
+
+@nativ
+funktion apic_lesen(register: u64) -> u64:
+    unsicher:
+        wenn hw(4) != 0:
+            gib_zurück msr_lesen(u32(0x800 + register / 16))
+        setze p: ptr[u32] auf zeiger(hw(3) + register)
+        gib_zurück u64(volatile_lesen(p))
+
+@nativ
+funktion apic_schreiben(register: u64, wert: u64) -> void:
+    unsicher:
+        wenn hw(4) != 0:
+            msr_schreiben(u32(0x800 + register / 16), wert)
+            gib_zurück
+        setze p: ptr[u32] auf zeiger(hw(3) + register)
+        volatile_schreiben(p, u32(wert))
+
+@nativ
+funktion apic_starten() -> bool:
+    unsicher:
+        setze basis_msr: u64 auf 0
+        setze svr: u64 auf 0
+        wenn hw(2) == 0:
+            gib_zurück falsch
+        setze basis_msr auf msr_lesen(0x1B)
+        wenn (basis_msr & 0x800) == 0:
+            gib_zurück falsch
+        hw_setze(4, u64((basis_msr & 0x400) != 0))
+        wenn hw(3) == 0:
+            hw_setze(3, basis_msr & 0x000FFFFFFFFFF000)
+        wenn hw(4) != 0:
+            hw_setze(5, apic_lesen(0x20) & 0xFFFFFFFF)
+        sonst:
+            hw_setze(5, (apic_lesen(0x20) >> 24) & 0xFF)
+        setze svr auf apic_lesen(0xF0)
+        apic_schreiben(0xF0, svr | 0x1FF)
+        gib_zurück wahr
+
+@nativ
+funktion apic_eoi() -> void:
+    unsicher:
+        apic_schreiben(0xB0, 0)
+
+@nativ
+@unterbrechung(64)
+funktion timer_irq(rahmen: ptr[u64]) -> void:
+    unsicher:
+        hw_setze(10, hw(10) + 1)
+        apic_eoi()
+
+@nativ
+@unterbrechung(65)
+funktion tastatur_irq(rahmen: ptr[u64]) -> void:
+    unsicher:
+        wenn (ein8(0x64) & 1) != 0:
+            setze scan: u8 auf ein8(0x60)
+            wenn (scan & 0x80) == 0 und hw(11) == 0:
+                hw_setze(11, u64(scan))
+        apic_eoi()
+
+@nativ
+funktion pm_vergangen(start: u64) -> u64:
+    unsicher:
+        gib_zurück (u64(ein32(u16(hw(0)))) - start) & hw(1)
+
+@nativ
+funktion timer_starten(tsc_pro_us: u64) -> u64:
+    unsicher:
+        setze start: u64 auf 0
+        setze ziel: u64 auf 0
+        setze schleifen: u64 auf 0
+        setze aktuell: u64 auf 0
+        setze takte: u64 auf 0
+        wenn nicht apic_starten():
+            gib_zurück 0
+        idt_tor(64, adresse_von(timer_irq), 0)
+        hw_setze(10, 0)
+        apic_schreiben(0x3E0, 3)
+        apic_schreiben(0x320, 0x10000 | 64)
+        apic_schreiben(0x380, 0xFFFFFFFF)
+        wenn hw(0) != 0:
+            setze start auf u64(ein32(u16(hw(0))))
+            solange pm_vergangen(start) < 35795 und schleifen < 100000000:
+                setze schleifen auf schleifen + 1
+            wenn schleifen >= 100000000:
+                gib_zurück 0
+            hw_setze(15, 1)
+        sonst wenn tsc_pro_us != 0:
+            setze start auf takt()
+            setze ziel auf tsc_pro_us * 10000
+            solange takt() - start < ziel und schleifen < 100000000:
+                setze schleifen auf schleifen + 1
+            wenn schleifen >= 100000000:
+                gib_zurück 0
+            # Auf dem N100 ist invariant TSC belegt; dieser Pfad nutzt nur die
+            # zuvor per PIT gemessene TSC, wenn FADT keinen PM-Port liefert.
+            hw_setze(15, 2)
+        sonst:
+            gib_zurück 0
+        setze aktuell auf apic_lesen(0x390)
+        setze takte auf 0xFFFFFFFF - aktuell
+        wenn takte == 0:
+            gib_zurück 0
+        apic_schreiben(0x3E0, 3)
+        apic_schreiben(0x320, 0x20000 | 64)
+        apic_schreiben(0x380, takte)
+        gib_zurück takte
+
+@nativ
+funktion ioapic_schreiben(register: u64, wert: u32) -> void:
+    unsicher:
+        setze auswahl: ptr[u32] auf zeiger(hw(6))
+        setze daten: ptr[u32] auf zeiger(hw(6) + 0x10)
+        volatile_schreiben(auswahl, u32(register))
+        volatile_schreiben(daten, wert)
+
+@nativ
+funktion ioapic_lesen(register: u64) -> u32:
+    unsicher:
+        setze auswahl: ptr[u32] auf zeiger(hw(6))
+        setze daten: ptr[u32] auf zeiger(hw(6) + 0x10)
+        volatile_schreiben(auswahl, u32(register))
+        gib_zurück volatile_lesen(daten)
+
+@nativ
+funktion ioapic_route(gsi: u64, vektor: u64, flags: u64) -> bool:
+    unsicher:
+        setze index: u64 auf 0
+        setze maximal: u64 auf 0
+        setze niedrig: u64 auf vektor
+        wenn hw(6) == 0 oder gsi < hw(7) oder hw(5) > 255:
+            gib_zurück falsch
+        setze index auf gsi - hw(7)
+        setze maximal auf (u64(ioapic_lesen(1)) >> 16) & 0xFF
+        wenn index > maximal:
+            gib_zurück falsch
+        wenn (flags & 3) == 3:
+            setze niedrig auf niedrig | 0x2000
+        wenn ((flags >> 2) & 3) == 3:
+            setze niedrig auf niedrig | 0x8000
+        ioapic_schreiben(0x10 + index * 2 + 1, u32((hw(5) & 0xFF) << 24))
+        ioapic_schreiben(0x10 + index * 2, u32(niedrig))
+        gib_zurück wahr
+
+@nativ
+funktion i8042_eingang_frei() -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 100000:
+            wenn (ein8(0x64) & 2) == 0:
+                gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
+
+@nativ
+funktion i8042_ausgang_voll() -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 100000:
+            wenn (ein8(0x64) & 1) != 0:
+                gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
+
+@nativ
+funktion i8042_befehl(wert: u8) -> bool:
+    unsicher:
+        wenn nicht i8042_eingang_frei():
+            gib_zurück falsch
+        aus8(0x64, wert)
+        gib_zurück wahr
+
+@nativ
+funktion i8042_daten(wert: u8) -> bool:
+    unsicher:
+        wenn nicht i8042_eingang_frei():
+            gib_zurück falsch
+        aus8(0x60, wert)
+        gib_zurück wahr
+
+@nativ
+funktion ps2_starten() -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        setze konfiguration: u8 auf 0
+        wenn hw(6) == 0:
+            gib_zurück falsch
+        wenn nicht i8042_befehl(0xAD) oder nicht i8042_befehl(0xA7):
+            gib_zurück falsch
+        solange (ein8(0x64) & 1) != 0 und i < 32:
+            ein8(0x60)
+            setze i auf i + 1
+        wenn nicht i8042_befehl(0x20) oder nicht i8042_ausgang_voll():
+            gib_zurück falsch
+        setze konfiguration auf ein8(0x60)
+        setze konfiguration auf (konfiguration | 1) & 0xEF
+        wenn nicht i8042_befehl(0x60) oder not i8042_daten(konfiguration):
+            gib_zurück falsch
+        wenn nicht i8042_befehl(0xAE):
+            gib_zurück falsch
+        wenn nicht i8042_daten(0xF4) oder not i8042_ausgang_voll() oder ein8(0x60) != 0xFA:
+            gib_zurück falsch
+        idt_tor(65, adresse_von(tastatur_irq), 0)
+        hw_setze(11, 0)
+        gib_zurück ioapic_route(hw(8), 65, hw(9))
+
+@nativ
+funktion unterbrechungen_an() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="sti", clobber=["memory"])
+
+@nativ
+funktion unterbrechungen_aus() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli", clobber=["memory"])
+
+@nativ
+funktion bis_unterbrechung_warten() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="hlt", clobber=["memory"])
 
 # ---------------- Paging ----------------
 @nativ
@@ -633,6 +1369,223 @@ funktion paging_einrichten(bi: u64, max_phys: u64, fb: u64, fb_groesse: u64) -> 
         cr3_laden(physisch(bi, pml4))
         gib_zurück physisch(bi, pml4)
 
+# ---------------- Page-Frame-Allocator und Kernel-Heap ----------------
+@nativ
+funktion pfa_wert(index: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(PFA_ZUSTAND) + index * 8, 8)
+
+@nativ
+funktion pfa_setze(index: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(PFA_ZUSTAND) + index * 8, wert, 8)
+
+@nativ
+funktion pfa_rahmen_frei(rahmen: u64) -> bool:
+    unsicher:
+        wenn rahmen >= pfa_wert(0):
+            gib_zurück falsch
+        setze byte: u8 auf speicher_lesen(adresse_von(PFA_BITS) + rahmen / 8, 1)
+        gib_zurück (byte & u8(1 << (rahmen & 7))) != 0
+
+@nativ
+funktion pfa_markiere(rahmen: u64, frei_machen: bool) -> void:
+    unsicher:
+        wenn rahmen >= pfa_wert(0):
+            gib_zurück
+        setze adr: u64 auf adresse_von(PFA_BITS) + rahmen / 8
+        setze maske: u8 auf u8(1 << (rahmen & 7))
+        setze alt: u8 auf speicher_lesen(adr, 1)
+        wenn frei_machen und (alt & maske) == 0:
+            speicher_schreiben(adr, alt | maske, 1)
+            pfa_setze(1, pfa_wert(1) + 1)
+        sonst wenn nicht frei_machen und (alt & maske) != 0:
+            speicher_schreiben(adr, alt & u8(255 - u64(maske)), 1)
+            pfa_setze(1, pfa_wert(1) - 1)
+
+@nativ
+funktion pfa_bereich(basis: u64, seiten: u64, frei_machen: bool) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        setze rahmen: u64 auf basis / 4096
+        solange i < seiten und rahmen + i < pfa_wert(0):
+            pfa_markiere(rahmen + i, frei_machen)
+            setze i auf i + 1
+
+@nativ
+funktion pfa_reserviere(basis: u64, bytes: u64) -> void:
+    unsicher:
+        wenn bytes == 0:
+            gib_zurück
+        setze erster: u64 auf basis / 4096
+        setze ende: u64 auf (basis + bytes + 4095) / 4096
+        wenn ende > erster:
+            pfa_bereich(erster * 4096, ende - erster, falsch)
+
+@nativ
+funktion pfa_starten(bi: u64, max_phys: u64) -> u64:
+    unsicher:
+        setze max_rahmen: u64 auf (max_phys + 4095) / 4096
+        setze karte: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, karte), 8)
+        setze schritt: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, deskriptor_groesse), 8)
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        setze d: u64 auf 0
+        wenn max_rahmen > 16777216:
+            setze max_rahmen auf 16777216
+        pfa_setze(0, max_rahmen)
+        pfa_setze(1, 0)
+        pfa_setze(2, 256)
+        wenn schritt >= groesse_von(EfiSpeicherDeskriptor):
+            setze anzahl auf speicher_lesen(bi + versatz_von(MooBootInfo, karte_groesse), 8) / schritt
+        # Vor dem eigenen CR3 nur ConventionalMemory (Typ 7). Loader- und
+        # BootServices-Seiten bleiben bis zum Paging-Wechsel unangetastet.
+        solange i < anzahl:
+            setze d auf karte + i * schritt
+            wenn speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_typ), 4) == 7:
+                pfa_bereich(speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_physisch), 8), speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8), wahr)
+            setze i auf i + 1
+        pfa_reserviere(0, 0x100000)
+        pfa_reserviere(speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8), speicher_lesen(bi + versatz_von(MooBootInfo, kern_ende), 8) - speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8))
+        gib_zurück pfa_wert(1)
+
+@nativ
+funktion pfa_nehme(anzahl: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 256
+        setze lauf: u64 auf 0
+        setze anfang: u64 auf 0
+        setze j: u64 auf 0
+        wenn anzahl == 0:
+            gib_zurück 0
+        solange i < pfa_wert(0):
+            wenn pfa_rahmen_frei(i):
+                wenn lauf == 0:
+                    setze anfang auf i
+                setze lauf auf lauf + 1
+                wenn lauf == anzahl:
+                    setze j auf 0
+                    solange j < anzahl:
+                        pfa_markiere(anfang + j, falsch)
+                        setze j auf j + 1
+                    pfa_setze(2, anfang + anzahl)
+                    gib_zurück anfang * 4096
+            sonst:
+                setze lauf auf 0
+            setze i auf i + 1
+        gib_zurück 0
+
+@nativ
+funktion pfa_bootspeicher_freigeben(bi: u64) -> u64:
+    unsicher:
+        setze karte: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, karte), 8)
+        setze schritt: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, deskriptor_groesse), 8)
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        setze d: u64 auf 0
+        setze typ: u64 auf 0
+        setze tabellen: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, seitentabelle), 8)
+        setze tabellen_seiten: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, seitentabelle_seiten), 8)
+        setze firmware: u64 auf speicher_lesen(bi + versatz_von(MooBootInfo, firmware_seitentabelle), 8)
+        setze bestaetigt: u64 auf 0
+        wenn schritt >= groesse_von(EfiSpeicherDeskriptor):
+            setze anzahl auf speicher_lesen(bi + versatz_von(MooBootInfo, karte_groesse), 8) / schritt
+        # Nach dem eigenen CR3 sind LoaderCode/Data und BootServicesCode/Data frei.
+        # Darin liegen sowohl der Loader-Tabellenblock als auch die Firmware-Tabellen.
+        solange i < anzahl:
+            setze d auf karte + i * schritt
+            setze typ auf u64(speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_typ), 4))
+            wenn typ >= 1 und typ <= 4:
+                pfa_bereich(speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_physisch), 8), speicher_lesen(d + versatz_von(EfiSpeicherDeskriptor, sd_seiten), 8), wahr)
+            setze i auf i + 1
+        # Noch lebende Loaderdaten und der Kern selbst bleiben reserviert.
+        pfa_reserviere(0, 0x100000)
+        pfa_reserviere(speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8), speicher_lesen(bi + versatz_von(MooBootInfo, kern_ende), 8) - speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8))
+        pfa_reserviere(bi, groesse_von(MooBootInfo))
+        pfa_reserviere(karte, speicher_lesen(bi + versatz_von(MooBootInfo, karte_groesse), 8))
+        pfa_reserviere(speicher_lesen(bi + versatz_von(MooBootInfo, arbeit), 8), speicher_lesen(bi + versatz_von(MooBootInfo, arbeit_groesse), 8))
+        pfa_reserviere(speicher_lesen(adresse_von(HEAP_ZUSTAND), 8), speicher_lesen(adresse_von(HEAP_ZUSTAND) + 8, 8))
+        # Exakte Loader-Seiten plus Firmware-PML4 muessen nun im PFA frei sein.
+        setze i auf 0
+        solange i < tabellen_seiten:
+            wenn pfa_rahmen_frei(tabellen / 4096 + i):
+                setze bestaetigt auf bestaetigt + 1
+            setze i auf i + 1
+        wenn firmware != 0 und pfa_rahmen_frei(firmware / 4096):
+            setze bestaetigt auf bestaetigt + 1
+        gib_zurück bestaetigt
+
+@nativ
+funktion heap_starten() -> bool:
+    unsicher:
+        setze seiten: u64 auf 256
+        setze basis: u64 auf pfa_nehme(seiten)
+        wenn basis == 0:
+            gib_zurück falsch
+        speicher_schreiben(adresse_von(HEAP_ZUSTAND), basis, 8)
+        speicher_schreiben(adresse_von(HEAP_ZUSTAND) + 8, seiten * 4096, 8)
+        speicher_schreiben(basis, seiten * 4096 - 32, 8)
+        speicher_schreiben(basis + 8, 0, 8)
+        speicher_schreiben(basis + 16, 1, 8)
+        speicher_schreiben(basis + 24, 0x4D4F4F4845415031, 8)
+        gib_zurück wahr
+
+@nativ
+funktion heap_nimm(bytes: u64) -> u64:
+    unsicher:
+        setze benoetigt: u64 auf (bytes + 15) & 0xFFFFFFFFFFFFFFF0
+        setze block: u64 auf speicher_lesen(adresse_von(HEAP_ZUSTAND), 8)
+        setze neuer_block: u64 auf 0
+        setze groesse: u64 auf 0
+        wenn benoetigt == 0:
+            setze benoetigt auf 16
+        solange block != 0:
+            setze groesse auf speicher_lesen(block, 8)
+            wenn speicher_lesen(block + 24, 8) != 0x4D4F4F4845415031:
+                gib_zurück 0
+            wenn speicher_lesen(block + 16, 8) != 0 und groesse >= benoetigt:
+                wenn groesse >= benoetigt + 48:
+                    setze neuer_block auf block + 32 + benoetigt
+                    speicher_schreiben(neuer_block, groesse - benoetigt - 32, 8)
+                    speicher_schreiben(neuer_block + 8, speicher_lesen(block + 8, 8), 8)
+                    speicher_schreiben(neuer_block + 16, 1, 8)
+                    speicher_schreiben(neuer_block + 24, 0x4D4F4F4845415031, 8)
+                    speicher_schreiben(block, benoetigt, 8)
+                    speicher_schreiben(block + 8, neuer_block, 8)
+                speicher_schreiben(block + 16, 0, 8)
+                gib_zurück block + 32
+            setze block auf speicher_lesen(block + 8, 8)
+        gib_zurück 0
+
+@nativ
+funktion heap_gib(adr: u64) -> void:
+    unsicher:
+        wenn adr < 32:
+            gib_zurück
+        setze block: u64 auf adr - 32
+        setze naechster: u64 auf speicher_lesen(block + 8, 8)
+        wenn speicher_lesen(block + 24, 8) != 0x4D4F4F4845415031:
+            gib_zurück
+        speicher_schreiben(block + 16, 1, 8)
+        wenn naechster != 0 und speicher_lesen(naechster + 16, 8) != 0 und speicher_lesen(naechster + 24, 8) == 0x4D4F4F4845415031:
+            speicher_schreiben(block, speicher_lesen(block, 8) + 32 + speicher_lesen(naechster, 8), 8)
+            speicher_schreiben(block + 8, speicher_lesen(naechster + 8, 8), 8)
+
+@nativ
+funktion heap_pruefen() -> bool:
+    unsicher:
+        setze a: u64 auf heap_nimm(64)
+        setze b: u64 auf heap_nimm(128)
+        wenn a == 0 oder b == 0:
+            gib_zurück falsch
+        speicher_schreiben(a, 0x1122334455667788, 8)
+        speicher_schreiben(b, 0x8877665544332211, 8)
+        wenn speicher_lesen(a, 8) != 0x1122334455667788 oder speicher_lesen(b, 8) != 0x8877665544332211:
+            gib_zurück falsch
+        heap_gib(b)
+        heap_gib(a)
+        gib_zurück wahr
+
 # ---------------- Alter Weg (nur Messung): direkt in den Framebuffer ----------------
 @nativ
 funktion pixel(format: u64, r: u32, g: u32, b: u32) -> u32:
@@ -685,6 +1638,12 @@ funktion kern_haupt(bi: u64) -> void:
         setze ok: u8 auf 0
         setze rip: u64 auf 0
         setze cr3: u64 auf 0
+        setze heap_ok: bool auf falsch
+        setze tabellen_frei: u64 auf 0
+        setze acpi_ok: u64 auf 0
+        setze timer_start: u64 auf 0
+        setze tastatur_ok: bool auf falsch
+        setze warte: u64 auf 0
         setze tsc: u64 auf 0
         setze t0: u64 auf 0
         setze t_alt: u64 auf 0
@@ -730,16 +1689,29 @@ funktion kern_haupt(bi: u64) -> void:
         meldung(adresse_von(T_KARTE), anzahl)
         meldung(adresse_von(T_FREI), frei / 256)
         meldung(adresse_von(T_MAXPHYS), maxphys)
+        # PFA und Heap laufen vor dem Paging-Wechsel nur auf ConventionalMemory.
+        meldung(adresse_von(T_PFA), pfa_starten(bi, maxphys))
+        setze heap_ok auf heap_starten()
+        wenn heap_ok:
+            setze heap_ok auf heap_pruefen()
+        meldung(adresse_von(T_HEAP), u64(heap_ok))
         # Eigene Seitentabellen (Firmware-Tabellen werden danach nicht mehr benutzt).
         setze cr3 auf paging_einrichten(bi, maxphys, fb, speicher_lesen(bi + versatz_von(MooBootInfo, fb_groesse), 8))
         wenn cr3 != 0:
             meldung(adresse_von(T_PAGING), cr3)
         sonst:
             meldung(adresse_von(T_PAGING_NEIN), maxphys)
+            anhalten()
+        # Erst hinter dem eigenen CR3 werden Loader- und Firmware-Tabellen frei.
+        setze tabellen_frei auf pfa_bootspeicher_freigeben(bi)
+        meldung(adresse_von(T_TABELLEN), tabellen_frei)
+        meldung(adresse_von(T_IDT), u64(idt_einrichten()))
         setze rsdp auf speicher_lesen(bi + versatz_von(MooBootInfo, acpi_rsdp), 8)
         meldung(adresse_von(T_RSDP), rsdp)
         wenn rsdp != 0:
             meldung(adresse_von(T_RSDP_OK), u64(speicher_lesen(rsdp, 8) == RSDP_SIGNATUR))
+            setze acpi_ok auf acpi_starten(rsdp)
+        meldung(adresse_von(T_ACPI), acpi_ok)
         meldung(adresse_von(T_FORMATE), formate_pruefen())
         setze tsc auf tsc_kalibrieren()
         meldung(adresse_von(T_TSC), tsc)
@@ -786,5 +1758,27 @@ funktion kern_haupt(bi: u64) -> void:
                     meldung(adresse_von(T_ALT_US), t_alt / tsc)
                     meldung(adresse_von(T_NEU_US), t_neu / tsc)
                     meldung(adresse_von(T_ZEILE_US), t_zeile / tsc)
+        meldung(adresse_von(T_AUS_TEST), u64(ausnahme_pruefen()))
+        # Legacy-PIC bleibt vollstaendig maskiert; externe IRQs laufen ueber IOAPIC.
+        aus8(0x21, 0xFF)
+        aus8(0xA1, 0xFF)
+        setze timer_start auf timer_starten(tsc)
+        meldung(adresse_von(T_TIMER_QUELLE), hw(15))
+        meldung(adresse_von(T_TIMER_INIT), timer_start)
+        setze tastatur_ok auf ps2_starten()
+        wenn tastatur_ok:
+            meldung(adresse_von(T_TASTATUR_BEREIT), 1)
+        sonst:
+            meldung(adresse_von(T_TASTATUR_BEREIT), 0)
+            text(adresse_von(T_TASTATUR_FEHLT))
+        wenn timer_start != 0:
+            unterbrechungen_an()
+            solange (hw(10) < 3 oder (tastatur_ok und hw(11) == 0)) und warte < 1000:
+                bis_unterbrechung_warten()
+                setze warte auf warte + 1
+            unterbrechungen_aus()
+        meldung(adresse_von(T_TIMER_TICKS), hw(10))
+        wenn tastatur_ok:
+            meldung(adresse_von(T_TASTATUR_SCAN), hw(11))
         text(adresse_von(T_OK))
         anhalten()

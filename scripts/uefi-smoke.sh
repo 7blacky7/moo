@@ -155,7 +155,12 @@ if [ "$PRUEFUNG" = "kern" ]; then
       -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9 \
       <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
   QPID=$!
+  KEY_SENT=0
   for ((i = 0; i < WAIT_S; i++)); do
+    if [ "$KEY_SENT" -eq 0 ] && grep -aqF "MOO-KERNEL TASTATUR BEREIT 0000000000000001" "$OUT/serial.log" 2>/dev/null; then
+      printf 'sendkey a\n' >&3
+      KEY_SENT=1
+    fi
     grep -aq "MOO-KERNEL OK" "$OUT/serial.log" 2>/dev/null && break
     grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" 2>/dev/null && break
     kill -0 "$QPID" 2>/dev/null || break
@@ -173,9 +178,18 @@ if [ "$PRUEFUNG" = "kern" ]; then
            "MOO-LADER EXITBOOTSERVICES OK " "MOO-LADER KARTE " "MOO-LADER SPRUNG " \
            "MOO-KERNEL START" "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL RSP FFFFFFFF8" \
            "MOO-KERNEL GDT CS 0000000000000008" "MOO-KERNEL PAGING EIGEN CR3 " \
-           "MOO-KERNEL PRESENT-FORMATE 0000000000000005" "MOO-KERNEL RSDP-SIG 0000000000000001" \
-           "MOO-KERNEL SURFACE 0000000000000001" "MOO-KONSOLE: SURFACE-PRESENT AUF GOP" \
-           "MOO-KONSOLE: GDT, PAGING, STACK IN MOO" "MOO-KERNEL MESS PRESENT-TAKTE " "MOO-KERNEL OK"; do
+           "MOO-KERNEL PFA FREI-SEITEN " "MOO-KERNEL HEAP OK 0000000000000001" \
+           "MOO-KERNEL TABELLEN FREI " "MOO-KERNEL IDT OK 0000000000000001" \
+           "MOO-KERNEL RSDP-SIG 0000000000000001" "MOO-KERNEL ACPI FADT-MADT 0000000000000003" \
+           "MOO-KERNEL PRESENT-FORMATE 0000000000000005" "MOO-KERNEL SURFACE 0000000000000001" \
+           "MOO-KONSOLE: SURFACE-PRESENT AUF GOP" "MOO-KONSOLE: GDT, PAGING, STACK IN MOO" \
+           "MOO-KERNEL AUSNAHME VEKTOR 0000000000000003" \
+           "MOO-KERNEL AUSNAHME FEHLERCODE 0000000000000000" "MOO-KERNEL AUSNAHME RIP " \
+           "MOO-KERNEL AUSNAHME TEST 0000000000000001" "MOO-KERNEL TIMER QUELLE 0000000000000001" \
+           "MOO-KERNEL TIMER STARTWERT " "MOO-KERNEL TIMER TICKS " \
+           "MOO-KERNEL TASTATUR BEREIT 0000000000000001" \
+           "MOO-KERNEL TASTATUR SCAN 000000000000001E" \
+           "MOO-KERNEL MESS PRESENT-TAKTE " "MOO-KERNEL OK"; do
     grep -aqF -- "$m" "$OUT/serial.log" || fail "Marker fehlt: '$m'"
   done
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
@@ -192,7 +206,14 @@ if [ "$PRUEFUNG" = "kern" ]; then
   done
   KARTE="$(grep -ao 'MOO-KERNEL KARTE-ANZ [0-9A-F]*' "$OUT/serial.log" | awk '{print $3}')"
   [ "$((16#$KARTE))" -gt 0 ] || fail "Speicherkarte im Kern leer"
-  echo "      OK: Loader -> ExitBootServices (Zeile $Z_EBS) -> Kern (Zeile $Z_KERN), Sprung $SPRUNG = ELF-Einstieg, Boot-Info identisch, $((16#$KARTE)) Kartendeskriptoren"
+  PFA="$(grep -ao 'MOO-KERNEL PFA FREI-SEITEN [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
+  TABELLEN="$(grep -ao 'MOO-KERNEL TABELLEN FREI [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
+  TICKS="$(grep -ao 'MOO-KERNEL TIMER TICKS [0-9A-F]*' "$OUT/serial.log" | awk '{print $4}')"
+  [ "$((16#$PFA))" -gt 0 ] || fail "PFA meldet keine freien Seiten"
+  [ "$((16#$TABELLEN))" -gt 0 ] || fail "Firmware-/Loader-Seitentabellen nicht freigegeben"
+  [ "$((16#$TICKS))" -ge 3 ] || fail "LAPIC-Timer lieferte weniger als drei Ticks"
+  [ "$KEY_SENT" -eq 1 ] || fail "QEMU sendkey a wurde nicht ausgeloest"
+  echo "      OK: Loader -> ExitBootServices (Zeile $Z_EBS) -> Kern (Zeile $Z_KERN), Sprung $SPRUNG = ELF-Einstieg, Boot-Info identisch, $((16#$KARTE)) Kartendeskriptoren, $((16#$PFA)) freie Frames, $((16#$TABELLEN)) alte Tabellenseiten, $((16#$TICKS)) Timer-Ticks, PS/2 Scan 0x1E"
   [ -s "$OUT/screenshot.png" ] || fail "kein Screenshot"
   if command -v magick >/dev/null 2>&1; then
     # Hintergrund (32,96,128) direkt vom Kern, Balken (255,196,64) ueber moo_surface_core.
