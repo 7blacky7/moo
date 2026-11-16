@@ -14,6 +14,7 @@ STICK_SHA=
 TROCKEN=0
 KOORDINATOR=0
 DIAGNOSE=0
+INVENTAR=0
 MODUS=1
 WATCHDOG_S=180
 KONFIG_QUELLE=
@@ -24,6 +25,7 @@ NOTIZ="${MOO_N100_NOTIZ:-$ROOT/build/notizen/synapse-offline.md}"
 while (($#)); do
   case "$1" in
     --trocken) TROCKEN=1; shift;;
+    --inventar) INVENTAR=1; shift;;
     --koordinator) KOORDINATOR=1; shift;;
     --diagnose) DIAGNOSE=1; MODUS=0; SEKUNDEN=20; shift;;
     --watchdog-test) DIAGNOSE=0; MODUS=2; shift;;
@@ -40,6 +42,7 @@ while (($#)); do
     --kern-konfigurieren) KONFIG_QUELLE="$2"; KONFIG_ZIEL="$3"; shift 3;;
     --aufraeumen) RESTORE="$2"; shift 2;;
     --hilfe) printf '%s\n' 'n100-lauf.sh --trocken | --koordinator --diagnose --efi DATEI --kern DATEI --usb-serie SERIE --partition {GUID} --stick-sha256 SHA256' \
+      '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern + 180s Hardware-Watchdog; --watchdog-test weist den Reset bei Stillstand nach.' \
       '--kern-konfigurieren QUELLE ZIEL [--sekunden N]: nur private ELF-Kopie konfigurieren.' \
       '--aufraeumen build/n100-laeufe/ZEIT --koordinator: Wiederherstellung erneut versuchen.'; exit 0;;
@@ -101,8 +104,8 @@ if [[ -n "$KONFIG_QUELLE" ]]; then
   kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL"
   exit 0
 fi
-((KOORDINATOR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
-if [[ -z "$RESTORE" ]]; then
+((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
+if [[ -z "$RESTORE" ]] && ((INVENTAR==0)); then
   ((MODUS<=2)) || { echo 'ICH9-Testmodi sind nur fuer private QEMU-Kernkopien erlaubt' >&2; exit 2; }
   if ((MODUS==0)); then
     ((DIAGNOSE && SEKUNDEN<=30)) || { echo 'Lesediagnose ohne Watchdog ist auf30s begrenzt' >&2; exit 2; }
@@ -113,7 +116,7 @@ fi
 for tool in uv timeout setsid flock sudo tcpdump curl ss; do
   command -v "$tool" >/dev/null || { echo "Werkzeug nicht gefunden: $tool" >&2; exit 2; }
 done
-OUT="${RESTORE:-${MOO_N100_AUSGABE:-$ROOT/build/n100-laeufe/$(date -u +%Y%m%dT%H%M%S)-$}}"
+OUT="${RESTORE:-${MOO_N100_AUSGABE:-$ROOT/build/n100-laeufe/$(date -u +%Y%m%dT%H%M%S)-${BASHPID}}}"
 mkdir -p "$OUT" "$(dirname "$NOTIZ")" "$ROOT/build/n100-laeufe"
 exec 9>"$ROOT/build/n100-laeufe/.lauf.lock"
 flock -n 9 || { echo 'Ein N100-Lauf ist bereits aktiv' >&2; exit 2; }
@@ -125,11 +128,18 @@ WAECHE_AN=true
 EINTRAG=
 json_wert() { uv run --no-project python -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; print(str(v).lower() if isinstance(v,bool) else v)' "$OUT/vorher.json" "$1"; }
 ps_quote() { local v="$1"; printf "'%s'" "${v//\'/\'\'}"; }
+REMOTE_BEREIT=0
 remote() {
-  local aktion="$1" code
-  code="$(<"$ROOT/skripte/p7/n100-boot.ps1")"
+  local aktion="$1"
+  if ((REMOTE_BEREIT==0)); then
+    # Gechunkter Upload mit SHA-Pruefung; kein langer -EncodedCommand-Inhalt.
+    timeout --foreground 90s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" upload \
+      "$ROOT/skripte/p7/n100-boot.ps1" >"$OUT/upload.log" 2>>"$OUT/winrm.log" || return $?
+    REMOTE_BEREIT=1
+  fi
+  # Scriptblock aus der Datei vermeidet auch eine dauerhafte ExecutionPolicy-Aenderung.
   timeout --foreground 50s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" run \
-    "& { $code } -Aktion $(ps_quote "$aktion") -UsbSerial $(ps_quote "$USB_SERIE") -PartitionGuid $(ps_quote "$PARTITION") -StickSha256 $(ps_quote "$STICK_SHA") -Eintrag $(ps_quote "$EINTRAG") -WaechterWarAn \$$WAECHE_AN -SynapseGestoppt \$$([[ "$SYNAPSE_STOPP" == 1 ]] && echo true || echo false)"
+    "& ([scriptblock]::Create([IO.File]::ReadAllText('D:\MooTest\n100-boot.ps1'))) -Aktion $(ps_quote "$aktion") -UsbSerial $(ps_quote "$USB_SERIE") -PartitionGuid $(ps_quote "$PARTITION") -StickSha256 $(ps_quote "$STICK_SHA") -Eintrag $(ps_quote "$EINTRAG") -WaechterWarAn ([bool]::Parse('$WAECHE_AN')) -SynapseGestoppt ($SYNAPSE_STOPP -eq 1)"
 }
 notiz() { printf '\n[%s] N100 %s: %s [noch zu uebertragen]\n' "$(date -u +%FT%TZ)" "$OUT" "$*" >>"$NOTIZ"; }
 beenden_gruppe() {
@@ -172,6 +182,12 @@ aufraeumen() {
   notiz "Exit=$rc; Register/Reset/Windows siehe netz.log und WinRM-Artefakte; HTTP-Rueckkehr siehe lauf.log"
   exit "$rc"
 }
+if ((INVENTAR)); then
+  remote pruefen >"$OUT/vorher.json" 2>>"$OUT/winrm.log"
+  printf 'Laufordner: %s\n' "$OUT"
+  cat "$OUT/vorher.json"
+  exit 0
+fi
 if [[ -n "$RESTORE" ]]; then
   [[ -f "$OUT/vorher.json" ]] || { echo 'Snapshot fuer Wiederherstellung nicht gefunden' >&2; exit 2; }
   EINTRAG="$(json_wert entry)"
@@ -197,6 +213,7 @@ trap aufraeumen EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 exec > >(exec 9>&-; tee -a "$OUT/lauf.log") 2>&1
+printf 'Laufordner: %s\n' "$OUT"
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "arp or udp" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" &
 CAPTURE_PID=$!
 MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &

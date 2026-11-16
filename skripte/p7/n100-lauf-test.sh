@@ -13,7 +13,11 @@ set -eu
 remote=0
 for a in "$@"; do [[ "$a" != */minipc_winrm.py ]] || remote=1; done
 if ((remote==0)); then exec "$REAL_UV" "$@"; fi
+for a in "$@"; do
+  if ((${#a}>2000)); then echo "The command line is too long." >&2; exit 20; fi
+done
 case "$*" in
+  *"upload"*) action=upload;;
   *"runfile"*) action=stop;;
   *"-Aktion 'pruefen'"*) action=pruefen;;
   *"-Aktion 'pausieren'"*) action=pausieren;;
@@ -87,7 +91,7 @@ if bash "$ROOT/skripte/p7/n100-lauf.sh" --koordinator --diagnose --sekunden 90 >
 fi
 test ! -e "$T/trace"
 echo 'PASS: Ungeschuetzter Langlauf wird verweigert'
-for phase in ok normal safety pruefen server capture pausieren stop booten; do
+for phase in ok normal safety upload pruefen server capture pausieren stop booten; do
   extra=()
   export MOCK_MODE=diag
   if [[ "$phase" == normal ]]; then extra=(--modus 1); export MOCK_MODE=normal; fi
