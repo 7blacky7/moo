@@ -81,7 +81,7 @@ funktion zeile(w):
     z(10)
 
 
-aus "../../../beispiele/kernel/usb_xhci" importiere xh_boot_interface, xh
+aus "../../../beispiele/kernel/usb_xhci" importiere xh_boot_interface, xh, xh_setze, xh_null, xh_control_bauen, xh_control, xh_abschluss, xh_event, xh_befehl, XH_T_EVT_CC, XH_T_EVT_REST, XH_T_EVT_PARAM
 @nativ
 konstante USB_TEST_COMPOSITE: [u8; 66] auf [9, 2, 66, 0, 3, 1, 0, 128, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 7, 5, 129, 3, 8, 0, 10, 9, 4, 1, 0, 1, 3, 0, 0, 0, 7, 5, 130, 3, 16, 0, 10, 9, 4, 3, 0, 1, 3, 1, 1, 0, 9, 33, 17, 1, 0, 1, 34, 63, 0, 7, 5, 131, 3, 8, 0, 10]
 @nativ
@@ -101,6 +101,164 @@ funktion usb_interface_test() -> u64:
         wenn xh_boot_interface(adresse_von(USB_TEST_MAUS), 25) oder xh_boot_interface(adresse_von(USB_TEST_ALTERNATE), 25) oder xh_boot_interface(adresse_von(USB_TEST_KAPUTT), 11) oder xh_boot_interface(adresse_von(USB_TEST_COMPOSITE), 65):
             gib_zurück 0
         gib_zurück 2023
+
+# P7-T23: echte Treiberfunktionen gegen synthetische DMA-Events im bestehenden
+# OVMF-Gate. Erwartete TRB-Dwords stammen aus xHCI 1.2b 6.4.1.2/6.4.2,
+# kein zweiter Treiber. RAM statt Controller; KEIN Hardware-/Timing-Beweis.
+@nativ
+statisch USB_TEST_DMA: [u64; 5128] auf 0
+@nativ
+statisch USB_TEST_LOG: [u64; 5] auf 0
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion usb_ep0_test_log(adr: u64, wert: u64) -> void:
+    unsicher:
+        setze p: u64 auf adresse_von(USB_TEST_LOG)
+        wenn adr == adresse_von(XH_T_EVT_CC):
+            speicher_schreiben(p, speicher_lesen(p, 8) + 1, 8)
+            speicher_schreiben(p + 8, speicher_lesen(p + 8, 8) + wert, 8)
+        wenn adr == adresse_von(XH_T_EVT_REST):
+            speicher_schreiben(p + 16, speicher_lesen(p + 16, 8) + 1, 8)
+            speicher_schreiben(p + 24, speicher_lesen(p + 24, 8) + wert, 8)
+        wenn adr == adresse_von(XH_T_EVT_PARAM):
+            speicher_schreiben(p + 32, wert, 8)
+
+@nativ
+funktion usb_ep0_test_basis() -> u64:
+    unsicher:
+        setze dma: u64 auf (adresse_von(USB_TEST_DMA) + 63) & 0xFFFFFFFFFFFFFFC0
+        setze i: u64 auf 0
+        solange i < 44:
+            xh_setze(i, 0)
+            setze i auf i + 1
+        xh_null(dma, 40960)
+        xh_null(adresse_von(USB_TEST_LOG), 40)
+        xh_setze(4, dma)
+        xh_setze(2, dma + 36864)
+        xh_setze(3, dma + 38912)
+        xh_setze(5, 32)
+        xh_setze(7, 1)
+        xh_setze(9, 1)
+        xh_setze(10, 7)
+        xh_setze(11, 3)
+        xh_setze(13, 1)
+        xh_setze(18, 1000)
+        xh_setze(26, adresse_von(usb_ep0_test_log))
+        gib_zurück dma
+
+@nativ
+funktion usb_ep0_test_event(i: u64, trb: u64, status: u32, flags: u32) -> void:
+    unsicher:
+        setze p: u64 auf xh(4) + 8192 + i * 16
+        speicher_schreiben(p, trb, 8)
+        speicher_schreiben(p + 8, status, 4)
+        speicher_schreiben(p + 12, flags, 4)
+
+@nativ
+funktion usb_ep0_ring_test() -> u64:
+    unsicher:
+        setze dma: u64 auf usb_ep0_test_basis()
+        setze ring: u64 auf dma + 24576
+        setze p: u64 auf xh_control_bauen(0x0008000001000680, dma + 32768, 8)
+        wenn p != ring + 32 oder speicher_lesen(ring, 8) != 0x0008000001000680 oder speicher_lesen(ring + 8, 4) != 8:
+            gib_zurück 2401
+        # Setup noch NICHT freigegeben: PCS=1, C=0; RsvdZ=0, IDT=1, TRT=IN.
+        wenn speicher_lesen(ring + 12, 4) != 0x30840 oder speicher_lesen(ring + 28, 4) != 0x10C05 oder speicher_lesen(ring + 44, 4) != 0x1021:
+            gib_zurück 2402
+        setze dma auf usb_ep0_test_basis()
+        xh_control_bauen(0x0900, 0, 0)
+        wenn speicher_lesen(ring + 12, 4) != 0x840 oder speicher_lesen(ring + 28, 4) != 0x11021 oder xh(40) != 0:
+            gib_zurück 2403
+        setze dma auf usb_ep0_test_basis()
+        xh_control_bauen(0x0008000002000921, dma + 32768, 8)
+        wenn speicher_lesen(ring + 12, 4) != 0x20840 oder speicher_lesen(ring + 28, 4) != 0xC01 oder speicher_lesen(ring + 44, 4) != 0x11021:
+            gib_zurück 2404
+        setze dma auf usb_ep0_test_basis()
+        xh_setze(12, 254)
+        setze p auf xh_control_bauen(0x0008000001000680, dma + 32768, 8)
+        wenn p != ring + 16 oder xh(12) != 2 oder xh(13) != 0 oder speicher_lesen(ring + 4092, 4) != 0x1803:
+            gib_zurück 2405
+        wenn speicher_lesen(ring + 4076, 4) != 0x30840 oder speicher_lesen(ring + 12, 4) != 0x10C04 oder speicher_lesen(ring + 28, 4) != 0x1020:
+            gib_zurück 2406
+        wenn xh_control_bauen(0x0008000001000680, dma + 32768, 7) != 0 oder xh(12) != 2:
+            gib_zurück 2407
+        gib_zurück 2024
+
+@nativ
+funktion usb_ep0_event_test() -> u64:
+    unsicher:
+        setze dma: u64 auf usb_ep0_test_basis()
+        setze ring: u64 auf dma + 24576
+        setze log: u64 auf adresse_von(USB_TEST_LOG)
+        # Short Data (5/8), dann Status: beide Events sichtbar, Empfangslaenge bleibt5.
+        usb_ep0_test_event(0, ring + 16, 0x0D000003, 0x07018001)
+        usb_ep0_test_event(1, ring + 32, 0x01000000, 0x07018001)
+        wenn nicht xh_control(0x0008000001000680, dma + 32768, 8) oder xh(43) != 5 oder xh(8) != 2:
+            gib_zurück 2501
+        wenn speicher_lesen(log, 8) != 2:
+            gib_zurück 25021
+        wenn speicher_lesen(log + 8, 8) != 14:
+            gib_zurück 25022
+        wenn speicher_lesen(log + 24, 8) != 3:
+            gib_zurück 25023
+        wenn speicher_lesen(ring + 12, 4) != 0x30841:
+            gib_zurück 25024
+        # Stall am SETUP muss sofort scheitern, nicht erst auf Status timeouten.
+        setze dma auf usb_ep0_test_basis()
+        usb_ep0_test_event(0, ring, 0x06000008, 0x07018001)
+        wenn xh_control(0x0008000001000680, dma + 32768, 8) oder xh(36) != 0x06000008 oder xh(6) != 0:
+            gib_zurück 2503
+        # Fremder Slot wird protokolliert, nicht dieser Anfrage zugeordnet.
+        setze dma auf usb_ep0_test_basis()
+        xh_control_bauen(0x0008000001000680, dma + 32768, 8)
+        usb_ep0_test_event(0, ring + 16, 0x06000008, 0x08018001)
+        usb_ep0_test_event(1, ring + 16, 0x04000008, 0x07018001)
+        wenn xh_abschluss(32, xh(41)) oder xh(36) != 0x04000008 oder xh(38) != ring + 16 oder speicher_lesen(log, 8) != 2:
+            gib_zurück 2504
+        # Command-PARAM24 ist roh, keine fingierte Transfer-Restlaenge.
+        setze dma auf usb_ep0_test_basis()
+        usb_ep0_test_event(0, dma + 4096, 0x01543210, 0x07008401)
+        wenn nicht xh_befehl(0, 9 << 10) oder xh(36) != 0x01543210 oder speicher_lesen(log + 32, 8) != 0x543210 oder speicher_lesen(log + 16, 8) != 0:
+            gib_zurück 2505
+        # Event-Ring-Umlauf und echte Short-CC13/Rest2 fuer Interrupt-IN.
+        setze dma auf usb_ep0_test_basis()
+        xh_setze(8, 255)
+        usb_ep0_test_event(255, dma + 28672, 0x0D000002, 0x07038001)
+        usb_ep0_test_event(0, dma + 28672, 0x01000000, 0x07038000)
+        wenn xh_event(32, dma + 28672) != 13 oder xh(36) != 0x0D000002 oder xh(8) != 0 oder xh(9) != 0:
+            gib_zurück 2506
+        wenn xh_event(32, dma + 28672) != 1 oder xh(8) != 1:
+            gib_zurück 2507
+        gib_zurück 2025
+
+@nativ
+funktion usb_ep0_retry_test() -> u64:
+    unsicher:
+        setze dma: u64 auf usb_ep0_test_basis()
+        setze ring: u64 auf dma + 24576
+        speicher_schreiben(dma + 20480 + 32, 2, 4)
+        usb_ep0_test_event(0, ring, 0x04000008, 0x07018001)
+        usb_ep0_test_event(1, dma + 4096, 0x01000000, 0x07008401)
+        usb_ep0_test_event(2, dma + 4112, 0x01000000, 0x07008401)
+        usb_ep0_test_event(3, ring + 80, 0x01000000, 0x07018001)
+        wenn nicht xh_control(0x0008000001000680, dma + 32768, 8) oder xh(6) != 2 oder xh(12) != 6 oder xh(43) != 8:
+            gib_zurück 2601
+        wenn speicher_lesen(dma + 4108, 4) != 0x07013801 oder speicher_lesen(dma + 4124, 4) != 0x07014001 oder speicher_lesen(dma + 4112, 8) != ((ring + 48) | 1):
+            gib_zurück 2602
+        # Drei Transaktionsfehler -> genau zwei Recoveries, dann Ende.
+        setze dma auf usb_ep0_test_basis()
+        speicher_schreiben(dma + 20480 + 32, 2, 4)
+        usb_ep0_test_event(0, ring + 16, 0x04000008, 0x07018001)
+        usb_ep0_test_event(1, dma + 4096, 0x01000000, 0x07008401)
+        usb_ep0_test_event(2, dma + 4112, 0x01000000, 0x07008401)
+        usb_ep0_test_event(3, ring + 64, 0x04000008, 0x07018001)
+        usb_ep0_test_event(4, dma + 4128, 0x01000000, 0x07008401)
+        usb_ep0_test_event(5, dma + 4144, 0x01000000, 0x07008401)
+        usb_ep0_test_event(6, ring + 112, 0x04000008, 0x07018001)
+        wenn xh_control(0x0008000001000680, dma + 32768, 8) oder xh(6) != 4 oder xh(12) != 9 oder xh(8) != 7:
+            gib_zurück 2603
+        gib_zurück 2026
 
 # Einstieg aus uefi_entry.c (wie netz_e1000.moos); Aufrufe also in einer
 # benannten Funktion, nicht in main.
@@ -129,4 +287,7 @@ funktion moo_efi_haupt():
         hw_lesebarriere()
         zeile(hw_kratz_lese())
         zeile(usb_interface_test())
+        zeile(usb_ep0_ring_test())
+        zeile(usb_ep0_event_test())
+        zeile(usb_ep0_retry_test())
         zeile(999)

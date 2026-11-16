@@ -862,6 +862,22 @@ impl<'ctx> CodeGen<'ctx> {
                 Err(meldung)
             }
         };
+        // x86-Firmware und Kernel garantieren keine Red-Zone unter RSP.
+        // Auch @nativ(SysV) und spaeter eingebettete Leaf-Funktionen brauchen
+        // das LLVM-Attribut; -mno-red-zone beim C-Link allein reicht nicht.
+        let triple = self.module.get_triple();
+        let triple = triple.as_str().to_string_lossy();
+        if ergebnis.is_ok() && triple.starts_with("x86_64-")
+            && (triple.contains("-none") || triple.contains("-uefi"))
+        {
+            let kind = inkwell::attributes::Attribute::get_named_enum_kind_id("noredzone");
+            let attribute = self.context.create_enum_attribute(kind, 0);
+            for function in self.module.get_functions() {
+                if function.get_first_basic_block().is_some() {
+                    function.add_attribute(inkwell::attributes::AttributeLoc::Function, attribute);
+                }
+            }
+        }
         for hinweis in std::mem::take(&mut self.warnings) {
             crate::diagnose::melden(hinweis);
         }

@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "e9ce7483effcbca4c23f6950382a4b0cea30e987db856340bea0f1b21786079b",
+  "compiler_sha256": "5f8e1d085324599d817bee206510636017b5f3e976e777fd0ef329a0a47d0a09",
   "normalization": "module-header-root-v2",
-  "batch": "34572",
+  "batch": "34600",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "4da13f5e2acfb48946d7f39438d4df9687663e6801c04ccfc7da4aacf9f9c458",
+  "compiler_runtime_inventory_sha256": "f095817db77ef19958eec5c4592fbb529b6c6fd2f89cea73f74c76593078a4f8",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -39,6 +39,11 @@
       "x86_64-bare"
     ],
     "beispiele/kernel/stackprot_test.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-bare"
+    ],
+    "beispiele/kernel/test_neustart.moos": [
       "--no-stdlib",
       "--target",
       "x86_64-bare"
@@ -98,7 +103,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "1a3a10060a01fc173f0c7496dafcef6cbcfae9be509eea72ae62afdfab9e564f",
+    "sha256": "3a0375077b4dd16bd9fbd073a3fa47040d9f807a928600453cffb37fd8713803",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -227,8 +232,9 @@
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
-      "beispiele/kernel/uefi_kern.moos": "5abbb5b9ff8d55e53ffddb5ef61a168b4d48da16ed28d0b5c9970eeed5ec5016",
-      "beispiele/kernel/usb_xhci.moos": "cefdd0ee305edd2d70dfdaeffe2ea25149d72f1338a6a6511e93af0123053c2b",
+      "beispiele/kernel/test_neustart.moos": "9a2604113500c90a68dc83039b58d2eeeefe1fef351f8fd4aa7e598ac7d88313",
+      "beispiele/kernel/uefi_kern.moos": "4689dfe846f3f4122f56ed8d99ecf3363d7eb5e34bb200f7bab11011904189cb",
+      "beispiele/kernel/usb_xhci.moos": "83226297f28838389da53f31a004e84c4ca773b99d091d23920e09836a9e7b6b",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
@@ -577,7 +583,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "fb7e64edcc99e84153116171ce373ec105601378bc5742d4fc3ee5cb85e1af3f",
+    "sha256": "ece5ec36f644a1028f630bf5303fb990c0ebff3563318a3196ffa4e0944dae40",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -706,8 +712,9 @@
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
-      "beispiele/kernel/uefi_kern.moos": "5abbb5b9ff8d55e53ffddb5ef61a168b4d48da16ed28d0b5c9970eeed5ec5016",
-      "beispiele/kernel/usb_xhci.moos": "cefdd0ee305edd2d70dfdaeffe2ea25149d72f1338a6a6511e93af0123053c2b",
+      "beispiele/kernel/test_neustart.moos": "9a2604113500c90a68dc83039b58d2eeeefe1fef351f8fd4aa7e598ac7d88313",
+      "beispiele/kernel/uefi_kern.moos": "4689dfe846f3f4122f56ed8d99ecf3363d7eb5e34bb200f7bab11011904189cb",
+      "beispiele/kernel/usb_xhci.moos": "83226297f28838389da53f31a004e84c4ca773b99d091d23920e09836a9e7b6b",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
       "beispiele/ki_bild_beschreiben.moos": "1f78813f9cfb79e773be73d52615deefcf7596aea928c35eb1ac0d402be86b5e",
       "beispiele/ki_capture_loopback_gate.moos": "9c04f712ed4de449ac8c0f23b984d50eb89da24578da8db79f14c05e94851f67",
@@ -1719,7 +1726,7 @@
       "compiler/tests/p7/nativ_bare_dyn_trap64.moos": "32950f7f49c5a079561fe458bdf867dcdaa28736766a61a6d833472327c6e988",
       "compiler/tests/p7/nativ_bare_typ_trap.moos": "5c83bde2245510bed12eb05b62924ea425e17715147882b2b6f3b84c183d5c2c",
       "compiler/tests/p7/nativ_bare_wert.moos": "7ff46df726d30e10363d4b8f005d094bf35c6e9723cb9a6288df552d1eec5400",
-      "compiler/tests/p7/nativ_uefi_dyn.moos": "1de5f0a64e0f3a3976f4255ffb58e661aae8781184d15b082da8656a0c145531",
+      "compiler/tests/p7/nativ_uefi_dyn.moos": "1f9e48f4751103a1b02cbd930926ca0ad8a7a2fa50c021f5d2cb2e34e78ecc51",
       "compiler/tests/p7/nativ_uefi_dyn_trap.moos": "f07df999f90d4208ffe2305d8206089cf225add153cdfa0dfd045a7965187520",
       "compiler/tests/p7/nativ_uefi_typ_trap.moos": "a645cd261facfe5fe85e05956539301af2011c431bedcb3bcbd28b908f21b584",
       "compiler/tests/regression/erde12_lib/welt_hilfe.moos": "b17502daaa8c37dc0c1f59eed11663afa175b8b7c4db54eeacaa03c16bc33a3f",
@@ -2383,7 +2390,7 @@
     },
     "beispiele/kernel/hallo_kern.moos": {
       "status": "ok",
-      "sha256": "222c6d09dd02ab72e4da9dac35bb1694245c70d06ca6ffe93d7324f7028878dc"
+      "sha256": "1fad30305796189fdcd91afd2f64271cb4f2bc1f6a365f5e4a5546840d792ae2"
     },
     "beispiele/kernel/moo_bootvertrag.moos": {
       "status": "ok",
@@ -2391,27 +2398,31 @@
     },
     "beispiele/kernel/nativ_kern.moos": {
       "status": "ok",
-      "sha256": "f36a763eafdd391e69f7f04374856fbe0b5fd5a28a0293bdb3934c6a3ae1b516"
+      "sha256": "00ea228fda61307ab48427caa5286f131daf8bd4b64d52dbf072f7df5dfb3be0"
     },
     "beispiele/kernel/nativ_seriell.moos": {
       "status": "ok",
-      "sha256": "3473e6bf01e0a79e77b2aa51b5d487d6b0ad2d6c27a5caf556ddb1c773c8037a"
+      "sha256": "44a8e995270657a9aec70d444146177d71b2d505f99df79820a7bbcf18fad997"
     },
     "beispiele/kernel/pf_test.moos": {
       "status": "ok",
-      "sha256": "0ebd33e9e699d38493dc884fafaf4c9840e93c59a6595aca5ddd4773caa3ea7e"
+      "sha256": "e87d1412725316b6625459197e4dca431c825190eef2c44a0b46ef1670444ebe"
     },
     "beispiele/kernel/stackprot_test.moos": {
       "status": "ok",
-      "sha256": "c4022dc347fa4632bd884a51d81183ef0938ada1a33944d28d1f0bff6881a99a"
+      "sha256": "8e07c3a924449f1255707ede52e9aea06f62828c0a11999a8e6e591512a557ee"
+    },
+    "beispiele/kernel/test_neustart.moos": {
+      "status": "ok",
+      "sha256": "5b6f345ef8b8d7d1675bf73274350db9de23e335d3d39166fc89ec9de90cf139"
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "9dfa90118c0308434e6fdeec4d0fccfaf32b2e286ff0324b8df56a01ab21c509"
+      "sha256": "42f25e710e5436ab16573d4216b3d7bb9ad82e88b6a7fb0160b749db58f458cc"
     },
     "beispiele/kernel/usb_xhci.moos": {
       "status": "ok",
-      "sha256": "3e30dc83298932f46c5f00080dd946e53db339fd5d9bc1c8fe23247c0fa30d14"
+      "sha256": "316c0f7c0471ab019de91d24eefa7782898ae72058fb15aae8847de372dd30c9"
     },
     "beispiele/ki_audio.moos": {
       "status": "ok",
@@ -3291,35 +3302,35 @@
     },
     "beispiele/uefi/hallo_uefi.moos": {
       "status": "ok",
-      "sha256": "911ed29ae656953ae8de23ecdb73907a342976be260d4f38af153b53e0b7af33"
+      "sha256": "01832ce6fccfcf87e6cce6f235b514a1f5eb2092e8f7d19eaa03bb425c2d8228"
     },
     "beispiele/uefi/hardware_pci.moos": {
       "status": "ok",
-      "sha256": "5fc56f718f7320e05670105d4b7a72f767187c38712c396522e41b76c90f37c8"
+      "sha256": "4e9477a885bf3b484d371b436b8d53e2d9f8c8d515a6ab7687f5c44aeef582ae"
     },
     "beispiele/uefi/moo_lader.moos": {
       "status": "ok",
-      "sha256": "694c0b1f4468886d1faade3c17d2792baa1bd4d3f388bd78b14be1c4aef90233"
+      "sha256": "2331184d34380576854a6e94d3eb84c9d245ff6b15e2b0693184028bb86c472c"
     },
     "beispiele/uefi/netz_e1000.moos": {
       "status": "ok",
-      "sha256": "66830b6c9e94ec2b683ff8bfab50b3e319f30485c093df8c07f056e34820b93a"
+      "sha256": "1016e1729526d9ff0d7ca68198c90d28bb75a0c6a78800caf3fd33e613f2c1c0"
     },
     "beispiele/uefi/netz_geraet.moos": {
       "status": "ok",
-      "sha256": "a95100d19984785ba3916fd773707c77d05dbf789484910130f4af7379a26e82"
+      "sha256": "9f1de90b6d35aa0df5e70be76c004dd9eefc19e01d0a51c399fda73bcde129a8"
     },
     "beispiele/uefi/netz_lader.moos": {
       "status": "ok",
-      "sha256": "d1615506c27896d9e21fdedba8a15a01ae3914ccdc90eedfce9e8a748c1eb599"
+      "sha256": "842a5af08ad70dbf5d19b673bcad151797788b1460b4451ec69a64e1ce834ba5"
     },
     "beispiele/uefi/netz_tftp.moos": {
       "status": "ok",
-      "sha256": "37ab60c8b3e7791b4a5b76c9703431bc524fcce21b1c82e6d696526ba7a832ec"
+      "sha256": "f3007ba5556a24d9f849a9c785937208eda8bea18b082a643e1d5cdd8314eb1c"
     },
     "beispiele/uefi/netz_treiber.moos": {
       "status": "ok",
-      "sha256": "075739c8b1b18038de44e16524f4ca00551bfe6f3bc7b334d931d08295c3eba7"
+      "sha256": "9590dba552df822cd114462f7a41ea767f26f30ecf8ddf220e51daf5d260e06d"
     },
     "beispiele/ui_automation_demo.moos": {
       "status": "ok",

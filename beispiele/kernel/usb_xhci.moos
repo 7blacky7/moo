@@ -13,8 +13,10 @@ aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmi
 # 23 physische BAR,24 CapsLock,25 neue Tastendruecke,
 # 26 Meldungs-Callback,27 PPC,28 MaxPorts,29 BDF,
 # 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
+# 36/37/38 letztes passendes Event Status/Steuer/TRB; 39/40/41 aktive EP0-TRBs,
+# 42 angefragte Datenbytes,43 tatsaechliche Datenbytes (Short vor Status).
 @nativ
-statisch XH: [u64; 36] auf 0
+statisch XH: [u64; 44] auf 0
 
 # Diagnose ueber die gemeinsame Konsole/COM1/UDP-Senke.
 @nativ
@@ -69,6 +71,65 @@ konstante XH_T_KLASSE: [u8; _] auf "MOO-KERNEL USB GERAETEKLASSE "
 konstante XH_T_INTERFACE: [u8; _] auf "MOO-KERNEL USB BOOT KEYBOARD INTERFACE "
 @nativ
 konstante XH_T_EP: [u8; _] auf "MOO-KERNEL USB BOOT KEYBOARD ENDPOINT "
+
+@nativ
+konstante XH_T_EVT_TYP: [u8; _] auf "MOO-KERNEL USB EVENT TYP "
+@nativ
+konstante XH_T_EVT_TRB: [u8; _] auf "MOO-KERNEL USB EVENT TRB "
+@nativ
+konstante XH_T_EVT_STATUS: [u8; _] auf "MOO-KERNEL USB EVENT STATUS "
+@nativ
+konstante XH_T_EVT_STEUER: [u8; _] auf "MOO-KERNEL USB EVENT STEUER "
+@nativ
+konstante XH_T_EVT_CC: [u8; _] auf "MOO-KERNEL USB EVENT CC "
+@nativ
+konstante XH_T_EVT_REST: [u8; _] auf "MOO-KERNEL USB EVENT REST "
+@nativ
+konstante XH_T_EVT_PARAM: [u8; _] auf "MOO-KERNEL USB EVENT COMMAND PARAM24 "
+@nativ
+konstante XH_T_EVT_SLOT: [u8; _] auf "MOO-KERNEL USB EVENT SLOT "
+@nativ
+konstante XH_T_EVT_EP: [u8; _] auf "MOO-KERNEL USB EVENT EP "
+@nativ
+konstante XH_T_WARTE_TYP: [u8; _] auf "MOO-KERNEL USB TIMEOUT TYP "
+@nativ
+konstante XH_T_WARTE_TRB: [u8; _] auf "MOO-KERNEL USB TIMEOUT TRB "
+@nativ
+konstante XH_T_SLOT0: [u8; _] auf "MOO-KERNEL USB OUTPUT SLOT DWORD0 "
+@nativ
+konstante XH_T_SLOT1: [u8; _] auf "MOO-KERNEL USB OUTPUT SLOT DWORD1 "
+@nativ
+konstante XH_T_SLOT3: [u8; _] auf "MOO-KERNEL USB OUTPUT SLOT DWORD3 "
+@nativ
+konstante XH_T_SLOT_STATE: [u8; _] auf "MOO-KERNEL USB OUTPUT SLOT STATE "
+@nativ
+konstante XH_T_ADRESSE: [u8; _] auf "MOO-KERNEL USB OUTPUT USB ADRESSE "
+@nativ
+konstante XH_T_EP0_0: [u8; _] auf "MOO-KERNEL USB OUTPUT EP0 DWORD0 "
+@nativ
+konstante XH_T_EP0_1: [u8; _] auf "MOO-KERNEL USB OUTPUT EP0 DWORD1 "
+@nativ
+konstante XH_T_EP0_DEQ: [u8; _] auf "MOO-KERNEL USB OUTPUT EP0 DEQUEUE "
+@nativ
+konstante XH_T_EP0_STATE: [u8; _] auf "MOO-KERNEL USB OUTPUT EP0 STATE "
+@nativ
+konstante XH_T_EP0_MPS: [u8; _] auf "MOO-KERNEL USB OUTPUT EP0 MPS "
+@nativ
+konstante XH_T_CTRL_REQUEST: [u8; _] auf "MOO-KERNEL USB CONTROL REQUEST "
+@nativ
+konstante XH_T_CTRL_VERSUCH: [u8; _] auf "MOO-KERNEL USB CONTROL VERSUCH "
+@nativ
+konstante XH_T_CTRL_LAENGE: [u8; _] auf "MOO-KERNEL USB CONTROL EMPFANGEN "
+@nativ
+konstante XH_T_CTRL_SETUP: [u8; _] auf "MOO-KERNEL USB CONTROL SETUP FLAGS "
+@nativ
+konstante XH_T_CTRL_DATA: [u8; _] auf "MOO-KERNEL USB CONTROL DATA FLAGS "
+@nativ
+konstante XH_T_CTRL_STATUS: [u8; _] auf "MOO-KERNEL USB CONTROL STATUS FLAGS "
+@nativ
+konstante XH_T_DESC8: [u8; _] auf "MOO-KERNEL USB DESCRIPTOR8 ROH "
+@nativ
+konstante XH_T_DESC_MPS: [u8; _] auf "MOO-KERNEL USB DESCRIPTOR MPS0 "
 
 @nativ
 statisch XH_PROTO: [u8; 256] auf 0
@@ -216,16 +277,19 @@ funktion xh_reg64(p: u64, w: u64) -> void:
 # Producer: Parameter/Status vor dem Cycle-Bit publizieren. Link-TRB am Ende
 # toggelt Cycle (TC=1); pro Ring ist hoechstens ein TD gleichzeitig ausstehend.
 @nativ
-funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer: u32) -> u64:
+funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer: u32, freigeben: bool) -> u64:
     unsicher:
         setze basis: u64 auf xh(4) + seite * 4096
         setze index: u64 auf xh(indexfeld)
         setze cycle: u64 auf xh(indexfeld + 1)
         setze p: u64 auf basis + index * 16
+        setze bereit: u32 auf u32(cycle)
+        wenn nicht freigeben:
+            setze bereit auf bereit ^ 1
         speicher_schreiben(p, parameter, 8)
         speicher_schreiben(p + 8, status, 4)
         schreibbarriere()
-        nt_mmio_schreibe32(p + 12, steuer | u32(cycle))
+        nt_mmio_schreibe32(p + 12, steuer | bereit)
         setze index auf index + 1
         wenn index == 255:
             speicher_schreiben(basis + 4080, basis, 8)
@@ -238,30 +302,61 @@ funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer:
         xh_setze(indexfeld + 1, cycle)
         gib_zurück p
 
-# Event-Verbrauch: Cycle volatil pruefen, danach lesebarriere. ERDP mit EHB.
-# Nur das passende Completion-Event wird akzeptiert, Port-Events mitverbraucht.
+# xHCI 1.2b 6.4.2: jede Command-/Transfer-Completion vor dem Filtern protokollieren.
+# Command PARAM24 ist keine Restlaenge (6.4.2.2); Transfer REST bleibt unveraendert.
 @nativ
 funktion xh_event(typ: u32, erwartet: u64) -> u32:
     unsicher:
         setze p: u64 auf xh(4) + 8192 + xh(8) * 16
         setze steuer: u32 auf nt_mmio_lese32(p + 12)
+        setze status: u32 auf 0
         setze code: u32 auf 0
+        setze ereignis: u32 auf 0
         setze parameter: u64 auf 0
+        setze passend: bool auf falsch
         wenn (steuer & 1) != u32(xh(9)):
             gib_zurück 0
         lesebarriere()
         setze parameter auf speicher_lesen(p, 8)
-        wenn ((steuer >> 10) & 63) == typ und parameter == erwartet:
-            setze code auf u32(speicher_lesen(p + 8, 4)) >> 24
-            xh_setze(22, u64(steuer >> 24))
-            # Kurze Interrupt-Reports werden vom Aufrufer verworfen, nicht als 8 Byte gelesen.
-            wenn typ == 32 und (speicher_lesen(p + 8, 4) & 0xFFFFFF) != 0:
-                setze code auf 255
+        setze status auf u32(speicher_lesen(p + 8, 4))
+        setze ereignis auf (steuer >> 10) & 63
+        # Alle Daten lokal sichern, dann ERDP freigeben, bevor die Log-Senke arbeitet.
         xh_setze(8, xh(8) + 1)
         wenn xh(8) == 256:
             xh_setze(8, 0)
             xh_setze(9, xh(9) ^ 1)
         xh_reg64(xh(3) + 0x38, (xh(4) + 8192 + xh(8) * 16) | 8)
+        wenn ereignis == 32 oder ereignis == 33:
+            xh_log(adresse_von(XH_T_EVT_TYP), u64(ereignis))
+            xh_log(adresse_von(XH_T_EVT_TRB), parameter)
+            xh_log(adresse_von(XH_T_EVT_STATUS), u64(status))
+            xh_log(adresse_von(XH_T_EVT_STEUER), u64(steuer))
+            xh_log(adresse_von(XH_T_EVT_SLOT), u64(steuer >> 24))
+            xh_log(adresse_von(XH_T_EVT_CC), u64(status >> 24))
+            wenn ereignis == 32:
+                xh_log(adresse_von(XH_T_EVT_EP), u64((steuer >> 16) & 31))
+                xh_log(adresse_von(XH_T_EVT_REST), u64(status & 0xFFFFFF))
+            sonst:
+                xh_log(adresse_von(XH_T_EVT_PARAM), u64(status & 0xFFFFFF))
+        setze passend auf ereignis == typ und parameter == erwartet
+        wenn ereignis == 32:
+            # Keine Event-Data-TRBs verwendet; Slot und Endpoint gehoeren zur Anfrage.
+            setze passend auf passend und (steuer & 4) == 0 und u64(steuer >> 24) == xh(10)
+            wenn typ == 32 und xh(39) != 0 und erwartet == xh(41):
+                setze passend auf (steuer & 4) == 0 und u64(steuer >> 24) == xh(10) und ((steuer >> 16) & 31) == 1 und (parameter == xh(39) oder parameter == xh(40) oder parameter == xh(41))
+            sonst:
+                setze passend auf passend und u64((steuer >> 16) & 31) == xh(11)
+        wenn passend:
+            xh_setze(36, u64(status))
+            xh_setze(37, u64(steuer))
+            xh_setze(38, parameter)
+            setze code auf status >> 24
+            wenn ereignis == 33:
+                xh_setze(22, u64(steuer >> 24))
+            # 6.4.1.2.2: Short Data beendet die Data-TD, danach Status abwarten.
+            wenn ereignis == 32 und xh(39) != 0 und parameter == xh(40) und code == 13 und u64(status & 0xFFFFFF) <= xh(42):
+                xh_setze(43, xh(42) - u64(status & 0xFFFFFF))
+                gib_zurück 0
         gib_zurück code
 
 @nativ
@@ -269,37 +364,98 @@ funktion xh_abschluss(typ: u32, p: u64) -> bool:
     unsicher:
         setze start: u64 auf takt()
         setze code: u32 auf 0
+        xh_setze(36, 0)
         solange takt() - start < 1000000 * xh(18):
             setze code auf xh_event(typ, p)
             wenn code != 0:
-                gib_zurück code == 1
+                # Auch Setup/Data-Fehler beenden das Warten; Erfolg nur am Status-TRB.
+                gib_zurück code == 1 und xh(38) == p und (typ != 32 oder (xh(36) & 0xFFFFFF) == 0)
+        xh_setze(36, 0)
+        xh_log(adresse_von(XH_T_WARTE_TYP), u64(typ))
+        xh_log(adresse_von(XH_T_WARTE_TRB), p)
         gib_zurück falsch
 
 @nativ
 funktion xh_befehl(parameter: u64, steuer: u32) -> bool:
     unsicher:
-        setze p: u64 auf xh_trb(1, 6, parameter, 0, steuer)
+        setze p: u64 auf xh_trb(1, 6, parameter, 0, steuer, wahr)
         nt_mmio_glocke32(xh(2), 0)
         gib_zurück xh_abschluss(33, p)
 
-# Control-TD: Setup mit Immediate Data, optional Data, Status mit IOC.
-# xHCI vergibt USB-Adresse durch Address Device, kein manuelles SET_ADDRESS.
+# Control-Stufen sind eigene TDs (xHCI 1.2b 6.4.1.2): kein CH zwischen ihnen.
+# Setup zuletzt freigeben, wie Linux xhci_queue_ctrl_tx/giveback_first_trb.
+@nativ
+funktion xh_control_bauen(setup: u64, daten: u64, laenge: u32) -> u64:
+    unsicher:
+        setze trt: u32 auf 0
+        setze dir: u32 auf 0
+        xh_setze(39, 0)
+        xh_setze(40, 0)
+        xh_setze(41, 0)
+        wenn laenge > 4096 oder u64(laenge) != (setup >> 48):
+            gib_zurück 0
+        wenn laenge != 0:
+            wenn daten == 0 oder (daten & 65535) + u64(laenge) > 65536:
+                gib_zurück 0
+            setze dir auf u32((setup >> 7) & 1)
+            setze trt auf (2 + dir) << 16
+        xh_setze(42, u64(laenge))
+        xh_setze(43, u64(laenge))
+        # Setup Bits4:1 sind RsvdZ, IDT=1, Transfer Length=8.
+        xh_setze(39, xh_trb(6, 12, setup, 8, (2 << 10) | 64 | trt, falsch))
+        wenn laenge != 0:
+            # Eine Data-TRB ist die ganze Data-TD: CH=0, ISP nur fuer IN, IDT=0.
+            xh_setze(40, xh_trb(6, 12, daten, laenge, (3 << 10) | (dir << 16) | (dir << 2), wahr))
+        setze trt auf 1 << 16
+        wenn laenge != 0 und dir == 1:
+            setze trt auf 0
+        xh_setze(41, xh_trb(6, 12, 0, 0, (4 << 10) | 32 | trt, wahr))
+        xh_log(adresse_von(XH_T_CTRL_SETUP), u64(nt_mmio_lese32(xh(39) + 12)))
+        wenn laenge != 0:
+            xh_log(adresse_von(XH_T_CTRL_DATA), u64(nt_mmio_lese32(xh(40) + 12)))
+        xh_log(adresse_von(XH_T_CTRL_STATUS), u64(nt_mmio_lese32(xh(41) + 12)))
+        gib_zurück xh(41)
+
+# Maximal drei Control-Versuche, nur USB Transaction Error + Halted erneut.
+# Kein Stall-/Timeout-/TRB-Error-Retry. Reset Endpoint nur bei EP State=Halted;
+# danach Set TR Dequeue auf eine NEU aufgebaute Setup-TD (xHCI 4.6.8/4.6.10).
 @nativ
 funktion xh_control(setup: u64, daten: u64, laenge: u32) -> bool:
     unsicher:
-        setze trt: u32 auf 0
+        setze versuch: u64 auf 1
         setze p: u64 auf 0
-        wenn laenge != 0:
-            setze trt auf 3 << 16
-        xh_trb(6, 12, setup, 8, (2 << 10) | 64 | 16 | trt)
-        wenn laenge != 0:
-            xh_trb(6, 12, daten, laenge, (3 << 10) | (1 << 16) | 16)
-        setze trt auf 1 << 16
-        wenn laenge != 0:
-            setze trt auf 0
-        setze p auf xh_trb(6, 12, 0, 0, (4 << 10) | 32 | trt)
-        nt_mmio_glocke32(xh(2) + xh(10) * 4, 1)
-        gib_zurück xh_abschluss(32, p)
+        setze ok: bool auf falsch
+        setze umsetzen: bool auf falsch
+        solange versuch <= 3:
+            xh_log(adresse_von(XH_T_CTRL_REQUEST), setup)
+            xh_log(adresse_von(XH_T_CTRL_VERSUCH), versuch)
+            setze p auf xh_control_bauen(setup, daten, laenge)
+            wenn p == 0:
+                gib_zurück falsch
+            wenn umsetzen:
+                # Erst Setup gueltig aufbauen, Dequeue mit deren PCS initialisieren.
+                wenn nicht xh_befehl(xh(39) | u64((nt_mmio_lese32(xh(39) + 12) ^ 1) & 1), (16 << 10) | (1 << 16) | u32(xh(10) << 24)):
+                    xh_setze(39, 0)
+                    gib_zurück falsch
+            schreibbarriere()
+            nt_mmio_schreibe32(xh(39) + 12, nt_mmio_lese32(xh(39) + 12) ^ 1)
+            nt_mmio_glocke32(xh(2) + xh(10) * 4, 1)
+            setze ok auf xh_abschluss(32, p)
+            xh_setze(39, 0)
+            wenn ok:
+                xh_log(adresse_von(XH_T_CTRL_LAENGE), xh(43))
+                gib_zurück wahr
+            xh_context_bild()
+            lesebarriere()
+            wenn (xh(36) >> 24) != 4 oder versuch == 3 oder (speicher_lesen(xh(4) + 20480 + xh(5), 4) & 7) != 2:
+                gib_zurück falsch
+            wenn nicht xh_befehl(0, (14 << 10) | (1 << 16) | u32(xh(10) << 24)):
+                gib_zurück falsch
+            setze umsetzen auf wahr
+            setze versuch auf versuch + 1
+            # Linux hub_port_init wartet zwischen Descriptor-Versuchen 100 ms.
+            xh_warte_us(100000)
+        gib_zurück falsch
 
 # PCI-Mechanismus 1 durchsucht Segment 0; Klasse/Subklasse/ProgIF exakt.
 @nativ
@@ -460,6 +616,28 @@ funktion xh_port(port: u64) -> u64:
         nt_mmio_schreibe32(p, (v & 0x0E00C200) | (v & 0x00FE0000))
         gib_zurück u64((v >> 10) & 15)
 
+# Output Context erst nach Command-Completion lesen; CSZ ist 32 oder 64 Byte.
+# xHCI 1.2b 6.2.2 (Slot DWORD3) / 6.2.3 (EP DWORD0/1/2/3).
+@nativ
+funktion xh_context_bild() -> void:
+    unsicher:
+        setze out: u64 auf xh(4) + 20480
+        setze ep: u64 auf out + xh(5)
+        lesebarriere()
+        setze slot: u32 auf u32(speicher_lesen(out + 12, 4))
+        setze ep0: u32 auf u32(speicher_lesen(ep, 4))
+        setze ep1: u32 auf u32(speicher_lesen(ep + 4, 4))
+        xh_log(adresse_von(XH_T_SLOT0), u64(speicher_lesen(out, 4)))
+        xh_log(adresse_von(XH_T_SLOT1), u64(speicher_lesen(out + 4, 4)))
+        xh_log(adresse_von(XH_T_SLOT3), u64(slot))
+        xh_log(adresse_von(XH_T_SLOT_STATE), u64((slot >> 27) & 31))
+        xh_log(adresse_von(XH_T_ADRESSE), u64(slot & 255))
+        xh_log(adresse_von(XH_T_EP0_0), u64(ep0))
+        xh_log(adresse_von(XH_T_EP0_1), u64(ep1))
+        xh_log(adresse_von(XH_T_EP0_DEQ), speicher_lesen(ep + 8, 8))
+        xh_log(adresse_von(XH_T_EP0_STATE), u64(ep0 & 7))
+        xh_log(adresse_von(XH_T_EP0_MPS), u64(ep1 >> 16))
+
 @nativ
 funktion xh_ep0(mps: u64) -> void:
     unsicher:
@@ -558,10 +736,17 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
         xh_ep0(mps)
         wenn nicht xh_befehl(input, (11 << 10) | u32(xh(10) << 24)):
             gib_zurück falsch
+        xh_context_bild()
+        # Software-Recovery nach SET_ADDRESS (xHCI 4.6.5; Linux hub.c:4742-4751).
+        xh_warte_us(10000)
         xh_setze(19, 5)
-        wenn nicht xh_control(0x0008000001000680, desc, 8):
-            gib_zurück falsch
+        xh_null(desc, 8)
+        setze boot auf xh_control(0x0008000001000680, desc, 8)
+        xh_log(adresse_von(XH_T_DESC8), speicher_lesen(desc, 8))
         setze n auf u64(speicher_lesen(desc + 7, 1))
+        xh_log(adresse_von(XH_T_DESC_MPS), n)
+        wenn nicht boot oder xh(43) < 8 oder speicher_lesen(desc, 2) != 0x0112:
+            gib_zurück falsch
         wenn speed >= 4:
             wenn n != 9:
                 gib_zurück falsch
@@ -575,19 +760,19 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
             speicher_schreiben(input + 2 * xh(5) + 4, u32((n << 16) | 38), 4)
             wenn nicht xh_befehl(input, (13 << 10) | u32(xh(10) << 24)):
                 gib_zurück falsch
-        wenn nicht xh_control(0x0012000001000680, desc, 18):
+        wenn nicht xh_control(0x0012000001000680, desc, 18) oder xh(43) < 18:
             gib_zurück falsch
         xh_log(adresse_von(XH_T_KLASSE), u64(speicher_lesen(desc + 4, 1)))
         xh_log(adresse_von(XH_T_VID), u64(speicher_lesen(desc + 8, 2)))
         xh_log(adresse_von(XH_T_PID), u64(speicher_lesen(desc + 10, 2)))
-        wenn nicht xh_control(0x0009000002000680, desc, 9):
+        wenn nicht xh_control(0x0009000002000680, desc, 9) oder xh(43) < 9:
             gib_zurück falsch
         wenn speicher_lesen(desc, 1) < 9 oder speicher_lesen(desc + 1, 1) != 2:
             gib_zurück falsch
         setze laenge auf u64(speicher_lesen(desc + 2, 2))
         wenn laenge < 9 oder laenge > 4096:
             gib_zurück falsch
-        wenn nicht xh_control((laenge << 48) | 0x02000680, desc, u32(laenge)):
+        wenn nicht xh_control((laenge << 48) | 0x02000680, desc, u32(laenge)) oder xh(43) < laenge:
             gib_zurück falsch
         wenn nicht xh_boot_interface(desc, laenge):
             xh_log(adresse_von(XH_T_INTERFACE), 0xFFFFFFFF)
@@ -700,7 +885,7 @@ funktion usb_report_pruefen() -> bool:
 @nativ
 funktion xh_in_anfordern() -> void:
     unsicher:
-        xh_setze(17, xh_trb(7, 14, xh(4) + 36864, 8, (1 << 10) | 32 | 4))
+        xh_setze(17, xh_trb(7, 14, xh(4) + 36864, 8, (1 << 10) | 32 | 4, wahr))
         nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(xh(11)))
 
 @nativ
@@ -710,7 +895,7 @@ funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool
         setze port: u64 auf 0
         setze ports: u64 auf 0
         setze speed: u64 auf 0
-        xh_null(adresse_von(XH), 36 * 8)
+        xh_null(adresse_von(XH), 44 * 8)
         xh_setze(26, log)
         xh_setze(4, dma)
         xh_setze(18, tsc_us)

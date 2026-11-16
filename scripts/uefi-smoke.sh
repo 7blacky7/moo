@@ -158,6 +158,19 @@ if [ "$PRUEFUNG" = "kern" ]; then
   phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
   "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
       -o "$OUT/KERN.ELF" >"$OUT/kern.err" 2>&1 || { sed 's/^/      | /' "$OUT/kern.err"; fail "Kern nicht gebaut"; }
+  "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --emit-ir -o "$OUT/KERN.ll" >"$OUT/kern-ir.err" 2>&1 \
+    || { sed 's/^/      | /' "$OUT/kern-ir.err"; fail "Kern-IR nicht gebaut"; }
+  uv run --no-project python - "$OUT/KERN.ll" <<'PY'
+import pathlib, re, sys
+ir = pathlib.Path(sys.argv[1]).read_text()
+attrs = dict(re.findall(r"^attributes #(\d+) = \{(.*)\}", ir, re.M))
+functions = re.findall(r"^define [^\n]+", ir, re.M)
+assert functions
+for function in functions:
+    group = re.search(r"#(\d+)\s*\{", function)
+    assert group and "noredzone" in attrs[group[1]], function
+print("      OK: %d Kernel-Funktionsdefinitionen ohne Red-Zone" % len(functions))
+PY
   readelf -h "$OUT/KERN.ELF" | grep -q 'Type:.*EXEC' || fail "Kern ist kein ELF EXEC"
   readelf -h "$OUT/KERN.ELF" | grep -q 'Machine:.*X86-64' || fail "Kern ist kein x86-64"
   [ -z "$(nm -u "$OUT/KERN.ELF")" ] || fail "Kern hat undefinierte Symbole"
@@ -199,11 +212,13 @@ if [ "$PRUEFUNG" = "kern" ]; then
     KERN_QEMU+=(-net none)
   fi
   USB="${MOO_UEFI_USB:-1}"
+  USB_VERSION="${MOO_UEFI_USB_VERSION:-2}"
+  case "$USB_VERSION" in 1|2) ;; *) fail "USB_VERSION: nur 1 (Full-Speed) oder 2 (High-Speed)";; esac
   if [ "$USB" = 1 ]; then
-    KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0)
+    KERN_QEMU+=(-device qemu-xhci,id=xhci -device "usb-kbd,bus=xhci.0,usb_version=$USB_VERSION")
   elif [ "$USB" = hub ]; then
     KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1
-      -device usb-kbd,bus=xhci.0,port=1.1)
+      -device "usb-kbd,bus=xhci.0,port=1.1,usb_version=$USB_VERSION")
   fi
   timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
@@ -276,6 +291,9 @@ if [ "$PRUEFUNG" = "kern" ]; then
     done
     USB_C="$(grep -acF 'MOO-KERNEL USB TASTE 0000000000000063' "$OUT/serial.log")"
     [ "$USB_C" -ge 135 ] || fail "USB-Ringumlauf: nur $USB_C von 140 Tastendruecken"
+    USB_SPEED=3; [ "$USB_VERSION" != 1 ] || USB_SPEED=1
+    grep -aqF "MOO-KERNEL USB SPEED 000000000000000$USB_SPEED" "$OUT/serial.log" || fail "Erwarteter USB-Speed $USB_SPEED fehlt"
+    echo "      OK: USB-Version $USB_VERSION, Port-Speed $USB_SPEED, $USB_C/140 Tastendruecke"
   elif [ "$USB" = 0 ]; then
     grep -aqF "MOO-KERNEL TASTATUR SCAN 000000000000001E" "$OUT/serial.log" || fail "PS/2 Scan 0x1E fehlt"
   elif [ "$USB" = hub ]; then
@@ -285,7 +303,7 @@ if [ "$PRUEFUNG" = "kern" ]; then
     echo "      OK: USB-Tastatur hinter Hub als Diagnose-/Negativfall (Hubtreiber weiterhin offen)"
   fi
   if [ "$USB" != 0 ]; then
-    for m in "HCSPARAMS1" "HCSPARAMS2" "HCCPARAMS1" "PROTOCOL CAP" "PROTOCOL PORTBEREICH" "PORTSC" "CCS" "PED" "PR" "PLS" "PP" "SPEED" "CSC GESEHEN"; do
+    for m in "HCSPARAMS1" "HCSPARAMS2" "HCCPARAMS1" "PROTOCOL CAP" "PROTOCOL PORTBEREICH" "PORTSC" "CCS" "PED" "PR" "PLS" "PP" "SPEED" "CSC GESEHEN" "EVENT TYP" "EVENT TRB" "EVENT CC" "EVENT REST" "EVENT COMMAND PARAM24" "OUTPUT SLOT STATE" "OUTPUT USB ADRESSE" "OUTPUT EP0 STATE" "OUTPUT EP0 MPS" "CONTROL SETUP FLAGS" "DESCRIPTOR8 ROH" "DESCRIPTOR MPS0"; do
       grep -aqF "MOO-KERNEL USB $m " "$OUT/serial.log" || fail "USB-Diagnose fehlt: $m"
     done
     for phase in 0 1 2 3 4 5; do
@@ -352,7 +370,7 @@ if [ "$PRUEFUNG" = "kern" ]; then
   timeout --foreground 40s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars-ohne.fd" \
-      -drive format=raw,file="$OUT/ohne-kern.img" -net none \
+      -drive if=virtio,format=raw,file="$OUT/ohne-kern.img" -net none \
       -m 256M -vga std -display none -no-reboot -monitor none \
       -serial file:"$OUT/serial-ohne.log" >"$OUT/qemu-ohne.log" 2>&1 &
   QPID=$!
@@ -543,13 +561,14 @@ if [ "$PRUEFUNG" = "e1000" ]; then
 fi
 if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   # P7-T17: @nativ-Systemkoerper mit dynamischen Werten im UEFI-Profil.
+  # Virtio-Block vermeidet QEMU11-IDE-SIGSEGV vor EFI-Entry.
   # Die App schreibt Zeilen "N <wert>" auf COM1. nativ: alle Werte exakt
   # (u64 2^60+8, i64 -6e18-1), danach ruft sie sich als nativ-trap mit dem
   # Negativfall auf (256 an u8 -> Trap, keine Folgezeile).
   timeout --foreground $((WAIT_S + 30))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" -machine q35 \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
-      -drive format=raw,file="$DISK" \
+      -drive if=virtio,format=raw,file="$DISK" \
       -m 256M -vga std -display none -no-reboot -monitor none -net none \
       -serial file:"$SERIAL_LOG" \
       -debugcon file:"$DEBUG_LOG" -global isa-debugcon.iobase=0xe9 \
@@ -568,7 +587,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
     # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
-    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 999"; do
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 999"; do
       tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
     done
     echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"

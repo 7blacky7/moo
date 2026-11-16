@@ -13,6 +13,14 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/test_neustart.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T25: nativer Reset-/TCO-Baustein, im UEFI-Kern importiert; Standalone-IR braucht das Bare-Profil"
+    },
+    {
       "path": "beispiele/uefi/netz_geraet.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

@@ -1,0 +1,172 @@
+# P7-T25: Testlauf-Reset und zuerst ausschliesslich lesende iTCO-Diagnose.
+# Intel N-Series Datasheet Vol.2, 759604-003:
+# https://cdrdv2.intel.com/v1/dl/getContent/759604?fileName=759604-003.pdf
+# 15.1.17/18 S.1065/1066: D31:F4, TCOBASE[15:5], TCOCTL[8].
+# 38.1.5/6 S.3040/3041: TCO2_STS[2] Strap; TCO1_CNT[0] NO_REBOOT.
+# 38.1.11 S.3044: TCO_TMR. Kein PMC-/RCBA-Schreiben fuer N100.
+# ACPI 6.6, 5.2.9 FADT: Flags[10], ResetReg GAS bei 116, ResetValue bei 128.
+# Linux v6.12 drivers/i2c/busses/i2c-i801.c:
+# 147-160 TCOBASE=0x50,TCOCTL=0x54,EN=bit8; 1514-1556 iTCO_version=6.
+# PCI 8086:54a3 (Alder Lake-M/N) nutzt FEATURE_TCO_CNL (PCI-Tabelle).
+# Linux v6.12 drivers/watchdog/iTCO_wdt.c:75-83 Register;218-231
+# NO_REBOOT bei Version>=6 in TCO1_CNT[0], nicht im alten PMC/GCS.
+# Diese Diagnose schreibt KEIN TCO-/SMI-/PMC-/PCI-Konfigurationsregister.
+aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
+
+# Im ELF eindeutig markierter Testvertrag. Der Runner darf nur die Daten
+# einer privaten Build-Kopie konfigurieren, niemals den Quelltext.
+@nativ
+statisch TESTLAUF_KONFIG: [u64; 4] auf [0x353254504F4F4D21, 90, 180, 0]
+@nativ
+statisch TESTLAUF_ZUSTAND: [u64; 7] auf 0
+@nativ
+konstante TL_RESET: [u8; _] auf "MOO-KERNEL NEUSTART "
+@nativ
+konstante TL_FADT: [u8; _] auf "MOO-KERNEL RESET FADT GAS "
+@nativ
+konstante TL_CF9: [u8; _] auf "MOO-KERNEL RESET CF9 "
+@nativ
+konstante TL_8042: [u8; _] auf "MOO-KERNEL RESET 8042 "
+@nativ
+konstante TL_FEHLER: [u8; _] auf "MOO-KERNEL RESET FEHLGESCHLAGEN "
+@nativ
+konstante TL_PCI: [u8; _] auf "MOO-KERNEL TCO SMBUS PCI "
+@nativ
+konstante TL_BASIS: [u8; _] auf "MOO-KERNEL TCO BASIS "
+@nativ
+konstante TL_CTL: [u8; _] auf "MOO-KERNEL TCO PCI TCOCTL "
+@nativ
+konstante TL_CNT: [u8; _] auf "MOO-KERNEL TCO TCO1_CNT "
+@nativ
+konstante TL_TMR: [u8; _] auf "MOO-KERNEL TCO TCO_TMR "
+@nativ
+konstante TL_STS2: [u8; _] auf "MOO-KERNEL TCO TCO2_STS "
+@nativ
+konstante TL_STRAP: [u8; _] auf "MOO-KERNEL TCO NO_REBOOT STRAP "
+@nativ
+konstante TL_NR: [u8; _] auf "MOO-KERNEL TCO NO_REBOOT "
+@nativ
+konstante TL_NUR: [u8; _] auf "MOO-KERNEL TCO NUR LESEN "
+@nativ
+konstante TL_FEHLT: [u8; _] auf "MOO-KERNEL TCO NICHT BELEGT "
+
+@nativ
+funktion testlauf_konfig(index: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(TESTLAUF_KONFIG) + index * 8, 8)
+
+@nativ
+funktion tl_wert(index: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(TESTLAUF_ZUSTAND) + index * 8, 8)
+
+@nativ
+funktion tl_setze(index: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(TESTLAUF_ZUSTAND) + index * 8, wert, 8)
+
+# Genauer BDF 00:1f.4; kein Scan beliebiger I/O-Adressen.
+@nativ
+funktion testlauf_tco_lesen(loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze pci_id: u32 auf nt_cfg_lese32(0x8000FC00)
+        setze basis: u32 auf 0
+        setze kontrolle: u32 auf 0
+        setze cnt: u16 auf 0
+        log(adresse_von(TL_PCI), u64(pci_id))
+        wenn pci_id != 0x54A38086:
+            log(adresse_von(TL_FEHLT), 1)
+            gib_zurück
+        setze basis auf nt_cfg_lese32(0x8000FC50)
+        setze kontrolle auf nt_cfg_lese32(0x8000FC54)
+        log(adresse_von(TL_BASIS), u64(basis))
+        log(adresse_von(TL_CTL), u64(kontrolle))
+        wenn (kontrolle & 0x100) == 0 oder (basis & 0xFFFF0000) != 0 oder (basis & 0xFFE0) == 0 oder (basis & 0x1E) != 0:
+            log(adresse_von(TL_FEHLT), 2)
+            gib_zurück
+        setze basis auf basis & 0xFFE0
+        setze cnt auf port_lese16(u16(basis + 8))
+        log(adresse_von(TL_CNT), u64(cnt))
+        log(adresse_von(TL_TMR), u64(port_lese16(u16(basis + 0x12))))
+        log(adresse_von(TL_STS2), u64(port_lese16(u16(basis + 6))))
+        log(adresse_von(TL_STRAP), u64((port_lese16(u16(basis + 6)) >> 2) & 1))
+        log(adresse_von(TL_NR), u64(cnt & 1))
+        log(adresse_von(TL_NUR), 1)
+
+@nativ
+funktion testlauf_starten(fadt: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze gas: u64 auf 0
+        setze adresse: u64 auf 0
+        setze raum: u64 auf 0
+        tl_setze(3, tsc * 1000000)
+        tl_setze(4, takt())
+        # Der Callback wird als Parameter an poll/reset weitergereicht.
+        wenn fadt != 0 und speicher_lesen(fadt + 4, 4) >= 129 und (speicher_lesen(fadt + 112, 4) & 0x400) != 0:
+            setze gas auf fadt + 116
+            setze raum auf u64(speicher_lesen(gas, 1))
+            setze adresse auf speicher_lesen(gas + 4, 8)
+            wenn speicher_lesen(gas + 1, 1) == 8 und speicher_lesen(gas + 2, 1) == 0 und speicher_lesen(gas + 3, 1) <= 1 und adresse != 0:
+                wenn raum == 0:
+                    setze adresse auf abbilden(bi, adresse, 1)
+                sonst wenn raum != 1 oder adresse > 0xFFFF:
+                    setze adresse auf 0
+                wenn adresse != 0:
+                    tl_setze(0, adresse)
+                    tl_setze(1, u64(speicher_lesen(fadt + 128, 1)))
+                    tl_setze(2, raum)
+        log(adresse_von(TL_FADT), tl_wert(0))
+        testlauf_tco_lesen(loggen)
+
+@nativ
+funktion tl_warten(ms: u64) -> void:
+    unsicher:
+        setze anfang: u64 auf takt()
+        setze hz: u64 auf tl_wert(3)
+        setze budget: u64 auf 1000000
+        solange hz != 0 oder budget > 0:
+            wenn hz != 0 und takt() - anfang >= hz / 1000 * ms:
+                gib_zurück
+            assembler(ziel="x86_64", code="pause", clobber=[])
+            setze budget auf budget - 1
+
+@nativ
+funktion testlauf_neustart(loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        log(adresse_von(TL_RESET), testlauf_konfig(1))
+        # TX darf abschliessen, bevor die Plattform zurueckgesetzt wird.
+        tl_warten(20)
+        assembler(ziel="x86_64", code="cli", clobber=[])
+        wenn tl_wert(0) != 0:
+            wenn tl_wert(2) == 1:
+                port_schreibe(u16(tl_wert(0)), u8(tl_wert(1)))
+            sonst:
+                setze ziel: ptr[u8] auf zeiger(tl_wert(0))
+                volatile_schreiben(ziel, u8(tl_wert(1)))
+            tl_warten(100)
+        log(adresse_von(TL_CF9), 1)
+        port_schreibe(u16(0xCF9), 2)
+        port_schreibe(u16(0xCF9), 6)
+        tl_warten(100)
+        log(adresse_von(TL_8042), 1)
+        setze versuche_8042: u64 auf 10000
+        solange versuche_8042 > 0 und (port_lese(u16(0x64)) & 2) != 0:
+            setze versuche_8042 auf versuche_8042 - 1
+        wenn versuche_8042 != 0:
+            port_schreibe(u16(0x64), 0xFE)
+        log(adresse_von(TL_FEHLER), 1)
+        solange wahr:
+            assembler(ziel="x86_64", code="hlt", clobber=[])
+
+@nativ
+funktion testlauf_poll(loggen: u64) -> void:
+    unsicher:
+        setze sekunden: u64 auf testlauf_konfig(1)
+        # 0 bedeutet interaktiv. Ein fehlender kalibrierter TSC darf einen
+        # befristeten Test nicht endlos machen: dann nach Diagnose resetten.
+        wenn sekunden > 0 und (tl_wert(3) == 0 oder (takt() - tl_wert(4)) / tl_wert(3) >= sekunden):
+            testlauf_neustart(loggen)

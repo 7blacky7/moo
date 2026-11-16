@@ -20,12 +20,19 @@
 # Umgebung: MOO_NETZ_IF (enp60s0), MOO_NETZ_ADR (192.168.77.1/24),
 #           MOO_NETZ_NUR_KOPIEREN=1 (nur moo.efi/.pruef erneuern, kein Server).
 set -euo pipefail
+export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 IFACE="${MOO_NETZ_IF:-enp60s0}"
 ADR="${MOO_NETZ_ADR:-192.168.77.1/24}"
 IP="${ADR%/*}"
 EFI="${1:-$ROOT/build/p7-netz/run5-hallo/BOOTX64.EFI}"
-TFTP="$ROOT/build/p7-netz/tftp"
+TFTP="${MOO_NETZ_TFTP:-$ROOT/build/p7-netz/tftp}"
+# Optional fuer Kern-Updates: Loader und seine Pruefdatei bleiben bytegleich.
+if [ "${MOO_NETZ_NUR_KERN:-0}" = 1 ]; then
+  EFI="$TFTP/moo.efi"
+  [ -s "$TFTP/moo.efi.pruef" ] || { echo "Vorhandene Loader-Pruefdatei fehlt" >&2; exit 2; }
+  [ -n "${MOO_NETZ_KERN:-${2:-}}" ] || { echo "Kernel-only braucht einen Kern" >&2; exit 2; }
+fi
 
 [ "$IFACE" != "enp59s0" ] || { echo "enp59s0 ist das Heimnetz - verweigert." >&2; exit 2; }
 [ -f "$EFI" ] || { echo "EFI-Datei fehlt: $EFI" >&2; exit 2; }
@@ -33,11 +40,13 @@ file -b "$EFI" | grep -q 'PE32+ executable for EFI' || { echo "Kein PE32+-EFI-Im
 ip link show "$IFACE" >/dev/null 2>&1 || { echo "Schnittstelle fehlt: $IFACE" >&2; exit 2; }
 
 mkdir -p "$TFTP"
+if [ "${MOO_NETZ_NUR_KERN:-0}" != 1 ]; then
 cp "$EFI" "$TFTP/moo.efi.neu" && mv "$TFTP/moo.efi.neu" "$TFTP/moo.efi"
 printf '%s %s\n' "$(stat -c %s "$TFTP/moo.efi")" \
   "$(gzip -c -n "$TFTP/moo.efi" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.efi.pruef"
 echo "moo.efi:       $(sha256sum "$TFTP/moo.efi" | cut -c1-64)  (aus $EFI)"
 echo "moo.efi.pruef: $(cat "$TFTP/moo.efi.pruef")"
+fi
 # P7-T5: optionaler Kern fuer den Moo-UEFI-Loader (moo.efi = beispiele/uefi/moo_lader.moos),
 # 2. Argument oder MOO_NETZ_KERN. Der Netz-Lader holt ihn als moo.kern und uebergibt
 # ihn per LoadOptions. Ohne Kern werden alte moo.kern-Dateien entfernt.
@@ -99,4 +108,4 @@ echo "TFTP-Server: $IP:69 auf $IFACE, Wurzel $TFTP (Strg+C beendet und entfernt 
 sudo -n dnsmasq --no-daemon --conf-file=/dev/null --port=0 --pid-file= \
   --interface="$IFACE" --except-interface=lo --bind-interfaces --listen-address="$IP" \
   --enable-tftp --tftp-root="$TFTP" --user="$(id -un)" --group="$(id -gn)" \
-  --log-facility=- || true
+  --log-facility=-

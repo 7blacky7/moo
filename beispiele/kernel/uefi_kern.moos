@@ -20,6 +20,7 @@
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
+aus "test_neustart" importiere testlauf_starten, testlauf_poll
 aus "../uefi/hardware_pci" importiere takt
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
 
@@ -1680,6 +1681,10 @@ funktion usb_poll() -> void:
         setze code auf xh_event(32, xh(17))
         wenn code == 0:
             gib_zurück
+        # Short/Teilreport nicht als acht Bytes lesen; CC und Rest bleiben im Netz-Log.
+        wenn code == 13 oder (code == 1 und (xh(36) & 0xFFFFFF) != 0):
+            xh_in_anfordern()
+            gib_zurück
         wenn code != 1:
             xh_setze(16, 0)
             xh_setze(19, u64(code) + 256)
@@ -1723,9 +1728,10 @@ funktion usb_poll() -> void:
 statisch NETZ_PORTS: [u64; 8] auf 0
 @nativ
 statisch NETZ_PCI: [u64; 4] auf 0
-# Anzahl NICs, aktiv, Fruehzeichen, Zeilenlaenge, verworfene Rahmen, Sende-Sperre.
+# Anzahl NICs, aktiv, FIFO-Kopf, Zeilenlaenge, FIFO-Verluste, Sende-Sperre,
+# FIFO-Ende, belegte FIFO-Bytes, bereits belieferte Ports des aktuellen Rahmens.
 @nativ
-statisch NETZ: [u64; 6] auf 0
+statisch NETZ: [u64; 9] auf 0
 @nativ
 statisch NETZ_FRUEH: [u8; 32768] auf 0
 @nativ
@@ -1745,37 +1751,84 @@ konstante T_NETZ_LINK: [u8; _] auf "MOO-KERNEL NETZ LINK "
 @nativ
 konstante T_NETZ_STOP_FEHLER: [u8; _] auf "MOO-KERNEL NETZ DMA-STOP FEHLER BDF "
 
+# Der vorhandene Fruehpuffer ist eine Byte-FIFO aus [u16 Laenge, Nutzlast].
+# Ring voll -> fuer spaeter behalten. Je Aufruf hoechstens16 Rahmen versuchen,
+# kein Warten auf Hardware; ein Port darf andere Ports nicht doppelt beliefern.
+@nativ
+funktion netz_spuelen() -> void:
+    unsicher:
+        setze z: u64 auf adresse_von(NETZ)
+        setze q: u64 auf adresse_von(NETZ_FRUEH)
+        setze kopf: u64 auf speicher_lesen(z + 16, 8)
+        setze benutzt: u64 auf speicher_lesen(z + 56, 8)
+        setze ports: u64 auf speicher_lesen(z, 8)
+        setze maske: u64 auf 0
+        setze laenge: u64 auf 0
+        setze nic: u64 auf 0
+        setze i: u64 auf 0
+        setze j: u64 auf 0
+        setze runden: u64 auf 0
+        wenn speicher_lesen(z + 8, 8) == 0 oder speicher_lesen(z + 40, 8) != 0:
+            gib_zurück
+        wenn ports == 0:
+            speicher_schreiben(z + 16, speicher_lesen(z + 48, 8), 8)
+            speicher_schreiben(z + 56, 0, 8)
+            gib_zurück
+        speicher_schreiben(z + 40, 1, 8)
+        solange benutzt != 0 und runden < 16:
+            setze laenge auf u64(speicher_lesen(q + kopf, 1)) | (u64(speicher_lesen(q + ((kopf + 1) & 32767), 1)) << 8)
+            setze j auf 0
+            solange j < laenge:
+                speicher_schreiben(adresse_von(NETZ_PAKET) + 42 + j, speicher_lesen(q + ((kopf + 2 + j) & 32767), 1), 1)
+                setze j auf j + 1
+            setze maske auf speicher_lesen(z + 64, 8)
+            setze i auf 0
+            solange i < ports:
+                wenn (maske & (u64(1) << i)) == 0:
+                    setze nic auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
+                    wenn nicht nt_link(nic):
+                        setze maske auf maske | (u64(1) << i)
+                    sonst wenn nt_senden(nic, adresse_von(NETZ_PAKET), nt_udp_rahmen(adresse_von(NETZ_PAKET), nic, laenge)):
+                        setze maske auf maske | (u64(1) << i)
+                setze i auf i + 1
+            speicher_schreiben(z + 64, maske, 8)
+            wenn maske != (u64(1) << ports) - 1:
+                stopp
+            setze kopf auf (kopf + laenge + 2) & 32767
+            setze benutzt auf benutzt - laenge - 2
+            speicher_schreiben(z + 16, kopf, 8)
+            speicher_schreiben(z + 56, benutzt, 8)
+            speicher_schreiben(z + 64, 0, 8)
+            setze runden auf runden + 1
+        speicher_schreiben(z + 40, 0, 8)
+
 @nativ
 funktion netz_senden(laenge: u64) -> void:
     unsicher:
-        setze i: u64 auf 0
-        setze nic: u64 auf 0
-        setze zustand: u64 auf adresse_von(NETZ)
-        wenn speicher_lesen(zustand + 40, 8) != 0:
+        setze z: u64 auf adresse_von(NETZ)
+        setze q: u64 auf adresse_von(NETZ_FRUEH)
+        setze ende: u64 auf speicher_lesen(z + 48, 8)
+        setze j: u64 auf 0
+        wenn speicher_lesen(z + 8, 8) != 0 und speicher_lesen(z, 8) == 0:
             gib_zurück
-        speicher_schreiben(zustand + 40, 1, 8)
-        nt_kopiere(adresse_von(NETZ_PAKET) + 42, adresse_von(NETZ_ZEILE), laenge)
-        solange i < speicher_lesen(zustand, 8):
-            setze nic auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
-            wenn nt_link(nic):
-                wenn nicht nt_senden(nic, adresse_von(NETZ_PAKET), nt_udp_rahmen(adresse_von(NETZ_PAKET), nic, laenge)):
-                    speicher_schreiben(zustand + 32, speicher_lesen(zustand + 32, 8) + 1, 8)
-            setze i auf i + 1
-        speicher_schreiben(zustand + 40, 0, 8)
+        netz_spuelen()
+        wenn speicher_lesen(z + 56, 8) + laenge + 2 > 32768:
+            speicher_schreiben(z + 32, speicher_lesen(z + 32, 8) + 1, 8)
+            gib_zurück
+        speicher_schreiben(q + ende, u8(laenge & 255), 1)
+        speicher_schreiben(q + ((ende + 1) & 32767), u8(laenge >> 8), 1)
+        solange j < laenge:
+            speicher_schreiben(q + ((ende + 2 + j) & 32767), speicher_lesen(adresse_von(NETZ_ZEILE) + j, 1), 1)
+            setze j auf j + 1
+        speicher_schreiben(z + 48, (ende + laenge + 2) & 32767, 8)
+        speicher_schreiben(z + 56, speicher_lesen(z + 56, 8) + laenge + 2, 8)
+        netz_spuelen()
 
 @nativ
 funktion netz_zeichen(z: u8) -> void:
     unsicher:
         setze zustand: u64 auf adresse_von(NETZ)
-        setze n: u64 auf speicher_lesen(zustand + 16, 8)
-        wenn speicher_lesen(zustand + 8, 8) == 0:
-            wenn n < 32768:
-                speicher_schreiben(adresse_von(NETZ_FRUEH) + n, z, 1)
-                speicher_schreiben(zustand + 16, n + 1, 8)
-            sonst:
-                speicher_schreiben(zustand + 32, speicher_lesen(zustand + 32, 8) + 1, 8)
-            gib_zurück
-        setze n auf speicher_lesen(zustand + 24, 8)
+        setze n: u64 auf speicher_lesen(zustand + 24, 8)
         wenn z == 10:
             netz_senden(n)
             speicher_schreiben(zustand + 24, 0, 8)
@@ -1846,10 +1899,7 @@ funktion netz_starten(bi: u64, tsc_us: u64) -> u64:
                 setze i auf i + 1
             assembler(ziel="x86_64", code="pause", clobber=[])
         speicher_schreiben(zustand + 8, 1, 8)
-        setze i auf 0
-        solange i < speicher_lesen(zustand + 16, 8):
-            netz_zeichen(speicher_lesen(adresse_von(NETZ_FRUEH) + i, 1))
-            setze i auf i + 1
+        netz_spuelen()
         meldung(adresse_von(T_NETZ_LINK), link)
         gib_zurück n
 
@@ -2014,6 +2064,11 @@ funktion kern_haupt(bi: u64) -> void:
             meldung(adresse_von(T_RSDP_OK), u64(speicher_lesen(rsdp, 8) == RSDP_SIGNATUR))
             setze acpi_ok auf acpi_starten(rsdp)
         meldung(adresse_von(T_ACPI), acpi_ok)
+        setze fadt_reset: u64 auf 0
+        wenn rsdp != 0:
+            setze fadt_reset auf acpi_tabelle(rsdp, 0x50434146)
+        testlauf_starten(fadt_reset, bi, tsc, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
+        netz_spuelen()
         meldung(adresse_von(T_FORMATE), formate_pruefen())
         # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
         setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite
@@ -2094,6 +2149,8 @@ funktion kern_haupt(bi: u64) -> void:
             unterbrechungen_an()
             solange (hw(10) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und xh(25) == 0)) und warte < 1000:
                 usb_poll()
+                netz_spuelen()
+                testlauf_poll(adresse_von(meldung))
                 bis_unterbrechung_warten()
                 setze warte auf warte + 1
             unterbrechungen_aus()
@@ -2101,11 +2158,13 @@ funktion kern_haupt(bi: u64) -> void:
         wenn tastatur_ok:
             meldung(adresse_von(T_TASTATUR_SCAN), hw(11))
         text(adresse_von(T_OK))
-        # Tastatur bleibt nach dem Bootbeweis benutzbar. Polling bei jedem Timer-Tick.
-        wenn usb_ok:
+        # Eingabe, Netz-FIFO und Testreset bleiben auch bei fehlenden Geraeten aktiv.
+        # Ohne Timer nicht hlt: der befristete Test muss weiter per TSC pollen.
+        wenn timer_start != 0:
             unterbrechungen_an()
-            solange wahr:
-                usb_poll()
-                wenn timer_start != 0:
-                    bis_unterbrechung_warten()
-        anhalten()
+        solange wahr:
+            usb_poll()
+            netz_spuelen()
+            testlauf_poll(adresse_von(meldung))
+            wenn timer_start != 0:
+                bis_unterbrechung_warten()
