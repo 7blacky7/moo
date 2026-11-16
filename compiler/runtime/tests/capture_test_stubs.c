@@ -57,3 +57,10 @@ MOO_CAPTURE_TEST_WEAK MooValue moo_struct_text(MooValue s) {
     moo_capture_test_unerwartet("moo_struct_text");
     return s;
 }
+
+/* P2-T114: moo_teilen (moo_memory.c) markiert Strukturboxen ueber
+ * moo_struct_box.c. Capture-Harnesses teilen nie Strukturboxen. */
+MOO_CAPTURE_TEST_WEAK void moo_struct_box_teilen(void* box) {
+    (void)box;
+    moo_capture_test_unerwartet("moo_struct_box_teilen");
+}
