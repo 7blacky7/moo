@@ -37,6 +37,28 @@
  * kein Fehler: moo_wert_ganz prueft danach exakt. */
 #define MOO_WERT_VIELLEICHT_BREIT(tag) ((uint64_t)(tag) >= MOO_WERT_TAG_I64)
 
+/* P7-T19: Dieser Header wird auch von der hosted Surface-Runtime eingebunden.
+ * MSVC kennt GNU-Builtins nicht und emittiert sie sonst als COFF-Imports. */
+#if defined(_MSC_VER)
+#include <intrin.h>
+#define MOO_WERT_UNWAHRSCHEINLICH(x) (x)
+#define MOO_WERT_TRAP() __fastfail(7)
+#elif defined(__GNUC__) || defined(__clang__)
+#define MOO_WERT_UNWAHRSCHEINLICH(x) __builtin_expect(!!(x), 0)
+#define MOO_WERT_TRAP() __builtin_trap()
+#else
+#define MOO_WERT_UNWAHRSCHEINLICH(x) (x)
+#define MOO_WERT_TRAP() ((void)0)
+#endif
+
+/* C11-konformer Bitcast ohne memcpy-Libcall; die Union wird nur mit einem
+ * aktiven Mitglied beschrieben und für die Byte-Repräsentation gelesen. */
+static inline double moo_wert_bits_als_double(uint64_t data) {
+    union { uint64_t bits; double number; } value;
+    value.bits = data;
+    return value.number;
+}
+
 static inline bool moo_wert_breit(uint64_t tag) {
     return tag == MOO_WERT_TAG_I64 || tag == MOO_WERT_TAG_U64;
 }
@@ -45,17 +67,15 @@ static inline bool moo_wert_ist_zahl(uint64_t tag) {
 }
 
 static inline double moo_wert_double(uint64_t tag, uint64_t data) {
-    if (__builtin_expect(MOO_WERT_VIELLEICHT_BREIT(tag), 0)) {
+    if (MOO_WERT_UNWAHRSCHEINLICH(MOO_WERT_VIELLEICHT_BREIT(tag))) {
         if (tag == MOO_WERT_TAG_I64) return (double)(int64_t)data;
         if (tag == MOO_WERT_TAG_U64) return (double)data;
     }
-    double d;
-    __builtin_memcpy(&d, &data, sizeof d);
-    return d;
+    return moo_wert_bits_als_double(data);
 }
 
 static inline double moo_wert_zahl(uint64_t tag, uint64_t data) {
-    if (__builtin_expect(!moo_wert_ist_zahl(tag), 0)) __builtin_trap();
+    if (MOO_WERT_UNWAHRSCHEINLICH(!moo_wert_ist_zahl(tag))) MOO_WERT_TRAP();
     return moo_wert_double(tag, data);
 }
 
@@ -65,8 +85,7 @@ static inline bool moo_wert_ganz(uint64_t tag, uint64_t data, uint64_t* bits, bo
     if (tag == MOO_WERT_TAG_U64) { *bits = data; *neg = false; return true; }
     if (tag == MOO_WERT_TAG_I64) { *bits = data; *neg = (int64_t)data < 0; return true; }
     if (tag != MOO_WERT_TAG_ZAHL) return false;
-    double d;
-    __builtin_memcpy(&d, &data, sizeof d);
+    double d = moo_wert_bits_als_double(data);
     if (!(d >= -9223372036854775808.0 && d < 18446744073709551616.0)) return false;
     if (d < 9223372036854775808.0) {
         int64_t i = (int64_t)d;
