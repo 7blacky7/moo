@@ -2578,7 +2578,11 @@ impl<'ctx> CodeGen<'ctx> {
         let (x86, a64) = if triple.is_empty() {
             (cfg!(target_arch = "x86_64"), cfg!(target_arch = "aarch64"))
         } else {
-            (triple.starts_with("x86_64"), triple.starts_with("aarch64"))
+            // Auch vollstaendige arm64-Triple brauchen den AArch64-Wrapper.
+            (
+                triple.starts_with("x86_64"),
+                triple.starts_with("aarch64") || triple.starts_with("arm64"),
+            )
         };
         if !(x86 || a64) || triple.contains("windows") {
             return Ok(function);

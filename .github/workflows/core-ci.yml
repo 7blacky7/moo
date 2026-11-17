@@ -145,6 +145,7 @@ jobs:
           # Beide Testskripte verwenden assoziative Arrays (Bash >= 4).
           echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
           LLVM_PREFIX="$(brew --prefix llvm@22)"
+          "$LLVM_PREFIX/bin/llvm-config" --host-target
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
           GLFW_PREFIX="$(brew --prefix glfw)"
