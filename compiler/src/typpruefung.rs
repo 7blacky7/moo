@@ -160,18 +160,7 @@ pub fn ergebnis() -> Result<(), String> {
 
 /// Alle Befunde einer Datei (ohne sie zu melden).
 pub fn pruefe(program: &Program, datei: &str) -> Vec<Diagnose> {
-    let mut p = Pruefer {
-        datei,
-        klassen: HashMap::new(),
-        fremd: HashSet::new(),
-        funktionen: HashMap::new(),
-        methoden: HashMap::new(),
-        datenklassen: HashMap::new(),
-        lokal: Vec::new(),
-        befunde: Vec::new(),
-    };
-    p.typen_sammeln(&program.statements);
-    p.signaturen_sammeln(&program.statements);
+    let mut p = Pruefer::neu(program, datei);
     // `global x` in einer Funktion schreibt die Top-Level-Variable x.
     let mut globale = HashSet::new();
     globale_sammeln(&program.statements, &mut globale);
@@ -243,6 +232,22 @@ struct Kontext {
 }
 
 impl<'d> Pruefer<'d> {
+    fn neu(program: &Program, datei: &'d str) -> Self {
+        let mut p = Self {
+            datei,
+            klassen: HashMap::new(),
+            fremd: HashSet::new(),
+            funktionen: HashMap::new(),
+            methoden: HashMap::new(),
+            datenklassen: HashMap::new(),
+            lokal: Vec::new(),
+            befunde: Vec::new(),
+        };
+        p.typen_sammeln(&program.statements);
+        p.signaturen_sammeln(&program.statements);
+        p
+    }
+
     fn typen_sammeln(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt {
@@ -1515,11 +1520,13 @@ struct Koerper {
     sicher: Vec<usize>,
     vielleicht: Vec<usize>,
     dynamisch: bool,
+    /// Native Koerper koennen C-Funktionszeiger bilden.
+    nativ: bool,
 }
 
 impl Koerper {
     fn neu(art: KoerperArt, zeile: usize) -> Self {
-        Koerper { art, zeile, zugriffe: Vec::new(), sicher: Vec::new(), vielleicht: Vec::new(), dynamisch: false }
+        Koerper { art, zeile, zugriffe: Vec::new(), sicher: Vec::new(), vielleicht: Vec::new(), dynamisch: false, nativ: false }
     }
 
     fn anzeige(&self) -> String {
@@ -1548,13 +1555,17 @@ impl Koerper {
 struct Lokal {
     namen: HashSet<String>,
     alle: bool,
+    /// Aus allen Zuweisungen bewiesene Typen, keine blossen Annotationen.
+    typen: HashMap<String, Ty>,
 }
 
-struct EffektScan {
+struct EffektScan<'d> {
+    typen: Pruefer<'d>,
     /// Top-Level-Variablen (LLVM-Globale) -> geteilt markiert.
     globale: HashMap<String, bool>,
     funktionen: HashMap<String, usize>,
     methoden: HashMap<String, Vec<usize>>,
+    methoden_typ: HashMap<(String, String), usize>,
     konstruktoren: HashMap<String, usize>,
     koerper: Vec<Koerper>,
     /// starte-Wurzeln: Koerper (None = Funktionswert unbekannt), Zeile.
@@ -1570,7 +1581,7 @@ struct EffektScan {
     fremd_wurzeln: Vec<usize>,
 }
 
-impl EffektScan {
+impl EffektScan<'_> {
     fn ist_global(&self, n: &str, l: &Lokal) -> bool {
         !l.alle && !l.namen.contains(n) && self.globale.contains_key(n)
     }
@@ -1613,7 +1624,28 @@ impl EffektScan {
             }
             namen.insert(n);
         }
-        Lokal { namen, alle: false }
+        let mut bereich = Bereich::default();
+        bereich.unsicher.extend(params.iter().cloned());
+        self.typen.sammeln(body, &mut bereich, &mut params.iter().cloned().collect());
+        let mut typen = self.typen.umgebung(&bereich);
+        // Globale koennen durch andere Aufrufe neu gesetzt werden. Nur
+        // lokale, aus echten Zuweisungen bewiesene Empfaenger verwenden.
+        typen.retain(|n, _| namen.contains(n));
+        Lokal { namen, alle: false, typen }
+    }
+
+    fn methode_fuer_typ(&self, objekt: &Expr, l: &Lokal, methode: &str) -> Option<usize> {
+        let Ty::Objekt(mut klasse) = self.typen.ableiten(objekt, &Sicht { env: &l.typen, nur: None }) else {
+            return None;
+        };
+        let mut besucht = HashSet::new();
+        while besucht.insert(klasse.clone()) {
+            if let Some(&ziel) = self.methoden_typ.get(&(klasse.clone(), methode.to_string())) {
+                return Some(ziel);
+            }
+            klasse = self.typen.klassen.get(&klasse)?.clone()?;
+        }
+        None
     }
 
     fn stmts(&mut self, id: usize, stmts: &[Stmt], l: &Lokal, oberste: bool) {
@@ -1680,7 +1712,9 @@ impl EffektScan {
                 for (muster, waechter, body) in cases {
                     let mut l2 = l.clone();
                     if let Some(m) = muster {
-                        namen_in(m, &mut l2.namen);
+                        let mut gebunden = HashSet::new();
+                        namen_in(m, &mut gebunden);
+                        for n in gebunden { l2.typen.remove(&n); l2.namen.insert(n); }
                     }
                     if let Some(w) = waechter {
                         self.expr(id, w, z, &l2);
@@ -1705,6 +1739,7 @@ impl EffektScan {
         self.koerper[id].sicher.push(lid);
         let mut l2 = l.clone();
         l2.namen.extend(params.iter().cloned());
+        for p in params { l2.typen.remove(p); }
         self.expr(lid, body, z, &l2);
         lid
     }
@@ -1718,6 +1753,13 @@ impl EffektScan {
                     // Funktion als Wert: laeuft vielleicht hier (map, Rueckruf).
                     self.adresse.insert(f);
                     self.koerper[id].vielleicht.push(f);
+                    // Im nativen Systemkoerper ist ein Funktionsname als
+                    // Wert nur als C-Rueckrufadresse erlaubt (rueckruf_adresse).
+                    // Schon das Bilden erfassen: deckt auch lokale Zeiger,
+                    // Strukturfelder, Weitergabe und spaetere C-Aufrufe ab.
+                    if self.koerper[id].nativ {
+                        self.fremd_wurzeln.push(f);
+                    }
                 }
             }
             Expr::FunctionCall { name, args, zeile } => {
@@ -1778,7 +1820,11 @@ impl EffektScan {
                 for a in args {
                     self.expr(id, a, z, l);
                 }
-                if let Some(ms) = self.methoden.get(method).cloned() {
+                if let Some(ziel) = self.methode_fuer_typ(object, l, method) {
+                    self.koerper[id].vielleicht.push(ziel);
+                } else if let Some(ms) = self.methoden.get(method).cloned() {
+                    // Parameter, wechselnde Typen und andere unbekannte
+                    // Empfaenger bleiben konservativ nach Namen aufgeloest.
                     self.koerper[id].vielleicht.extend(ms);
                 }
             }
@@ -1807,6 +1853,7 @@ impl EffektScan {
                 self.expr(id, iterable, z, l);
                 let mut l2 = l.clone();
                 l2.namen.insert(var_name.clone());
+                l2.typen.remove(var_name);
                 self.expr(id, expr, z, &l2);
                 if let Some(c) = condition {
                     self.expr(id, c, z, &l2);
@@ -1816,6 +1863,7 @@ impl EffektScan {
                 self.expr(id, source, z, l);
                 let mut l2 = l.clone();
                 l2.namen.insert(var_name.clone());
+                l2.typen.remove(var_name);
                 for t in [where_cond.as_deref(), order_expr.as_deref(), Some(select_expr.as_ref())].into_iter().flatten() {
                     self.expr(id, t, z, &l2);
                 }
@@ -1825,7 +1873,9 @@ impl EffektScan {
                 for (muster, waechter, ergebnis) in cases {
                     let mut l2 = l.clone();
                     if let Some(m) = muster {
-                        namen_in(m, &mut l2.namen);
+                        let mut gebunden = HashSet::new();
+                        namen_in(m, &mut gebunden);
+                        for n in gebunden { l2.typen.remove(&n); l2.namen.insert(n); }
                     }
                     if let Some(w) = waechter {
                         self.expr(id, w, z, &l2);
@@ -1906,9 +1956,11 @@ pub fn globale_pruefen(program: &Program, datei: &str) -> Result<GlobalePruefpla
     }).collect();
 
     let mut scan = EffektScan {
+        typen: Pruefer::neu(program, datei),
         globale,
         funktionen: HashMap::new(),
         methoden: HashMap::new(),
+        methoden_typ: HashMap::new(),
         konstruktoren: HashMap::new(),
         koerper: vec![Koerper::neu(KoerperArt::Haupt, 0)],
         wurzeln: Vec::new(),
@@ -1924,21 +1976,21 @@ pub fn globale_pruefen(program: &Program, datei: &str) -> Result<GlobalePruefpla
     let leer: &[String] = &[];
     for s in &program.statements {
         match s {
-            Stmt::FunctionDef { name, params, body, decorators, zeile, .. } if !ist_nativ(decorators) => {
+            Stmt::FunctionDef { name, params, body, decorators, zeile, .. } => {
                 let id = scan.koerper.len();
                 scan.koerper.push(Koerper::neu(KoerperArt::Funktion(name.clone()), *zeile));
+                scan.koerper[id].nativ = ist_nativ(decorators);
                 scan.funktionen.insert(name.clone(), id);
                 zu_scannen.push((id, params, body));
             }
             Stmt::ClassDef { name: klasse, body, .. } => {
                 for m in body {
                     if let Stmt::FunctionDef { name, params, body, decorators, zeile, .. } = m {
-                        if ist_nativ(decorators) {
-                            continue;
-                        }
                         let id = scan.koerper.len();
                         scan.koerper.push(Koerper::neu(KoerperArt::Methode(klasse.clone(), name.clone()), *zeile));
+                        scan.koerper[id].nativ = ist_nativ(decorators);
                         scan.methoden.entry(name.clone()).or_default().push(id);
+                        scan.methoden_typ.insert((klasse.clone(), name.clone()), id);
                         if name == "erstelle" {
                             scan.konstruktoren.insert(klasse.clone(), id);
                         }
@@ -1954,7 +2006,7 @@ pub fn globale_pruefen(program: &Program, datei: &str) -> Result<GlobalePruefpla
             _ => {}
         }
     }
-    scan.stmts(0, &program.statements, &Lokal { namen: HashSet::new(), alle: true }, true);
+    scan.stmts(0, &program.statements, &Lokal { namen: HashSet::new(), alle: true, typen: HashMap::new() }, true);
     for (id, params, body) in zu_scannen {
         let l = scan.lokale(params, body);
         scan.stmts(id, body, &l, false);
@@ -2124,4 +2176,92 @@ pub fn globale_pruefen(program: &Program, datei: &str) -> Result<GlobalePruefpla
         return Err(format!("{fehler} Fehler bei Globalen und Threads"));
     }
     Ok(plan)
+}
+
+
+#[cfg(test)]
+mod effekt_tests {
+    use super::*;
+
+    fn plan(quelle: &str) -> GlobalePruefplan {
+        STRENG.with(|s| s.set(false));
+        let tokens = crate::lexer::Lexer::new().tokenize(quelle).expect("lexer");
+        let programm = crate::parser::Parser::new(tokens).parse().expect("parser");
+        globale_pruefen(&programm, "effekt-test.moos").expect("Effektplan")
+    }
+
+    const KLASSEN: &str = "setze g auf 3\n\
+        klasse A:\n    funktion m(x):\n        gib_zurück x * g\n\
+        klasse B:\n    funktion m(x):\n        gib_zurück x\n\
+        klasse C(B):\n    funktion erstelle():\n        gib_zurück nichts\n";
+
+    fn methoden_plan(body: &str) -> GlobalePruefplan {
+        plan(&format!("{KLASSEN}\nfunktion arbeite(n):\n{body}\nstarte(arbeite, 0)\n"))
+    }
+
+    #[test]
+    fn bekannte_klasse_alias_und_erbe_trennen_gleichnamige_methoden() {
+        for klasse in ["B", "C"] {
+            let p = methoden_plan(&format!(
+                "    setze r auf neu {klasse}()\n    setze alias auf r\n    gib_zurück alias.m(n)"));
+            assert!(!p.funktionen.contains("A__m"), "{klasse}: fremde Methode erfasst");
+        }
+    }
+
+    #[test]
+    fn wechselnder_empfaengertyp_bleibt_konservativ() {
+        let p = methoden_plan("    setze r auf neu B()\n    wenn n > 0:\n        setze r auf neu A()\n    gib_zurück r.m(n)");
+        assert!(p.funktionen.contains("A__m"));
+    }
+
+    #[test]
+    fn parameter_annotation_ist_keine_bewiesene_klasse() {
+        let p = plan(&format!("{KLASSEN}\nfunktion arbeite(r: B):\n    gib_zurück r.m(1)\nstarte(arbeite, neu A())\n"));
+        assert!(p.funktionen.contains("A__m"));
+    }
+
+    #[test]
+    fn echte_zuweisung_gilt_statt_widersprechender_annotation() {
+        let p = methoden_plan("    setze r: A auf neu B()\n    gib_zurück r.m(n)");
+        assert!(!p.funktionen.contains("A__m"));
+    }
+
+    #[test]
+    fn lambda_parameter_verschattet_bekannten_aussentyp() {
+        let p = methoden_plan("    setze r auf neu B()\n    setze f auf (r) => r.m(1)\n    gib_zurück f(n)");
+        assert!(p.funktionen.contains("A__m"));
+    }
+
+    #[test]
+    fn schleifenvariable_hat_nicht_den_frueheren_typ() {
+        let p = methoden_plan("    setze r auf neu B()\n    für r in [neu A()]:\n        r.m(1)\n    gib_zurück n");
+        assert!(p.funktionen.contains("A__m"));
+    }
+
+    #[test]
+    fn native_funktionsadresse_erfasst_indirekt_aufgerufenen_koerper() {
+        // Effektpass isoliert: die Backend-Zulaessigkeit der Koerper wird
+        // hier nicht getestet. Die C-ABI-Ausfuehrung prueft rueckruf.sh.
+        let p = plan("setze g auf 3\nfunktion lies():\n    gib_zurück g\n\
+            @nativ\n@rückruf\nfunktion cb(x: i32) -> i32:\n    lies()\n    gib_zurück x\n\
+            @nativ\nfunktion vorbereiten() -> i32:\n    unsicher:\n        setze p: ptr[fn(i32) -> i32] auf cb\n        setze q: ptr[fn(i32) -> i32] auf p\n        gib_zurück q(1)\n");
+        assert!(p.funktionen.contains("lies"));
+    }
+
+    #[test]
+    fn native_funktionsadresse_verfolgt_transitive_aufrufe() {
+        let p = plan("setze g auf 3\nfunktion lies():\n    gib_zurück g\n\
+            @nativ\nfunktion helfer(x: i32) -> i32:\n    lies()\n    gib_zurück x\n\
+            @nativ\n@rückruf\nfunktion cb(x: i32) -> i32:\n    gib_zurück helfer(x)\n\
+            @nativ\nfunktion vorbereiten() -> i32:\n    unsicher:\n        setze p: ptr[fn(i32) -> i32] auf cb\n        gib_zurück 0\n");
+        assert!(p.funktionen.contains("lies"));
+    }
+
+    #[test]
+    fn reiner_direkter_native_aufruf_ist_keine_fremdthread_wurzel() {
+        let p = plan("setze g auf 3\nfunktion lies():\n    gib_zurück g\n\
+            @nativ\nfunktion nur_hier(x: i32) -> i32:\n    lies()\n    gib_zurück x\n\
+            nur_hier(1)\n");
+        assert!(!p.funktionen.contains("lies"));
+    }
 }

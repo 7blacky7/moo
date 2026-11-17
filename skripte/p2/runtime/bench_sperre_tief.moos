@@ -1,0 +1,10 @@
+# P2-T121: Kosten der tiefen Aliaspruefung, ein Thread, 200000 Lock-Runden.
+# Vorher/Nachher dasselbe Programm, Ausgabe 200000; vorhandener zaehle.c.
+setze s auf sperre({"wert": 0})
+setze i auf 0
+solange i < 200000:
+    mit s als k:
+        k["wert"] = k["wert"] + 1
+    setze i auf i + 1
+mit s als k:
+    zeige k["wert"]

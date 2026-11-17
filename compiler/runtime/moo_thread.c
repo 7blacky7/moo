@@ -920,6 +920,7 @@ MooValue moo_sperre_neu(MooValue wert) {
                                  "Sperre anlegen, z. B. sperre({\"stand\": 0})."));
         return moo_none();
     }
+    moo_sperre_unterelemente_sichern(wert);
     moo_sperre_freigabe_haken = moo_sperre_free;
     MooSperre* s = (MooSperre*)moo_alloc(sizeof(MooSperre));
     s->refcount = 1;
@@ -961,6 +962,8 @@ MooValue moo_sperre_verlassen(MooValue sperre, MooValue pruefen) {
     MooSperre* s = (MooSperre*)moo_val_as_ptr(sperre);
     if (marke_lade(&s->besitzer) != (void*)&moo_thread_marke) return moo_none();
     int entkommen = pruefen.tag == MOO_BOOL && MV_BOOL(pruefen) && referenzen(s->inhalt) > 1;
+    /* Auch im Fehlerpfad vor dem Entsperren: ein Alias bleibt nur lesbar. */
+    moo_sperre_unterelemente_sichern(s->inhalt);
     marke_setze(&s->besitzer, NULL);
 #ifdef _WIN32
     LeaveCriticalSection(&s->mutex);

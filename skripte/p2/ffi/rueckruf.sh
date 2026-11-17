@@ -42,9 +42,9 @@ set -e
 [ "$rc_u" -eq 1 ] || { cat "$out/ungefangen.out" "$out/ungefangen.err" >&2; echo "FEHLER: ungefangen RC $rc_u statt 1" >&2; exit 1; }
 grep -qx 'vor' "$out/ungefangen.out" && ! grep -q 'NICHT ERREICHT' "$out/ungefangen.out" \
     || { cat "$out/ungefangen.out" >&2; echo 'FEHLER: ungefangen Ausgabe' >&2; exit 1; }
-# moo_throw: 'Unbehandelter Fehler: ' auf stderr, der Fehlertext per moo_print auf stdout.
+# Unbehandelte Fehler samt Fehlertext stehen auf stderr (moo_error.c).
 grep -qF 'Unbehandelter Fehler' "$out/ungefangen.err" \
-    && grep -qF "Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'teile'" "$out/ungefangen.out" \
+    && grep -qF "Nativer Laufzeitfehler (Division, Shift, Index oder Konversion) in 'teile'" "$out/ungefangen.err" \
     || { cat "$out/ungefangen.out" "$out/ungefangen.err" >&2; echo 'FEHLER: ungefangen ohne Diagnose' >&2; exit 1; }
 [ "$rc_f" -ge 128 ] || { cat "$out/fremdthread.err" >&2; echo "FEHLER: Fremdthread RC $rc_f statt abort" >&2; exit 1; }
 grep -qF "Rückruf 'teile' auf fremdem Thread: fehlbare Rückrufe sind nur auf Moo-Threads erlaubt" "$out/fremdthread.err" \

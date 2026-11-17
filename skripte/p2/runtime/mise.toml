@@ -25,8 +25,8 @@ run = "bash cross_windows.sh"
 
 [tasks.rc-geteilt-stress]
 description = "P2-T112 geteilte Heap-Werte: Stresstest 20x je Fixture (Projektcompiler)"
-run = "bash rc_geteilt_stress.sh ../../../compiler/target/release/moo-compiler ../../../build/p2-rc-geteilt/stress 20 projekt"
+run = 'bash rc_geteilt_stress.sh "${P2_COMPILER:-../../../compiler/target/release/moo-compiler}" "${P2_RUNTIME_OUT:-../../../build/p2-rc-geteilt}/stress" 20 projekt'
 
 [tasks.rc-geteilt-tsan]
 description = "P2-T112 geteilte Heap-Werte: TSan-Gate (Projektcompiler und -Runtime)"
-run = "bash rc_geteilt_tsan.sh ../../../compiler/target/release/moo-compiler ../../../compiler/runtime ../../../build/p2-rc-geteilt/tsan"
+run = 'bash rc_geteilt_tsan.sh "${P2_COMPILER:-../../../compiler/target/release/moo-compiler}" ../../../compiler/runtime "${P2_RUNTIME_OUT:-../../../build/p2-rc-geteilt}/tsan"'

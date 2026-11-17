@@ -1,6 +1,7 @@
 #include "moo_runtime.h"
 #include "moo_rc.h"
 #include "moo_struct_box_priv.h"
+#include "moo_buffer_priv.h"
 
 // === Reference Counting ===
 
@@ -268,8 +269,86 @@ static void teilen_push(MooValue** stapel, MooValue* lokal, int32_t* n, int32_t*
 // Thread aufgerufen werden, dem die ungeteilten Teile allein gehoeren.
 bool moo_ist_geteilt(MooValue v) {
     if (!is_heap_type(v.tag)) return false;
+    if (v.tag == MOO_BUFFER) return moo_buffer_geteilt(moo_val_as_ptr(v));
     int32_t* rc = get_refcount_ptr(v);
     return rc && moo_rc_ist_geteilt(rc);
+}
+
+/* Owning-MooValue-Kanten genau einmal beschreiben: Teilen und die
+ * Sperrenpruefung sehen denselben Graphen. Unveraenderliche Dict-Schluessel
+ * erhalten direkt die threadfeste RC-Markierung. Der Besucher leiht Werte. */
+typedef void (*MooKindBesucher)(MooValue wert, void* kontext);
+static void moo_wert_kinder(MooValue v, MooKindBesucher besuch, void* kontext) {
+    switch (v.tag) {
+        case MOO_LIST: {
+            MooList* l = MV_LIST(v);
+            for (int32_t i = 0; i < l->length; i++) besuch(l->items[i], kontext);
+            break;
+        }
+        case MOO_DICT: {
+            MooDict* d = MV_DICT(v);
+            for (int32_t i = 0; i < d->capacity; i++) {
+                if (!d->entries[i].occupied) continue;
+                MooString* k = d->entries[i].key;
+                if (k && moo_rc_lesen(&k->refcount) > 0)
+                    moo_rc_bit_setzen(&k->refcount);
+                besuch(d->entries[i].value, kontext);
+            }
+            break;
+        }
+        case MOO_OBJECT: {
+            MooObject* o = MV_OBJ(v);
+            for (int32_t i = 0; i < o->prop_count; i++) besuch(o->properties[i].value, kontext);
+            if (o->parent) {
+                MooValue p;
+                p.tag = MOO_OBJECT;
+                moo_val_set_ptr(&p, o->parent);
+                besuch(p, kontext);
+            }
+            break;
+        }
+        case MOO_FUNC: {
+            MooFunc* f = MV_FUNC(v);
+            for (int32_t i = 0; f->captured && i < f->n_captured; i++) besuch(f->captured[i], kontext);
+            break;
+        }
+        case MOO_THREAD: {
+            MooThread* t = moo_val_as_ptr(v);
+            besuch(t->result, kontext);
+            besuch(t->halt_func, kontext);
+            besuch(t->halt_arg, kontext);
+            break;
+        }
+        case MOO_STRUCT: {
+            MooStructBox* box = moo_val_as_ptr(v);
+            if (box && box->besitzer) {
+                MooValue b;
+                b.tag = MOO_STRUCT;
+                moo_val_set_ptr(&b, box->besitzer);
+                besuch(b, kontext);
+            }
+            break;
+        }
+        case MOO_SPERRE:
+            /* Inhalt ausschliesslich unter dem eigenen Mutex erreichbar. */
+            break;
+        default:
+            /* Weitere Heap-Typen enthalten keine MooValues; Kanalinhalte
+             * werden schon vor dem Senden geteilt. */
+            break;
+    }
+}
+
+typedef struct {
+    MooValue** stapel;
+    MooValue* lokal;
+    int32_t* n;
+    int32_t* cap;
+} MooTeilBesuch;
+
+static void teilen_kind(MooValue wert, void* kontext) {
+    MooTeilBesuch* b = kontext;
+    teilen_push(b->stapel, b->lokal, b->n, b->cap, wert);
 }
 
 void moo_teilen(MooValue wurzel) {
@@ -277,79 +356,179 @@ void moo_teilen(MooValue wurzel) {
     MooValue lokal[64];
     MooValue* stapel = lokal;
     int32_t n = 0, cap = 64;
+    MooTeilBesuch besuch = { &stapel, lokal, &n, &cap };
     stapel[n++] = wurzel;
     while (n > 0) {
         MooValue v = stapel[--n];
         int32_t* rc = get_refcount_ptr(v);
-        if (!rc) continue;
-        int32_t r = moo_rc_lesen(rc);
-        if (r <= 0) continue;  /* unsterblich oder schon geteilt */
-        moo_rc_bit_setzen(rc);
-        switch (v.tag) {
-            case MOO_LIST: {
-                MooList* l = MV_LIST(v);
-                for (int32_t i = 0; i < l->length; i++)
-                    teilen_push(&stapel, lokal, &n, &cap, l->items[i]);
-                break;
-            }
-            case MOO_DICT: {
-                MooDict* d = MV_DICT(v);
-                for (int32_t i = 0; i < d->capacity; i++) {
-                    if (!d->entries[i].occupied) continue;
-                    MooString* k = d->entries[i].key;
-                    if (k && moo_rc_lesen(&k->refcount) > 0) moo_rc_bit_setzen(&k->refcount);
-                    teilen_push(&stapel, lokal, &n, &cap, d->entries[i].value);
-                }
-                break;
-            }
-            case MOO_OBJECT: {
-                MooObject* o = MV_OBJ(v);
-                for (int32_t i = 0; i < o->prop_count; i++)
-                    teilen_push(&stapel, lokal, &n, &cap, o->properties[i].value);
-                if (o->parent) {
-                    MooValue p;
-                    p.tag = MOO_OBJECT;
-                    moo_val_set_ptr(&p, o->parent);
-                    teilen_push(&stapel, lokal, &n, &cap, p);
-                }
-                break;
-            }
-            case MOO_FUNC: {
-                MooFunc* f = MV_FUNC(v);
-                for (int32_t i = 0; f->captured && i < f->n_captured; i++)
-                    teilen_push(&stapel, lokal, &n, &cap, f->captured[i]);
-                break;
-            }
-            case MOO_THREAD: {
-                MooThread* t = (MooThread*)moo_val_as_ptr(v);
-                teilen_push(&stapel, lokal, &n, &cap, t->result);
-                teilen_push(&stapel, lokal, &n, &cap, t->halt_func);
-                teilen_push(&stapel, lokal, &n, &cap, t->halt_arg);
-                break;
-            }
-            case MOO_STRUCT:
-                /* Sichten halten eine Referenz auf ihre Wurzelbox. Das
-                   private Layout ist in beiden Modulen identisch eingebunden,
-                   daher braucht der Kern kein Strukturbox-Symbol. */
-                {
-                    MooStructBox* box = moo_val_as_ptr(v);
-                    if (box && box->besitzer &&
-                        moo_rc_lesen(&box->besitzer->refcount) > 0)
-                        moo_rc_bit_setzen(&box->besitzer->refcount);
-                }
-                break;
-            case MOO_SPERRE:
-                // P2-T114 B: Der Inhalt einer Sperre wird nicht geteilt (und
-                // damit nicht eingefroren); er ist nur unter ihrem Mutex
-                // erreichbar (mit ... als).
-                break;
-            default:
-                // Uebrige Heap-Typen enthalten keine MooValues (Kanalinhalte
-                // werden beim Senden markiert).
-                break;
+        if (!rc || moo_rc_lesen(rc) <= 0) continue;
+        if (v.tag == MOO_BUFFER) {
+            MooBuffer* puffer = moo_val_as_ptr(v);
+            moo_rc_schreiben(&puffer->storage->eingefroren, 1);
         }
+        moo_rc_bit_setzen(rc);
+        moo_wert_kinder(v, teilen_kind, &besuch);
     }
     if (stapel != lokal) free(stapel);
+}
+
+
+
+/* Von der Sperre erreichbare owning Referenzen von aeusseren Aliasen
+ * unterscheiden. Ein Knoten wird einmal besucht, jede Kante gezaehlt. */
+typedef struct {
+    MooValue wert;                 /* geliehen; bei Speicher unbenutzt */
+    MooBufferStorage* speicher;
+    size_t innen;
+} MooSperrKnoten;
+
+typedef struct {
+    MooValue wurzel;
+    MooSperrKnoten lokal[8];
+    size_t index_lokal[16];
+    MooSperrKnoten* knoten;
+    size_t* index;
+    size_t n, cap, index_cap;
+} MooSperrGraph;
+
+static void sperrgraph_voll(void) {
+    fprintf(stderr, "moo: Sperren-Graph zu gross oder Speicher voll!\n");
+    exit(1);
+}
+
+static void* sperrgraph_kennung(const MooSperrKnoten* k) {
+    return k->speicher ? (void*)k->speicher : moo_val_as_ptr(k->wert);
+}
+
+static size_t sperrgraph_platz(const MooSperrGraph* g, void* kennung) {
+    /* Der Hash darf absichtlich unsigned umbrechen. Keine Pointerarithmetik. */
+    uint64_t h = (uint64_t)(uintptr_t)kennung;
+    h ^= h >> 33;
+    h *= UINT64_C(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    size_t p = (size_t)h & (g->index_cap - 1);
+    while (g->index[p]
+           && sperrgraph_kennung(&g->knoten[g->index[p] - 1]) != kennung)
+        p = (p + 1) & (g->index_cap - 1);
+    return p;
+}
+
+static void sperrgraph_index_wachsen(MooSperrGraph* g) {
+    if (g->index_cap > SIZE_MAX / 2
+        || g->index_cap * 2 > SIZE_MAX / sizeof(size_t)) sperrgraph_voll();
+    size_t cap = g->index_cap * 2;
+    size_t* index = calloc(cap, sizeof(size_t));
+    if (!index) sperrgraph_voll();
+    if (g->index != g->index_lokal) free(g->index);
+    g->index = index;
+    g->index_cap = cap;
+    for (size_t i = 0; i < g->n; i++) {
+        size_t p = sperrgraph_platz(g, sperrgraph_kennung(&g->knoten[i]));
+        g->index[p] = i + 1;
+    }
+}
+
+static void sperrgraph_eintragen(MooSperrGraph* g, MooValue wert,
+                                MooBufferStorage* speicher) {
+    void* kennung = speicher ? (void*)speicher : moo_val_as_ptr(wert);
+    size_t p = sperrgraph_platz(g, kennung);
+    if (g->index[p]) {
+        MooSperrKnoten* k = &g->knoten[g->index[p] - 1];
+        if (k->innen == SIZE_MAX) sperrgraph_voll();
+        k->innen++;
+        return;
+    }
+    if (g->n == g->cap) {
+        if (g->cap > SIZE_MAX / 2
+            || g->cap * 2 > SIZE_MAX / sizeof(MooSperrKnoten)) sperrgraph_voll();
+        size_t cap = g->cap * 2;
+        MooSperrKnoten* neu = malloc(cap * sizeof(MooSperrKnoten));
+        if (!neu) sperrgraph_voll();
+        memcpy(neu, g->knoten, g->n * sizeof(MooSperrKnoten));
+        if (g->knoten != g->lokal) free(g->knoten);
+        g->knoten = neu;
+        g->cap = cap;
+    }
+    if (g->n >= g->index_cap / 2) {
+        sperrgraph_index_wachsen(g);
+        p = sperrgraph_platz(g, kennung);
+    }
+    g->knoten[g->n].wert = wert;
+    g->knoten[g->n].speicher = speicher;
+    g->knoten[g->n].innen = 1;
+    g->index[p] = ++g->n;
+}
+
+static void sperrgraph_start(MooSperrGraph* g) {
+    /* Erst ein Heapkind braucht Aliaszaehlung. Ungenutzte Knoten werden
+     * nicht gelesen; nur der Hashindex braucht leere Slots. */
+    memset(g->index_lokal, 0, sizeof(g->index_lokal));
+    g->knoten = g->lokal;
+    g->index = g->index_lokal;
+    g->cap = 8;
+    g->index_cap = 16;
+    sperrgraph_eintragen(g, g->wurzel, NULL);
+}
+
+static void sperrgraph_kind(MooValue wert, void* kontext) {
+    if (!is_heap_type(wert.tag)) return;
+    int32_t* rc = get_refcount_ptr(wert);
+    if (!rc || moo_rc_lesen(rc) <= 0) return;
+    MooSperrGraph* g = kontext;
+    if (!g->n) sperrgraph_start(g);
+    sperrgraph_eintragen(g, wert, NULL);
+}
+
+void moo_sperre_unterelemente_sichern(MooValue wurzel) {
+    if (!is_heap_type(wurzel.tag)) return;
+    int32_t* rc = get_refcount_ptr(wurzel);
+    if (!rc || moo_rc_lesen(rc) <= 0) return;
+    MooSperrGraph g;
+    g.n = 0;
+    g.wurzel = wurzel;
+    size_t anfang = 1;
+    if (wurzel.tag == MOO_BUFFER) {
+        /* Auch ohne MooValue-Kinder koennen weitere Speicheransichten
+         * existieren. Daher Buffer immer samt Speicher zaehlen. */
+        sperrgraph_start(&g);
+        anfang = 0;
+    } else {
+        moo_wert_kinder(wurzel, sperrgraph_kind, &g);
+        if (!g.n) {
+            /* Keine ungeteilten Heapkinder: nur die eigene Referenz der
+             * Sperre liegt innen. Schluessel sind bereits threadfest. */
+            if (moo_rc_lesen(rc) > 1) moo_teilen(wurzel);
+            return;
+        }
+    }
+    /* Die Wurzelkinder wurden bereits besucht; jede Kante nur einmal. */
+    for (size_t i = anfang; i < g.n; i++) {
+        /* Der Besucher darf den Knotenvektor vergroessern. */
+        MooSperrKnoten k = g.knoten[i];
+        if (k.speicher) continue;
+        if (k.wert.tag == MOO_BUFFER) {
+            MooBuffer* b = moo_val_as_ptr(k.wert);
+            if (!moo_rc_lesen(&b->storage->eingefroren)) {
+                MooValue leer = {0};
+                sperrgraph_eintragen(&g, leer, b->storage);
+            }
+        }
+        moo_wert_kinder(k.wert, sperrgraph_kind, &g);
+    }
+    for (size_t i = 0; i < g.n; i++) {
+        MooSperrKnoten* k = &g.knoten[i];
+        if (k->speicher) {
+            /* Jede im Graphen gehaltene Ansicht zaehlt eine Speicherref.
+             * Weitere Ansichten/Pins duerfen den Speicher nicht beschreiben. */
+            if (moo_rc_size_lesen(&k->speicher->refs) > k->innen)
+                moo_rc_schreiben(&k->speicher->eingefroren, 1);
+        } else {
+            int32_t r = moo_rc_lesen(get_refcount_ptr(k->wert));
+            if (r > 0 && (size_t)r > k->innen) moo_teilen(k->wert);
+        }
+    }
+    if (g.knoten != g.lokal) free(g.knoten);
+    if (g.index != g.index_lokal) free(g.index);
 }
 
 // Vor dem ersten Thread-Start (moo_thread_spawn). P2-T114 Phase C: Globale

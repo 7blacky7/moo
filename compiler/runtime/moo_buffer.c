@@ -1,5 +1,6 @@
 #include "moo_buffer.h"
 #include "moo_buffer_value.h"
+#include "moo_buffer_priv.h"
 #include "moo_rc.h"
 
 #include <float.h>
@@ -7,25 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-    size_t refs;
-    size_t views;
-    size_t pins;
-    size_t elem_size;
-    MooBufferScalarType scalar_type;
-    uint64_t type_id; /* P2-T48 D: Strukturidentitaet, 0 = keine Struktur */
-    size_t len;
-    size_t capacity;
-    unsigned char* data;
-} MooBufferStorage;
-
-struct MooBuffer {
-    int32_t refcount; /* moo_retain/moo_release require this as the first field */
-    MooBufferStorage* storage;
-    size_t start;
-    size_t len;
-    int is_view;
-};
 
 struct MooBufferPin { MooBufferStorage* storage; };
 
@@ -200,6 +182,7 @@ MooBufferStatus moo_buffer_get(const MooBuffer* b, size_t index, void* out) {
 MooBufferStatus moo_buffer_set(MooBuffer* b, size_t index, const void* value) {
     if (!b || !value) return MOO_BUFFER_INVALID;
     if (index >= b->len) return MOO_BUFFER_BOUNDS;
+    if (moo_buffer_geteilt(b)) return MOO_BUFFER_PINNED;
     memmove(b->storage->data + (b->start + index) * b->storage->elem_size, value, b->storage->elem_size);
     return MOO_BUFFER_OK;
 }
@@ -207,7 +190,8 @@ MooBufferStatus moo_buffer_set(MooBuffer* b, size_t index, const void* value) {
 int moo_buffer_alleinbesitz(MooValue value) {
     if (value.tag != MOO_BUFFER || !moo_val_as_ptr(value)) return 0;
     MooBuffer* b = moo_val_as_ptr(value);
-    if (b->is_view || moo_rc_lesen(&b->refcount) != 1) return 0;
+    if (b->is_view || moo_rc_lesen(&b->refcount) != 1
+        || moo_rc_lesen(&b->storage->eingefroren)) return 0;
     MooBufferStorage* s = b->storage;
     return moo_rc_size_lesen(&s->refs) == 1 && moo_rc_size_lesen(&s->views) == 0
         && moo_rc_size_lesen(&s->pins) == 0;
@@ -218,7 +202,7 @@ MooBufferStatus moo_buffer_resize(MooBuffer* b, size_t len) {
     MooBufferStorage* s = b->storage;
     if (len == s->len) return MOO_BUFFER_OK;
     /* P2-T114: ein geteilter Puffer ist eingefroren und waechst nicht. */
-    if (moo_rc_ist_geteilt(&b->refcount)) return MOO_BUFFER_PINNED;
+    if (moo_buffer_geteilt(b)) return MOO_BUFFER_PINNED;
     if (moo_rc_size_lesen(&s->views) || moo_rc_size_lesen(&s->pins)) return MOO_BUFFER_PINNED;
     const size_t max_len = SIZE_MAX / s->elem_size;
     if (len > max_len) return MOO_BUFFER_OVERFLOW;
@@ -247,7 +231,7 @@ MooBufferStatus moo_buffer_append_scalar(MooBuffer* b, MooBufferScalarType type,
     if (!b || !value || b->is_view) return MOO_BUFFER_INVALID;
     MooBufferStorage* s = b->storage;
     if (type == MOO_BUFFER_SCALAR_NONE || s->scalar_type != type) return MOO_BUFFER_TYPE;
-    if (moo_rc_ist_geteilt(&b->refcount)) return MOO_BUFFER_PINNED;
+    if (moo_buffer_geteilt(b)) return MOO_BUFFER_PINNED;
     if (moo_rc_size_lesen(&s->views) || moo_rc_size_lesen(&s->pins)) return MOO_BUFFER_PINNED;
     if (s->len == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
     /* Copy before resize: value may alias storage and growth may free it. */

@@ -124,6 +124,9 @@ void moo_release(MooValue v);
 // der Initialisierung (tief eingefroren). Andere Globale gehoeren dem
 // Hauptthread und werden nicht geteilt.
 void moo_teilen(MooValue v);
+/* Geliehen, nur mit exklusivem Besitz/unter Sperren-Mutex: externe Aliase
+ * im erreichbaren Untergraphen einfrieren; interne Referenzen abziehen. */
+void moo_sperre_unterelemente_sichern(MooValue wurzel);
 /* P2-T114: true, wenn v ein geteilter (und damit eingefrorener) Heap-Wert ist. */
 bool moo_ist_geteilt(MooValue v);
 /* P2-T114 B: Wert mit Referenzzaehler (Heap-Typ). */

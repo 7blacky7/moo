@@ -1,0 +1,29 @@
+# P2-T121: 5 Mio. Aufrufe, deren Klasse nur der Hauptthread benutzt.
+# Die gleichnamige Methode des Workers darf hier keinen Guard erzwingen.
+setze faktor auf 3
+
+klasse HauptRechner:
+    funktion erstelle():
+        gib_zurück nichts
+    funktion rechne(x):
+        gib_zurück x * faktor
+
+klasse NebenRechner:
+    funktion erstelle():
+        gib_zurück nichts
+    funktion rechne(x):
+        gib_zurück x + 1
+
+funktion arbeite(n):
+    setze r auf neu NebenRechner()
+    gib_zurück r.rechne(n)
+
+setze t auf starte(arbeite, 0)
+t.warten()
+setze r auf neu HauptRechner()
+setze summe auf 0
+setze i auf 0
+solange i < 5000000:
+    setze summe auf summe + r.rechne(i)
+    setze i auf i + 1
+zeige summe

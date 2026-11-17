@@ -1,0 +1,29 @@
+# P2-T121: verschiedene Klassen, lokaler Alias und geerbte Methode.
+setze faktor auf 7
+
+klasse HauptRechner:
+    funktion erstelle():
+        gib_zurück nichts
+    funktion rechne(x):
+        gib_zurück x * faktor
+
+klasse NebenRechner:
+    funktion erstelle():
+        gib_zurück nichts
+    funktion rechne(x):
+        gib_zurück x + 1
+
+klasse Erbe(NebenRechner):
+    funktion erstelle():
+        gib_zurück nichts
+
+funktion arbeite(n):
+    setze r auf neu Erbe()
+    setze alias auf r
+    gib_zurück alias.rechne(n)
+
+setze t auf starte(arbeite, 41)
+zeige t.warten()
+setze h auf neu HauptRechner()
+zeige h.rechne(5)
+zeige "Typen Ende"

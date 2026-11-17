@@ -8,6 +8,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 comp="$(realpath "$1")"; work="$(realpath -m "$2")"; n="${3:-20}"; tag="${4:-lauf}"
 mkdir -p "$work"
 declare -A erwartet=(
+  [sperre_unterelemente]="$(<"$ROOT/compiler/tests/p2/rc_geteilt/sperre_unterelemente.expected")"  # P2-T121
+  [methoden_typen]="$(<"$ROOT/compiler/tests/p2/rc_geteilt/methoden_typen.expected")"  # P2-T121
   [mt_geteilt]=8000000
   [einfuegen_kanal]=12000000
   [global_spaet]=8000000
@@ -25,6 +27,8 @@ declare -A erwartet=(
   [warten_freigabe]="$(<"$ROOT/compiler/tests/p2/rc_geteilt/warten_freigabe.expected")"  # P2-T120
 )
 declare -A quelle=(
+  [sperre_unterelemente]="$ROOT/compiler/tests/p2/rc_geteilt/sperre_unterelemente.moos"
+  [methoden_typen]="$ROOT/compiler/tests/p2/rc_geteilt/methoden_typen.moos"
   [mt_geteilt]="$ROOT/compiler/tests/p2/rc_geteilt/mt_geteilt.moos"
   [einfuegen_kanal]="$ROOT/compiler/tests/p2/rc_geteilt/einfuegen_kanal.moos"
   [global_spaet]="$ROOT/compiler/tests/p2/rc_geteilt/global_spaet.moos"
@@ -42,7 +46,7 @@ declare -A quelle=(
   [warten_freigabe]="$ROOT/compiler/tests/p2/rc_geteilt/warten_freigabe.moos"  # P2-T120
 )
 gesamt_fehler=0
-for p in ${RC_STRESS_PROGRAMME:-mt_geteilt einfuegen_kanal global_spaet fehler_getrennt geteilt_eingefroren geteilt_global spiel_kanal atom_zaehler sperre_konto uebergib_puffer warten_mehrfach text_konstante starte_mehrere starte_lambda_mehrere warten_freigabe}; do
+for p in ${RC_STRESS_PROGRAMME:-mt_geteilt einfuegen_kanal global_spaet fehler_getrennt geteilt_eingefroren geteilt_global spiel_kanal atom_zaehler sperre_konto uebergib_puffer warten_mehrfach text_konstante starte_mehrere starte_lambda_mehrere warten_freigabe methoden_typen sperre_unterelemente}; do
   bin="$work/${p}_$tag"
   if ! "$comp" compile "${quelle[$p]}" -o "$bin" >"$work/${p}_$tag.compile.log" 2>&1; then
     echo "$p $tag KOMPILIERFEHLER"; gesamt_fehler=$((gesamt_fehler+1)); continue

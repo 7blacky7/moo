@@ -3210,6 +3210,24 @@ impl<'ctx> CodeGen<'ctx> {
                 result
             }
             Stmt::Expression(expr, _) => {
+                if matches!(expr, Expr::FunctionCall { name, .. } if name == "__moo_sperre_verlassen") {
+                    // Nur vor einer abgeschlossenen Entsperr-Anweisung:
+                    // kein noch aktiver Receiver einer aeusseren Expression.
+                    // Compiler-Temps sind keine entkommenen Benutzeraliase.
+                    let mut slots: Vec<_> = self.variables.iter()
+                        .filter(|(n, _)| n.starts_with("__mcall_obj."))
+                        .map(|(n, p)| (n.clone(), *p)).collect();
+                    slots.sort_by(|a, b| a.0.cmp(&b.0));
+                    let i64_t = self.context.i64_type();
+                    let nichts = self.mv_type().const_named_struct(&[
+                        i64_t.const_int(tag::NONE, false).into(), i64_t.const_zero().into()]);
+                    for (_, slot) in slots {
+                        let v = self.builder.build_load(self.mv_type(), slot, "mit_temp")
+                            .map_err(|e| format!("{e}"))?.into_struct_value();
+                        self.call_rt_void(self.rt.moo_release, &[v.into()], "mit_temp_frei")?;
+                        self.builder.build_store(slot, nichts).map_err(|e| format!("{e}"))?;
+                    }
+                }
                 // Ergebnis wird nicht konsumiert → Expression-Temp freigeben,
                 // sonst leakt z.B. eine nackte `d[k]`-Zeile den Return-Ref.
                 let guarded = self.defer_runtime || self.defer_borrowed_handler.is_some();

@@ -1,0 +1,172 @@
+# P2-T121: echte externe Aliase einfrieren, interne Mehrfachkanten behalten.
+klasse Dose:
+    funktion erstelle():
+        selbst.wert = 1
+
+funktion schutz(label, f):
+    versuche:
+        f()
+        zeige "FALSCH: " + label
+    fange e:
+        wenn text(e).text_enthält("eingefroren"):
+            zeige label
+        sonst:
+            wirf e
+
+funktion baue_funktion():
+    setze innen auf [1]
+    gib_zurück (n) => innen
+
+funktion baue_ansichten():
+    setze p auf puffer_erstellen(i32, 2)
+    p[0] = 10
+    p[1] = 20
+    setze v auf puffer_ansicht(p, 0, 2)
+    gib_zurück {"p": p, "v": v}
+
+funktion baue_graph():
+    setze gemeinsam auf [1]
+    setze kreis auf []
+    kreis.hinzufügen(kreis)
+    setze viele auf []
+    für i in 0..40:
+        viele.hinzufügen([i])
+    gib_zurück {"a": gemeinsam, "b": gemeinsam, "kreis": kreis, "viele": viele}
+
+@nativ
+@liest(1)
+funktion nativ_lesen(p: puffer[i32]) -> i32:
+    unsicher:
+        gib_zurück p[0]
+
+@nativ
+funktion nativ_schreiben(p: puffer[i32]) -> i32:
+    unsicher:
+        p[0] = 99
+        gib_zurück p[0]
+
+setze skalar auf sperre(7)
+mit skalar als zahl:
+    zeige zahl
+
+setze s auf sperre({"teil": [1], "bleibt": [10], "obj": neu Dose(), "fn": baue_funktion()})
+für i in 0..3:
+    mit s als k:
+        k["bleibt"].hinzufügen(i)
+mit s als k:
+    zeige länge(k["bleibt"])
+
+setze raus auf nichts
+mit s als k:
+    setze raus auf k["teil"]
+schutz("Liste eingefroren", () => raus.hinzufügen(9))
+mit s als k:
+    k["bleibt"].hinzufügen(4)
+    k["teil"] = [7]
+    zeige länge(k["bleibt"])
+
+setze objekt auf nichts
+mit s als k:
+    setze objekt auf k["obj"]
+versuche:
+    objekt.wert = 2
+    zeige "FALSCH: Objekt eingefroren"
+fange e:
+    wenn text(e).text_enthält("eingefroren"):
+        zeige "Objekt eingefroren"
+    sonst:
+        wirf e
+
+setze f auf nichts
+mit s als k:
+    setze f auf k["fn"]
+setze eingefangen auf f(0)
+schutz("Capture eingefroren", () => eingefangen.hinzufügen(9))
+
+setze fehler_alias auf nichts
+versuche:
+    mit s als k:
+        setze fehler_alias auf k["teil"]
+        wirf "absichtlich"
+fange e:
+    zeige "Fehlerpfad frei"
+schutz("Fehlerpfad eingefroren", () => fehler_alias.hinzufügen(9))
+
+setze vorher auf [1]
+setze s2 auf sperre({"teil": vorher})
+schutz("Vorheriger Alias eingefroren", () => vorher.hinzufügen(9))
+
+setze sg auf sperre(baue_graph())
+für r in 0..2:
+    mit sg als k:
+        k["a"].hinzufügen(r)
+mit sg als k:
+    zeige länge(k["b"])
+    # Den internen Zyklus vor der Freigabe aufloesen (Moo ist refcountet).
+    k["kreis"][0] = nichts
+    k["viele"][39].hinzufügen(99)
+    zeige länge(k["viele"][39])
+
+setze sp auf sperre(baue_ansichten())
+mit sp als k:
+    k["p"][0] = 42
+mit sp als k:
+    zeige k["v"][0]
+    k["v"][0] = 43
+mit sp als k:
+    zeige k["p"][0]
+
+setze ansicht auf nichts
+mit sp als k:
+    setze ansicht auf k["v"]
+versuche:
+    ansicht[0] = 99
+    zeige "FALSCH: Ansicht eingefroren"
+fange e:
+    wenn text(e).text_enthält("eingefroren"):
+        zeige "Ansicht eingefroren"
+    sonst:
+        wirf e
+versuche:
+    mit sp als k:
+        k["p"][0] = 99
+fange e:
+    wenn text(e).text_enthält("eingefroren"):
+        zeige "Ursprung eingefroren"
+    sonst:
+        wirf e
+unsicher:
+    zeige nativ_lesen(ansicht)
+versuche:
+    unsicher:
+        nativ_schreiben(ansicht)
+    zeige "FALSCH: Native Leihe eingefroren"
+fange e:
+    wenn text(e).text_enthält("eingefroren"):
+        zeige "Native Leihe eingefroren"
+    sonst:
+        wirf e
+
+geteilt konstante GEMEINSAM auf sperre({"kind": [1]})
+setze gelesen auf nichts
+mit GEMEINSAM als k:
+    setze gelesen auf k["kind"]
+
+funktion arbeite(n):
+    setze fehler auf 0
+    für i in 0..1000:
+        versuche:
+            mit GEMEINSAM als k:
+                k["kind"].hinzufügen(i)
+        fange e:
+            wenn text(e).text_enthält("eingefroren"):
+                setze fehler auf fehler + 1
+            sonst:
+                wirf e
+    gib_zurück fehler
+
+setze t auf starte(arbeite, 0)
+für i in 0..1000:
+    länge(gelesen)
+zeige t.warten()
+zeige "Sperren Ende"

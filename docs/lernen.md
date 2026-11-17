@@ -794,9 +794,13 @@ setze t auf starte(pruefe, 2)
 zeige t.warten()        # wahr
 ```
 
-Lässt sich der Zugriff nicht beweisen (Funktionswert, Methode), prüft das Programm
-zur Laufzeit und bricht mit Meldung ab; `--typ-streng` lehnt es stattdessen mit
-`M-P002` ab.
+Methoden werden anhand der nachgewiesenen lokalen Klasse aufgelöst, auch über
+Aliase und Vererbung. Eine Typangabe allein gilt dabei nicht als Beweis: Entscheidend
+sind die tatsächlichen Zuweisungen. Bei unbekanntem oder wechselndem Empfängertyp
+bleibt die Prüfung vorsichtig. Lässt sich der Zugriff nicht beweisen, prüft das
+Programm zur Laufzeit und bricht mit Meldung ab; `--typ-streng` lehnt es stattdessen
+mit `M-P002` ab. Funktionsadressen, die `@nativ`-Code als C-Rückruf weitergibt,
+werden ebenfalls als mögliche Aufrufe aus fremden Threads geprüft.
 
 ### Atom und Sperre: geteilt verändern
 
@@ -829,6 +833,16 @@ Block `mit S als k:` / `with S als k:`; die Sperre wird am Blockende, bei `wirf`
 und bei Fehlern in aufgerufenen Funktionen wieder freigegeben. `gib_zurück`,
 `stopp`/`abbrechen` und `weiter` aus dem Block heraus sind ein Compilefehler. Fangbare Fehler:
 verschachteltes `mit` auf dieselbe Sperre, Inhalt nach dem Block noch referenziert.
+
+Unterelemente, die außerhalb der Sperre noch referenziert sind, werden tief und
+dauerhaft eingefroren, bevor der Block die Sperre freigibt; das gilt auch bei
+Fehlern. Bereits beim Erstellen der Sperre vorhandene Aliase auf Unterelemente
+werden ebenso geschützt. Rein interne Mehrfachreferenzen bleiben veränderlich.
+Bei Puffern schützt das Einfrieren auch andere Ansichten auf denselben Speicher.
+Lesender nativer Zugriff bleibt mit `@liest(...)` möglich; schreibender Zugriff
+wirft einen fangbaren Fehler. Zum Ändern eines eingefrorenen Werts muss ein neuer
+Wert eingesetzt werden. Diese Prüfung durchsucht den erreichbaren Inhalt beim
+Erstellen der Sperre und beim Verlassen jedes `mit`-Blocks.
 
 ```
 geteilt konstante KONTO auf sperre({"stand": 0})

@@ -1,5 +1,6 @@
 #include "moo_buffer_index.h"
 #include "moo_buffer_value.h"
+#include "moo_buffer_priv.h"
 #include <float.h>
 #include <stdint.h>
 #include <string.h>
@@ -257,7 +258,9 @@ void moo_buffer_index_set(MooValue container, MooValue index, MooValue value) {
     }
     MooBufferStatus status = buffer ? moo_buffer_set_scalar(buffer, type, i, &element)
                                     : MOO_BUFFER_INVALID;
-    if (status != MOO_BUFFER_OK)
+    if (status == MOO_BUFFER_PINNED)
+        moo_throw(moo_error(MOO_GETEILT_TEXT));
+    else if (status != MOO_BUFFER_OK)
         moo_throw(moo_error("Pufferzuweisung: falscher Typ oder Index ausserhalb"));
 }
 
@@ -361,6 +364,20 @@ static MooNativeLeihe *leih_fehler(const MooValue *wert, int32_t elementtyp, con
     return NULL;
 }
 
+static int leih_schreibschutz(const MooValue* wert, int32_t schreibbar) {
+    if (!schreibbar) return 1;
+    /* Nur nach der Typpruefung fuer Buffer/Frame/Tensor aufgerufen.
+     * Den gemeinsamen RC-Praefix direkt nutzen, Buffer mit Speicherstatus.
+     * So bleibt das Leihmodul auch einzeln ohne moo_memory verknuepfbar. */
+    const void* p = moo_val_as_ptr(*wert);
+    int geteilt = p && (wert->tag == MOO_BUFFER
+        ? moo_buffer_geteilt((const MooBuffer*)p)
+        : moo_rc_ist_geteilt((const int32_t*)p));
+    if (!geteilt) return 1;
+    moo_throw(moo_error("Native Leihgabe: geteilter Speicher ist eingefroren und nicht schreibbar"));
+    return 0;
+}
+
 MooNativeLeihe *moo_native_leihen(const MooValue *wert, int32_t elementtyp, uint64_t struktur_id,
                                   int32_t schreibbar, void **daten, uint64_t *laenge) {
     if (daten) *daten = NULL;
@@ -377,6 +394,7 @@ MooNativeLeihe *moo_native_leihen(const MooValue *wert, int32_t elementtyp, uint
             free(leihe);
             return leih_fehler(wert, elementtyp, " (Tensoren nur als puffer[f32])");
         }
+        if (!leih_schreibschutz(wert, schreibbar)) { free(leihe); return NULL; }
         MooTensor *t = MV_TENSOR(*wert);
         moo_tensor_host_sichern(t);
         if (moo_native_fehler_offen() || (t->size > 0 && !t->data)) {
@@ -400,6 +418,7 @@ MooNativeLeihe *moo_native_leihen(const MooValue *wert, int32_t elementtyp, uint
             free(leihe);
             return leih_fehler(wert, elementtyp, " (ungueltige Frame-Groesse)");
         }
+        if (!leih_schreibschutz(wert, schreibbar)) { free(leihe); return NULL; }
         *daten = f->pixels;
         *laenge = f->pixels ? (uint64_t)f->height * (uint64_t)f->stride : 0;
         return leihe;
@@ -418,6 +437,7 @@ MooNativeLeihe *moo_native_leihen(const MooValue *wert, int32_t elementtyp, uint
         return leih_fehler(wert, elementtyp, !buffer ? ""
             : struktur_id != 0 ? " mit anderer Strukturdefinition" : " mit anderem Elementtyp");
     }
+    if (!leih_schreibschutz(wert, schreibbar)) { free(leihe); return NULL; }
     if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
         free(leihe);
         moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
