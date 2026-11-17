@@ -38,7 +38,8 @@ if [[ "${RC_THREAD_START_TEST:-0}" == 1 ]]; then
   thread_member="$("$thread_ar" t "$thread_basis" | tr -d '\r' | awk '/moo_thread[.](o|obj)$/ {print; exit}')"
   [[ -n "$thread_member" ]] || { echo "moo_thread-Archivmitglied nicht gefunden" >&2; exit 2; }
   cp "$thread_basis" "$thread_archiv" || exit 2
-  thread_flags=(-O2 -g -fPIC -std=c11 -D_GNU_SOURCE -DMOO_HAS_SURFACE -DMOO_HAS_3D)
+  thread_flags=(-O2 -g -std=c11 -D_GNU_SOURCE -DMOO_HAS_SURFACE -DMOO_HAS_3D)
+  if [[ "$exe" != .exe ]]; then thread_flags+=(-fPIC); fi
   if [[ "${RC_THREAD_START_ASAN:-0}" == 1 ]]; then
     thread_flags+=(-O1 -fsanitize=address -fno-omit-frame-pointer)
   fi
