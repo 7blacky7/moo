@@ -141,7 +141,9 @@ jobs:
         shell: bash
         run: |
           brew update
-          brew install llvm@22 sdl2 sdl2_image glfw vulkan-loader openssl@3
+          brew install bash llvm@22 sdl2 sdl2_image glfw vulkan-loader openssl@3
+          # Beide Testskripte verwenden assoziative Arrays (Bash >= 4).
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
           LLVM_PREFIX="$(brew --prefix llvm@22)"
           SDL2_PREFIX="$(brew --prefix sdl2)"
           SDL2_IMAGE_PREFIX="$(brew --prefix sdl2_image)"
@@ -204,8 +206,13 @@ jobs:
       - name: Run complete core suite
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
+          printf 'BASH_VERSION=%s\n' "$BASH_VERSION"
+          if (( BASH_VERSINFO[0] < 4 )); then
+            echo 'Core-Tests brauchen Bash >= 4' >&2; exit 2
+          fi
           bash compiler/tests/run_all.sh 2>&1 | tee "core-ci-${{ runner.os }}.log"
+          grep -F 'Ergebnis:' "core-ci-${{ runner.os }}.log"
 
       - name: Check failed system thread starts
         shell: bash
@@ -225,6 +232,8 @@ jobs:
             bash skripte/p2/runtime/rc_geteilt_stress.sh \
             compiler/target/release/moo-compiler build/p2-thread-start-ci 1 systemfehler \
             2>&1 | tee "thread-start-ci-${{ runner.os }}.log"
+          tr -d '\r' < "thread-start-ci-${{ runner.os }}.log" \
+            | grep -Fx 'thread_start_fehler systemfehler korrekt=1/1'
 
       - name: Upload core-suite log
         if: always()

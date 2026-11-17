@@ -4,6 +4,10 @@
 # Kompiliert die Fixtures aus compiler/tests/p2/rc_geteilt und build/opus-t112/prog
 # (mt_geteilt) und laeuft jede N-mal; zaehlt korrekte Ausgaben.
 set -uo pipefail
+if (( BASH_VERSINFO[0] < 4 )); then
+  printf 'Bash >= 4 erforderlich (gefunden: %s)\n' "$BASH_VERSION" >&2
+  exit 2
+fi
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 comp="$1"; work="$2"; n="${3:-20}"; tag="${4:-lauf}"
 [[ -f "$comp" ]] || comp="$comp.exe"
