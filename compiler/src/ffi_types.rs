@@ -180,10 +180,16 @@ fn value_type_in(ty: &TypeRef, ist_struktur: &dyn Fn(&str) -> bool) -> Result<Ff
 }
 
 
-/// Effektive C-ABI eines skalaren extern-C-Aufrufs: AArch64 -> AAPCS64; x86_64
-/// nach expliziter Konvention (sysv64/win64), sonst nach Zieltriple.
+fn darwin_aarch64(target: &str) -> bool {
+    target.starts_with("arm64-apple-darwin") || target.starts_with("aarch64-apple-darwin")
+}
+
+/// Attributklasse fuer skalare C-Werte; klassifiziert keine Strukturwerte.
 fn skalar_abi(target: &str, convention: u32) -> crate::ffi_abi::Abi {
     use crate::ffi_abi::Abi;
+    // Nur die skalaren Extension-Attribute: Darwin verlangt hier wie SysV
+    // signext/zeroext (Clang-Orakel ffi_klein_roundtrip.c), nicht die Struktur-ABI.
+    if darwin_aarch64(target) { return Abi::SysV; }
     if target.starts_with("aarch64-") { return Abi::Aapcs64; }
     match convention {
         CC_X86_64_SYSV => Abi::SysV,
@@ -1126,7 +1132,7 @@ impl FfiSignature {
         if !matches!(triple, "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
             | "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
             | "aarch64-unknown-linux-gnu" | "x86_64-unknown-uefi" | "x86_64-unknown-none"
-            | "aarch64-unknown-none") {
+            | "aarch64-unknown-none") && !darwin_aarch64(triple) {
             return Err(format!("extern C: Ziel-ABI '{triple}' ist noch nicht freigegeben"));
         }
         if variadic {

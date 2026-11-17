@@ -236,6 +236,15 @@ jobs:
           tr -d '\r' < "thread-start-ci-${{ runner.os }}.log" \
             | grep -Fx 'thread_start_fehler systemfehler korrekt=1/1'
 
+      - name: Check Darwin scalar C FFI
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          P2_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
+            bash skripte/p2/ffi/klein_roundtrip.sh 2>&1 | tee ffi-darwin-ci.log
+          grep -Fx 'i8/u8/bool nativer C-Roundtrip und Typnegative: PASS' ffi-darwin-ci.log
+
       - name: Upload core-suite log
         if: always()
         uses: actions/upload-artifact@v4
@@ -245,6 +254,8 @@ jobs:
             core-ci-${{ runner.os }}.log
             build/p2-msvc-zweige/
             thread-start-ci-${{ runner.os }}.log
+            ffi-darwin-ci.log
+            build/p2-ffi-klein-roundtrip/*.log
             build/p2-thread-start-ci/*.compile.log
             build/p2-thread-start-ci/err.txt
           if-no-files-found: warn

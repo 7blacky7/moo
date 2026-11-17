@@ -6,10 +6,9 @@ extern "C" funktion moo_test_thread_start_mutexe() -> i32
 extern "C" funktion moo_test_thread_start_fehlercode() -> i32
 
 @nativ
-funktion hook_modus(wert: i32) -> i32:
+funktion hook_modus(wert: i32) -> void:
     unsicher:
         moo_test_thread_start_modus(wert)
-    gib_zurück 0
 
 @nativ
 funktion hook_anzahl() -> i32:
