@@ -40,8 +40,12 @@ use moo_tag as tag;
 /// P7-T20: Art des Bare-Inline-Schnellwegs (siehe CodeGen::bare_schnellweg).
 #[derive(Clone, Copy)]
 enum BareSchnell {
-    /// 0 = add, 1 = sub, 2 = mul, 3 = div
+    /// 0 = add, 1 = sub, 2 = mul, 3 = div, 4 = mod
     Rechnen(u8),
+    /// 0 = and, 1 = or, 2 = xor, 3 = lshift, 4 = rshift
+    Bit(u8),
+    BitNicht,
+    Negativ,
     Vergleich(inkwell::FloatPredicate),
     Wahrheit,
     /// moo_number(double): nur Tag 0 + Bits, ohne kalten Pfad
@@ -1968,6 +1972,14 @@ impl<'ctx> CodeGen<'ctx> {
             && self.bare_mode
         {
             CodeModel::Kernel
+        } else if triple_str.starts_with("riscv64-")
+            && triple_str.contains("-none")
+            && self.bare_mode
+        {
+            // P7-T21: QEMU-virt RAM beginnt bei 0x80000000. Small/medlow
+            // kann dort positive Globals nicht mit signiertem HI20 laden.
+            // Medium/medany verwendet PC-relative LLA (LLVM RISCV-Lowering).
+            CodeModel::Medium
         } else {
             CodeModel::Default
         };
@@ -1983,9 +1995,9 @@ impl<'ctx> CodeGen<'ctx> {
             )
             .ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
 
-        // Die Optimierung gilt nur fuer freestanding Nativ-Objekte, fuer
-        // explizite Win64-Objekte ohne Standardbibliothek (bare_mode) und
-        // (P2-T66) fuer hosted x86_64-Objekte mit Systemkoerpern. Regulare
+        // Bare-Objekte werden voll optimiert, auch ohne @nativ. Zusaetzlich
+        // gilt weiterhin (P2-T66): hosted x86_64 mit Systemkoerpern wird nur
+        // fuer die nativen Koerper optimiert. Regulare
         // Hosted-/Legacy-Programme ohne Systemkoerper und WASM behalten ihren
         // Codepfad. Kein Fast-Math; Pointer-Alignment bleibt bei den belegten Werten.
         let freestanding_native = triple_str.contains("-none");
@@ -2003,8 +2015,12 @@ impl<'ctx> CodeGen<'ctx> {
             && matches!(triple_str.as_str(), "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
                 | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
                 | "aarch64-unknown-linux-gnu");
-        let o2_laeuft = (freestanding_native || win64_no_stdlib || hosted_x86_system)
-            && !self.native_functions.is_empty();
+        // P7-T21: Bare-Objekte bekommen auch ohne @nativ volle Optimierung.
+        // Hosted behält die bisherige Abschirmung; WASM bleibt unveraendert.
+        let bare_o2 = self.bare_mode && !triple_str.starts_with("wasm");
+        let o2_laeuft = bare_o2
+            || ((freestanding_native || win64_no_stdlib || hosted_x86_system)
+                && !self.native_functions.is_empty());
         if o2_laeuft {
             use inkwell::attributes::{Attribute, AttributeLoc};
             use inkwell::values::AsValueRef;
@@ -2038,9 +2054,8 @@ impl<'ctx> CodeGen<'ctx> {
             self.module.verify()
                 .map_err(|e| format!("LLVM-IR nach O2 ungueltig: {e}"))?;
         } else if self.bare_mode {
-            // P7-T20: Ohne O2 (Bare ohne @nativ) bettet nur dieser Pass die
-            // alwaysinline-Schnellwege (bare_schnellweg) ein. Er aendert
-            // sonst nichts am Code.
+            // P7-T20: Fuer Bare-Ziele ausserhalb des Object-O2-Pfads bleibt
+            // der vorhandene Always-Inliner erhalten.
             self.module.run_passes("always-inline", &machine, PassBuilderOptions::create())
                 .map_err(|e| format!("LLVM always-inline fehlgeschlagen: {e}"))?;
         }
@@ -2233,14 +2248,17 @@ impl<'ctx> CodeGen<'ctx> {
     /// direkt in double, mit derselben Semantik wie der Schnellweg in
     /// moo_bare.c (fadd/fsub/fmul/fdiv, fcmp o** bzw. une fuer !=). Jeder
     /// andere Tag ruft die Runtime auf (kalter Pfad, T17-Semantik unveraendert).
-    /// moo_mod bleibt beim Runtime-Aufruf: (int64_t)-Cast ausserhalb des
-    /// Bereichs waere in IR poison statt des C-Verhaltens der Runtime.
+    /// Modulo und Bitops konvertieren nur nach geprueftem i64-Bereich;
+    /// ausserhalb bleibt der bisherige Runtime-Pfad statt LLVM-poison.
     /// Nur im Bare-Profil und nicht unter MSVC-ABI (dort indirekte Argumente).
     fn bare_schnellweg(&self, func: FunctionValue<'ctx>) -> FunctionValue<'ctx> {
         if !self.bare_mode || self.windows_x64_abi() {
             return func;
         }
         use inkwell::FloatPredicate as P;
+        // --erlaube-kern setzt bare_mode auch fuer die Hosted-Runtime.
+        // Neue P7-T21-Regeln gelten nur fuer moo_bare.c, nicht moo_ops.c.
+        let freestanding = self.module.get_triple().as_str().to_string_lossy().contains("-none");
         let name = match func.get_name().to_str() {
             Ok(n) => n.to_string(),
             Err(_) => return func,
@@ -2250,6 +2268,14 @@ impl<'ctx> CodeGen<'ctx> {
             "moo_sub" => BareSchnell::Rechnen(1),
             "moo_mul" => BareSchnell::Rechnen(2),
             "moo_div" => BareSchnell::Rechnen(3),
+            "moo_mod" if freestanding => BareSchnell::Rechnen(4),
+            "moo_neg" if freestanding => BareSchnell::Negativ,
+            "moo_bitand" if freestanding => BareSchnell::Bit(0),
+            "moo_bitor" if freestanding => BareSchnell::Bit(1),
+            "moo_bitxor" if freestanding => BareSchnell::Bit(2),
+            "moo_lshift" if freestanding => BareSchnell::Bit(3),
+            "moo_rshift" if freestanding => BareSchnell::Bit(4),
+            "moo_bitnot" if freestanding => BareSchnell::BitNicht,
             "moo_lt" => BareSchnell::Vergleich(P::OLT),
             "moo_gt" => BareSchnell::Vergleich(P::OGT),
             "moo_lte" => BareSchnell::Vergleich(P::OLE),
@@ -2260,6 +2286,18 @@ impl<'ctx> CodeGen<'ctx> {
             "moo_number" => BareSchnell::Zahl,
             _ => return func,
         };
+        // P7-T21: Nur diese kanonischen Bare-Operatoren schreiben keinen
+        // Speicher (moo_bare.c: Arithmetik/Vergleich/truthy). Stringvergleich
+        // und truthy lesen ggf. Heap-Daten: deshalb memory(read), NICHT none.
+        // Keine Aussage ueber Hardware-, Print-, Allocator- oder Useraufrufe.
+        // Indirekte Windows-ABI wurde oben bereits ausgeschlossen.
+        // LLVM 22 MemoryEffects::readOnly().toIntValue() = 0x555; per
+        // LLVMParseIRInContext("memory(read)")/LLVMGetEnumAttributeValue belegt.
+        let memory_kind = inkwell::attributes::Attribute::get_named_enum_kind_id("memory");
+        if freestanding && memory_kind != 0 && func.count_basic_blocks() == 0 {
+            func.add_attribute(inkwell::attributes::AttributeLoc::Function,
+                self.context.create_enum_attribute(memory_kind, 0x555));
+        }
         let name_schnell = format!("{name}.bare_schnell");
         if let Some(f) = self.module.get_function(&name_schnell) {
             return f;
@@ -2293,100 +2331,153 @@ impl<'ctx> CodeGen<'ctx> {
         let f64t = self.context.f64_type();
         let fehler = |e: inkwell::builder::BuilderError| format!("{e}");
         let start = self.context.append_basic_block(f, "start");
-        if let BareSchnell::Zahl = art {
-            // Wie moo_number in moo_bare.c/stage2_rt.c/uefi_rt.c: {0, Bits}.
-            b.position_at_end(start);
-            let d = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?
-                .into_float_value();
-            let bits = b.build_bit_cast(d, i64t, "bits").map_err(fehler)?.into_int_value();
+        let wert = |tag: u64, daten: inkwell::values::IntValue<'ctx>|
+            -> Result<StructValue<'ctx>, String> {
             let v = b.build_insert_value(self.mv_type().get_undef(),
-                i64t.const_int(TAG_ZAHL, false), 0, "v0").map_err(fehler)?;
-            let v = b.build_insert_value(v, bits, 1, "v").map_err(fehler)?;
-            b.build_return(Some(&v.into_struct_value())).map_err(fehler)?;
+                i64t.const_int(tag, false), 0, "v0").map_err(fehler)?;
+            Ok(b.build_insert_value(v, daten, 1, "v").map_err(fehler)?.into_struct_value())
+        };
+        let zahl = |v: StructValue<'ctx>, n: &str|
+            -> Result<inkwell::values::FloatValue<'ctx>, String> {
+            let bits = b.build_extract_value(v, 1, n).map_err(fehler)?.into_int_value();
+            Ok(b.build_bit_cast(bits, f64t, n).map_err(fehler)?.into_float_value())
+        };
+        // fptosi ist nur in [-2^63,2^63) definiert. Geordnete Vergleiche
+        // schliessen auch NaN/Inf aus; ausserhalb bleibt der Runtime-Pfad.
+        let im_i64 = |x: inkwell::values::FloatValue<'ctx>|
+            -> Result<inkwell::values::IntValue<'ctx>, String> {
+            let unten = b.build_float_compare(inkwell::FloatPredicate::OGE, x,
+                f64t.const_float(-9223372036854775808.0), "i64_unten").map_err(fehler)?;
+            let oben = b.build_float_compare(inkwell::FloatPredicate::OLT, x,
+                f64t.const_float(9223372036854775808.0), "i64_oben").map_err(fehler)?;
+            b.build_and(unten, oben, "i64_bereich").map_err(fehler)
+        };
+        b.position_at_end(start);
+        if let BareSchnell::Zahl = art {
+            let x = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?.into_float_value();
+            let bits = b.build_bit_cast(x, i64t, "bits").map_err(fehler)?.into_int_value();
+            b.build_return(Some(&wert(TAG_ZAHL, bits)?)).map_err(fehler)?;
             return Ok(());
         }
         let schnell = self.context.append_basic_block(f, "schnell");
         let kalt = self.context.append_basic_block(f, "kalt");
         let params: Vec<BasicMetadataValueEnum<'ctx>> =
             f.get_param_iter().map(|p| p.into()).collect();
-        let a = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?
-            .into_struct_value();
-        let zahl = |v: StructValue<'ctx>, n: &str| -> Result<inkwell::values::FloatValue<'ctx>, String> {
-            let bits = b.build_extract_value(v, 1, n).map_err(fehler)?.into_int_value();
-            Ok(b.build_bit_cast(bits, f64t, n).map_err(fehler)?.into_float_value())
-        };
-
-        b.position_at_end(start);
+        let a = f.get_nth_param(0).ok_or("bare_schnellweg: Parameter fehlt")?.into_struct_value();
         let tag_a = b.build_extract_value(a, 0, "tag_a").map_err(fehler)?.into_int_value();
         match art {
             BareSchnell::Wahrheit => {
                 let ret_t = func.get_type().get_return_type()
                     .ok_or("moo_is_truthy ohne Rueckgabe")?.into_int_type();
-                let als_ret = |v: inkwell::values::IntValue<'ctx>| -> Result<inkwell::values::IntValue<'ctx>, String> {
+                let als_ret = |v: inkwell::values::IntValue<'ctx>|
+                    -> Result<inkwell::values::IntValue<'ctx>, String> {
                     if ret_t.get_bit_width() == 1 { Ok(v) }
                     else { b.build_int_z_extend(v, ret_t, "w").map_err(fehler) }
                 };
                 let pruef_bool = self.context.append_basic_block(f, "pruef_bool");
                 let ist_bool = self.context.append_basic_block(f, "ist_bool");
                 let ist_zahl = b.build_int_compare(inkwell::IntPredicate::EQ, tag_a,
-                    i64t.const_int(TAG_ZAHL, false), "ist_zahl").map_err(fehler)?;
+                    i64t.const_zero(), "ist_zahl").map_err(fehler)?;
                 b.build_conditional_branch(ist_zahl, schnell, pruef_bool).map_err(fehler)?;
-
                 b.position_at_end(schnell);
-                let x = zahl(a, "x")?;
-                let w = b.build_float_compare(inkwell::FloatPredicate::UNE, x,
+                let w = b.build_float_compare(inkwell::FloatPredicate::UNE, zahl(a, "x")?,
                     f64t.const_zero(), "w").map_err(fehler)?;
                 b.build_return(Some(&als_ret(w)?)).map_err(fehler)?;
-
                 b.position_at_end(pruef_bool);
                 let ist_b = b.build_int_compare(inkwell::IntPredicate::EQ, tag_a,
                     i64t.const_int(TAG_BOOL, false), "ist_b").map_err(fehler)?;
                 b.build_conditional_branch(ist_b, ist_bool, kalt).map_err(fehler)?;
-
                 b.position_at_end(ist_bool);
                 let daten = b.build_extract_value(a, 1, "d").map_err(fehler)?.into_int_value();
                 let w = b.build_int_compare(inkwell::IntPredicate::NE, daten,
                     i64t.const_zero(), "wb").map_err(fehler)?;
                 b.build_return(Some(&als_ret(w)?)).map_err(fehler)?;
             }
-            BareSchnell::Zahl => unreachable!("oben behandelt"),
-            BareSchnell::Rechnen(_) | BareSchnell::Vergleich(_) => {
-                let bb = f.get_nth_param(1).ok_or("bare_schnellweg: Parameter fehlt")?
-                    .into_struct_value();
+            BareSchnell::Negativ | BareSchnell::BitNicht => {
+                let ist_zahl = b.build_int_compare(inkwell::IntPredicate::EQ, tag_a,
+                    i64t.const_zero(), "ist_zahl").map_err(fehler)?;
+                b.build_conditional_branch(ist_zahl, schnell, kalt).map_err(fehler)?;
+                b.position_at_end(schnell);
+                let x = zahl(a, "x")?;
+                let r = if let BareSchnell::Negativ = art {
+                    b.build_float_neg(x, "neg").map_err(fehler)?
+                } else {
+                    let konvertieren = self.context.append_basic_block(f, "konvertieren");
+                    b.build_conditional_branch(im_i64(x)?, konvertieren, kalt).map_err(fehler)?;
+                    b.position_at_end(konvertieren);
+                    let ganz = b.build_float_to_signed_int(x, i64t, "ganz").map_err(fehler)?;
+                    let bits = b.build_not(ganz, "bitnicht").map_err(fehler)?;
+                    b.build_signed_int_to_float(bits, f64t, "zurueck").map_err(fehler)?
+                };
+                let bits = b.build_bit_cast(r, i64t, "bits").map_err(fehler)?.into_int_value();
+                b.build_return(Some(&wert(TAG_ZAHL, bits)?)).map_err(fehler)?;
+            }
+            BareSchnell::Rechnen(_) | BareSchnell::Vergleich(_) | BareSchnell::Bit(_) => {
+                let bb = f.get_nth_param(1).ok_or("bare_schnellweg: Parameter fehlt")?.into_struct_value();
                 let tag_b = b.build_extract_value(bb, 0, "tag_b").map_err(fehler)?.into_int_value();
                 let beide = b.build_or(tag_a, tag_b, "tags").map_err(fehler)?;
                 let ist_zahl = b.build_int_compare(inkwell::IntPredicate::EQ, beide,
-                    i64t.const_int(TAG_ZAHL, false), "zwei_zahlen").map_err(fehler)?;
+                    i64t.const_zero(), "zwei_zahlen").map_err(fehler)?;
                 b.build_conditional_branch(ist_zahl, schnell, kalt).map_err(fehler)?;
-
                 b.position_at_end(schnell);
                 let x = zahl(a, "x")?;
                 let y = zahl(bb, "y")?;
                 let (tag, daten) = match art {
                     BareSchnell::Rechnen(op) => {
-                        let r = match op {
-                            0 => b.build_float_add(x, y, "r"),
-                            1 => b.build_float_sub(x, y, "r"),
-                            2 => b.build_float_mul(x, y, "r"),
-                            _ => b.build_float_div(x, y, "r"),
+                        let r = if op == 4 {
+                            // Gleiche Formel wie moo_bare.c, nicht frem/fmod:
+                            // x - (double)(int64_t)(x/y) * y. Cast nur im Bereich.
+                            let q = b.build_float_div(x, y, "quotient").map_err(fehler)?;
+                            let konvertieren = self.context.append_basic_block(f, "konvertieren");
+                            b.build_conditional_branch(im_i64(q)?, konvertieren, kalt).map_err(fehler)?;
+                            b.position_at_end(konvertieren);
+                            let ganz = b.build_float_to_signed_int(q, i64t, "quotient_ganz").map_err(fehler)?;
+                            let zurueck = b.build_signed_int_to_float(ganz, f64t, "quotient_zahl").map_err(fehler)?;
+                            let produkt = b.build_float_mul(zurueck, y, "produkt").map_err(fehler)?;
+                            b.build_float_sub(x, produkt, "rest").map_err(fehler)?
+                        } else {
+                            match op {
+                                0 => b.build_float_add(x, y, "r"),
+                                1 => b.build_float_sub(x, y, "r"),
+                                2 => b.build_float_mul(x, y, "r"),
+                                _ => b.build_float_div(x, y, "r"),
+                            }.map_err(fehler)?
+                        };
+                        (TAG_ZAHL, b.build_bit_cast(r, i64t, "bits").map_err(fehler)?.into_int_value())
+                    }
+                    BareSchnell::Bit(op) => {
+                        let konvertieren = self.context.append_basic_block(f, "konvertieren");
+                        let bereich = b.build_and(im_i64(x)?, im_i64(y)?, "beide_im_bereich").map_err(fehler)?;
+                        b.build_conditional_branch(bereich, konvertieren, kalt).map_err(fehler)?;
+                        b.position_at_end(konvertieren);
+                        let xi = b.build_float_to_signed_int(x, i64t, "x_ganz").map_err(fehler)?;
+                        let yi = b.build_float_to_signed_int(y, i64t, "y_ganz").map_err(fehler)?;
+                        let bits = match op {
+                            0 => b.build_and(xi, yi, "bitund"),
+                            1 => b.build_or(xi, yi, "bitoder"),
+                            2 => b.build_xor(xi, yi, "bitxor"),
+                            3 => {
+                                let count = b.build_and(yi, i64t.const_int(63, false), "shift63").map_err(fehler)?;
+                                b.build_left_shift(xi, count, "links")
+                            }
+                            _ => {
+                                let count = b.build_and(yi, i64t.const_int(63, false), "shift63").map_err(fehler)?;
+                                b.build_right_shift(xi, count, true, "rechts")
+                            }
                         }.map_err(fehler)?;
-                        let bits = b.build_bit_cast(r, i64t, "bits").map_err(fehler)?.into_int_value();
-                        (TAG_ZAHL, bits)
+                        let r = b.build_signed_int_to_float(bits, f64t, "zurueck").map_err(fehler)?;
+                        (TAG_ZAHL, b.build_bit_cast(r, i64t, "bits").map_err(fehler)?.into_int_value())
                     }
                     BareSchnell::Vergleich(pred) => {
                         let c = b.build_float_compare(pred, x, y, "c").map_err(fehler)?;
                         (TAG_BOOL, b.build_int_z_extend(c, i64t, "cb").map_err(fehler)?)
                     }
-                    BareSchnell::Wahrheit | BareSchnell::Zahl => unreachable!(),
+                    _ => unreachable!("durch aeusseren Match ausgeschlossen"),
                 };
-                let mv = self.mv_type();
-                let v = b.build_insert_value(mv.get_undef(), i64t.const_int(tag, false), 0, "v0")
-                    .map_err(fehler)?;
-                let v = b.build_insert_value(v, daten, 1, "v").map_err(fehler)?;
-                b.build_return(Some(&v.into_struct_value())).map_err(fehler)?;
+                b.build_return(Some(&wert(tag, daten)?)).map_err(fehler)?;
             }
+            BareSchnell::Zahl => unreachable!("oben behandelt"),
         }
-
         b.position_at_end(kalt);
         let r = b.build_call(func, &params, "kalt").map_err(fehler)?;
         match r.try_as_basic_value() {
@@ -14515,6 +14606,126 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Number(_) | Expr::NativeNumber { .. } | Expr::String(_) | Expr::Boolean(_)
             | Expr::None | Expr::This => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod bare_schnell_regression {
+    use super::*;
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    use inkwell::memory_buffer::MemoryBuffer;
+    use inkwell::values::AnyValue;
+
+    #[test]
+    fn memory_fakten_nur_fuer_kanonische_bare_operatoren() {
+        let context = Context::create();
+        let mut cg = CodeGen::new(&context, "bare_memory", "x86_64-bare").unwrap();
+        cg.set_bare_mode(true);
+        let add = cg.module.get_function("moo_add").unwrap();
+        cg.bare_schnellweg(add);
+        let kind = Attribute::get_named_enum_kind_id("memory");
+        // Unabhaengiges Orakel: LLVM selbst parst memory(read). Damit ist
+        // auch das versionsabhaengige Enum-Encoding im Produkt geprueft.
+        let buffer = MemoryBuffer::create_from_memory_range_copy(
+            b"declare void @referenz() memory(read)\n\0", "memory_referenz");
+        let reference = context.create_module_from_ir(buffer).unwrap();
+        let expected = reference.get_function("referenz").unwrap()
+            .get_enum_attribute(AttributeLoc::Function, kind).unwrap().get_enum_value();
+        assert_eq!(add.get_enum_attribute(AttributeLoc::Function, kind).unwrap().get_enum_value(), expected);
+        let print = cg.module.get_function("moo_print").unwrap();
+        assert_eq!(cg.bare_schnellweg(print), print);
+        assert!(print.get_enum_attribute(AttributeLoc::Function, kind).is_none());
+
+        let hosted = CodeGen::new(&context, "hosted_memory", "x86_64").unwrap();
+        let add = hosted.module.get_function("moo_add").unwrap();
+        assert_eq!(hosted.bare_schnellweg(add), add);
+        assert!(add.get_enum_attribute(AttributeLoc::Function, kind).is_none());
+
+        let mut hosted_optin = CodeGen::new(&context, "hosted_optin_memory", "x86_64").unwrap();
+        hosted_optin.set_bare_mode(true);
+        let add = hosted_optin.module.get_function("moo_add").unwrap();
+        hosted_optin.bare_schnellweg(add);
+        assert!(add.get_enum_attribute(AttributeLoc::Function, kind).is_none());
+        for name in ["moo_mod", "moo_neg", "moo_bitand", "moo_bitor", "moo_bitxor",
+                     "moo_lshift", "moo_rshift", "moo_bitnot"] {
+            let op = hosted_optin.module.get_function(name).unwrap();
+            assert_eq!(hosted_optin.bare_schnellweg(op), op);
+            assert!(op.get_enum_attribute(AttributeLoc::Function, kind).is_none());
+        }
+
+        let mut windows = CodeGen::new(&context, "windows_memory", "x86_64-windows").unwrap();
+        windows.set_bare_mode(true);
+        let add = windows.module.get_function("moo_add").unwrap();
+        assert_eq!(windows.bare_schnellweg(add), add);
+        assert!(add.get_enum_attribute(AttributeLoc::Function, kind).is_none());
+    }
+
+    fn optimierter_probe(op: &str, values: &[(u64, u64)]) -> String {
+        let context = Context::create();
+        let mut cg = CodeGen::new(&context, "cast_probe", "x86_64-bare").unwrap();
+        cg.set_bare_mode(true);
+        let wrapper = cg.bare_schnellweg(cg.module.get_function(op).unwrap());
+        let probe = cg.module.add_function("probe", cg.mv_type().fn_type(&[], false), None);
+        cg.builder.position_at_end(context.append_basic_block(probe, "entry"));
+        let args: Vec<BasicMetadataValueEnum<'_>> = values.iter().map(|(tag, bits)|
+            cg.mv_type().const_named_struct(&[
+                context.i64_type().const_int(*tag, false).into(),
+                context.i64_type().const_int(*bits, false).into(),
+            ]).into()).collect();
+        let result = match cg.builder.build_call(wrapper, &args, "ergebnis").unwrap()
+            .try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => panic!("Probe muss einen MooValue liefern"),
+        };
+        cg.builder.build_return(Some(&result)).unwrap();
+        cg.module.verify().unwrap();
+        let triple = cg.module.get_triple();
+        let machine = Target::from_triple(&triple).unwrap().create_target_machine(
+            &triple, "generic", "", OptimizationLevel::Default,
+            RelocMode::Static, CodeModel::Kernel).unwrap();
+        cg.module.run_passes("default<O2>", &machine, PassBuilderOptions::create()).unwrap();
+        cg.module.verify().unwrap();
+        probe.print_to_string().to_string()
+    }
+
+    #[test]
+    fn ungueltige_float_integer_casts_bleiben_im_runtime_pfad() {
+        // Der Test fuehrt die undefinierten alten C-Casts NICHT aus.
+        // LLVM muss den kalten Aufruf statt eines fptosi-Poison erzeugen.
+        let limit = 9223372036854775808.0_f64;
+        for (op, args) in [
+            ("moo_mod", vec![(0, limit.to_bits()), (0, 1.0_f64.to_bits())]),
+            ("moo_mod", vec![(0, f64::INFINITY.to_bits()), (0, 1.0_f64.to_bits())]),
+            ("moo_mod", vec![(0, f64::NAN.to_bits()), (0, 1.0_f64.to_bits())]),
+            ("moo_mod", vec![(0, 7.0_f64.to_bits()), (0, 0.0_f64.to_bits())]),
+            ("moo_bitand", vec![(0, limit.to_bits()), (0, 1.0_f64.to_bits())]),
+            ("moo_bitnot", vec![(0, f64::NAN.to_bits())]),
+            ("moo_lshift", vec![(0, 1.0_f64.to_bits()), (0, f64::INFINITY.to_bits())]),
+            ("moo_mod", vec![(30, (-9_i64) as u64), (0, 2.0_f64.to_bits())]),
+        ] {
+            let ir = optimierter_probe(op, &args);
+            assert!(ir.contains(&format!("@{op}(")), "{op}: {ir}");
+            assert!(!ir.contains("fptosi"), "{op}: {ir}");
+        }
+    }
+
+    #[test]
+    fn definierte_grenzen_und_restformel_werden_gefaltet() {
+        let lower = -9223372036854775808.0_f64;
+        for (op, args, expected) in [
+            ("moo_mod", vec![(0, 7.5_f64.to_bits()), (0, 2.0_f64.to_bits())], 1.5_f64),
+            ("moo_mod", vec![(0, (-7.5_f64).to_bits()), (0, 2.0_f64.to_bits())], -1.5_f64),
+            ("moo_mod", vec![(0, lower.to_bits()), (0, 1.0_f64.to_bits())], 0.0_f64),
+            ("moo_bitand", vec![(0, lower.to_bits()), (0, 1.0_f64.to_bits())], 0.0_f64),
+            ("moo_rshift", vec![(0, (-8.0_f64).to_bits()), (0, 65.0_f64.to_bits())], -4.0_f64),
+            ("moo_lshift", vec![(0, 1.0_f64.to_bits()), (0, (-1.0_f64).to_bits())], lower),
+            ("moo_neg", vec![(0, 0.0_f64.to_bits())], -0.0_f64),
+        ] {
+            let ir = optimierter_probe(op, &args);
+            assert!(!ir.contains(&format!("@{op}(")), "{op}: {ir}");
+            assert!(!ir.contains("fptosi"), "{op}: {ir}");
+            assert!(ir.contains(&(expected.to_bits() as i64).to_string()), "{op}: {ir}");
         }
     }
 }

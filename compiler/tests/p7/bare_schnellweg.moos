@@ -1,12 +1,23 @@
 # P7-T20: Der Codegen rechnet Zahl-op-Zahl (Tag 0) im Bare-Profil inline.
 # Diese Datei prueft Ergebnisse, Vergleiche (auch NaN), Wahrheitswerte von
 # Zahl und bool sowie den kalten Pfad mit einem i64-Wert (Tag 30) aus @nativ.
-# Gate: KERNEL_MARKER="9 5 14 7 101 102 103 104 105 107 -4 106 108 777"
+# Gate: KERNEL_MARKER="9 5 14 7 101 102 103 104 105 107 -4 106 108 2121 2122 2123 2124 2125 2126 777"
 #       KERNEL_MARKER_FEHLT="999 998 997 996" scripts/kernel-smoke.sh <diese Datei>
 @nativ
 funktion vz64(x: i64) -> i64:
     unsicher:
         gib_zurück x + 0
+
+
+@nativ
+funktion breit_testwert() -> u64:
+    unsicher:
+        setze eins: u64 auf 1
+        gib_zurück (eins << 63) + 9
+
+funktion dynamisch_breit():
+    unsicher:
+        gib_zurück vz64(-9)
 
 setze a auf 7
 setze b auf 2
@@ -46,4 +57,62 @@ wenn g == 5:
     zeige 996
 wenn a:
     zeige 108
+
+# P7-T21: Number-Modulo muss die bestehende Trunkierungsformel behalten.
+setze x auf 7.5
+setze y auf 2
+wenn x % y != 1.5:
+    zeige 999
+wenn (0 - x) % y != -1.5:
+    zeige 999
+wenn x % (0 - y) != 1.5:
+    zeige 999
+zeige 2121
+
+# Bitoperationen truncieren endliche Zahlen im i64-Bereich.
+setze bits auf 7.75
+setze maske auf 3.5
+wenn (bits & maske) != 3 oder (bits | 8) != 15 oder (bits ^ 3) != 4:
+    zeige 999
+wenn (~bits) != -8 oder ((0 - bits) & maske) != 1:
+    zeige 999
+zeige 2122
+
+# Kein Fast-Math: Negation erhaelt Vorzeichen von Null und NaN.
+setze nullwert auf 0
+setze minusnull auf -nullwert
+wenn nicht (1 / minusnull < 0):
+    zeige 999
+setze negnan auf -q
+wenn negnan == negnan:
+    zeige 999
+wenn -x != -7.5:
+    zeige 999
+zeige 2123
+
+# Breite Tags aus @nativ bleiben im exakten Runtime-Pfad.
+unsicher:
+    setze breit auf breit_testwert()
+wenn breit % 16 != 9 oder (breit & 15) != 9 oder (breit >> 63) != 1:
+    zeige 999
+wenn (-breit) % 16 != 7:
+    zeige 999
+zeige 2124
+
+# Alte Typ-Hinweise duerfen nach unbekanntem Rueckgabewert nicht gelten.
+setze wechsel auf 7
+setze wechsel auf dynamisch_breit()
+wenn wechsel + 1 != -8:
+    zeige 999
+zeige 2125
+
+# Wie in moo_bare.c: Shiftcount wird mit 63 maskiert, rechts arithmetisch.
+setze count auf 65
+wenn (1 << count) != 2 oder ((0 - 8) >> count) != -4:
+    zeige 999
+setze count auf 0 - 1
+wenn nicht ((1 << count) < 0):
+    zeige 999
+zeige 2126
+
 zeige 777

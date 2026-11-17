@@ -1,0 +1,25 @@
+# P7-T21: echte Number-Schleife ohne @nativ, auch ohne Hardware-FPU.
+# Ergebnisadapter: bare_ohne_fpu_probe.c; Runtime bleibt moo_bare.c.
+setze i auf 0
+setze s auf 0
+solange i < 1000:
+    setze s auf s + i * 0.5 + i % 7
+    setze i auf i + 1
+zeige s
+setze b auf 13.75
+zeige b & 7
+zeige b | 2
+zeige b ^ 7
+zeige ~b
+zeige b << 65
+zeige -16 >> 2
+zeige -(s / 2)
+zeige s - 249750
+zeige -7.5 % 2
+setze z auf 0
+wenn 1 / (-z) < 0:
+    zeige 21
+setze n auf z / z
+wenn n != n:
+    zeige 22
+zeige 777

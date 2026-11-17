@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "5f8e1d085324599d817bee206510636017b5f3e976e777fd0ef329a0a47d0a09",
+  "compiler_sha256": "83846efb7b03f15fd930c8cae652ab8d1a371293074d30d061c8c9e203123666",
   "normalization": "module-header-root-v2",
-  "batch": "34662",
+  "batch": "34676",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "f095817db77ef19958eec5c4592fbb529b6c6fd2f89cea73f74c76593078a4f8",
+  "compiler_runtime_inventory_sha256": "65364628105cc16ec94535b9cc326c2cf8ddb887e213fe501933059574eeb9fa",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -607,7 +607,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "be890b1311fa65403c6177b7369344d1bb22facf49b62ec2c74d2a6a76138314",
+    "sha256": "3e70cdb4f9c355e259df6976645473bb6a94b41000ea638d51aa263cd48b8e80",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -1694,7 +1694,8 @@
       "compiler/tests/p2/zeiger_variabel.moos": "f79ee9271d30e9ddb16deec95d1c09e90a6f23c2e465ddbfb5d0746c45c13d60",
       "compiler/tests/p2/zeiger_variabel_signed.moos": "906f657322112781fd4c470b88a51e65856a25ca51e8459c522659bd4da33220",
       "compiler/tests/p2/zeiger_variabel_u64.moos": "3518b4e79307acb9d195dcf18cd56c9b571d661133d75bb70a55d8bd1a3de263",
-      "compiler/tests/p7/bare_schnellweg.moos": "19ae16ec34272bb3c891d4ba975a72ce9b3d6b9009c8b9dc25da80e9146413f9",
+      "compiler/tests/p7/bare_ohne_fpu.moos": "3008c87db5cf2e8c07fe12985669b720d33b7fc86633a28ca8a7efd48eddff69",
+      "compiler/tests/p7/bare_schnellweg.moos": "dc41d7ea11074563bcabf98f9926fb5ce4b042f554027c3897eae0d1fb79babd",
       "compiler/tests/p7/bench_bare_zahl_kern.moos": "739d2e7756aacafd43cf962eec304340672659782812dbf54175241de0117461",
       "compiler/tests/p7/hardware/assembler_aarch64.moos": "531b0962a67cdf071d5885848242f7a255f8776f5ba42613172734c923d24683",
       "compiler/tests/p7/hardware/assembler_ausgang_anweisung.moos": "c9aeb99beb729d941a1cc92a77c71bcbb7c909968eb8028ad417a52e827628a3",
@@ -1974,7 +1975,7 @@
     },
     "beispiele/bootloader/stage2.moos": {
       "status": "ok",
-      "sha256": "ea4f7f6af84e9d3ba133bc3d692507fc5268be93c3fa6a15240b3e429a0624ad"
+      "sha256": "bcb08a333c49a0f0e980ecc27f14cc2992dd1aa03302ec14be454b8a3bb98740"
     },
     "beispiele/boulder_dash.moos": {
       "status": "ok",
@@ -2414,11 +2415,11 @@
     },
     "beispiele/kernel/arm64_test.moos": {
       "status": "ok",
-      "sha256": "23d5aaf291c82f656ecc7e2ac68b762851c189749cd942c5277f28f83962b639"
+      "sha256": "1f2cbc8443086360cec20a30d700eb5b75e0a171e79512f4711c91d572bfacac"
     },
     "beispiele/kernel/hallo_kern.moos": {
       "status": "ok",
-      "sha256": "1fad30305796189fdcd91afd2f64271cb4f2bc1f6a365f5e4a5546840d792ae2"
+      "sha256": "0beb60cdfe060df300a2b35dbca01fd0f08469aa07c20090b05d9b8f1aa3f9f5"
     },
     "beispiele/kernel/moo_bootvertrag.moos": {
       "status": "ok",
@@ -2426,7 +2427,7 @@
     },
     "beispiele/kernel/nativ_kern.moos": {
       "status": "ok",
-      "sha256": "00ea228fda61307ab48427caa5286f131daf8bd4b64d52dbf072f7df5dfb3be0"
+      "sha256": "84b859d0a5a7c0d2b7ca1ca70c39d9b5952024b3d6b3f95b706be7dfe1d72ed6"
     },
     "beispiele/kernel/nativ_seriell.moos": {
       "status": "ok",
@@ -2438,7 +2439,7 @@
     },
     "beispiele/kernel/pf_test.moos": {
       "status": "ok",
-      "sha256": "e87d1412725316b6625459197e4dca431c825190eef2c44a0b46ef1670444ebe"
+      "sha256": "ab03f79efd0a2b1529e83097c3f6b952711c75880dbc8fbee80f43d34105a484"
     },
     "beispiele/kernel/speicher_gpt.moos": {
       "status": "ok",
@@ -2446,7 +2447,7 @@
     },
     "beispiele/kernel/stackprot_test.moos": {
       "status": "ok",
-      "sha256": "8e07c3a924449f1255707ede52e9aea06f62828c0a11999a8e6e591512a557ee"
+      "sha256": "b1b4c267789e1d5b780c430604a17117c91d633ece0dadc511669a92f828b6a4"
     },
     "beispiele/kernel/test_neustart.moos": {
       "status": "ok",

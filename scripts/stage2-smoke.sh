@@ -26,7 +26,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/compiler/target/release/moo-compiler"
+BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 MOO_SRC="$ROOT/beispiele/bootloader/stage2.moos"
 ENTRY_S="$ROOT/beispiele/bootloader/stage2_entry.S"
 STAGE1_S="$ROOT/beispiele/bootloader/stage1_loader.S"

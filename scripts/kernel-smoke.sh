@@ -46,6 +46,57 @@ ELF="$OUT/hallo_kern.elf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# P7-T21: derselbe Smoke-Einstieg fuer zwei echte CPUs ohne FPU.
+# Builtins-Archiv passend zum Ziel explizit angeben (libgcc oder compiler-rt).
+# Beispiel: KERNEL_OHNE_FPU=arm MOO_SOFTFLOAT_BUILTINS=/.../libclang_rt.builtins-armv7m.a
+if [ -n "${KERNEL_OHNE_FPU:-}" ]; then
+  [ -x "$MOO_BIN" ] || fail "Compiler fehlt: $MOO_BIN"
+  [ -f "${MOO_SOFTFLOAT_BUILTINS:-}" ] || fail "MOO_SOFTFLOAT_BUILTINS fehlt"
+  FP_OUT="${MOO_OHNE_FPU_OUT:-$OUT}"
+  mkdir -p "$FP_OUT" || fail "Ausgabeordner"
+  FP_FLAGS=()
+  case "$KERNEL_OHNE_FPU" in
+    arm)
+      FP_TARGET=thumbv7m-none-eabi
+      FP_FLAGS=(--target=thumbv7m-none-eabi -mcpu=cortex-m3 -mthumb -mfloat-abi=soft)
+      FP_QEMU=("${MOO_OHNE_FPU_QEMU:-qemu-system-arm}" -M lm3s6965evb -cpu cortex-m3
+               -display none -monitor none -serial none -semihosting-config enable=on,target=native)
+      ;;
+    rv64)
+      FP_TARGET=riscv64-bare
+      FP_FLAGS=(--target=riscv64-none-elf -march=rv64imac -mabi=lp64 -mcmodel=medany -msmall-data-limit=0)
+      FP_QEMU=("${MOO_OHNE_FPU_QEMU:-qemu-system-riscv64}" -M virt -m 128M -smp 1
+               -cpu rv64,f=false,d=false,zfa=false -bios none -display none -monitor none -serial stdio)
+      ;;
+    *) fail "KERNEL_OHNE_FPU erwartet arm oder rv64";;
+  esac
+  for tool in clang ld.lld llvm-readelf llvm-objdump timeout "${FP_QEMU[0]}"; do
+    command -v "$tool" >/dev/null || fail "Werkzeug fehlt: $tool"
+  done
+  "$MOO_BIN" compile "$ROOT/compiler/tests/p7/bare_ohne_fpu.moos" --no-stdlib \
+      --target "$FP_TARGET" -o "$FP_OUT/moo.o" || fail "Moo ohne FPU"
+  clang "${FP_FLAGS[@]}" -O2 -ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
+      -DMOO_BARE -c "$ROOT/compiler/runtime/moo_bare.c" -o "$FP_OUT/runtime.o" || fail "Bare-Runtime"
+  clang "${FP_FLAGS[@]}" -O2 -ffreestanding -fno-builtin -ffunction-sections -fdata-sections \
+      -c "$ROOT/compiler/tests/p7/bare_ohne_fpu_probe.c" -o "$FP_OUT/probe.o" || fail "Ergebnisadapter"
+  clang "${FP_FLAGS[@]}" -c "$ROOT/compiler/tests/p7/bare_ohne_fpu_start.S" \
+      -o "$FP_OUT/start.o" || fail "Startup"
+  clang "${FP_FLAGS[@]}" -E -P -x c "$ROOT/compiler/tests/p7/bare_ohne_fpu.ld" \
+      -o "$FP_OUT/link.ld" || fail "Linkerscript"
+  ld.lld --gc-sections -T "$FP_OUT/link.ld" "$FP_OUT/start.o" "$FP_OUT/moo.o" \
+      "$FP_OUT/runtime.o" "$FP_OUT/probe.o" "$MOO_SOFTFLOAT_BUILTINS" \
+      -o "$FP_OUT/test.elf" || fail "Softfloat-Link"
+  llvm-readelf -h -A "$FP_OUT/test.elf" > "$FP_OUT/elf.txt" || fail "ELF"
+  llvm-objdump -d "$FP_OUT/test.elf" > "$FP_OUT/disasm.txt" || fail "Disassembly"
+  timeout 20s "${FP_QEMU[@]}" -kernel "$FP_OUT/test.elf" > "$FP_OUT/qemu.log" 2>&1
+  FP_RC=$?
+  cat "$FP_OUT/qemu.log"
+  [ "$FP_RC" = 0 ] || fail "QEMU ohne FPU: RC=$FP_RC"
+  grep -qx 'MOO-OHNE-FPU PASS 13' "$FP_OUT/qemu.log" || fail "13 Ergebnisse nicht bestaetigt"
+  echo "PASS: $KERNEL_OHNE_FPU ohne Hardware-FPU, echte Bare-Runtime."
+  exit 0
+fi
+
 echo "############################################################"
 echo "# moo Kernel-Smoke (Plan-010 T1)"
 echo "# Kernel : $KERNEL_SRC"
