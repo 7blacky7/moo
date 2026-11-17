@@ -13,6 +13,30 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/nvme.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T27: nativer NVMe-Pollingtreiber, getrennte Admin-/Read-Whitelist, PFA/MMIO und gemeinsamer GPT-Leser; Standalone-IR und readonly QEMU-NVMe-Trace-Gates"
+    },
+    {
+      "path": "beispiele/kernel/speicher_gpt.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T27: vorhandenen P7-T26-GPT-Leser gemeinsam fuer USB und NVMe verwenden, gleiche CRC/GUID/Bereichspruefungen und SysV-Blockcallback; Native- und QEMU-Gates"
+    },
+    {
       "path": "beispiele/uefi/hardware_crc.moos",
       "category": "profile",
       "args": [

@@ -183,8 +183,8 @@ PY
   MSC="${MOO_UEFI_USB_STORAGE:-0}"
   MSC_SERIE=FE1234567890ABCD
   case "$MSC" in 0|1|gross|falsche-serie) ;; *) fail "USB_STORAGE: 0, 1, gross oder falsche-serie";; esac
-  msc_fingerabdruck() {
-    uv run --no-project python - "$OUT/usb-gpt.img" <<'PY'
+  speicher_fingerabdruck() {
+    uv run --no-project python - "${1:-$OUT/usb-gpt.img}" <<'PY'
 import hashlib, json, os, stat, sys
 fd = os.open(sys.argv[1], os.O_RDONLY)
 st = os.fstat(fd)
@@ -214,21 +214,25 @@ os.close(fd)
 print(json.dumps(dict(size=st.st_size, extents=extents, sha256=h.hexdigest()), sort_keys=True))
 PY
   }
-  if [ "$MSC" != 0 ]; then
-    [ "${MOO_UEFI_USB:-1}" = 1 ] && [ "${MOO_UEFI_NETZ:-1}" = 1 ] || fail "MSC-Gate braucht USB=1 und NETZ=1"
-    command -v sfdisk >/dev/null || fail "MSC-Gate braucht sfdisk"
-    [ ! -e "$OUT/usb-gpt.img" ] || [ -f "$OUT/usb-gpt.img" ] || fail "Testimage ist keine reguläre Datei"
-    rm -f "$OUT/usb-gpt.img"
-    MSC_SIZE=64M; [ "$MSC" != gross ] || MSC_SIZE=3T
-    truncate -s "$MSC_SIZE" "$OUT/usb-gpt.img" || fail "MSC-Testimage"
-    sfdisk "$OUT/usb-gpt.img" >"$OUT/usb-gpt-layout.log" 2>&1 <<'GPT' || fail "GPT-Testimage"
+  # Gemeinsamer vorhandener GPT-Testaufbau fuer USB und NVMe.
+  speicher_testimage() {
+    command -v sfdisk >/dev/null || fail "Speicher-Gate braucht sfdisk"
+    [ ! -e "$1" ] || [ -f "$1" ] || fail "Testimage ist keine regulaere Datei"
+    rm -f -- "$1"
+    truncate -s "$2" -- "$1" || fail "Speicher-Testimage"
+    sfdisk --sector-size "$3" "$1" >"$4" 2>&1 <<'GPT' || fail "GPT-Testimage"
 label: gpt
 label-id: AABBCCDD-1122-3344-5566-778899AABBCC
 
 start=2048, size=2048, type=linux, uuid=12345678-9ABC-DEF0-1234-56789ABCDEF0, name=MOO-READONLY
 GPT
-    sfdisk --verify "$OUT/usb-gpt.img" >>"$OUT/usb-gpt-layout.log" 2>&1 || fail "GPT-Layoutprüfung"
-    msc_fingerabdruck >"$OUT/usb-gpt-vorher.json" || fail "MSC-Fingerabdruck"
+    sfdisk --sector-size "$3" --verify "$1" >>"$4" 2>&1 || fail "GPT-Layoutpruefung"
+  }
+  if [ "$MSC" != 0 ]; then
+    [ "${MOO_UEFI_USB:-1}" = 1 ] && [ "${MOO_UEFI_NETZ:-1}" = 1 ] || fail "MSC-Gate braucht USB=1 und NETZ=1"
+    MSC_SIZE=64M; [ "$MSC" != gross ] || MSC_SIZE=3T
+    speicher_testimage "$OUT/usb-gpt.img" "$MSC_SIZE" 512 "$OUT/usb-gpt-layout.log"
+    speicher_fingerabdruck >"$OUT/usb-gpt-vorher.json" || fail "MSC-Fingerabdruck"
     uv run --no-project python - "$OUT/KERN.ELF" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
@@ -244,6 +248,35 @@ print("      OK: private QEMU-Kernkopie, BDF68/46F4:0001/FE1234567890ABCD")
 PY
     [ "$?" -eq 0 ] || fail "MSC-Zielvertrag in privater ELF-Kopie"
     [ "$MSC" != falsche-serie ] || MSC_SERIE=FE1234567890ABCE
+  fi
+  # P7-T27: NVMe nur auf eigenem Image; Produktziel bleibt deaktiviert.
+  NVME="${MOO_UEFI_NVME:-0}"
+  case "$NVME" in 0|1|gross|4k|falsche-serie|falscher-namespace) ;; *) fail "NVME: 0, 1, gross, 4k, falsche-serie oder falscher-namespace";; esac
+  NVME_SERIE=MOONVME-READONLY-001
+  NVME_BLOCK=512
+  if [ "$NVME" != 0 ]; then
+    [ "${MOO_UEFI_NETZ:-1}" = 1 ] || fail "NVMe-Gate braucht NETZ=1"
+    NVME_SIZE=64M; [ "$NVME" != gross ] || NVME_SIZE=3T
+    [ "$NVME" != 4k ] || NVME_BLOCK=4096
+    speicher_testimage "$OUT/nvme-gpt.img" "$NVME_SIZE" "$NVME_BLOCK" "$OUT/nvme-gpt-layout.log"
+    speicher_fingerabdruck "$OUT/nvme-gpt.img" >"$OUT/nvme-gpt-vorher.json" || fail "NVMe-Fingerabdruck"
+    uv run --no-project python - "$OUT/KERN.ELF" "$NVME" <<'PY'
+import pathlib, struct, sys
+path = pathlib.Path(sys.argv[1])
+elf = bytearray(path.read_bytes())
+contract = struct.pack("<8Q", 0x4E564D45524F3031, 65536, 1, 0, 0, 0, 0, 0)
+assert elf.count(contract) == 1, "Eindeutiger deaktivierter NVMe-Zielvertrag fehlt"
+pos = elf.index(contract)
+nsid = 0xfffffffe if sys.argv[2] == "falscher-namespace" else 1
+struct.pack_into("<3Q", elf, pos + 8, 0x70, nsid, 20)
+elf[pos + 32:pos + 52] = b"MOONVME-READONLY-001"
+path.write_bytes(elf)
+print("      OK: private QEMU-NVMe-Kernkopie, BDF70/NSID%d/exakteSN20" % nsid)
+PY
+    [ "$?" -eq 0 ] || fail "NVMe-Zielvertrag in privater ELF-Kopie"
+    [ "$NVME" != falsche-serie ] || NVME_SERIE=MOONVME-READONLY-002
+    printf '%s\n' pci_nvme_mmio_start_success pci_nvme_admin_cmd pci_nvme_io_cmd \
+      pci_nvme_enqueue_req_completion pci_nvme_read >"$OUT/nvme-trace-events"
   fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
@@ -290,6 +323,12 @@ PY
   if [ "$MSC" != 0 ]; then
     KERN_QEMU+=(-drive "if=none,id=msc,format=raw,readonly=on,file=$OUT/usb-gpt.img"
       -device "usb-storage,bus=xhci.0,drive=msc,serial=$MSC_SERIE,pcap=$OUT/usb.pcap")
+  fi
+  if [ "$NVME" != 0 ]; then
+    KERN_QEMU+=(-drive "if=none,id=nvmedisk,format=raw,readonly=on,file=$OUT/nvme-gpt.img"
+      -device "nvme,id=nvme0,serial=$NVME_SERIE,addr=0xe"
+      -device "nvme-ns,bus=nvme0,drive=nvmedisk,nsid=1,logical_block_size=$NVME_BLOCK,physical_block_size=$NVME_BLOCK"
+      -trace "events=$OUT/nvme-trace-events,file=$OUT/nvme.trace")
   fi
   timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
@@ -382,7 +421,7 @@ PY
     done
   fi
   if [ "$MSC" != 0 ]; then
-    msc_fingerabdruck >"$OUT/usb-gpt-nachher.json" || fail "MSC-Fingerabdruck nach QEMU"
+    speicher_fingerabdruck >"$OUT/usb-gpt-nachher.json" || fail "MSC-Fingerabdruck nach QEMU"
     cmp "$OUT/usb-gpt-vorher.json" "$OUT/usb-gpt-nachher.json" || fail "MSC-Testimage verändert"
     uv run --no-project python - "$OUT" "$MSC" <<'PY'
 import pathlib, re, struct, sys
@@ -467,6 +506,82 @@ else:
 print("      OK: USB-MSC %s, %d CBWs nur lesend, keine Data-OUT-Phase, Image unverändert" % (mode, len(ops)))
 PY
     [ "$?" -eq 0 ] || fail "USB-MSC BOT/GPT/Serien-/Nur-Lese-Gate"
+  fi
+  if [ "$NVME" != 0 ]; then
+    speicher_fingerabdruck "$OUT/nvme-gpt.img" >"$OUT/nvme-gpt-nachher.json" || fail "NVMe-Fingerabdruck nach QEMU"
+    cmp "$OUT/nvme-gpt-vorher.json" "$OUT/nvme-gpt-nachher.json" || fail "NVMe-Testimage veraendert"
+    uv run --no-project python - "$OUT" "$NVME" "$NVME_BLOCK" <<'PY'
+import json, pathlib, re, sys
+out, mode, block = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+serial = (out / "serial.log").read_text(errors="replace")
+trace = (out / "nvme.trace").read_text(errors="replace")
+# Firmware darf eigene Initialisierung haben. Der letzte CC.EN-Start gehoert
+# zum Kern; nur dieser Abschnitt muss exakt mit dessen Log uebereinstimmen.
+start = trace.rfind("pci_nvme_mmio_start_success")
+assert start >= 0, "NVMe-Controllerstart fehlt"
+trace = trace[start:]
+commands = []
+for line in trace.splitlines():
+    m = re.search(r"pci_nvme_(admin|io)_cmd cid (\d+)(?: nsid 0x[0-9a-f]+)? sqid (\d+) opc 0x([0-9a-f]+)", line)
+    if m:
+        kind, cid, queue, op = m.groups()
+        cid, queue, op = int(cid), int(queue), int(op, 16)
+        assert (kind == "admin" and queue == 0 and op in {0,1,2,4,5,6,10}) or (kind == "io" and queue == 1 and op == 2), line
+        commands.append((queue, op, cid))
+def values(name):
+    return [int(x, 16) for x in re.findall(r"MOO-KERNEL NVME " + name + r" ([0-9A-F]{16})", serial)]
+logged = list(zip(values("QUEUE"), values("OPCODE"), values("CID")))
+assert commands and commands == logged, (commands, logged)
+assert len(values("QUEUE")) == len(values("OPCODE")) == len(values("CID"))
+completions = [tuple(int(x, 16) if i >= 2 else int(x) for i,x in enumerate(m))
+               for m in re.findall(r"pci_nvme_enqueue_req_completion cid (\d+) cqid (\d+) dw0 0x([0-9a-f]+) dw1 0x([0-9a-f]+) status 0x([0-9a-f]+)", trace)]
+words = list(zip(*(values("CQ-DW%d" % i) for i in range(4))))
+assert len(completions) == len(commands) == len(words), (len(completions),len(commands),len(words))
+queue_counts = [0,0]
+for (queue,op,cid), (event_cid,event_queue,dw0,dw1,status), word in zip(commands,completions,words):
+    assert (event_queue,event_cid) == (queue,cid)
+    assert word[:2] == (dw0,dw1) and word[2] >> 16 == queue and word[2] & 0xffff < 8
+    assert word[3] & 0xffff == cid and (word[3] >> 17) == status
+    assert (word[3] >> 16) & 1 == (1 ^ ((queue_counts[queue] // 8) & 1))
+    expected_status = 0x400b if mode == "falscher-namespace" and cid == 2 else 0
+    assert status == expected_status, (queue,op,cid,status)
+    queue_counts[queue] += 1
+assert values("SCT") == [0] * len(commands)
+assert values("SC") == ([0,11] if mode == "falscher-namespace" else [0] * len(commands))
+assert values("DNR") == ([0,1] if mode == "falscher-namespace" else [0] * len(commands))
+admin = [op for q,op,cid in commands if q == 0]
+reads = [tuple(int(x,16) if i == 4 else int(x) for i,x in enumerate(m))
+         for m in re.findall(r"pci_nvme_read cid (\d+) nsid (\d+) nlb (\d+) count (\d+) lba 0x([0-9a-f]+)", trace)]
+if mode == "falsche-serie":
+    assert admin == [6] and not reads and all(q == 0 for q,op,cid in commands)
+    assert values("SERIE-OK") == [0] and values("BEREIT") == [0] and values("READS") == [0]
+    assert "MOO-KERNEL NVME GPT " not in serial
+elif mode == "falscher-namespace":
+    assert admin == [6,6] and not reads and all(q == 0 for q,op,cid in commands)
+    assert values("SERIE-OK") == [1] and values("BEREIT") == [0] and values("READS") == [0]
+    assert values("FEHLER") == [0x1e] and "MOO-KERNEL NVME GPT " not in serial
+else:
+    assert admin == [6,6,10,2,5,1,0,4], admin
+    assert len(reads) == sum(q == 1 for q,op,cid in commands) == values("READS")[0]
+    last = (out / "nvme-gpt.img").stat().st_size // block - 1
+    assert all(ns == 1 and nlb == 1 and count == block and lba <= last for cid,ns,nlb,count,lba in reads)
+    assert {0,1,last} <= {x[4] for x in reads}
+    if mode == "gross":
+        assert last > 0xffffffff and any(x[4] > 0xffffffff for x in reads)
+    if block == 512:
+        assert values("IO-CQ-UMLAUF")[0] >= 4
+    assert values("ADMIN-CQ-UMLAUF") == [1]
+    assert values("SERIE-OK") == [1] and values("BEREIT") == [1] and values("BLOCKBYTES") == [block]
+    for marker in ("GPT HEADER CRC OK 0000000000000001", "GPT ARRAY CRC OK 0000000000000001",
+                   "GPT BACKUP HEADER OK 0000000000000001", "GPT PARTITIONEN 0000000000000001",
+                   "GPT ERSTE LBA 0000000000000800", "GPT LETZTE LBA 0000000000000FFF",
+                   "GPT PART GUID {12345678-9ABC-DEF0-1234-56789ABCDEF0} 0000000000000001"):
+        assert "MOO-KERNEL NVME " + marker in serial, marker
+    assert "MOO-KERNEL NVME FEHLER " not in serial and "MOO-KERNEL NVME OPCODE-GESPERRT " not in serial
+(out / "nvme-befehle.json").write_text(json.dumps(dict(mode=mode,blockbytes=block,commands=commands,reads=reads,completions=completions),indent=2)+"\n")
+print("      OK: NVMe %s, %d Admin/%d Reads, jedes CQE/CID/Phase gegen QEMU-Trace, Image unveraendert" % (mode,len(admin),len(reads)))
+PY
+    [ "$?" -eq 0 ] || fail "NVMe-Opcode/CQE/GPT/Serien-/Nur-Lese-Gate"
   fi
   [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
@@ -745,7 +860,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
     # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
-    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 2027" "N 2028" "N 2029" "N 2030" "N 2031" "N 999"; do
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 2027" "N 2028" "N 2029" "N 2030" "N 2031" "N 2032" "N 2033" "N 2034" "N 2035" "N 2036" "N 999"; do
       tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
     done
     echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"

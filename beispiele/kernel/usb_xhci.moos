@@ -4,7 +4,7 @@
 # Keine Hubs, Maus, Hotplug, MSI/INTx. Kein Firmwaredienst nach ExitBootServices.
 # DMA kommt als zusammenhaengender, identisch gemappter PFA-Block (64 Seiten).
 # Endliche Wartezeiten; bei Fehler Controller anhalten, DMA niemals wiedergeben.
-aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt
+aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt, nt_null
 
 # 0 CAP,1 OP,2 DB,3 RT,4 DMA,5 Contextgroesse,6/7 CMD Index/Cycle,
 # 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
@@ -247,10 +247,7 @@ funktion xh_setze(f: u64, w: u64) -> void:
 @nativ
 funktion xh_null(p: u64, n: u64) -> void:
     unsicher:
-        setze i: u64 auf 0
-        solange i < n:
-            speicher_schreiben(p + i, 0, 8)
-            setze i auf i + 8
+        nt_null(p, n)
 
 # TSC ist bereits vom vorhandenen Kern kalibriert.
 @nativ

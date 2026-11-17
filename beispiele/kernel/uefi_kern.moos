@@ -21,6 +21,7 @@
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
 aus "usb_speicher" importiere usb_speicher_pruefen
+aus "nvme" importiere nvme_pruefen
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall
 aus "../uefi/hardware_pci" importiere takt
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
@@ -36,6 +37,12 @@ konstante USB_LESEN_SERIE: [u8; _] auf "AA00000000000489"
 funktion usb_leseziel(index: u64) -> u64:
     unsicher:
         gib_zurück speicher_lesen(adresse_von(USB_LESEN_ZIEL) + index * 8, 8)
+
+# P7-T27: interne SSD bleibt deaktiviert, bis BDF, NSID und exakte SN20
+# vom Koordinator fuer einen lesenden Lauf freigegeben sind. 65536 ist KEINE BDF.
+# Private QEMU-Kopie patcht diesen 64-Byte-Datenvertrag, nie Produkt-Testwerte.
+@nativ
+statisch NVME_LESEN_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 1, 0, 0, 0, 0, 0]
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -2084,6 +2091,9 @@ funktion kern_haupt(bi: u64) -> void:
         netz_spuelen()
         testlauf_poll(adresse_von(meldung))
         testlauf_rueckfall(adresse_von(meldung))
+        # Ausschliesslich nach dem Rueckfall-Guard; DMA bleibt dauerhaft im PFA.
+        wenn speicher_lesen(adresse_von(NVME_LESEN_ZIEL) + 8, 8) < 65536:
+            nvme_pruefen(pfa_nehme(39), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(NVME_LESEN_ZIEL))
         meldung(adresse_von(T_FORMATE), formate_pruefen())
         # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
         setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite

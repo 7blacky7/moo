@@ -1,12 +1,13 @@
 # P7-T26: USB-MSC/BOT, ausschliesslich lesende SCSI-Kommandos.
 # Verwendet den EINEN xHCI-Hostpfad; synchrone Diagnose VOR dem HID-Start.
 # LUN0, direkt am Rootport, keine Streams/UAS/Hubs. DMA: mindestens99 PFA-Seiten.
-# Seite0..63 xHCI inkl.Scratchpads;64 Daten;65 CBW/CSW;66 CRC-Tabelle.
+# Seite0..63 xHCI inkl.Scratchpads;64 Daten;65 CBW/CSW/GPT-Kopf/Kontext;66 CRC-Tabelle.
 # Seite67..98 haelt die komplette, auf128KiB begrenzte GPT-Eintragstabelle.
 # IN-Ring Seite7, OUT-Ring Seite9; HID benutzt die Arena erst nach Controller-Stopp.
 aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us
 aus "../uefi/hardware_pci" importiere nt_mmio_glocke32, takt
-aus "../uefi/hardware_crc" importiere hw_crc_tabelle, hw_crc_fortsetzen, hw_crc32
+aus "../uefi/hardware_crc" importiere hw_crc_tabelle
+aus "./speicher_gpt" importiere gp_hex_ziffer, gp_guid_format, gp_kopf, gp_eintrag, gp_kontext, gp_anzahl, gp_lesen
 aus "../uefi/netz_geraet" importiere nt_kopiere
 
 # 0 DMA,1 Daten,2 CBW,3 CSW,4 CRC,5 erlaubte VID/PID (PID<<16|VID),
@@ -497,6 +498,7 @@ funktion ms_scsi_starten() -> bool:
         gib_zurück ms(18) >= 34 und ms(17) >= 512 und ms(17) <= 4096 und (ms(17) & (ms(17) - 1)) == 0
 
 @nativ
+@aufrufkonvention("sysv64")
 funktion ms_lese_block(lba: u64) -> bool:
     unsicher:
         setze op: u64 auf 0x28
@@ -507,225 +509,39 @@ funktion ms_lese_block(lba: u64) -> bool:
         gib_zurück ms(16) == ms(17)
 
 # GPT-Header und Eintraege: UEFI2.10/edk2 UefiGpt.h; CRC wie Linux efi.c.
-# Maximal128KiB Eintragstabelle liegen vollstaendig im eigenen PFA-RAM.
+# Die bisherigen Helfernamen bleiben fuer Nutzer und Native-Orakel erhalten.
 @nativ
-statisch MS_GUID: [u8; 96] auf 0
-@nativ
-konstante MS_T_GPT_KOPF: [u8; _] auf "MOO-KERNEL USB MSC GPT HEADER CRC OK "
-@nativ
-konstante MS_T_GPT_TABELLE: [u8; _] auf "MOO-KERNEL USB MSC GPT ARRAY CRC OK "
-@nativ
-konstante MS_T_GPT_BACKUP: [u8; _] auf "MOO-KERNEL USB MSC GPT BACKUP HEADER OK "
-@nativ
-konstante MS_T_GPT_TAIL: [u8; _] auf "MOO-KERNEL USB MSC GPT BACKUP NICHT MEDIUMENDE "
-@nativ
-konstante MS_T_GPT_DISK: [u8; _] auf "MOO-KERNEL USB MSC GPT DISK GUID "
-@nativ
-konstante MS_T_GPT_GUID: [u8; _] auf "MOO-KERNEL USB MSC GPT PART GUID "
-@nativ
-konstante MS_T_GPT_TYP: [u8; _] auf "MOO-KERNEL USB MSC GPT TYPE GUID "
-@nativ
-konstante MS_T_GPT_ANZAHL: [u8; _] auf "MOO-KERNEL USB MSC GPT PARTITIONEN "
-@nativ
-konstante MS_T_GPT_ANFANG: [u8; _] auf "MOO-KERNEL USB MSC GPT ERSTE LBA "
-@nativ
-konstante MS_T_GPT_ENDE: [u8; _] auf "MOO-KERNEL USB MSC GPT LETZTE LBA "
-@nativ
-konstante MS_T_GPT_ATTR: [u8; _] auf "MOO-KERNEL USB MSC GPT ATTRIBUTE "
+konstante MS_T_GPT_PRAEFIX: [u8; _] auf "MOO-KERNEL USB MSC "
 
 @nativ
 funktion ms_hex_ziffer(wert: u64) -> u8:
     unsicher:
-        wenn wert < 10:
-            gib_zurück u8(wert + 48)
-        gib_zurück u8(wert + 55)
+        gib_zurück gp_hex_ziffer(wert)
 
-# GUID.Data1/2/3 sind little-endian; Data4 bleibt Bytefolge. Keine Test-GUID.
 @nativ
 funktion ms_guid_format(praefix: u64, guid: u64) -> u64:
     unsicher:
-        setze ziel: u64 auf adresse_von(MS_GUID)
-        setze pos: u64 auf 0
-        setze j: u64 auf 0
-        setze idx: u64 auf 0
-        setze wert: u64 auf 0
-        xh_null(ziel, 96)
-        solange pos < 48 und u64(speicher_lesen(praefix + pos, 1)) != 0:
-            speicher_schreiben(ziel + pos, speicher_lesen(praefix + pos, 1), 1)
-            setze pos auf pos + 1
-        speicher_schreiben(ziel + pos, 123, 1)
-        setze pos auf pos + 1
-        solange j < 16:
-            wenn j == 4 oder j == 6 oder j == 8 oder j == 10:
-                speicher_schreiben(ziel + pos, 45, 1)
-                setze pos auf pos + 1
-            setze idx auf j
-            wenn j < 4:
-                setze idx auf 3 - j
-            sonst wenn j < 6:
-                setze idx auf 9 - j
-            sonst wenn j < 8:
-                setze idx auf 13 - j
-            setze wert auf u64(speicher_lesen(guid + idx, 1))
-            speicher_schreiben(ziel + pos, ms_hex_ziffer(wert >> 4), 1)
-            speicher_schreiben(ziel + pos + 1, ms_hex_ziffer(wert & 15), 1)
-            setze pos auf pos + 2
-            setze j auf j + 1
-        speicher_schreiben(ziel + pos, 125, 1)
-        speicher_schreiben(ziel + pos + 1, 32, 1)
-        gib_zurück ziel
+        gib_zurück gp_guid_format(praefix, guid)
 
-# Integritaet, Groessen und Mediengrenzen. Ein Backup innerhalb eines groesseren
-# Mediums wird gelesen und spaeter explizit als Lageabweichung geloggt (Linux
-# efi.c:544); keine schreibende GPT-Reparatur und keine verschwiegene Konformitaet.
 @nativ
 funktion ms_gpt_kopf(daten: u64, kopf_lba: u64) -> bool:
     unsicher:
-        setze groesse: u64 auf u64(speicher_lesen(daten + 12, 4))
-        setze erwartet: u64 auf u64(speicher_lesen(daten + 16, 4))
-        setze alternativ: u64 auf u64(speicher_lesen(daten + 32, 8))
-        setze erste: u64 auf u64(speicher_lesen(daten + 40, 8))
-        setze letzte: u64 auf u64(speicher_lesen(daten + 48, 8))
-        setze tabelle: u64 auf u64(speicher_lesen(daten + 72, 8))
-        setze anzahl: u64 auf u64(speicher_lesen(daten + 80, 4))
-        setze breite: u64 auf u64(speicher_lesen(daten + 84, 4))
-        setze bytezahl: u64 auf 0
-        setze bloecke: u64 auf 0
-        setze crc: u64 auf 0
-        wenn ms(17) < 512 oder ms(17) > 4096 oder (ms(17) & (ms(17) - 1)) != 0:
-            gib_zurück falsch
-        wenn u64(speicher_lesen(daten, 8)) != 0x5452415020494645 oder u64(speicher_lesen(daten + 8, 4)) != 0x00010000 oder groesse < 92 oder groesse > ms(17) oder u64(speicher_lesen(daten + 20, 4)) != 0:
-            gib_zurück falsch
-        wenn kopf_lba == 0 oder kopf_lba > ms(18) oder u64(speicher_lesen(daten + 24, 8)) != kopf_lba oder alternativ == 0 oder alternativ > ms(18) oder alternativ == kopf_lba:
-            gib_zurück falsch
-        wenn erste < 2 oder letzte < erste oder letzte >= ms(18):
-            gib_zurück falsch
-        wenn (u64(speicher_lesen(daten + 56, 8)) | u64(speicher_lesen(daten + 64, 8))) == 0:
-            gib_zurück falsch
-        wenn anzahl == 0 oder anzahl > 1024 oder breite < 128 oder breite > 16384 oder (breite & (breite - 1)) != 0:
-            gib_zurück falsch
-        setze bytezahl auf anzahl * breite
-        wenn bytezahl < 16384 oder bytezahl > 131072:
-            gib_zurück falsch
-        setze bloecke auf (bytezahl + ms(17) - 1) / ms(17)
-        wenn tabelle < 2 oder tabelle > ms(18) oder bloecke - 1 > ms(18) - tabelle:
-            gib_zurück falsch
-        wenn kopf_lba == 1:
-            wenn alternativ <= letzte oder tabelle >= erste oder bloecke > erste - tabelle:
-                gib_zurück falsch
-        sonst:
-            wenn alternativ != 1 oder tabelle <= letzte oder tabelle >= kopf_lba oder bloecke > kopf_lba - tabelle:
-                gib_zurück falsch
-        # Nur die RAM-Kopie fuer die CRC-Berechnung aendern und immer restaurieren.
-        speicher_schreiben(daten + 16, 0, 4)
-        setze crc auf u64(hw_crc32(ms(4), daten, groesse))
-        speicher_schreiben(daten + 16, u32(erwartet), 4)
-        gib_zurück crc == erwartet
+        gib_zurück gp_kopf(daten, kopf_lba, ms(17), ms(18), ms(4))
 
 @nativ
 funktion ms_gpt_eintrag(daten: u64, erste: u64, letzte: u64) -> bool:
     unsicher:
-        wenn (u64(speicher_lesen(daten, 8)) | u64(speicher_lesen(daten + 8, 8))) == 0:
-            gib_zurück wahr
-        setze start_lba: u64 auf u64(speicher_lesen(daten + 32, 8))
-        setze ende_lba: u64 auf u64(speicher_lesen(daten + 40, 8))
-        wenn start_lba < erste oder ende_lba < start_lba oder ende_lba > letzte:
-            gib_zurück falsch
-        wenn (u64(speicher_lesen(daten + 16, 8)) | u64(speicher_lesen(daten + 24, 8))) == 0:
-            gib_zurück falsch
-        gib_zurück (u64(speicher_lesen(daten + 48, 8)) & 0x0000FFFFFFFFFFF8) == 0
+        gib_zurück gp_eintrag(daten, erste, letzte)
 
-# Erst vollstaendig lesen und CRC/Bounds aller Eintraege pruefen, dann anzeigen.
 @nativ
 funktion ms_gpt_lesen() -> bool:
     unsicher:
-        setze puffer: u64 auf ms(1)
-        setze kopf: u64 auf ms(2) + 128
-        setze tabelle: u64 auf ms(0) + 67 * 4096
-        setze quelle_lba: u64 auf 0
-        setze backup_lba: u64 auf 0
-        setze anzahl: u64 auf 0
-        setze breite: u64 auf 0
-        setze bytezahl: u64 auf 0
-        setze pos: u64 auf 0
-        setze teil: u64 auf 0
-        setze j: u64 auf 0
-        setze k: u64 auf 0
-        setze eintrag: u64 auf 0
-        setze anderer: u64 auf 0
-        setze erste: u64 auf 0
-        setze letzte: u64 auf 0
-        setze partitionen: u64 auf 0
-        setze schutz_mbr: bool auf falsch
-        wenn nicht ms_lese_block(0) oder u64(speicher_lesen(puffer + 510, 2)) != 0xAA55:
-            gib_zurück falsch
-        solange j < 4:
-            wenn u64(speicher_lesen(puffer + 450 + j * 16, 1)) == 0xEE:
-                setze schutz_mbr auf wahr
-            setze j auf j + 1
-        wenn nicht schutz_mbr oder nicht ms_lese_block(1) oder nicht ms_gpt_kopf(puffer, 1):
-            gib_zurück falsch
-        nt_kopiere(kopf, puffer, 92)
-        setze quelle_lba auf u64(speicher_lesen(kopf + 72, 8))
-        setze backup_lba auf u64(speicher_lesen(kopf + 32, 8))
-        setze anzahl auf u64(speicher_lesen(kopf + 80, 4))
-        setze breite auf u64(speicher_lesen(kopf + 84, 4))
-        setze bytezahl auf anzahl * breite
-        setze erste auf u64(speicher_lesen(kopf + 40, 8))
-        setze letzte auf u64(speicher_lesen(kopf + 48, 8))
-        solange pos < bytezahl:
-            wenn nicht ms_lese_block(quelle_lba + pos / ms(17)):
-                gib_zurück falsch
-            setze teil auf ms(17)
-            wenn teil > bytezahl - pos:
-                setze teil auf bytezahl - pos
-            nt_kopiere(tabelle + pos, puffer, teil)
-            setze pos auf pos + teil
-        wenn u64(hw_crc32(ms(4), tabelle, bytezahl)) != u64(speicher_lesen(kopf + 88, 4)):
-            gib_zurück falsch
-        setze j auf 0
-        solange j < anzahl:
-            setze eintrag auf tabelle + j * breite
-            wenn nicht ms_gpt_eintrag(eintrag, erste, letzte):
-                gib_zurück falsch
-            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
-                setze k auf 0
-                solange k < j:
-                    setze anderer auf tabelle + k * breite
-                    wenn (u64(speicher_lesen(anderer, 8)) | u64(speicher_lesen(anderer + 8, 8))) != 0:
-                        wenn u64(speicher_lesen(eintrag + 16, 8)) == u64(speicher_lesen(anderer + 16, 8)) und u64(speicher_lesen(eintrag + 24, 8)) == u64(speicher_lesen(anderer + 24, 8)):
-                            gib_zurück falsch
-                        wenn u64(speicher_lesen(eintrag + 32, 8)) <= u64(speicher_lesen(anderer + 40, 8)) und u64(speicher_lesen(anderer + 32, 8)) <= u64(speicher_lesen(eintrag + 40, 8)):
-                            gib_zurück falsch
-                    setze k auf k + 1
-                setze partitionen auf partitionen + 1
-            setze j auf j + 1
-        # READ16 wird hier fuer grosse Medien tatsaechlich benoetigt.
-        wenn nicht ms_lese_block(backup_lba) oder nicht ms_gpt_kopf(puffer, backup_lba):
-            gib_zurück falsch
-        wenn u64(speicher_lesen(puffer + 40, 8)) != erste oder u64(speicher_lesen(puffer + 48, 8)) != letzte oder u64(speicher_lesen(puffer + 56, 8)) != u64(speicher_lesen(kopf + 56, 8)) oder u64(speicher_lesen(puffer + 64, 8)) != u64(speicher_lesen(kopf + 64, 8)):
-            gib_zurück falsch
-        wenn u64(speicher_lesen(puffer + 80, 4)) != anzahl oder u64(speicher_lesen(puffer + 84, 4)) != breite oder u64(speicher_lesen(puffer + 88, 4)) != u64(speicher_lesen(kopf + 88, 4)):
-            gib_zurück falsch
-        xh_log(adresse_von(MS_T_GPT_KOPF), 1)
-        xh_log(adresse_von(MS_T_GPT_TABELLE), 1)
-        xh_log(adresse_von(MS_T_GPT_BACKUP), 1)
-        wenn backup_lba != ms(18):
-            xh_log(adresse_von(MS_T_GPT_TAIL), backup_lba)
-        xh_log(ms_guid_format(adresse_von(MS_T_GPT_DISK), kopf + 56), 0)
-        setze j auf 0
-        solange j < anzahl:
-            setze eintrag auf tabelle + j * breite
-            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
-                xh_log(ms_guid_format(adresse_von(MS_T_GPT_GUID), eintrag + 16), j + 1)
-                xh_log(ms_guid_format(adresse_von(MS_T_GPT_TYP), eintrag), j + 1)
-                xh_log(adresse_von(MS_T_GPT_ANFANG), u64(speicher_lesen(eintrag + 32, 8)))
-                xh_log(adresse_von(MS_T_GPT_ENDE), u64(speicher_lesen(eintrag + 40, 8)))
-                xh_log(adresse_von(MS_T_GPT_ATTR), u64(speicher_lesen(eintrag + 48, 8)))
-            setze j auf j + 1
-        ms_setze(22, partitionen)
-        xh_log(adresse_von(MS_T_GPT_ANZAHL), partitionen)
-        gib_zurück wahr
+        setze kontext: u64 auf ms(2) + 256
+        setze ergebnis: bool auf falsch
+        gp_kontext(kontext, ms(1), ms(2) + 128, ms(0) + 67 * 4096, ms(4), ms(17), ms(18))
+        setze ergebnis auf gp_lesen(kontext, adresse_von(ms_lese_block), xh(26), adresse_von(MS_T_GPT_PRAEFIX))
+        ms_setze(22, gp_anzahl(kontext))
+        gib_zurück ergebnis
 
 # Ein ausdruecklich freigegebenes Geraet, LUN0; niemals fremde Disks SCSI-proben.
 # Nach der Diagnose den Host stoppen, bevor der bisherige HID-Pfad ihn benutzt.
