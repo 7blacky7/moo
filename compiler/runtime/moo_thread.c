@@ -214,6 +214,12 @@ static void moo_hauptthread_markieren(void) {
 #pragma section(".CRT$XCU", read)
 __declspec(allocate(".CRT$XCU"))
 void (__cdecl* const moo_hauptthread_initialisierung)(void) = moo_hauptthread_markieren;
+/* Den CRT-Eintrag auch bei Ganzprogrammoptimierung als Wurzel erhalten. */
+#ifdef _M_IX86
+#pragma comment(linker, "/include:_moo_hauptthread_initialisierung")
+#else
+#pragma comment(linker, "/include:moo_hauptthread_initialisierung")
+#endif
 #endif
 #endif
 /* Thread-Marke: ihre Adresse kennzeichnet den Thread (warten, Sperre). */

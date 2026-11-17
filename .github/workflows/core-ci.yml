@@ -192,8 +192,10 @@ jobs:
           $probeSource = "compiler\runtime\tests\test_rc_thread_kennung.c"
           $probeObject = Join-Path $out "test_rc_thread_kennung.obj"
           $probeExe = Join-Path $out "test_rc_thread_kennung.exe"
-          $threadObject = Join-Path $out "moo_thread.obj"
-          & $cl /nologo /std:c11 /O2 /W4 /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /Icompiler/runtime $probeSource $threadObject "/Fo$probeObject" "/Fe$probeExe" /link /OPT:REF kernel32.lib
+          $threadObject = Join-Path $out "moo_thread_probe.obj"
+          & $cl /nologo /std:c11 /O2 /GL /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /Icompiler/runtime /c compiler/runtime/moo_thread.c "/Fo$threadObject"
+          if ($LASTEXITCODE -ne 0) { throw "MSVC-Ganzprogrammobjekt des Threadtests fehlgeschlagen" }
+          & $cl /nologo /std:c11 /O2 /GL /W4 /D_CRT_SECURE_NO_WARNINGS /D_CRT_NONSTDC_NO_DEPRECATE /Icompiler/runtime $probeSource $threadObject "/Fo$probeObject" "/Fe$probeExe" /link /LTCG /OPT:REF kernel32.lib
           if ($LASTEXITCODE -ne 0) { throw "MSVC-Link des RC-/Thread-Vertragstests fehlgeschlagen" }
           & $probeExe
           if ($LASTEXITCODE -ne 0) { throw "MSVC RC-/Thread-Vertragstest fehlgeschlagen" }
