@@ -210,8 +210,18 @@ jobs:
       - name: Check failed system thread starts
         shell: bash
         run: |
-          set -o pipefail
-          RC_THREAD_START_TEST=1 RC_STRESS_PROGRAMME=thread_start_fehler \
+          set -euo pipefail
+          # Cargo nennt das tatsaechlich verwendete Build-Verzeichnis, auch aus dem Cache.
+          mkdir -p build
+          cargo build --manifest-path compiler/Cargo.toml --release --message-format=json \
+            > build/thread-start-cargo.json
+          thread_out_dir="$(jq -sr '[.[] | select(.reason == "build-script-executed" and (.package_id | contains("moo-compiler"))) | .out_dir] | unique | if length == 1 then .[0] else error("Runtime-Build-Verzeichnis nicht eindeutig") end' build/thread-start-cargo.json)"
+          case "$RUNNER_OS" in
+            Windows) thread_lib=moo_runtime.lib ;;
+            *) thread_lib=libmoo_runtime.a ;;
+          esac
+          MOO_RUNTIME_LIB="$thread_out_dir/$thread_lib" \
+            RC_THREAD_START_TEST=1 RC_STRESS_PROGRAMME=thread_start_fehler \
             bash skripte/p2/runtime/rc_geteilt_stress.sh \
             compiler/target/release/moo-compiler build/p2-thread-start-ci 1 systemfehler \
             2>&1 | tee "thread-start-ci-${{ runner.os }}.log"
