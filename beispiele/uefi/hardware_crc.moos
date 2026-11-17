@@ -1,0 +1,36 @@
+# Gemeinsames IEEE-CRC32 fuer UEFI-TFTP und Kern-GPT (P7-T26).
+# Rechenlogik aus netz_tftp.moos; Tabelle liegt in 1024 Byte eigenem RAM.
+# Kein Heap, Firmwareaufruf oder Zugriff auf ein Blockgeraet.
+@nativ
+funktion hw_crc_tabelle(tab: u64) -> void:
+    unsicher:
+        setze n: u64 auf 0
+        setze c: u32 auf 0
+        setze k: u64 auf 0
+        solange n < 256:
+            setze c auf u32(n)
+            setze k auf 0
+            solange k < 8:
+                wenn (c & 1) != 0:
+                    setze c auf u32(0xEDB88320) ^ (c >> 1)
+                sonst:
+                    setze c auf c >> 1
+                setze k auf k + 1
+            speicher_schreiben(tab + n * 4, c, 4)
+            setze n auf n + 1
+
+# Interner CRC-Zustand ohne finales XOR; erlaubt begrenztes Streaming.
+@nativ
+funktion hw_crc_fortsetzen(tab: u64, daten: u64, laenge: u64, anfang: u32) -> u32:
+    unsicher:
+        setze c: u32 auf anfang
+        setze i: u64 auf 0
+        solange i < laenge:
+            setze c auf u32(speicher_lesen(tab + u64((c ^ u32(speicher_lesen(daten + i, 1))) & 255) * 4, 4)) ^ (c >> 8)
+            setze i auf i + 1
+        gib_zurück c
+
+@nativ
+funktion hw_crc32(tab: u64, daten: u64, laenge: u64) -> u32:
+    unsicher:
+        gib_zurück hw_crc_fortsetzen(tab, daten, laenge, u32(0xFFFFFFFF)) ^ u32(0xFFFFFFFF)

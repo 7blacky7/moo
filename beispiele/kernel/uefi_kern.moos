@@ -20,9 +20,22 @@
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
+aus "usb_speicher" importiere usb_speicher_pruefen
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall
 aus "../uefi/hardware_pci" importiere takt
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
+
+# P7-T26: Explizit freigegebener Boot-Stick aus dem N100-Inventar.
+# Diagnose beendet den MSC-Host vor dem vorhandenen HID-Start.
+# Nur die private QEMU-ELF-Kopie darf diesen markierten Datenvertrag aendern.
+@nativ
+statisch USB_LESEN_ZIEL: [u64; 3] auf [0x44524253554F4F4D, 0x68, 0x1000090C]
+@nativ
+konstante USB_LESEN_SERIE: [u8; _] auf "AA00000000000489"
+@nativ
+funktion usb_leseziel(index: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(USB_LESEN_ZIEL) + index * 8, 8)
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -2138,6 +2151,9 @@ funktion kern_haupt(bi: u64) -> void:
             meldung(adresse_von(T_TASTATUR_BEREIT), 0)
             text(adresse_von(T_TASTATUR_FEHLT))
         meldung(adresse_von(T_USB_TEST), u64(usb_report_pruefen()))
+        # Erst die lesende Boot-Stick-Diagnose, dann den HID-Host neu initialisieren.
+        # Der Rueckfallzweig weiter oben kehrt nicht hierher zurueck.
+        usb_speicher_pruefen(pfa_nehme(99), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), usb_leseziel(1), usb_leseziel(2), adresse_von(USB_LESEN_SERIE))
         # PFA besitzt die DMA-Seiten dauerhaft. Kein Firmware-Speicher wird benutzt.
         setze usb_dma auf pfa_nehme(64)
         setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung))

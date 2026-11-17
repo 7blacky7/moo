@@ -15,8 +15,9 @@ aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmi
 # 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
 # 36/37/38 letztes passendes Event Status/Steuer/TRB; 39/40/41 aktive EP0-TRBs,
 # 42 angefragte Datenbytes,43 tatsaechliche Datenbytes (Short vor Status).
+# 44/45 Bulk-OUT Index/Cycle. HID und MSC werden nacheinander benutzt.
 @nativ
-statisch XH: [u64; 44] auf 0
+statisch XH: [u64; 46] auf 0
 
 # Diagnose ueber die gemeinsame Konsole/COM1/UDP-Senke.
 @nativ
@@ -360,7 +361,7 @@ funktion xh_event(typ: u32, erwartet: u64) -> u32:
         gib_zurück code
 
 @nativ
-funktion xh_abschluss(typ: u32, p: u64) -> bool:
+funktion xh_ergebnis(typ: u32, p: u64) -> u32:
     unsicher:
         setze start: u64 auf takt()
         setze code: u32 auf 0
@@ -368,12 +369,19 @@ funktion xh_abschluss(typ: u32, p: u64) -> bool:
         solange takt() - start < 1000000 * xh(18):
             setze code auf xh_event(typ, p)
             wenn code != 0:
-                # Auch Setup/Data-Fehler beenden das Warten; Erfolg nur am Status-TRB.
-                gib_zurück code == 1 und xh(38) == p und (typ != 32 oder (xh(36) & 0xFFFFFF) == 0)
+                # Rohes CC behalten; Control-Short-Data wird bereits in xh_event gepaart.
+                gib_zurück code
         xh_setze(36, 0)
         xh_log(adresse_von(XH_T_WARTE_TYP), u64(typ))
         xh_log(adresse_von(XH_T_WARTE_TRB), p)
-        gib_zurück falsch
+        gib_zurück 0
+
+@nativ
+funktion xh_abschluss(typ: u32, p: u64) -> bool:
+    unsicher:
+        setze code: u32 auf xh_ergebnis(typ, p)
+        # Command/EP0-Erfolg nur am erwarteten TRB ohne Restdaten.
+        gib_zurück code == 1 und xh(38) == p und (typ != 32 oder (xh(36) & 0xFFFFFF) == 0)
 
 @nativ
 funktion xh_befehl(parameter: u64, steuer: u32) -> bool:
@@ -698,27 +706,20 @@ funktion xh_boot_interface(desc: u64, laenge: u64) -> bool:
         gib_zurück falsch
 
 @nativ
-funktion xh_geraet(port: u64, speed: u64) -> bool:
+funktion xh_beschreiben(port: u64, speed: u64, ziel_id: u64) -> u64:
     unsicher:
         setze input: u64 auf xh(4) + 16384
         setze desc: u64 auf xh(4) + 32768
         setze mps: u64 auf 8
         setze laenge: u64 auf 0
-        setze pos: u64 auf 0
         setze n: u64 auf 0
-        setze typ: u64 auf 0
-        setze hid_nummer: u64 auf 0
         setze boot: bool auf falsch
-        setze ep: u64 auf 0
-        setze paket: u64 auf 0
-        setze intervall: u64 auf 0
-        setze konfig: u64 auf 0
         xh_setze(19, 4)
         wenn nicht xh_befehl(0, 9 << 10):
-            gib_zurück falsch
+            gib_zurück 0
         xh_setze(10, xh(22))
         wenn xh(10) == 0:
-            gib_zurück falsch
+            gib_zurück 0
         xh_null(input, 8192)
         xh_null(xh(4) + 24576, 8192)
         xh_setze(12, 0)
@@ -735,7 +736,7 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
             setze mps auf 512
         xh_ep0(mps)
         wenn nicht xh_befehl(input, (11 << 10) | u32(xh(10) << 24)):
-            gib_zurück falsch
+            gib_zurück 0
         xh_context_bild()
         # Software-Recovery nach SET_ADDRESS (xHCI 4.6.5; Linux hub.c:4742-4751).
         xh_warte_us(10000)
@@ -746,33 +747,54 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
         setze n auf u64(speicher_lesen(desc + 7, 1))
         xh_log(adresse_von(XH_T_DESC_MPS), n)
         wenn nicht boot oder xh(43) < 8 oder speicher_lesen(desc, 2) != 0x0112:
-            gib_zurück falsch
+            gib_zurück 0
         wenn speed >= 4:
             wenn n != 9:
-                gib_zurück falsch
+                gib_zurück 0
             setze n auf 512
         wenn n != 8 und n != 16 und n != 32 und n != 64 und n != 512:
-            gib_zurück falsch
+            gib_zurück 0
         wenn n != mps:
             speicher_schreiben(input, 0, 4)
             speicher_schreiben(input + 4, 2, 4)
             # Evaluate Context aktualisiert nur MPS, der bestehende Dequeue bleibt.
             speicher_schreiben(input + 2 * xh(5) + 4, u32((n << 16) | 38), 4)
             wenn nicht xh_befehl(input, (13 << 10) | u32(xh(10) << 24)):
-                gib_zurück falsch
+                gib_zurück 0
         wenn nicht xh_control(0x0012000001000680, desc, 18) oder xh(43) < 18:
-            gib_zurück falsch
+            gib_zurück 0
         xh_log(adresse_von(XH_T_KLASSE), u64(speicher_lesen(desc + 4, 1)))
         xh_log(adresse_von(XH_T_VID), u64(speicher_lesen(desc + 8, 2)))
         xh_log(adresse_von(XH_T_PID), u64(speicher_lesen(desc + 10, 2)))
+        # Identitaetsfilter vor Config/BOT; 0 bedeutet beliebiges USB-Geraet.
+        wenn ziel_id != 0 und u64(speicher_lesen(desc + 8, 4)) != ziel_id:
+            gib_zurück 0
         wenn nicht xh_control(0x0009000002000680, desc, 9) oder xh(43) < 9:
-            gib_zurück falsch
+            gib_zurück 0
         wenn speicher_lesen(desc, 1) < 9 oder speicher_lesen(desc + 1, 1) != 2:
-            gib_zurück falsch
+            gib_zurück 0
         setze laenge auf u64(speicher_lesen(desc + 2, 2))
         wenn laenge < 9 oder laenge > 4096:
-            gib_zurück falsch
+            gib_zurück 0
         wenn nicht xh_control((laenge << 48) | 0x02000680, desc, u32(laenge)) oder xh(43) < laenge:
+            gib_zurück 0
+        gib_zurück laenge
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion xh_geraet(port: u64, speed: u64) -> bool:
+    unsicher:
+        setze input: u64 auf xh(4) + 16384
+        setze desc: u64 auf xh(4) + 32768
+        setze laenge: u64 auf xh_beschreiben(port, speed, 0)
+        setze n: u64 auf 0
+        setze typ: u64 auf 0
+        setze hid_nummer: u64 auf 0
+        setze ep: u64 auf 0
+        setze paket: u64 auf 0
+        setze intervall: u64 auf 0
+        setze konfig: u64 auf 0
+        wenn laenge == 0:
             gib_zurück falsch
         wenn nicht xh_boot_interface(desc, laenge):
             xh_log(adresse_von(XH_T_INTERFACE), 0xFFFFFFFF)
@@ -889,21 +911,24 @@ funktion xh_in_anfordern() -> void:
         nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(xh(11)))
 
 @nativ
-funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool:
+funktion xh_suchen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, pruefen: u64) -> bool:
     unsicher:
         setze bdf: u32 auf 0
         setze port: u64 auf 0
         setze ports: u64 auf 0
         setze speed: u64 auf 0
-        xh_null(adresse_von(XH), 44 * 8)
+        setze pruefe_geraet: ptr[fn[sysv64](u64, u64) -> bool] auf zeiger(pruefen)
+        xh_null(adresse_von(XH), 46 * 8)
         xh_setze(26, log)
         xh_setze(4, dma)
         xh_setze(18, tsc_us)
-        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0:
+        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0 oder pruefen == 0 oder ziel_bdf > 65536:
             xh_setze(19, 1)
             gib_zurück falsch
         xh_setze(19, 10)
-        solange bdf < 65536:
+        wenn ziel_bdf < 65536:
+            setze bdf auf u32(ziel_bdf)
+        solange bdf < 65536 und (ziel_bdf == 65536 oder u64(bdf) == ziel_bdf):
             wenn (xh_pci(bdf, 0) & 0xFFFF) == 0xFFFF:
                 wenn (bdf & 7) == 0:
                     setze bdf auf bdf + 7
@@ -917,8 +942,7 @@ funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool
                     solange port <= ports:
                         setze speed auf xh_port(port)
                         wenn speed >= 1 und speed <= 4:
-                            wenn xh_geraet(port, speed):
-                                xh_in_anfordern()
+                            wenn pruefe_geraet(port, speed):
                                 gib_zurück wahr
                             wenn xh(10) != 0:
                                 wenn nicht xh_befehl(0, (10 << 10) | u32(xh(10) << 24)):
@@ -930,5 +954,13 @@ funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool
                     gib_zurück falsch
             setze bdf auf bdf + 1
         gib_zurück falsch
+
+@nativ
+funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool:
+    unsicher:
+        wenn nicht xh_suchen(dma, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet)):
+            gib_zurück falsch
+        xh_in_anfordern()
+        gib_zurück wahr
 
 

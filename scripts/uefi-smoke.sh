@@ -179,6 +179,72 @@ PY
   [ "$((ENTRY_ELF))" -eq "$((16#$ENTRY_SYM))" ] || fail "ELF-Einstieg $ENTRY_ELF ist nicht moo_kern_start ($ENTRY_SYM)"
   od -A n -t x1 "$OUT/KERN.ELF" | tr -d '\n' | grep -q 'd6 50 52 e8' && fail "Multiboot2-Kopf im Kern (GRUB-Pfad nicht verworfen)"
   echo "      OK: ELF64 EXEC x86-64, Einstieg moo_kern_start $ENTRY_ELF, kein Multiboot2-Kopf"
+  # P7-T26: Nur eigene reguläre Testimages; N100-Zielwerte nur in privater ELF-Kopie.
+  MSC="${MOO_UEFI_USB_STORAGE:-0}"
+  MSC_SERIE=FE1234567890ABCD
+  case "$MSC" in 0|1|gross|falsche-serie) ;; *) fail "USB_STORAGE: 0, 1, gross oder falsche-serie";; esac
+  msc_fingerabdruck() {
+    uv run --no-project python - "$OUT/usb-gpt.img" <<'PY'
+import hashlib, json, os, stat, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+st = os.fstat(fd)
+assert stat.S_ISREG(st.st_mode), "Nur reguläres Testimage"
+h, pos, extents = hashlib.sha256(), 0, []
+h.update(str(st.st_size).encode())
+while pos < st.st_size:
+    try:
+        start = os.lseek(fd, pos, os.SEEK_DATA)
+    except OSError as ex:
+        import errno
+        if ex.errno == errno.ENXIO:
+            break
+        raise
+    end = os.lseek(fd, start, os.SEEK_HOLE)
+    extents.append([start, end])
+    h.update(("%d:%d:" % (start, end)).encode())
+    os.lseek(fd, start, os.SEEK_SET)
+    left = end - start
+    while left:
+        data = os.read(fd, min(left, 1048576))
+        assert data
+        h.update(data)
+        left -= len(data)
+    pos = end
+os.close(fd)
+print(json.dumps(dict(size=st.st_size, extents=extents, sha256=h.hexdigest()), sort_keys=True))
+PY
+  }
+  if [ "$MSC" != 0 ]; then
+    [ "${MOO_UEFI_USB:-1}" = 1 ] && [ "${MOO_UEFI_NETZ:-1}" = 1 ] || fail "MSC-Gate braucht USB=1 und NETZ=1"
+    command -v sfdisk >/dev/null || fail "MSC-Gate braucht sfdisk"
+    [ ! -e "$OUT/usb-gpt.img" ] || [ -f "$OUT/usb-gpt.img" ] || fail "Testimage ist keine reguläre Datei"
+    rm -f "$OUT/usb-gpt.img"
+    MSC_SIZE=64M; [ "$MSC" != gross ] || MSC_SIZE=3T
+    truncate -s "$MSC_SIZE" "$OUT/usb-gpt.img" || fail "MSC-Testimage"
+    sfdisk "$OUT/usb-gpt.img" >"$OUT/usb-gpt-layout.log" 2>&1 <<'GPT' || fail "GPT-Testimage"
+label: gpt
+label-id: AABBCCDD-1122-3344-5566-778899AABBCC
+
+start=2048, size=2048, type=linux, uuid=12345678-9ABC-DEF0-1234-56789ABCDEF0, name=MOO-READONLY
+GPT
+    sfdisk --verify "$OUT/usb-gpt.img" >>"$OUT/usb-gpt-layout.log" 2>&1 || fail "GPT-Layoutprüfung"
+    msc_fingerabdruck >"$OUT/usb-gpt-vorher.json" || fail "MSC-Fingerabdruck"
+    uv run --no-project python - "$OUT/KERN.ELF" <<'PY'
+import pathlib, struct, sys
+path = pathlib.Path(sys.argv[1])
+elf = bytearray(path.read_bytes())
+contract = struct.pack("<QQQ", 0x44524253554F4F4D, 0x68, 0x1000090C)
+assert elf.count(contract) == 1, "Eindeutiger USB-Lesezielvertrag fehlt"
+pos = elf.index(contract)
+struct.pack_into("<Q", elf, pos + 16, 0x000146F4)
+assert elf.count(b"AA00000000000489") == 1, "Eindeutige Zielserie fehlt"
+elf = elf.replace(b"AA00000000000489", b"FE1234567890ABCD")
+path.write_bytes(elf)
+print("      OK: private QEMU-Kernkopie, BDF68/46F4:0001/FE1234567890ABCD")
+PY
+    [ "$?" -eq 0 ] || fail "MSC-Zielvertrag in privater ELF-Kopie"
+    [ "$MSC" != falsche-serie ] || MSC_SERIE=FE1234567890ABCE
+  fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
   for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd \
@@ -215,10 +281,15 @@ PY
   USB_VERSION="${MOO_UEFI_USB_VERSION:-2}"
   case "$USB_VERSION" in 1|2) ;; *) fail "USB_VERSION: nur 1 (Full-Speed) oder 2 (High-Speed)";; esac
   if [ "$USB" = 1 ]; then
-    KERN_QEMU+=(-device qemu-xhci,id=xhci -device "usb-kbd,bus=xhci.0,usb_version=$USB_VERSION")
+    XHCI_ADDR=""; [ "$MSC" = 0 ] || XHCI_ADDR=",addr=0xd"
+    KERN_QEMU+=(-device "qemu-xhci,id=xhci$XHCI_ADDR" -device "usb-kbd,bus=xhci.0,usb_version=$USB_VERSION")
   elif [ "$USB" = hub ]; then
     KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1
       -device "usb-kbd,bus=xhci.0,port=1.1,usb_version=$USB_VERSION")
+  fi
+  if [ "$MSC" != 0 ]; then
+    KERN_QEMU+=(-drive "if=none,id=msc,format=raw,readonly=on,file=$OUT/usb-gpt.img"
+      -device "usb-storage,bus=xhci.0,drive=msc,serial=$MSC_SERIE,pcap=$OUT/usb.pcap")
   fi
   timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
@@ -309,6 +380,93 @@ PY
     for phase in 0 1 2 3 4 5; do
       grep -aqF "MOO-KERNEL USB PHASE 000000000000000$phase" "$OUT/serial.log" || fail "USB-Snapshot Phase$phase fehlt"
     done
+  fi
+  if [ "$MSC" != 0 ]; then
+    msc_fingerabdruck >"$OUT/usb-gpt-nachher.json" || fail "MSC-Fingerabdruck nach QEMU"
+    cmp "$OUT/usb-gpt-vorher.json" "$OUT/usb-gpt-nachher.json" || fail "MSC-Testimage verändert"
+    uv run --no-project python - "$OUT" "$MSC" <<'PY'
+import pathlib, re, struct, sys
+out, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
+serial = (out / "serial.log").read_text(errors="replace").replace("\r", "")
+def pcap(path, linktype):
+    raw = path.read_bytes()
+    assert raw[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4")
+    order = "<" if raw[0] == 0xd4 else ">"
+    assert struct.unpack_from(order + "I", raw, 20)[0] == linktype
+    pos = 24
+    while pos < len(raw):
+        assert pos + 16 <= len(raw)
+        sec, usec, size, original = struct.unpack_from(order + "IIII", raw, pos)
+        pos += 16
+        assert size <= original and pos + size <= len(raw)
+        yield sec * 1000000 + usec, raw[pos:pos+size], order
+        pos += size
+# QEMU net/dump.c nutzt virtuelle Zeit, USB-pcap Hostzeit: keine Uhren mischen.
+# ms_seriennummer() beendet GET_DEVICE18 / STRING0 / iSerial mit wLength255.
+# Der nachfolgende HID-Pfad fragt keine USB-Strings ab (xh_beschreiben/xh_geraet).
+packets = list(pcap(out / "usb.pcap", 220))
+completed, pending = [], None
+serial_end = None
+wire_series = "FE1234567890ABCE" if mode == "falsche-serie" else "FE1234567890ABCD"
+for index, (_, packet, order) in enumerate(packets):
+    assert len(packet) >= 64
+    assert struct.unpack_from(order + "I", packet, 36)[0] == len(packet)
+    if packet[9] != 2:
+        continue
+    if packet[8] == ord("S"):
+        pending = struct.unpack_from("<BBHHH", packet, 40)
+    elif packet[8] == ord("C") and pending is not None:
+        completed.append((pending, packet[64:], struct.unpack_from(order + "i", packet, 28)[0]))
+        request, data, status = completed[-1]
+        if request[0:2] == (0x80, 6) and request[2] >> 8 == 3 and request[2] & 255 and request[4] == 255:
+            expected = wire_series.encode("utf-16le")
+            if status == 0 and data == bytes([2 + len(expected), 3]) + expected:
+                assert len(completed) >= 3
+                devreq, dev, devstatus = completed[-3]
+                langreq, lang, langstatus = completed[-2]
+                assert devreq == (0x80, 6, 0x0100, 0, 18) and devstatus == 0 and len(dev) == 18
+                assert struct.unpack_from("<HH", dev, 8) == (0x46f4, 1)
+                assert langreq == (0x80, 6, 0x0300, 0, 255) and langstatus == 0
+                assert len(lang) >= 4 and lang[1] == 3
+                assert request[2] == 0x0300 | dev[16]
+                assert request[3] == struct.unpack_from("<H", lang, 2)[0]
+                serial_end = index
+        pending = None
+assert serial_end is not None, "Abgeschlossene Serienpruefung des Kern-MSC-Pfads fehlt im USB-pcap"
+# QEMU hw/usb/pcap.c: LINKTYPE220, 64-byte usbmon header; nur Submit/Bulk/OUT.
+outgoing = [packet[64:] for _, packet, _ in packets[serial_end+1:]
+            if packet[8] == ord("S") and packet[9] == 3 and not packet[10] & 128]
+ops = [int(x, 16) for x in re.findall(r"USB MSC SCSI OPCODE ([0-9A-F]{16})", serial)]
+tags = [int(x, 16) for x in re.findall(r"USB MSC CBW TAG ([0-9A-F]{16})", serial)]
+assert len(ops) == len(tags) == len(outgoing), (ops, tags, len(outgoing))
+for cbw, opcode, tag in zip(outgoing, ops, tags):
+    assert len(cbw) == 31 and cbw[:4] == b"USBC", cbw.hex()
+    assert struct.unpack_from("<I", cbw, 4)[0] == tag
+    length = struct.unpack_from("<I", cbw, 8)[0]
+    assert cbw[12] == (128 if length else 0) and cbw[13] == 0
+    assert cbw[15] == opcode and opcode in {0, 3, 0x12, 0x25, 0x28, 0x88, 0x9e}
+    assert cbw[14] == (6 if opcode in {0,3,0x12} else 10 if opcode in {0x25,0x28} else 16)
+    if opcode == 0x9e:
+        assert cbw[16] == 0x10
+if mode == "falsche-serie":
+    assert not ops and "USB MSC SERIE GEPRUEFT 0000000000000000" in serial
+    assert "USB MSC BEREIT 0000000000000000" in serial
+    assert "USB MSC GPT PART GUID " not in serial
+else:
+    for marker in ("SERIE GEPRUEFT 0000000000000001", "BEREIT 0000000000000001",
+                   "BLOCKGROESSE 0000000000000200", "GPT HEADER CRC OK 0000000000000001",
+                   "GPT ARRAY CRC OK 0000000000000001", "GPT BACKUP HEADER OK 0000000000000001",
+                   "GPT PARTITIONEN 0000000000000001", "GPT ERSTE LBA 0000000000000800",
+                   "GPT LETZTE LBA 0000000000000FFF",
+                   "GPT PART GUID {12345678-9ABC-DEF0-1234-56789ABCDEF0} 0000000000000001"):
+        assert "USB MSC " + marker in serial, marker
+    assert {0,0x12,0x25,0x28} <= set(ops), ops
+    if mode == "gross":
+        assert {0x9e,0x88} <= set(ops), ops
+    assert "USB MSC FEHLER " not in serial and "USB MSC RESET RECOVERY " not in serial
+print("      OK: USB-MSC %s, %d CBWs nur lesend, keine Data-OUT-Phase, Image unverändert" % (mode, len(ops)))
+PY
+    [ "$?" -eq 0 ] || fail "USB-MSC BOT/GPT/Serien-/Nur-Lese-Gate"
   fi
   [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
@@ -587,7 +745,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
     # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
-    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 999"; do
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 2027" "N 2028" "N 2029" "N 2030" "N 2031" "N 999"; do
       tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
     done
     echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"

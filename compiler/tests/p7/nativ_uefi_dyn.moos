@@ -129,7 +129,7 @@ funktion usb_ep0_test_basis() -> u64:
     unsicher:
         setze dma: u64 auf (adresse_von(USB_TEST_DMA) + 63) & 0xFFFFFFFFFFFFFFC0
         setze i: u64 auf 0
-        solange i < 44:
+        solange i < 46:
             xh_setze(i, 0)
             setze i auf i + 1
         xh_null(dma, 40960)
@@ -262,6 +262,299 @@ funktion usb_ep0_retry_test() -> u64:
 
 # Einstieg aus uefi_entry.c (wie netz_e1000.moos); Aufrufe also in einer
 # benannten Funktion, nicht in main.
+aus "../../../beispiele/kernel/usb_speicher" importiere ms, ms_setze, ms_cbw_bauen, ms_cbw_lesend, ms_csw_pruefen, ms_gpt_kopf, ms_gpt_eintrag, ms_guid_format, ms_interface, ms_ep_context, ms_serien_text
+aus "../../../beispiele/uefi/hardware_crc" importiere hw_crc_tabelle, hw_crc_fortsetzen, hw_crc32
+aus "../../../beispiele/uefi/netz_geraet" importiere nt_kopiere
+
+
+# P7-T26: Wire-Orakel und Fehlerfaelle fuer den echten Nur-Lese-Treiber.
+# Eigener kleiner RAM-Bereich im vorhandenen UEFI-Harness, keine echte USB-I/O.
+@nativ
+statisch MS_TEST_RAM: [u8; 8192] auf 0
+@nativ
+konstante MS_TEST_LEER: [u8; _] auf ""
+@nativ
+konstante MS_TEST_GUID: [u8; 16] auf [0x78,0x56,0x34,0x12,0xBC,0x9A,0xF0,0xDE,0x12,0x34,0x56,0x78,0x9A,0xBC,0xDE,0xF0]
+@nativ
+konstante MS_TEST_GUID_TEXT: [u8; _] auf "{12345678-9ABC-DEF0-1234-56789ABCDEF0} "
+@nativ
+konstante MS_TEST_CONFIG: [u8; 32] auf [9,2,32,0,1,1,0,128,50,9,4,2,0,2,8,6,80,0,7,5,129,2,0,2,0,7,5,2,2,0,2,0]
+@nativ
+konstante MS_TEST_SS_CONFIG: [u8; 44] auf [9,2,44,0,1,1,0,128,50,9,4,2,0,2,8,6,80,0,7,5,129,2,0,4,0,6,48,3,0,0,0,7,5,2,2,0,4,0,6,48,4,0,0,0]
+
+@nativ
+funktion ms_test_basis() -> u64:
+    unsicher:
+        setze a: u64 auf adresse_von(MS_TEST_RAM)
+        setze j: u64 auf 0
+        xh_null(a, 8192)
+        solange j < 28:
+            ms_setze(j, 0)
+            setze j auf j + 1
+        ms_setze(0, a)
+        ms_setze(1, a)
+        ms_setze(2, a + 4096)
+        ms_setze(3, a + 4160)
+        ms_setze(4, a + 6144)
+        ms_setze(17, 512)
+        ms_setze(18, 0xFFFFFFFFFFFFFFFF)
+        hw_crc_tabelle(ms(4))
+        gib_zurück a
+
+@nativ
+funktion ms_cbw_test() -> u64:
+    unsicher:
+        setze a: u64 auf ms_test_basis()
+        setze p: u64 auf ms(2)
+        setze op: u64 auf 0
+        setze erlaubt: bool auf falsch
+        wenn nicht ms_cbw_bauen(0x28, 0x12345678, 3):
+            gib_zurück 2701
+        # Unabhaengige31Byte-BOT-/SCSI-Wirewerte, nicht der Decoder als Orakel.
+        wenn speicher_lesen(p, 8) != 0x0000000143425355 oder speicher_lesen(p + 8, 8) != 0x280A008000000600 oder speicher_lesen(p + 16, 8) != 0x0300007856341200 oder speicher_lesen(p + 24, 4) != 0:
+            gib_zurück 2702
+        wenn nicht ms_cbw_bauen(0x88, 0x123456789ABCDEF0, 2):
+            gib_zurück 2703
+        wenn speicher_lesen(p, 8) != 0x0000000243425355 oder speicher_lesen(p + 8, 8) != 0x8810008000000400 oder speicher_lesen(p + 16, 8) != 0xDEBC9A7856341200 oder speicher_lesen(p + 24, 1) != 0xF0 oder speicher_lesen(p + 25, 4) != 0x02000000:
+            gib_zurück 2704
+        wenn nicht ms_cbw_bauen(0x9E, 0, 0) oder speicher_lesen(p + 16, 1) != 0x10 oder speicher_lesen(p + 25, 4) != 0x20000000:
+            gib_zurück 2705
+        wenn ms_cbw_bauen(0x28, 0x100000000, 1) oder ms_cbw_bauen(0x28, 0, 0) oder ms_cbw_bauen(0x88, 0, 9):
+            gib_zurück 2706
+        solange op < 256:
+            setze erlaubt auf op == 0 oder op == 3 oder op == 0x12 oder op == 0x25 oder op == 0x28 oder op == 0x88 oder op == 0x9E
+            wenn ms_cbw_bauen(op, 16, 1) != erlaubt:
+                gib_zurück 2707
+            setze op auf op + 1
+        wenn nicht ms_cbw_bauen(0x28, 16, 1):
+            gib_zurück 2708
+        speicher_schreiben(p + 15, 0x2A, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2709
+        speicher_schreiben(p + 15, 0x8A, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2710
+        speicher_schreiben(p + 15, 0x28, 1)
+        speicher_schreiben(p + 12, 0, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2711
+        speicher_schreiben(p + 12, 129, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2712
+        wenn nicht ms_cbw_bauen(0x28, 16, 1):
+            gib_zurück 2714
+        speicher_schreiben(p, 0x43425354, 4)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2715
+        speicher_schreiben(p, 0x43425355, 4)
+        speicher_schreiben(p + 13, 1, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2716
+        speicher_schreiben(p + 13, 0, 1)
+        speicher_schreiben(p + 14, 16, 1)
+        wenn ms_cbw_lesend(p):
+            gib_zurück 2717
+        ms_setze(18, 100)
+        wenn ms_cbw_bauen(0x88, 100, 2):
+            gib_zurück 2713
+        gib_zurück 2027
+
+@nativ
+funktion ms_csw_test() -> u64:
+    unsicher:
+        setze a: u64 auf ms_test_basis()
+        setze p: u64 auf ms(3)
+        ms_setze(14, 0x12345678)
+        speicher_schreiben(p, 0x53425355, 4)
+        speicher_schreiben(p + 4, 0x12345678, 4)
+        speicher_schreiben(p + 8, 4, 4)
+        wenn nicht ms_csw_pruefen(13, 512, 512) oder ms(16) != 508:
+            gib_zurück 2801
+        speicher_schreiben(p, 0x53425354, 4)
+        wenn ms_csw_pruefen(13, 512, 512):
+            gib_zurück 2809
+        speicher_schreiben(p, 0x53425355, 4)
+        wenn ms_csw_pruefen(12, 512, 512) oder ms_csw_pruefen(13, 512, 4):
+            gib_zurück 2802
+        speicher_schreiben(p + 4, 0x12345679, 4)
+        wenn ms_csw_pruefen(13, 512, 512):
+            gib_zurück 2803
+        speicher_schreiben(p + 4, 0x12345678, 4)
+        speicher_schreiben(p + 8, 513, 4)
+        wenn ms_csw_pruefen(13, 512, 512):
+            gib_zurück 2804
+        speicher_schreiben(p + 8, 0, 4)
+        speicher_schreiben(p + 12, 2, 1)
+        wenn ms_csw_pruefen(13, 512, 512):
+            gib_zurück 2805
+        speicher_schreiben(p + 12, 3, 1)
+        wenn ms_csw_pruefen(13, 512, 512):
+            gib_zurück 2806
+        speicher_schreiben(p + 12, 1, 1)
+        speicher_schreiben(p + 8, 512, 4)
+        wenn nicht ms_csw_pruefen(13, 512, 0) oder ms(15) != 1 oder ms(16) != 0:
+            gib_zurück 2807
+        speicher_schreiben(p + 12, 0, 1)
+        speicher_schreiben(p + 8, 0, 4)
+        wenn nicht ms_csw_pruefen(13, 0, 0):
+            gib_zurück 2808
+        gib_zurück 2028
+
+@nativ
+funktion ms_test_header_crc(p: u64) -> void:
+    unsicher:
+        speicher_schreiben(p + 16, 0, 4)
+        speicher_schreiben(p + 16, hw_crc32(ms(4), p, 92), 4)
+
+@nativ
+funktion ms_gpt_test() -> u64:
+    unsicher:
+        setze a: u64 auf ms_test_basis()
+        setze p: u64 auf a
+        setze s: u64 auf 0
+        setze j: u64 auf 0
+        setze crc: u32 auf 0
+        speicher_schreiben(a, 0x3837363534333231, 8)
+        speicher_schreiben(a + 8, 57, 1)
+        wenn hw_crc32(ms(4), a, 9) != u32(0xCBF43926) oder hw_crc32(ms(4), a, 0) != u32(0):
+            gib_zurück 2901
+        setze crc auf hw_crc_fortsetzen(ms(4), a, 4, u32(0xFFFFFFFF))
+        setze crc auf hw_crc_fortsetzen(ms(4), a + 4, 5, crc)
+        wenn (crc ^ u32(0xFFFFFFFF)) != u32(0xCBF43926):
+            gib_zurück 2902
+        xh_null(a, 512)
+        ms_setze(18, 20479)
+        speicher_schreiben(p, 0x5452415020494645, 8)
+        speicher_schreiben(p + 8, 0x10000, 4)
+        speicher_schreiben(p + 12, 92, 4)
+        speicher_schreiben(p + 24, 1, 8)
+        speicher_schreiben(p + 32, 20479, 8)
+        speicher_schreiben(p + 40, 34, 8)
+        speicher_schreiben(p + 48, 20446, 8)
+        speicher_schreiben(p + 56, 0x123456789ABCDEF0, 8)
+        speicher_schreiben(p + 64, 0x9876543210FEDCBA, 8)
+        speicher_schreiben(p + 72, 2, 8)
+        speicher_schreiben(p + 80, 128, 4)
+        speicher_schreiben(p + 84, 128, 4)
+        ms_test_header_crc(p)
+        wenn nicht ms_gpt_kopf(p, 1):
+            gib_zurück 2903
+        speicher_schreiben(p + 16, u32(speicher_lesen(p + 16, 4)) ^ u32(1), 4)
+        wenn ms_gpt_kopf(p, 1):
+            gib_zurück 2904
+        ms_test_header_crc(p)
+        speicher_schreiben(p + 80, 0xFFFFFFFF, 4)
+        ms_test_header_crc(p)
+        wenn ms_gpt_kopf(p, 1):
+            gib_zurück 2905
+        speicher_schreiben(p + 80, 128, 4)
+        speicher_schreiben(p + 84, 192, 4)
+        ms_test_header_crc(p)
+        wenn ms_gpt_kopf(p, 1):
+            gib_zurück 2906
+        speicher_schreiben(p + 84, 128, 4)
+        speicher_schreiben(p + 72, 20478, 8)
+        ms_test_header_crc(p)
+        wenn ms_gpt_kopf(p, 1):
+            gib_zurück 2907
+        speicher_schreiben(p + 72, 2, 8)
+        speicher_schreiben(p + 32, 10000, 8)
+        speicher_schreiben(p + 48, 9967, 8)
+        ms_test_header_crc(p)
+        wenn nicht ms_gpt_kopf(p, 1):
+            gib_zurück 2908
+        nt_kopiere(a + 512, adresse_von(MS_TEST_GUID), 16)
+        setze s auf ms_guid_format(adresse_von(MS_TEST_LEER), a + 512)
+        solange j < 39:
+            wenn speicher_lesen(s + j, 1) != speicher_lesen(adresse_von(MS_TEST_GUID_TEXT) + j, 1):
+                gib_zurück 2909
+            setze j auf j + 1
+        speicher_schreiben(a + 512, 1, 8)
+        speicher_schreiben(a + 520, 0, 8)
+        speicher_schreiben(a + 528, 2, 8)
+        speicher_schreiben(a + 536, 0, 8)
+        speicher_schreiben(a + 544, 100, 8)
+        speicher_schreiben(a + 552, 199, 8)
+        wenn nicht ms_gpt_eintrag(a + 512, 34, 20446):
+            gib_zurück 2910
+        speicher_schreiben(a + 552, 99, 8)
+        wenn ms_gpt_eintrag(a + 512, 34, 20446):
+            gib_zurück 2911
+        speicher_schreiben(a + 552, 199, 8)
+        speicher_schreiben(a + 560, 8, 8)
+        wenn ms_gpt_eintrag(a + 512, 34, 20446):
+            gib_zurück 2912
+        speicher_schreiben(a + 560, 0x8000000000000000, 8)
+        wenn nicht ms_gpt_eintrag(a + 512, 34, 20446):
+            gib_zurück 2913
+        gib_zurück 2029
+
+@nativ
+funktion ms_interface_test() -> u64:
+    unsicher:
+        setze a: u64 auf ms_test_basis()
+        setze input: u64 auf a + 512
+        nt_kopiere(a, adresse_von(MS_TEST_CONFIG), 32)
+        wenn nicht ms_interface(a, 32, 3) oder ms(7) != 2 oder ms(8) != 0x81 oder ms(9) != 2 oder ms(10) != 512 oder ms(11) != 512:
+            gib_zurück 3001
+        speicher_schreiben(a + 16, 0x62, 1)
+        wenn ms_interface(a, 32, 3):
+            gib_zurück 3002
+        speicher_schreiben(a + 16, 0x50, 1)
+        speicher_schreiben(a + 12, 1, 1)
+        wenn ms_interface(a, 32, 3):
+            gib_zurück 3003
+        speicher_schreiben(a + 12, 0, 1)
+        speicher_schreiben(a + 27, 0x82, 1)
+        wenn ms_interface(a, 32, 3):
+            gib_zurück 3004
+        speicher_schreiben(a + 27, 2, 1)
+        wenn ms_interface(a, 31, 3) oder ms_interface(a, 32, 1) oder ms_interface(a, 32, 2):
+            gib_zurück 3005
+        xh_setze(5, 32)
+        ms_ep_context(input, 3, 0x12345000, 512, 0, wahr)
+        wenn speicher_lesen(input + 132, 4) != 0x02000036 oder speicher_lesen(input + 136, 8) != 0x12345001 oder speicher_lesen(input + 144, 4) != 4096:
+            gib_zurück 3006
+        nt_kopiere(a, adresse_von(MS_TEST_SS_CONFIG), 44)
+        wenn nicht ms_interface(a, 44, 4) oder ms(12) != 3 oder ms(13) != 4:
+            gib_zurück 3007
+        speicher_schreiben(a + 28, 1, 1)
+        wenn ms_interface(a, 44, 4):
+            gib_zurück 3008
+        xh_setze(5, 64)
+        ms_ep_context(input, 4, 0x12346000, 1024, 7, falsch)
+        wenn speicher_lesen(input + 324, 4) != 0x04000716 oder speicher_lesen(input + 328, 8) != 0x12346001:
+            gib_zurück 3009
+        gib_zurück 2030
+
+@nativ
+konstante MS_TEST_SERIE: [u8; _] auf "FE1234567890ABCD"
+@nativ
+konstante MS_TEST_SERIENDESC: [u8; 34] auf [34,3,70,0,69,0,49,0,50,0,51,0,52,0,53,0,54,0,55,0,56,0,57,0,48,0,65,0,66,0,67,0,68,0]
+
+@nativ
+funktion ms_serien_test() -> u64:
+    unsicher:
+        setze a: u64 auf ms_test_basis()
+        setze erwartet: u64 auf adresse_von(MS_TEST_SERIE)
+        nt_kopiere(a, adresse_von(MS_TEST_SERIENDESC), 34)
+        wenn nicht ms_serien_text(a, 34, erwartet):
+            gib_zurück 3101
+        wenn ms_serien_text(a, 33, erwartet) oder ms_serien_text(a, 34, adresse_von(MS_TEST_LEER)):
+            gib_zurück 3102
+        speicher_schreiben(a + 2, 71, 1)
+        wenn ms_serien_text(a, 34, erwartet):
+            gib_zurück 3103
+        speicher_schreiben(a + 2, 70, 1)
+        speicher_schreiben(a + 3, 1, 1)
+        wenn ms_serien_text(a, 34, erwartet):
+            gib_zurück 3104
+        speicher_schreiben(a + 3, 0, 1)
+        speicher_schreiben(a, 32, 1)
+        wenn ms_serien_text(a, 34, erwartet):
+            gib_zurück 3105
+        gib_zurück 2031
+
 funktion moo_efi_haupt():
     setze a auf 0 - 12345
     setze b auf 200 + 13
@@ -290,4 +583,9 @@ funktion moo_efi_haupt():
         zeile(usb_ep0_ring_test())
         zeile(usb_ep0_event_test())
         zeile(usb_ep0_retry_test())
+        zeile(ms_cbw_test())
+        zeile(ms_csw_test())
+        zeile(ms_gpt_test())
+        zeile(ms_interface_test())
+        zeile(ms_serien_test())
         zeile(999)

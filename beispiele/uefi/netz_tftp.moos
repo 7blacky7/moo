@@ -22,6 +22,8 @@
 #   192 RRQ-Puffer, 200 RRQ-Laenge, 208 Ziel, 216 Ziel-Maximum.
 # IP-Adressen als Zahl a<<24|b<<16|c<<8|d.
 
+aus "./hardware_crc" importiere hw_crc_tabelle, hw_crc32
+
 # Nutzt aus netz_treiber.moos: nt_senden, nt_empfangen, nt_mac, nt_dma, nt_b8,
 # nt_b16, nt_kopiere. P2-T33: eigenstaendig uebersetzbar per selektivem Import;
 # importiert der Aufrufer netz_treiber ebenfalls, ueberspringt resolve_modules
@@ -333,29 +335,13 @@ funktion nn_tftp_schritt(ctx):
         nn_tftp_ack(ctx, block)
         gib_zurück 0
 
-# ---------------- CRC32 (wie gzip) ----------------
+# ---------------- CRC32 (wie gzip), gemeinsamer nativer Kern ----------------
 funktion nn_crc_tabelle():
     unsicher:
         setze tab auf nt_dma(1024)
-        setze n auf 0
-        solange n < 256:
-            setze c auf n
-            setze k auf 0
-            solange k < 8:
-                wenn (c & 1) != 0:
-                    setze c auf 0xEDB88320 ^ (c >> 1)
-                sonst:
-                    setze c auf c >> 1
-                setze k auf k + 1
-            speicher_schreiben(tab + n * 4, c, 4)
-            setze n auf n + 1
+        hw_crc_tabelle(tab)
         gib_zurück tab
 
 funktion nn_crc32(tab, adresse, laenge):
     unsicher:
-        setze c auf 0xFFFFFFFF
-        setze i auf 0
-        solange i < laenge:
-            setze c auf speicher_lesen(tab + ((c ^ speicher_lesen(adresse + i, 1)) & 255) * 4, 4) ^ (c >> 8)
-            setze i auf i + 1
-        gib_zurück c ^ 0xFFFFFFFF
+        gib_zurück hw_crc32(tab, adresse, laenge)

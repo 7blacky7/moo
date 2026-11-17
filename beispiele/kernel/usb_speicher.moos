@@ -1,0 +1,763 @@
+# P7-T26: USB-MSC/BOT, ausschliesslich lesende SCSI-Kommandos.
+# Verwendet den EINEN xHCI-Hostpfad; synchrone Diagnose VOR dem HID-Start.
+# LUN0, direkt am Rootport, keine Streams/UAS/Hubs. DMA: mindestens99 PFA-Seiten.
+# Seite0..63 xHCI inkl.Scratchpads;64 Daten;65 CBW/CSW;66 CRC-Tabelle.
+# Seite67..98 haelt die komplette, auf128KiB begrenzte GPT-Eintragstabelle.
+# IN-Ring Seite7, OUT-Ring Seite9; HID benutzt die Arena erst nach Controller-Stopp.
+aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us
+aus "../uefi/hardware_pci" importiere nt_mmio_glocke32, takt
+aus "../uefi/hardware_crc" importiere hw_crc_tabelle, hw_crc_fortsetzen, hw_crc32
+aus "../uefi/netz_geraet" importiere nt_kopiere
+
+# 0 DMA,1 Daten,2 CBW,3 CSW,4 CRC,5 erlaubte VID/PID (PID<<16|VID),
+# 6 Config,7 Interface,8/9 IN/OUT-Adresse,10/11 MPS,12/13 Burst,
+# 14 Tag,15 CSW-Status,16 echte Datenlaenge,17 Blockgroesse,18 letzteLBA,
+# 19 bereit,20 Transport defekt,21 Zeitlimit,22 Partitionen,
+# 24 angeforderte Datenlaenge,25 CDB-Laenge,26 Opcode,27 erlaubte USB-Seriennummer.
+@nativ
+statisch MS: [u64; 28] auf 0
+@nativ
+konstante MS_T_INTERFACE: [u8; _] auf "MOO-KERNEL USB MSC INTERFACE "
+@nativ
+konstante MS_T_IN: [u8; _] auf "MOO-KERNEL USB MSC BULK IN "
+@nativ
+konstante MS_T_OUT: [u8; _] auf "MOO-KERNEL USB MSC BULK OUT "
+@nativ
+konstante MS_T_OPCODE: [u8; _] auf "MOO-KERNEL USB MSC SCSI OPCODE "
+@nativ
+konstante MS_T_TAG: [u8; _] auf "MOO-KERNEL USB MSC CBW TAG "
+@nativ
+konstante MS_T_STATUS: [u8; _] auf "MOO-KERNEL USB MSC CSW STATUS "
+@nativ
+konstante MS_T_REST: [u8; _] auf "MOO-KERNEL USB MSC CSW REST "
+@nativ
+konstante MS_T_DATEN: [u8; _] auf "MOO-KERNEL USB MSC DATEN LAENGE "
+@nativ
+konstante MS_T_FEHLER: [u8; _] auf "MOO-KERNEL USB MSC FEHLER "
+@nativ
+konstante MS_T_BEREIT: [u8; _] auf "MOO-KERNEL USB MSC BEREIT "
+@nativ
+konstante MS_T_BLOCK: [u8; _] auf "MOO-KERNEL USB MSC BLOCKGROESSE "
+@nativ
+konstante MS_T_LBA: [u8; _] auf "MOO-KERNEL USB MSC LETZTE LBA "
+@nativ
+konstante MS_T_SENSE: [u8; _] auf "MOO-KERNEL USB MSC SENSE "
+
+@nativ
+funktion ms(feld: u64) -> u64:
+    unsicher:
+        gib_zurück u64(speicher_lesen(adresse_von(MS) + feld * 8, 8))
+
+@nativ
+funktion ms_setze(feld: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(MS) + feld * 8, wert, 8)
+
+@nativ
+funktion ms_be_lesen(daten: u64, breite: u64) -> u64:
+    unsicher:
+        setze wert: u64 auf 0
+        setze j: u64 auf 0
+        solange j < breite:
+            setze wert auf (wert << 8) | u64(speicher_lesen(daten + j, 1))
+            setze j auf j + 1
+        gib_zurück wert
+
+@nativ
+funktion ms_be_setzen(daten: u64, wert: u64, breite: u64) -> void:
+    unsicher:
+        setze j: u64 auf 0
+        solange j < breite:
+            speicher_schreiben(daten + breite - j - 1, u8(wert >> (j * 8)), 1)
+            setze j auf j + 1
+
+# BOT1.0 §5.1: nur diese Lesekommandos duerfen ueber Bulk-OUT.
+# Weder ein freier Opcode noch eine Data-Out-Richtung sind Teil der API.
+@nativ
+funktion ms_cbw_lesend(cbw: u64) -> bool:
+    unsicher:
+        setze op: u64 auf u64(speicher_lesen(cbw + 15, 1))
+        setze n: u64 auf u64(speicher_lesen(cbw + 8, 4))
+        setze cdb: u64 auf u64(speicher_lesen(cbw + 14, 1))
+        setze flags: u64 auf 0
+        setze anzahl: u64 auf 0
+        wenn n != 0:
+            setze flags auf 128
+        wenn u64(speicher_lesen(cbw, 4)) != 0x43425355 oder u64(speicher_lesen(cbw + 13, 1)) != 0 oder u64(speicher_lesen(cbw + 12, 1)) != flags oder n > 4096:
+            gib_zurück falsch
+        wenn op == 0:
+            gib_zurück cdb == 6 und n == 0
+        wenn op == 3:
+            gib_zurück cdb == 6 und n == 18 und u64(speicher_lesen(cbw + 19, 1)) == 18
+        wenn op == 0x12:
+            gib_zurück cdb == 6 und n == 36 und u64(speicher_lesen(cbw + 16, 1)) == 0 und u64(speicher_lesen(cbw + 19, 1)) == 36
+        wenn op == 0x25:
+            gib_zurück cdb == 10 und n == 8
+        wenn op == 0x9E:
+            gib_zurück cdb == 16 und n == 32 und u64(speicher_lesen(cbw + 16, 1)) == 0x10 und ms_be_lesen(cbw + 25, 4) == 32
+        wenn op == 0x28 und cdb == 10:
+            setze anzahl auf ms_be_lesen(cbw + 22, 2)
+        sonst wenn op == 0x88 und cdb == 16:
+            setze anzahl auf ms_be_lesen(cbw + 25, 4)
+        sonst:
+            gib_zurück falsch
+        gib_zurück ms(17) >= 512 und ms(17) <= 4096 und anzahl >= 1 und anzahl <= 8 und n == anzahl * ms(17)
+
+# MSC BOT: Klasse8/Subklasse6(SCSI transparent)/Protokoll0x50, Alternate0.
+@nativ
+funktion ms_interface(desc: u64, laenge: u64, speed: u64) -> bool:
+    unsicher:
+        setze pos: u64 auf 0
+        setze n: u64 auf 0
+        setze typ: u64 auf 0
+        setze ep: u64 auf 0
+        setze paket: u64 auf 0
+        setze richtung: u64 auf 0
+        setze letzte: u64 auf 0
+        setze aktiv: bool auf falsch
+        setze companion: bool auf falsch
+        ms_setze(8, 0)
+        ms_setze(9, 0)
+        ms_setze(12, 0)
+        ms_setze(13, 0)
+        wenn laenge < 9 oder laenge > 4096 oder u64(speicher_lesen(desc, 1)) < 9 oder u64(speicher_lesen(desc + 2, 2)) != laenge oder u64(speicher_lesen(desc + 1, 1)) != 2 oder u64(speicher_lesen(desc + 5, 1)) == 0 oder speed == 2:
+            gib_zurück falsch
+        solange pos + 2 <= laenge:
+            setze n auf u64(speicher_lesen(desc + pos, 1))
+            setze typ auf u64(speicher_lesen(desc + pos + 1, 1))
+            wenn n < 2 oder n > laenge - pos:
+                gib_zurück falsch
+            wenn companion und typ != 48:
+                gib_zurück falsch
+            wenn typ == 4:
+                wenn aktiv und ms(8) != 0 und ms(9) != 0:
+                    gib_zurück wahr
+                wenn n < 9:
+                    gib_zurück falsch
+                setze aktiv auf u64(speicher_lesen(desc + pos + 3, 1)) == 0 und u64(speicher_lesen(desc + pos + 4, 1)) == 2 und u64(speicher_lesen(desc + pos + 5, 1)) == 8 und u64(speicher_lesen(desc + pos + 6, 1)) == 6 und u64(speicher_lesen(desc + pos + 7, 1)) == 0x50
+                ms_setze(8, 0)
+                ms_setze(9, 0)
+                ms_setze(12, 0)
+                ms_setze(13, 0)
+                wenn aktiv:
+                    ms_setze(7, u64(speicher_lesen(desc + pos + 2, 1)))
+                    ms_setze(6, u64(speicher_lesen(desc + 5, 1)))
+            sonst wenn typ == 5 und aktiv:
+                wenn n < 7 oder u64(speicher_lesen(desc + pos + 3, 1)) != 2:
+                    gib_zurück falsch
+                setze ep auf u64(speicher_lesen(desc + pos + 2, 1))
+                setze paket auf u64(speicher_lesen(desc + pos + 4, 2))
+                wenn (ep & 15) == 0 oder (ep & 0x70) != 0 oder (paket & 0xF800) != 0:
+                    gib_zurück falsch
+                wenn speed == 1:
+                    wenn paket != 8 und paket != 16 und paket != 32 und paket != 64:
+                        gib_zurück falsch
+                sonst wenn speed == 3:
+                    wenn paket != 512:
+                        gib_zurück falsch
+                sonst wenn speed == 4:
+                    wenn paket != 1024:
+                        gib_zurück falsch
+                sonst:
+                    gib_zurück falsch
+                setze richtung auf 1
+                wenn (ep & 128) != 0:
+                    setze richtung auf 0
+                wenn ms(8 + richtung) != 0:
+                    gib_zurück falsch
+                ms_setze(8 + richtung, ep)
+                ms_setze(10 + richtung, paket)
+                setze letzte auf richtung
+                setze companion auf speed == 4
+            sonst wenn typ == 48 und aktiv:
+                wenn nicht companion oder n < 6 oder u64(speicher_lesen(desc + pos + 2, 1)) > 15 oder u64(speicher_lesen(desc + pos + 3, 1)) != 0:
+                    gib_zurück falsch
+                ms_setze(12 + letzte, u64(speicher_lesen(desc + pos + 2, 1)))
+                setze companion auf falsch
+            setze pos auf pos + n
+        gib_zurück pos == laenge und aktiv und nicht companion und ms(8) != 0 und ms(9) != 0
+
+@nativ
+konstante MS_T_SERIE: [u8; _] auf "MOO-KERNEL USB MSC SERIE GEPRUEFT "
+
+# Die Modellkennung allein ist keine eindeutige Medienfreigabe.
+# ASCII-Zielserie gegen den tatsaechlichen USB-UTF16-String vergleichen.
+@nativ
+funktion ms_serien_text(daten: u64, empfangen: u64, erwartet: u64) -> bool:
+    unsicher:
+        setze n: u64 auf u64(speicher_lesen(daten, 1))
+        setze j: u64 auf 0
+        wenn erwartet == 0 oder empfangen < 4 oder n < 4 oder n > empfangen oder (n & 1) != 0 oder u64(speicher_lesen(daten + 1, 1)) != 3:
+            gib_zurück falsch
+        solange j < 64 und u64(speicher_lesen(erwartet + j, 1)) != 0:
+            wenn 2 + j * 2 + 2 > n:
+                gib_zurück falsch
+            wenn u64(speicher_lesen(daten + 2 + j * 2, 2)) != u64(speicher_lesen(erwartet + j, 1)):
+                gib_zurück falsch
+            setze j auf j + 1
+        gib_zurück j > 0 und j < 64 und 2 + j * 2 == n und u64(speicher_lesen(erwartet + j, 1)) == 0
+
+@nativ
+funktion ms_seriennummer() -> bool:
+    unsicher:
+        setze p: u64 auf ms(1)
+        setze idx: u64 auf 0
+        setze sprache: u64 auf 0
+        wenn nicht xh_control(0x0012000001000680, p, 18) oder xh(43) < 18 oder u64(speicher_lesen(p, 2)) != 0x0112 oder u64(speicher_lesen(p + 8, 4)) != ms(5):
+            gib_zurück falsch
+        setze idx auf u64(speicher_lesen(p + 16, 1))
+        wenn idx == 0:
+            gib_zurück falsch
+        wenn nicht xh_control(0x00FF000003000680, p, 255) oder xh(43) < 4 oder u64(speicher_lesen(p, 1)) < 4 oder u64(speicher_lesen(p, 1)) > xh(43) oder u64(speicher_lesen(p + 1, 1)) != 3:
+            gib_zurück falsch
+        setze sprache auf u64(speicher_lesen(p + 2, 2))
+        wenn sprache == 0:
+            gib_zurück falsch
+        wenn nicht xh_control((u64(255) << 48) | (sprache << 32) | ((u64(0x0300) | idx) << 16) | 0x0680, p, 255):
+            gib_zurück falsch
+        gib_zurück ms_serien_text(p, xh(43), ms(27))
+
+@nativ
+funktion ms_ep_context(input: u64, dci: u64, ring: u64, paket: u64, burst: u64, eingang: bool) -> void:
+    unsicher:
+        setze art: u64 auf 2
+        wenn eingang:
+            setze art auf 6
+        setze epctx: u64 auf input + (dci + 1) * xh(5)
+        speicher_schreiben(epctx + 4, u32((paket << 16) | (burst << 8) | (art << 3) | 6), 4)
+        speicher_schreiben(epctx + 8, ring | 1, 8)
+        speicher_schreiben(epctx + 16, 4096, 4)
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion ms_geraet(port: u64, speed: u64) -> bool:
+    unsicher:
+        setze desc: u64 auf xh(4) + 32768
+        setze input: u64 auf xh(4) + 16384
+        setze laenge: u64 auf xh_beschreiben(port, speed, ms(5))
+        setze eingang: u64 auf 0
+        setze ausgang: u64 auf 0
+        setze letzte: u64 auf 0
+        setze serie_ok: bool auf falsch
+        wenn laenge == 0 oder nicht ms_interface(desc, laenge, speed):
+            gib_zurück falsch
+        setze serie_ok auf ms_seriennummer()
+        xh_log(adresse_von(MS_T_SERIE), u64(serie_ok))
+        wenn nicht serie_ok:
+            gib_zurück falsch
+        setze eingang auf (ms(8) & 15) * 2 + 1
+        setze ausgang auf (ms(9) & 15) * 2
+        setze letzte auf eingang
+        wenn ausgang > letzte:
+            setze letzte auf ausgang
+        xh_log(adresse_von(MS_T_INTERFACE), ms(7))
+        xh_log(adresse_von(MS_T_IN), ms(8))
+        xh_log(adresse_von(MS_T_OUT), ms(9))
+        wenn nicht xh_control((ms(6) << 16) | 0x0900, 0, 0):
+            gib_zurück falsch
+        xh_null(input, 4096)
+        xh_null(xh(4) + 28672, 4096)
+        xh_null(xh(4) + 36864, 4096)
+        xh_setze(14, 0)
+        xh_setze(15, 1)
+        xh_setze(44, 0)
+        xh_setze(45, 1)
+        speicher_schreiben(input + 4, u32(1 | (u64(1) << eingang) | (u64(1) << ausgang)), 4)
+        speicher_schreiben(input + xh(5), u32((speed << 20) | (letzte << 27)), 4)
+        speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
+        ms_ep_context(input, eingang, xh(4) + 28672, ms(10), ms(12), wahr)
+        ms_ep_context(input, ausgang, xh(4) + 36864, ms(11), ms(13), falsch)
+        wenn nicht xh_befehl(input, (12 << 10) | u32(xh(10) << 24)):
+            gib_zurück falsch
+        ms_setze(19, 1)
+        ms_setze(20, 0)
+        gib_zurück wahr
+
+# Ein Normal-TRB pro begrenztem Transfer; kein Ueberschreiten einer64KiB-Grenze.
+# Bulk-OUT nimmt NUR den geprueften31B-CBW, niemals einen Datensektor.
+@nativ
+funktion ms_bulk(eingang: bool, puffer: u64, laenge: u64) -> bool:
+    unsicher:
+        setze seite: u64 auf 7
+        setze indexfeld: u64 auf 14
+        setze dci: u64 auf (ms(8) & 15) * 2 + 1
+        setze steuer: u32 auf (1 << 10) | 32 | 4
+        setze trb: u64 auf 0
+        setze code: u32 auf 0
+        setze rest: u64 auf 0
+        ms_setze(16, 0)
+        wenn ms(19) == 0 oder ms(20) != 0 oder xh(4) != ms(0) oder laenge == 0 oder laenge > 4096 oder (puffer & 65535) + laenge > 65536:
+            gib_zurück falsch
+        wenn eingang:
+            wenn puffer != ms(1) und puffer != ms(3):
+                gib_zurück falsch
+            wenn puffer == ms(3) und laenge != 13:
+                gib_zurück falsch
+        sonst:
+            wenn puffer != ms(2) oder laenge != 31 oder nicht ms_cbw_lesend(puffer):
+                gib_zurück falsch
+            setze seite auf 9
+            setze indexfeld auf 44
+            setze dci auf (ms(9) & 15) * 2
+            setze steuer auf (1 << 10) | 32
+        xh_setze(11, dci)
+        setze trb auf xh_trb(seite, indexfeld, puffer, u32(laenge), steuer, wahr)
+        nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(dci))
+        setze code auf xh_ergebnis(32, trb)
+        setze rest auf xh(36) & 0xFFFFFF
+        wenn (code != 1 und (nicht eingang oder code != 13)) oder rest > laenge:
+            gib_zurück falsch
+        ms_setze(16, laenge - rest)
+        gib_zurück wahr
+
+@nativ
+konstante MS_T_RECOVERY: [u8; _] auf "MOO-KERNEL USB MSC RESET RECOVERY "
+@nativ
+konstante MS_T_INQUIRY: [u8; _] auf "MOO-KERNEL USB MSC INQUIRY VENDOR "
+
+# CBW1Fh: Signatur/Tag/Laenge/LUN und CDB nach BOT1.0 Tabelle5.1.
+# Alle anderen Opcodes werden VOR dem ersten Doorbell-Aufruf abgewiesen.
+@nativ
+funktion ms_cbw_bauen(op: u64, lba: u64, anzahl: u64) -> bool:
+    unsicher:
+        setze cbw: u64 auf ms(2)
+        setze cdb: u64 auf cbw + 15
+        setze laenge: u64 auf 0
+        setze breite: u64 auf 6
+        wenn op == 3:
+            setze laenge auf 18
+        sonst wenn op == 0x12:
+            setze laenge auf 36
+        sonst wenn op == 0x25:
+            setze laenge auf 8
+            setze breite auf 10
+        sonst wenn op == 0x9E:
+            setze laenge auf 32
+            setze breite auf 16
+        sonst wenn op == 0x28 oder op == 0x88:
+            wenn ms(17) < 512 oder ms(17) > 4096 oder anzahl == 0 oder anzahl > 4096 / ms(17) oder lba > ms(18) oder anzahl - 1 > ms(18) - lba:
+                gib_zurück falsch
+            setze laenge auf anzahl * ms(17)
+            setze breite auf 16
+            wenn op == 0x28:
+                wenn lba > 0xFFFFFFFF oder anzahl > 65535:
+                    gib_zurück falsch
+                setze breite auf 10
+        sonst wenn op != 0:
+            gib_zurück falsch
+        xh_null(cbw, 31)
+        wenn ms(14) >= 0xFFFFFFFF:
+            ms_setze(14, 1)
+        sonst:
+            ms_setze(14, ms(14) + 1)
+        speicher_schreiben(cbw, 0x43425355, 4)
+        speicher_schreiben(cbw + 4, u32(ms(14)), 4)
+        speicher_schreiben(cbw + 8, u32(laenge), 4)
+        wenn laenge != 0:
+            speicher_schreiben(cbw + 12, 128, 1)
+        speicher_schreiben(cbw + 14, u8(breite), 1)
+        speicher_schreiben(cdb, u8(op), 1)
+        wenn op == 3 oder op == 0x12:
+            speicher_schreiben(cdb + 4, u8(laenge), 1)
+        sonst wenn op == 0x9E:
+            speicher_schreiben(cdb + 1, 0x10, 1)
+            ms_be_setzen(cdb + 10, 32, 4)
+        sonst wenn op == 0x28:
+            ms_be_setzen(cdb + 2, lba, 4)
+            ms_be_setzen(cdb + 7, anzahl, 2)
+        sonst wenn op == 0x88:
+            ms_be_setzen(cdb + 2, lba, 8)
+            ms_be_setzen(cdb + 10, anzahl, 4)
+        ms_setze(24, laenge)
+        ms_setze(25, breite)
+        ms_setze(26, op)
+        gib_zurück ms_cbw_lesend(cbw)
+
+# Nach einem Transport-/Phasenfehler keine weiteren CBWs in diesem Lauf.
+# BOT1.0 §5.3.4: Class Reset, Clear Halt IN, Clear Halt OUT; dann Controller-Stopp
+# durch den Aufrufer. Kein Wiederanlauf mit unpassendem Host-Datentoggle.
+@nativ
+funktion ms_transport_abbruch(grund: u64) -> bool:
+    unsicher:
+        ms_setze(20, 1)
+        xh_log(adresse_von(MS_T_FEHLER), grund)
+        setze erholt: bool auf xh_control((ms(7) << 32) | 0xFF21, 0, 0)
+        wenn erholt:
+            setze erholt auf xh_control((ms(8) << 32) | 0x0102, 0, 0)
+        wenn erholt:
+            setze erholt auf xh_control((ms(9) << 32) | 0x0102, 0, 0)
+        xh_log(adresse_von(MS_T_RECOVERY), u64(erholt))
+        gib_zurück falsch
+
+# CSW-Tabelle5.2/§6.3: tatsaechliche13B, Signatur/Tag, gueltiger Status,
+# Residuum <= angefordert; nur relevante, wirklich empfangene Daten benutzen.
+@nativ
+funktion ms_csw_pruefen(csw_laenge: u64, angefordert: u64, empfangen: u64) -> bool:
+    unsicher:
+        setze csw: u64 auf ms(3)
+        setze rest: u64 auf u64(speicher_lesen(csw + 8, 4))
+        setze status: u64 auf u64(speicher_lesen(csw + 12, 1))
+        wenn csw_laenge != 13 oder u64(speicher_lesen(csw, 4)) != 0x53425355 oder u64(speicher_lesen(csw + 4, 4)) != ms(14):
+            gib_zurück falsch
+        wenn status > 1 oder rest > angefordert oder angefordert - rest > empfangen:
+            gib_zurück falsch
+        ms_setze(15, status)
+        ms_setze(16, angefordert - rest)
+        gib_zurück wahr
+
+@nativ
+funktion ms_bot(op: u64, lba: u64, anzahl: u64) -> bool:
+    unsicher:
+        setze empfangen: u64 auf 0
+        wenn ms(19) == 0 oder ms(20) != 0:
+            gib_zurück falsch
+        wenn ms(21) != 0 und takt() - ms(21) > xh(18) * 30000000:
+            ms_setze(20, 1)
+            xh_log(adresse_von(MS_T_FEHLER), 0xEE)
+            gib_zurück falsch
+        wenn nicht ms_cbw_bauen(op, lba, anzahl):
+            gib_zurück falsch
+        xh_log(adresse_von(MS_T_OPCODE), op)
+        xh_log(adresse_von(MS_T_TAG), ms(14))
+        wenn nicht ms_bulk(falsch, ms(2), 31) oder ms(16) != 31:
+            gib_zurück ms_transport_abbruch(1)
+        wenn ms(24) != 0:
+            xh_null(ms(1), ms(24))
+            wenn nicht ms_bulk(wahr, ms(1), ms(24)):
+                gib_zurück ms_transport_abbruch(2)
+            setze empfangen auf ms(16)
+        xh_null(ms(3), 13)
+        wenn nicht ms_bulk(wahr, ms(3), 13):
+            gib_zurück ms_transport_abbruch(3)
+        xh_log(adresse_von(MS_T_STATUS), u64(speicher_lesen(ms(3) + 12, 1)))
+        xh_log(adresse_von(MS_T_REST), u64(speicher_lesen(ms(3) + 8, 4)))
+        wenn nicht ms_csw_pruefen(ms(16), ms(24), empfangen):
+            gib_zurück ms_transport_abbruch(4)
+        xh_log(adresse_von(MS_T_DATEN), ms(16))
+        gib_zurück ms(15) == 0
+
+@nativ
+funktion ms_sense() -> u64:
+    unsicher:
+        setze antwort: u64 auf 0
+        setze key: u64 auf 0
+        setze asc: u64 auf 0
+        setze ascq: u64 auf 0
+        wenn nicht ms_bot(3, 0, 0) oder ms(16) < 4:
+            gib_zurück 0xFFFFFFFF
+        setze antwort auf u64(speicher_lesen(ms(1), 1)) & 127
+        wenn antwort == 0x70 oder antwort == 0x71:
+            wenn ms(16) < 14:
+                gib_zurück 0xFFFFFFFF
+            setze key auf u64(speicher_lesen(ms(1) + 2, 1)) & 15
+            setze asc auf u64(speicher_lesen(ms(1) + 12, 1))
+            setze ascq auf u64(speicher_lesen(ms(1) + 13, 1))
+        sonst wenn antwort == 0x72 oder antwort == 0x73:
+            setze key auf u64(speicher_lesen(ms(1) + 1, 1)) & 15
+            setze asc auf u64(speicher_lesen(ms(1) + 2, 1))
+            setze ascq auf u64(speicher_lesen(ms(1) + 3, 1))
+        sonst:
+            gib_zurück 0xFFFFFFFF
+        setze antwort auf (key << 16) | (asc << 8) | ascq
+        xh_log(adresse_von(MS_T_SENSE), antwort)
+        gib_zurück antwort
+
+@nativ
+funktion ms_scsi_starten() -> bool:
+    unsicher:
+        setze versuch: u64 auf 0
+        setze sense: u64 auf 0
+        setze bereit: bool auf falsch
+        wenn nicht ms_bot(0x12, 0, 0):
+            gib_zurück falsch
+        wenn ms(16) < 36 oder (u64(speicher_lesen(ms(1), 1)) & 0x1F) != 0:
+            gib_zurück falsch
+        xh_log(adresse_von(MS_T_INQUIRY), u64(speicher_lesen(ms(1) + 8, 8)))
+        solange versuch < 10 und nicht bereit:
+            setze bereit auf ms_bot(0, 0, 0)
+            wenn nicht bereit:
+                wenn ms(20) != 0:
+                    gib_zurück falsch
+                setze sense auf ms_sense()
+                wenn (sense >> 16) != 6 und nicht ((sense >> 16) == 2 und ((sense >> 8) & 255) == 4):
+                    gib_zurück falsch
+                xh_warte_us(100000)
+            setze versuch auf versuch + 1
+        wenn nicht bereit oder nicht ms_bot(0x25, 0, 0) oder ms(16) != 8:
+            gib_zurück falsch
+        ms_setze(18, ms_be_lesen(ms(1), 4))
+        ms_setze(17, ms_be_lesen(ms(1) + 4, 4))
+        wenn ms(18) == 0xFFFFFFFF:
+            wenn nicht ms_bot(0x9E, 0, 0) oder ms(16) != 32:
+                gib_zurück falsch
+            ms_setze(18, ms_be_lesen(ms(1), 8))
+            ms_setze(17, ms_be_lesen(ms(1) + 8, 4))
+        xh_log(adresse_von(MS_T_BLOCK), ms(17))
+        xh_log(adresse_von(MS_T_LBA), ms(18))
+        gib_zurück ms(18) >= 34 und ms(17) >= 512 und ms(17) <= 4096 und (ms(17) & (ms(17) - 1)) == 0
+
+@nativ
+funktion ms_lese_block(lba: u64) -> bool:
+    unsicher:
+        setze op: u64 auf 0x28
+        wenn lba > 0xFFFFFFFF:
+            setze op auf 0x88
+        wenn nicht ms_bot(op, lba, 1):
+            gib_zurück falsch
+        gib_zurück ms(16) == ms(17)
+
+# GPT-Header und Eintraege: UEFI2.10/edk2 UefiGpt.h; CRC wie Linux efi.c.
+# Maximal128KiB Eintragstabelle liegen vollstaendig im eigenen PFA-RAM.
+@nativ
+statisch MS_GUID: [u8; 96] auf 0
+@nativ
+konstante MS_T_GPT_KOPF: [u8; _] auf "MOO-KERNEL USB MSC GPT HEADER CRC OK "
+@nativ
+konstante MS_T_GPT_TABELLE: [u8; _] auf "MOO-KERNEL USB MSC GPT ARRAY CRC OK "
+@nativ
+konstante MS_T_GPT_BACKUP: [u8; _] auf "MOO-KERNEL USB MSC GPT BACKUP HEADER OK "
+@nativ
+konstante MS_T_GPT_TAIL: [u8; _] auf "MOO-KERNEL USB MSC GPT BACKUP NICHT MEDIUMENDE "
+@nativ
+konstante MS_T_GPT_DISK: [u8; _] auf "MOO-KERNEL USB MSC GPT DISK GUID "
+@nativ
+konstante MS_T_GPT_GUID: [u8; _] auf "MOO-KERNEL USB MSC GPT PART GUID "
+@nativ
+konstante MS_T_GPT_TYP: [u8; _] auf "MOO-KERNEL USB MSC GPT TYPE GUID "
+@nativ
+konstante MS_T_GPT_ANZAHL: [u8; _] auf "MOO-KERNEL USB MSC GPT PARTITIONEN "
+@nativ
+konstante MS_T_GPT_ANFANG: [u8; _] auf "MOO-KERNEL USB MSC GPT ERSTE LBA "
+@nativ
+konstante MS_T_GPT_ENDE: [u8; _] auf "MOO-KERNEL USB MSC GPT LETZTE LBA "
+@nativ
+konstante MS_T_GPT_ATTR: [u8; _] auf "MOO-KERNEL USB MSC GPT ATTRIBUTE "
+
+@nativ
+funktion ms_hex_ziffer(wert: u64) -> u8:
+    unsicher:
+        wenn wert < 10:
+            gib_zurück u8(wert + 48)
+        gib_zurück u8(wert + 55)
+
+# GUID.Data1/2/3 sind little-endian; Data4 bleibt Bytefolge. Keine Test-GUID.
+@nativ
+funktion ms_guid_format(praefix: u64, guid: u64) -> u64:
+    unsicher:
+        setze ziel: u64 auf adresse_von(MS_GUID)
+        setze pos: u64 auf 0
+        setze j: u64 auf 0
+        setze idx: u64 auf 0
+        setze wert: u64 auf 0
+        xh_null(ziel, 96)
+        solange pos < 48 und u64(speicher_lesen(praefix + pos, 1)) != 0:
+            speicher_schreiben(ziel + pos, speicher_lesen(praefix + pos, 1), 1)
+            setze pos auf pos + 1
+        speicher_schreiben(ziel + pos, 123, 1)
+        setze pos auf pos + 1
+        solange j < 16:
+            wenn j == 4 oder j == 6 oder j == 8 oder j == 10:
+                speicher_schreiben(ziel + pos, 45, 1)
+                setze pos auf pos + 1
+            setze idx auf j
+            wenn j < 4:
+                setze idx auf 3 - j
+            sonst wenn j < 6:
+                setze idx auf 9 - j
+            sonst wenn j < 8:
+                setze idx auf 13 - j
+            setze wert auf u64(speicher_lesen(guid + idx, 1))
+            speicher_schreiben(ziel + pos, ms_hex_ziffer(wert >> 4), 1)
+            speicher_schreiben(ziel + pos + 1, ms_hex_ziffer(wert & 15), 1)
+            setze pos auf pos + 2
+            setze j auf j + 1
+        speicher_schreiben(ziel + pos, 125, 1)
+        speicher_schreiben(ziel + pos + 1, 32, 1)
+        gib_zurück ziel
+
+# Integritaet, Groessen und Mediengrenzen. Ein Backup innerhalb eines groesseren
+# Mediums wird gelesen und spaeter explizit als Lageabweichung geloggt (Linux
+# efi.c:544); keine schreibende GPT-Reparatur und keine verschwiegene Konformitaet.
+@nativ
+funktion ms_gpt_kopf(daten: u64, kopf_lba: u64) -> bool:
+    unsicher:
+        setze groesse: u64 auf u64(speicher_lesen(daten + 12, 4))
+        setze erwartet: u64 auf u64(speicher_lesen(daten + 16, 4))
+        setze alternativ: u64 auf u64(speicher_lesen(daten + 32, 8))
+        setze erste: u64 auf u64(speicher_lesen(daten + 40, 8))
+        setze letzte: u64 auf u64(speicher_lesen(daten + 48, 8))
+        setze tabelle: u64 auf u64(speicher_lesen(daten + 72, 8))
+        setze anzahl: u64 auf u64(speicher_lesen(daten + 80, 4))
+        setze breite: u64 auf u64(speicher_lesen(daten + 84, 4))
+        setze bytezahl: u64 auf 0
+        setze bloecke: u64 auf 0
+        setze crc: u64 auf 0
+        wenn ms(17) < 512 oder ms(17) > 4096 oder (ms(17) & (ms(17) - 1)) != 0:
+            gib_zurück falsch
+        wenn u64(speicher_lesen(daten, 8)) != 0x5452415020494645 oder u64(speicher_lesen(daten + 8, 4)) != 0x00010000 oder groesse < 92 oder groesse > ms(17) oder u64(speicher_lesen(daten + 20, 4)) != 0:
+            gib_zurück falsch
+        wenn kopf_lba == 0 oder kopf_lba > ms(18) oder u64(speicher_lesen(daten + 24, 8)) != kopf_lba oder alternativ == 0 oder alternativ > ms(18) oder alternativ == kopf_lba:
+            gib_zurück falsch
+        wenn erste < 2 oder letzte < erste oder letzte >= ms(18):
+            gib_zurück falsch
+        wenn (u64(speicher_lesen(daten + 56, 8)) | u64(speicher_lesen(daten + 64, 8))) == 0:
+            gib_zurück falsch
+        wenn anzahl == 0 oder anzahl > 1024 oder breite < 128 oder breite > 16384 oder (breite & (breite - 1)) != 0:
+            gib_zurück falsch
+        setze bytezahl auf anzahl * breite
+        wenn bytezahl < 16384 oder bytezahl > 131072:
+            gib_zurück falsch
+        setze bloecke auf (bytezahl + ms(17) - 1) / ms(17)
+        wenn tabelle < 2 oder tabelle > ms(18) oder bloecke - 1 > ms(18) - tabelle:
+            gib_zurück falsch
+        wenn kopf_lba == 1:
+            wenn alternativ <= letzte oder tabelle >= erste oder bloecke > erste - tabelle:
+                gib_zurück falsch
+        sonst:
+            wenn alternativ != 1 oder tabelle <= letzte oder tabelle >= kopf_lba oder bloecke > kopf_lba - tabelle:
+                gib_zurück falsch
+        # Nur die RAM-Kopie fuer die CRC-Berechnung aendern und immer restaurieren.
+        speicher_schreiben(daten + 16, 0, 4)
+        setze crc auf u64(hw_crc32(ms(4), daten, groesse))
+        speicher_schreiben(daten + 16, u32(erwartet), 4)
+        gib_zurück crc == erwartet
+
+@nativ
+funktion ms_gpt_eintrag(daten: u64, erste: u64, letzte: u64) -> bool:
+    unsicher:
+        wenn (u64(speicher_lesen(daten, 8)) | u64(speicher_lesen(daten + 8, 8))) == 0:
+            gib_zurück wahr
+        setze start_lba: u64 auf u64(speicher_lesen(daten + 32, 8))
+        setze ende_lba: u64 auf u64(speicher_lesen(daten + 40, 8))
+        wenn start_lba < erste oder ende_lba < start_lba oder ende_lba > letzte:
+            gib_zurück falsch
+        wenn (u64(speicher_lesen(daten + 16, 8)) | u64(speicher_lesen(daten + 24, 8))) == 0:
+            gib_zurück falsch
+        gib_zurück (u64(speicher_lesen(daten + 48, 8)) & 0x0000FFFFFFFFFFF8) == 0
+
+# Erst vollstaendig lesen und CRC/Bounds aller Eintraege pruefen, dann anzeigen.
+@nativ
+funktion ms_gpt_lesen() -> bool:
+    unsicher:
+        setze puffer: u64 auf ms(1)
+        setze kopf: u64 auf ms(2) + 128
+        setze tabelle: u64 auf ms(0) + 67 * 4096
+        setze quelle_lba: u64 auf 0
+        setze backup_lba: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze breite: u64 auf 0
+        setze bytezahl: u64 auf 0
+        setze pos: u64 auf 0
+        setze teil: u64 auf 0
+        setze j: u64 auf 0
+        setze k: u64 auf 0
+        setze eintrag: u64 auf 0
+        setze anderer: u64 auf 0
+        setze erste: u64 auf 0
+        setze letzte: u64 auf 0
+        setze partitionen: u64 auf 0
+        setze schutz_mbr: bool auf falsch
+        wenn nicht ms_lese_block(0) oder u64(speicher_lesen(puffer + 510, 2)) != 0xAA55:
+            gib_zurück falsch
+        solange j < 4:
+            wenn u64(speicher_lesen(puffer + 450 + j * 16, 1)) == 0xEE:
+                setze schutz_mbr auf wahr
+            setze j auf j + 1
+        wenn nicht schutz_mbr oder nicht ms_lese_block(1) oder nicht ms_gpt_kopf(puffer, 1):
+            gib_zurück falsch
+        nt_kopiere(kopf, puffer, 92)
+        setze quelle_lba auf u64(speicher_lesen(kopf + 72, 8))
+        setze backup_lba auf u64(speicher_lesen(kopf + 32, 8))
+        setze anzahl auf u64(speicher_lesen(kopf + 80, 4))
+        setze breite auf u64(speicher_lesen(kopf + 84, 4))
+        setze bytezahl auf anzahl * breite
+        setze erste auf u64(speicher_lesen(kopf + 40, 8))
+        setze letzte auf u64(speicher_lesen(kopf + 48, 8))
+        solange pos < bytezahl:
+            wenn nicht ms_lese_block(quelle_lba + pos / ms(17)):
+                gib_zurück falsch
+            setze teil auf ms(17)
+            wenn teil > bytezahl - pos:
+                setze teil auf bytezahl - pos
+            nt_kopiere(tabelle + pos, puffer, teil)
+            setze pos auf pos + teil
+        wenn u64(hw_crc32(ms(4), tabelle, bytezahl)) != u64(speicher_lesen(kopf + 88, 4)):
+            gib_zurück falsch
+        setze j auf 0
+        solange j < anzahl:
+            setze eintrag auf tabelle + j * breite
+            wenn nicht ms_gpt_eintrag(eintrag, erste, letzte):
+                gib_zurück falsch
+            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
+                setze k auf 0
+                solange k < j:
+                    setze anderer auf tabelle + k * breite
+                    wenn (u64(speicher_lesen(anderer, 8)) | u64(speicher_lesen(anderer + 8, 8))) != 0:
+                        wenn u64(speicher_lesen(eintrag + 16, 8)) == u64(speicher_lesen(anderer + 16, 8)) und u64(speicher_lesen(eintrag + 24, 8)) == u64(speicher_lesen(anderer + 24, 8)):
+                            gib_zurück falsch
+                        wenn u64(speicher_lesen(eintrag + 32, 8)) <= u64(speicher_lesen(anderer + 40, 8)) und u64(speicher_lesen(anderer + 32, 8)) <= u64(speicher_lesen(eintrag + 40, 8)):
+                            gib_zurück falsch
+                    setze k auf k + 1
+                setze partitionen auf partitionen + 1
+            setze j auf j + 1
+        # READ16 wird hier fuer grosse Medien tatsaechlich benoetigt.
+        wenn nicht ms_lese_block(backup_lba) oder nicht ms_gpt_kopf(puffer, backup_lba):
+            gib_zurück falsch
+        wenn u64(speicher_lesen(puffer + 40, 8)) != erste oder u64(speicher_lesen(puffer + 48, 8)) != letzte oder u64(speicher_lesen(puffer + 56, 8)) != u64(speicher_lesen(kopf + 56, 8)) oder u64(speicher_lesen(puffer + 64, 8)) != u64(speicher_lesen(kopf + 64, 8)):
+            gib_zurück falsch
+        wenn u64(speicher_lesen(puffer + 80, 4)) != anzahl oder u64(speicher_lesen(puffer + 84, 4)) != breite oder u64(speicher_lesen(puffer + 88, 4)) != u64(speicher_lesen(kopf + 88, 4)):
+            gib_zurück falsch
+        xh_log(adresse_von(MS_T_GPT_KOPF), 1)
+        xh_log(adresse_von(MS_T_GPT_TABELLE), 1)
+        xh_log(adresse_von(MS_T_GPT_BACKUP), 1)
+        wenn backup_lba != ms(18):
+            xh_log(adresse_von(MS_T_GPT_TAIL), backup_lba)
+        xh_log(ms_guid_format(adresse_von(MS_T_GPT_DISK), kopf + 56), 0)
+        setze j auf 0
+        solange j < anzahl:
+            setze eintrag auf tabelle + j * breite
+            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
+                xh_log(ms_guid_format(adresse_von(MS_T_GPT_GUID), eintrag + 16), j + 1)
+                xh_log(ms_guid_format(adresse_von(MS_T_GPT_TYP), eintrag), j + 1)
+                xh_log(adresse_von(MS_T_GPT_ANFANG), u64(speicher_lesen(eintrag + 32, 8)))
+                xh_log(adresse_von(MS_T_GPT_ENDE), u64(speicher_lesen(eintrag + 40, 8)))
+                xh_log(adresse_von(MS_T_GPT_ATTR), u64(speicher_lesen(eintrag + 48, 8)))
+            setze j auf j + 1
+        ms_setze(22, partitionen)
+        xh_log(adresse_von(MS_T_GPT_ANZAHL), partitionen)
+        gib_zurück wahr
+
+# Ein ausdruecklich freigegebenes Geraet, LUN0; niemals fremde Disks SCSI-proben.
+# Nach der Diagnose den Host stoppen, bevor der bisherige HID-Pfad ihn benutzt.
+@nativ
+funktion usb_speicher_pruefen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, ziel_id: u64, ziel_serie: u64) -> bool:
+    unsicher:
+        setze ergebnis: bool auf falsch
+        xh_null(adresse_von(MS), 28 * 8)
+        xh_setze(26, log)
+        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0 oder tsc_us > 1000000 oder ziel_bdf >= 65536 oder ziel_id == 0 oder ziel_id > 0xFFFFFFFF oder ziel_serie == 0:
+            xh_log(adresse_von(MS_T_FEHLER), 0xFF)
+            gib_zurück falsch
+        ms_setze(0, dma)
+        ms_setze(1, dma + 64 * 4096)
+        ms_setze(2, dma + 65 * 4096)
+        ms_setze(3, dma + 65 * 4096 + 64)
+        ms_setze(4, dma + 66 * 4096)
+        ms_setze(5, ziel_id)
+        ms_setze(27, ziel_serie)
+        wenn xh_suchen(dma, tsc_us, bi, map, log, ziel_bdf, adresse_von(ms_geraet)):
+            ms_setze(21, takt())
+            hw_crc_tabelle(ms(4))
+            wenn ms_scsi_starten():
+                setze ergebnis auf ms_gpt_lesen()
+            wenn nicht ergebnis:
+                xh_log(adresse_von(MS_T_FEHLER), 0x10)
+        ms_setze(19, 0)
+        wenn xh(10) != 0:
+            wenn nicht xh_befehl(0, (10 << 10) | u32(xh(10) << 24)):
+                setze ergebnis auf falsch
+            xh_setze(10, 0)
+        wenn nicht xh_stop():
+            setze ergebnis auf falsch
+        xh_log(adresse_von(MS_T_BEREIT), u64(ergebnis))
+        gib_zurück ergebnis
