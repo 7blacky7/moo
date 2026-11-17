@@ -1,0 +1,88 @@
+# P2-T122: Echte Runtime, nur Betriebssystem-Start und Mutexzaehler sind
+# im Test-Threadobjekt umgeleitet. Unerwartete Fehler brechen den Selftest ab.
+extern "C" funktion moo_test_thread_start_modus(wert: i32) -> void
+extern "C" funktion moo_test_thread_start_anzahl() -> i32
+extern "C" funktion moo_test_thread_start_mutexe() -> i32
+extern "C" funktion moo_test_thread_start_fehlercode() -> i32
+
+@nativ
+funktion hook_modus(wert: i32) -> i32:
+    unsicher:
+        moo_test_thread_start_modus(wert)
+    gib_zurück 0
+
+@nativ
+funktion hook_anzahl() -> i32:
+    unsicher:
+        gib_zurück moo_test_thread_start_anzahl()
+
+@nativ
+funktion hook_mutexe() -> i32:
+    unsicher:
+        gib_zurück moo_test_thread_start_mutexe()
+
+@nativ
+funktion hook_fehlercode() -> i32:
+    unsicher:
+        gib_zurück moo_test_thread_start_fehlercode()
+
+
+
+funktion schlicht(arg):
+    gib_zurück arg[0]
+
+funktion ohne():
+    gib_zurück [11]
+
+funktion mehrere(a, b, c):
+    gib_zurück a[0] + b[0] + c[0]
+
+funktion erzeuge_funktion(n):
+    setze inhalt auf [n]
+    gib_zurück (arg) => inhalt[0] + arg[0]
+
+funktion pruefe_fehler(fallnummer, n):
+    setze resultat auf nichts
+    setze code auf 0
+    unsicher:
+        setze code auf hook_fehlercode()
+    versuche:
+        wenn fallnummer == 0:
+            setze resultat auf starte(schlicht, [n])
+        sonst wenn fallnummer == 1:
+            setze resultat auf starte(erzeuge_funktion(n), [n])
+        sonst wenn fallnummer == 2:
+            setze resultat auf starte(ohne)
+        sonst:
+            setze resultat auf starte(mehrere, [n], [n + 1], [n + 2])
+        wirf "FALSCH: Threadstart ohne Fehler"
+    fange e:
+        wenn nicht text(e).text_enthält("Thread erstellen fehlgeschlagen ("):
+            wirf e
+        wenn nicht text(e).text_enthält(": " + text(code) + ")"):
+            wirf e
+        wenn resultat != nichts:
+            wirf "FALSCH: ungueltiger Threadwert nach Fehlstart"
+    gib_zurück 1
+
+funktion wieder_erfolgreich():
+    setze t1 auf starte(schlicht, [7])
+    setze t2 auf starte(erzeuge_funktion(8), [9])
+    setze t3 auf starte(ohne)
+    setze t4 auf starte(mehrere, [1], [2], [3])
+    gib_zurück [t1.warten(), t2.warten(), t3.warten(), t4.warten()]
+
+setze gefangen auf 0
+für i in 0..1000:
+    für fallnummer in 0..4:
+        setze gefangen auf gefangen + pruefe_fehler(fallnummer, i)
+zeige gefangen
+unsicher:
+    zeige hook_anzahl()
+    zeige hook_mutexe()
+    hook_modus(0)
+zeige wieder_erfolgreich()
+unsicher:
+    zeige hook_mutexe()
+    zeige hook_anzahl()
+zeige "Threadstart Ende"

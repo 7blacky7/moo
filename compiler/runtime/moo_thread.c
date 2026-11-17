@@ -435,20 +435,38 @@ static MooValue moo_thread_starten(MooValue func, MooValue arg, int32_t n_args) 
 
 #ifdef _WIN32
     t->thread = CreateThread(NULL, 0, thread_runner_win, post, 0, &t->thread_id);
-    if (!t->thread) {
-        // Ohne Thread: die +1 des Aufrufers fuer arg sowie die gehaltenen
-        // Referenzen (Extra-Retain, Closure-Environment) freigeben. Mehrfach-
-        // Weg: die +1 der Liste steckt bereits in halt_arg.
+    int fehlgeschlagen = t->thread == NULL;
+    /* Vor der Freigabe sichern: weitere Win32-Aufrufe koennen LastError setzen. */
+    unsigned long systemfehler = fehlgeschlagen ? (unsigned long)GetLastError() : 0;
+    const char* systemaufruf = "CreateThread";
+#else
+    /* pthread_create liefert den Fehlercode direkt; errno ist hier nicht der Vertrag. */
+    int startcode = pthread_create(&t->thread, NULL, thread_runner_posix, post);
+    int fehlgeschlagen = startcode != 0;
+    unsigned long systemfehler = (unsigned long)startcode;
+    const char* systemaufruf = "pthread_create";
+#endif
+    if (fehlgeschlagen) {
+        /* Kein Worker hat Besitz uebernommen: Einargument-Parameterslot und
+         * gehaltene Referenzen exakt abbauen. Im Mehrargumentpfad gehoert die
+         * uebergebene Liste bereits halt_arg. Kein Join auf ungueltigem Handle. */
         if (n_args < 0) moo_release(arg);
         moo_thread_halt_freigeben(t);
-        free(post);
+#ifdef _WIN32
+        DeleteCriticalSection(&t->mutex);
+#else
+        pthread_mutex_destroy(&t->mutex);
+#endif
+        /* Das noch unveroeffentlichte Postfach haelt Worker- und Thread-Ref. */
+        post_release(post);
+        post_release(post);
         free(t);
-        moo_throw(moo_string_new("Thread erstellen fehlgeschlagen"));
+        char meldung[128];
+        snprintf(meldung, sizeof(meldung), "Thread erstellen fehlgeschlagen (%s: %lu)",
+                 systemaufruf, systemfehler);
+        moo_throw(moo_string_new(meldung));
         return moo_none();
     }
-#else
-    pthread_create(&t->thread, NULL, thread_runner_posix, post);
-#endif
 
     MooValue v;
     v.tag = MOO_THREAD;

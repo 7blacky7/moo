@@ -207,6 +207,15 @@ jobs:
           set -o pipefail
           bash compiler/tests/run_all.sh 2>&1 | tee "core-ci-${{ runner.os }}.log"
 
+      - name: Check failed system thread starts
+        shell: bash
+        run: |
+          set -o pipefail
+          RC_THREAD_START_TEST=1 RC_STRESS_PROGRAMME=thread_start_fehler \
+            bash skripte/p2/runtime/rc_geteilt_stress.sh \
+            compiler/target/release/moo-compiler build/p2-thread-start-ci 1 systemfehler \
+            2>&1 | tee "thread-start-ci-${{ runner.os }}.log"
+
       - name: Upload core-suite log
         if: always()
         uses: actions/upload-artifact@v4
@@ -215,5 +224,8 @@ jobs:
           path: |
             core-ci-${{ runner.os }}.log
             build/p2-msvc-zweige/
+            thread-start-ci-${{ runner.os }}.log
+            build/p2-thread-start-ci/*.compile.log
+            build/p2-thread-start-ci/err.txt
           if-no-files-found: warn
           retention-days: 14

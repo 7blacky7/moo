@@ -30,3 +30,12 @@ run = 'bash rc_geteilt_stress.sh "${P2_COMPILER:-../../../compiler/target/releas
 [tasks.rc-geteilt-tsan]
 description = "P2-T112 geteilte Heap-Werte: TSan-Gate (Projektcompiler und -Runtime)"
 run = 'bash rc_geteilt_tsan.sh "${P2_COMPILER:-../../../compiler/target/release/moo-compiler}" ../../../compiler/runtime "${P2_RUNTIME_OUT:-../../../build/p2-rc-geteilt}/tsan"'
+
+
+[tasks.thread-start-fehler]
+description = "P2-T122: OS-Threadstartfehler, Ressourcenfreigabe und anschliessende echte Starts"
+run = 'RC_THREAD_START_TEST=1 RC_STRESS_PROGRAMME=thread_start_fehler bash rc_geteilt_stress.sh "${P2_COMPILER:-../../../compiler/target/release/moo-compiler}" "${P2_RUNTIME_OUT:-../../../build/p2-thread-start}/fehler" 1 systemfehler'
+
+[tasks.thread-start-fehler-asan]
+description = "P2-T122: erzwungene Threadstartfehler mit ASan und LSan"
+run = 'RC_THREAD_START_TEST=1 RC_THREAD_START_ASAN=1 RC_STRESS_PROGRAMME=thread_start_fehler bash rc_geteilt_stress.sh "${P2_COMPILER:-../../../compiler/target/release/moo-compiler}" "${P2_RUNTIME_OUT:-../../../build/p2-thread-start}/asan" 1 asan'
