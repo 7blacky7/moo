@@ -6,6 +6,7 @@ param(
     [string]$UsbSerial,
     [string]$PartitionGuid,
     [string]$StickSha256,
+    [string]$RueckfallSha256,
     [string]$Eintrag,
     [bool]$WaechterWarAn=$true,
     [bool]$SynapseGestoppt=$false
@@ -28,8 +29,9 @@ function Firmware-Eintraege([string]$Text) {
     foreach ($block in ($Text -split '(?:\r?\n){2,}')) {
         $id=[regex]::Match($block,'(?im)^\s*(?:identifier|Bezeichner)\s+(\{[0-9a-f-]{36}\})\s*$')
         $device=[regex]::Match($block,'(?im)^\s*(?:device|Ger.t)\s+partition=(\\Device\\HarddiskVolume[0-9]+)\s*$')
+        $path=[regex]::Match($block,'(?im)^\s*(?:path|Pfad)\s+(\\[^\r\n]+)\s*$')
         if ($id.Success -and $device.Success) {
-            [pscustomobject]@{ id=$id.Groups[1].Value; device=$device.Groups[1].Value }
+            [pscustomobject]@{ id=$id.Groups[1].Value; device=$device.Groups[1].Value; path=$path.Groups[1].Value.Trim() }
         }
     }
 }
@@ -55,7 +57,7 @@ public static class MooN100DosDevice {
     return $puffer.ToString().Split([char]0)[0]
 }
 function Bestand {
-    if ($UsbSerial -notmatch '^[a-zA-Z0-9_-]+$' -or $StickSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+    if ($UsbSerial -notmatch '^[a-zA-Z0-9_-]+$' -or $StickSha256 -notmatch '^[0-9a-fA-F]{64}$' -or $RueckfallSha256 -notmatch '^[0-9a-fA-F]{64}$') {
         throw 'USB-Seriennummer und erwarteter SHA256 sind Pflicht'
     }
     $disks=@(Get-Disk | Where-Object { $_.BusType -eq 'USB' -and $_.SerialNumber.Trim() -eq $UsbSerial })
@@ -67,9 +69,14 @@ function Bestand {
     $device=Volume-Geraet $volumes[0]
     $hash=(Get-FileHash -LiteralPath ($volumes[0]+'EFI\BOOT\BOOTX64.EFI') -Algorithm SHA256).Hash
     if ($hash -ne $StickSha256) { throw 'Stick-Loader hat nicht den erwarteten SHA256' }
+    $fallHash=(Get-FileHash -LiteralPath ($volumes[0]+'EFI\MOO\KERN.ELF') -Algorithm SHA256).Hash
+    if ($fallHash -ne $RueckfallSha256) { throw 'Lokaler Rueckfallkern fehlt oder hat nicht den freigegebenen SHA256' }
     $firmware=Bcd-Lesen 'firmware'
     $entries=@(Firmware-Eintraege $firmware | Where-Object { $_.device -eq $device })
     if ($entries.Count -ne 1) { throw 'Kein eindeutiger Firmware-Eintrag fuer genau diese USB-ESP' }
+    if ($entries[0].path -ine '\EFI\BOOT\BOOTX64.EFI') {
+        throw 'EFI-Dateipfad des USB-Eintrags ist nicht exakt belegt (erwartet \EFI\BOOT\BOOTX64.EFI); kein Lauf'
+    }
     $manager=Bcd-Lesen '{fwbootmgr}'
     if ($manager -notmatch '(?im)^\s*(?:displayorder|Anzeigereihenfolge)\s+') {
         throw 'Firmware-Manager-Ausgabe nicht erkannt'
@@ -77,8 +84,8 @@ function Bestand {
     if ((Bootfolge $manager) -ne '') { throw 'Vorhandene einmalige Bootfolge: nicht ueberschreiben' }
     $task=Get-ScheduledTask -TaskName 'Synapse-Waechter'
     [pscustomobject]@{
-        entry=$entries[0].id; device=$device; partition_guid=$parts[0].Guid
-        usb_serial=$UsbSerial; stick_sha256=$hash
+        entry=$entries[0].id; device=$device; efi_path=$entries[0].path; partition_guid=$parts[0].Guid
+        usb_serial=$UsbSerial; stick_sha256=$hash; rueckfall_sha256=$fallHash
         watcher_enabled=[bool]$task.Settings.Enabled; manager=$manager
         last_boot=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
     }

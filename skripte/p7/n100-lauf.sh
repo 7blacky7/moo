@@ -5,9 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EFI="$ROOT/build/p7-t25/stick/tftp/moo.efi"
 KERN="$ROOT/build/p7-t25/stick/tftp/moo.kern"
+RUECKFALL="$ROOT/build/p7-t25/rueckkehr/RUECKFALL.ELF"
+RUECKFALL_SHA=
 IFACE=enp60s0
 SEKUNDEN=90
 ZEITLIMIT=600
+SYNAPSE_LIMIT=600
 USB_SERIE=
 PARTITION=
 STICK_SHA=
@@ -19,6 +22,8 @@ MODUS=1
 WATCHDOG_S=180
 KONFIG_QUELLE=
 KONFIG_ZIEL=
+KONFIG_LOADER_QUELLE=
+KONFIG_LOADER_ZIEL=
 RESTORE=
 STOPP_SK="${MOO_N100_STOPP_SKRIPT:-$ROOT/build/koord/sanft_aus.ps1}"
 NOTIZ="${MOO_N100_NOTIZ:-$ROOT/build/notizen/synapse-offline.md}"
@@ -33,28 +38,34 @@ while (($#)); do
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
     --kern) KERN="$2"; shift 2;;
+    --rueckfall-kern) RUECKFALL="$2"; shift 2;;
     --interface) IFACE="$2"; shift 2;;
     --sekunden) SEKUNDEN="$2"; shift 2;;
     --zeitlimit) ZEITLIMIT="$2"; shift 2;;
+    --synapse-zeitlimit) SYNAPSE_LIMIT="$2"; shift 2;;
     --usb-serie) USB_SERIE="$2"; shift 2;;
     --partition) PARTITION="$2"; shift 2;;
     --stick-sha256) STICK_SHA="$2"; shift 2;;
     --kern-konfigurieren) KONFIG_QUELLE="$2"; KONFIG_ZIEL="$3"; shift 3;;
+    --loader-konfigurieren) KONFIG_LOADER_QUELLE="$2"; KONFIG_LOADER_ZIEL="$3"; shift 3;;
     --aufraeumen) RESTORE="$2"; shift 2;;
     --hilfe) printf '%s\n' 'n100-lauf.sh --trocken | --koordinator --diagnose --efi DATEI --kern DATEI --usb-serie SERIE --partition {GUID} --stick-sha256 SHA256' \
+      '--rueckfall-kern ELF: exakt20s/180s/Modus3; SHA muss EFI/MOO/KERN.ELF auf dem Stick entsprechen.' \
+      '--synapse-zeitlimit N: eigenes Startlimit nach Windows-Rueckkehr (Standard600s).' \
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern + 180s Hardware-Watchdog; --watchdog-test weist den Reset bei Stillstand nach.' \
+      '--loader-konfigurieren QUELLE ZIEL: sichere Rueckkehr nur in privater PE-Kopie aktivieren.' \
       '--kern-konfigurieren QUELLE ZIEL [--sekunden N]: nur private ELF-Kopie konfigurieren.' \
       '--aufraeumen build/n100-laeufe/ZEIT --koordinator: Wiederherstellung erneut versuchen.'; exit 0;;
     *) printf 'Unbekanntes Argument: %s\n' "$1" >&2; exit 2;;
   esac
 done
-[[ "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|100|101)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
-((SEKUNDEN>=1 && SEKUNDEN<=600 && WATCHDOG_S>=6 && WATCHDOG_S<=600 && ZEITLIMIT>=30 && ZEITLIMIT<=1800)) || { echo 'Ungueltiges Zeitlimit' >&2; exit 2; }
+[[ "$SYNAPSE_LIMIT" =~ ^[0-9]+$ && "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|3|100|101|103)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
+((SYNAPSE_LIMIT>=5 && SYNAPSE_LIMIT<=1800 && SEKUNDEN>=1 && SEKUNDEN<=600 && WATCHDOG_S>=6 && WATCHDOG_S<=600 && ZEITLIMIT>=30 && ZEITLIMIT<=1800)) || { echo 'Ungueltiges Zeitlimit' >&2; exit 2; }
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project python - "$1" "$2" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" <<'PY'
+  uv run --no-project python - "$1" "$2" "${3:-$SEKUNDEN}" "${4:-$WATCHDOG_S}" "${5:-$MODUS}" <<'PY'
 import pathlib, struct, sys
 src, dst = map(pathlib.Path, sys.argv[1:3])
 seconds, watchdog, mode = map(int, sys.argv[3:6])
@@ -80,16 +91,66 @@ for i in range(count):
         pos = data.find(magic, pos + 1, start + length)
 if len(hits) != 1:
     raise SystemExit("Testvertrag nicht eindeutig in schreibbarem PT_LOAD")
-# 0: Lesen; 1: N100+Pings; 2: N100-Stillstand; 100/101: nur ICH9-QEMU.
+# 0: Lesen; 1: N100+Pings; 2: Stillstand; 3: kurzer Rueckfall ohne USB.
+# 100/101/103: ausschliesslich ICH9-QEMU.
 struct.pack_into("<QQQ", data, hits[0] + 8, seconds, watchdog, mode)
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_bytes(data)
 print(f"Kern-Kopie {dst}: {seconds}s, iTCO {watchdog}s, Modus {mode}")
 PY
 }
+loader_kopie() {
+  uv run --no-project python - "$1" "$2" <<'PY'
+import pathlib, struct, sys
+src, dst = map(pathlib.Path, sys.argv[1:3])
+if src.resolve() == dst.resolve():
+    raise SystemExit("Quell-Loader darf nicht ueberschrieben werden")
+data = bytearray(src.read_bytes())
+if data[:2] != b"MZ" or len(data) < 64:
+    raise SystemExit("Kein PE-Loader")
+pe = struct.unpack_from("<I", data, 60)[0]
+if pe + 24 > len(data) or data[pe:pe+4] != b"PE\0\0":
+    raise SystemExit("Kein PE-Kopf")
+machine, count = struct.unpack_from("<HH", data, pe+4)
+optlen = struct.unpack_from("<H", data, pe+20)[0]
+opt = pe + 24
+if machine != 0x8664 or optlen < 152 or opt + optlen > len(data):
+    raise SystemExit("Kein PE64 x86-64")
+if struct.unpack_from("<H", data, opt)[0] != 0x20b or struct.unpack_from("<H", data, opt+68)[0] != 10:
+    raise SystemExit("Kein EFI-Application PE32+")
+if struct.unpack_from("<I", data, opt+64)[0] or any(data[opt+144:opt+152]):
+    raise SystemExit("Nur eigener unsignierter Loader ohne PE-Pruefsumme")
+magic = struct.pack("<Q", 0x353254524F4F4D21)
+hits = []
+for i in range(count):
+    h = opt + optlen + i*40
+    if h+40 > len(data):
+        raise SystemExit("Abgeschnittener Abschnittskopf")
+    length, start = struct.unpack_from("<II", data, h+16)
+    flags = struct.unpack_from("<I", data, h+36)[0]
+    if start + length > len(data):
+        raise SystemExit("Abgeschnittener Abschnitt")
+    if not flags & 0x80000000:
+        continue
+    pos = data.find(magic, start, start+length)
+    while pos >= 0:
+        if pos+16 <= start+length:
+            hits.append(pos)
+        pos = data.find(magic, pos+1, start+length)
+if len(hits) != 1:
+    raise SystemExit("Rueckkehrvertrag nicht eindeutig im schreibbaren PE-Abschnitt")
+if struct.unpack_from("<Q", data, hits[0]+8)[0] not in (0, 1):
+    raise SystemExit("Unbekannte Rueckkehrkonfiguration")
+struct.pack_into("<Q", data, hits[0]+8, 1)
+dst.parent.mkdir(parents=True, exist_ok=True)
+dst.write_bytes(data)
+print(f"Loader-Kopie {dst}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
+PY
+}
 if ((TROCKEN)); then
   printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Dateien.'
   printf '1. USB-ESP per Seriennummer+GPT-GUID+NT-Geraetepfad+SHA256 belegen: %s %s %s\n' "$USB_SERIE" "$PARTITION" "$STICK_SHA"
+  printf 'Lokalen Rueckfallkern (20s,180s iTCO,Modus3) und ESP-SHA pruefen: %s\n' "$RUECKFALL"
   printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=Bedienen,2=Stillstand)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
   printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
@@ -98,6 +159,10 @@ if ((TROCKEN)); then
   printf '%s\n' '7. Eigene Bootsequence, Waechter, Synapse, tcpdump und Server aufraeumen; netz-server restauriert IP/NM/Firewall.'
   printf '%s\n' 'Ergebnisse: build/n100-laeufe/<UTC-Zeit>/; Offline-Notizen: build/notizen/synapse-offline.md.'
   printf '%s\n' 'Safety-Vertrag: N100 8086:54A3, Basis0x400, TCOCTL0x101, CNT0x1800, Strap0; sonst vor USB abbrechen und zuruecksetzen.'
+  exit 0
+fi
+if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
+  loader_kopie "$KONFIG_LOADER_QUELLE" "$KONFIG_LOADER_ZIEL"
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
@@ -139,7 +204,7 @@ remote() {
   fi
   # Scriptblock aus der Datei vermeidet auch eine dauerhafte ExecutionPolicy-Aenderung.
   timeout --foreground 50s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" run \
-    "& ([scriptblock]::Create([IO.File]::ReadAllText('D:\MooTest\n100-boot.ps1'))) -Aktion $(ps_quote "$aktion") -UsbSerial $(ps_quote "$USB_SERIE") -PartitionGuid $(ps_quote "$PARTITION") -StickSha256 $(ps_quote "$STICK_SHA") -Eintrag $(ps_quote "$EINTRAG") -WaechterWarAn ([bool]::Parse('$WAECHE_AN')) -SynapseGestoppt ($SYNAPSE_STOPP -eq 1)"
+    "& ([scriptblock]::Create([IO.File]::ReadAllText('D:\MooTest\n100-boot.ps1'))) -Aktion $(ps_quote "$aktion") -UsbSerial $(ps_quote "$USB_SERIE") -PartitionGuid $(ps_quote "$PARTITION") -StickSha256 $(ps_quote "$STICK_SHA") -RueckfallSha256 $(ps_quote "$RUECKFALL_SHA") -Eintrag $(ps_quote "$EINTRAG") -WaechterWarAn ([bool]::Parse('$WAECHE_AN')) -SynapseGestoppt ($SYNAPSE_STOPP -eq 1)"
 }
 notiz() { printf '\n[%s] N100 %s: %s [noch zu uebertragen]\n' "$(date -u +%FT%TZ)" "$OUT" "$*" >>"$NOTIZ"; }
 beenden_gruppe() {
@@ -154,6 +219,17 @@ beenden_gruppe() {
     sudo -n kill -KILL -- "-$pid" 2>/dev/null || true
   fi
   wait "$pid" 2>/dev/null || true
+}
+synapse_warten() {
+  local bis=$((SECONDS+SYNAPSE_LIMIT)) code
+  while ((SECONDS<bis)); do
+    code="$(curl -s -o /dev/null --max-time 5 -w '%{http_code}' https://synapse.moosynapse.org/ || true)"
+    printf 'Synapse HTTP %s; verbleibendes Startlimit %ss\n' "$code" "$((bis-SECONDS))"
+    [[ "$code" != 200 ]] || return 0
+    # Auch 502 ist waehrend des Starts ein Wartezustand, bis das eigene Limit endet.
+    sleep 5
+  done
+  return 1
 }
 aufraeumen() {
   local rc=$? wieder=0 bis=$((SECONDS+120))
@@ -173,8 +249,8 @@ aufraeumen() {
   beenden_gruppe "$CAPTURE_PID"
   beenden_gruppe "$SERVER_PID"
   if ((SYNAPSE_STOPP && wieder)); then
-    if ! timeout --foreground 180s bash -c 'until [[ "$(curl -s -o /dev/null --max-time 5 -w "%{http_code}" https://synapse.moosynapse.org/)" == 200 ]]; do sleep 5; done'; then
-      echo 'FEHLER: Windows zurueck, aber Synapse HTTP 200 nicht belegt' >&2
+    if ! synapse_warten; then
+      echo 'FEHLER: Windows zurueck, aber Synapse HTTP 200 nach eigenem Startlimit nicht belegt' >&2
       rc=1
     fi
   fi
@@ -182,6 +258,16 @@ aufraeumen() {
   notiz "Exit=$rc; Register/Reset/Windows siehe netz.log und WinRM-Artefakte; HTTP-Rueckkehr siehe lauf.log"
   exit "$rc"
 }
+if [[ -z "$RESTORE" ]]; then
+  [[ -f "$RUECKFALL" ]] || { echo 'Befristeter lokaler Rueckfallkern ist Pflicht (--rueckfall-kern)' >&2; exit 2; }
+  kern_kopie "$RUECKFALL" "$OUT/rueckfall-geprueft.elf" 20 180 3
+  cmp -s "$RUECKFALL" "$OUT/rueckfall-geprueft.elf" || { echo 'Rueckfallkern muss exakt20s/180s/Modus3 haben' >&2; exit 2; }
+  RUECKFALL_SHA="$(sha256sum "$RUECKFALL" | cut -d ' ' -f1)"
+  if ((INVENTAR==0)); then
+    loader_kopie "$EFI" "$OUT/loader-geprueft.efi"
+    cmp -s "$EFI" "$OUT/loader-geprueft.efi" || { echo 'Testloader muss sichere Windows-BootNext-Rueckkehr aktiv haben (--loader-konfigurieren)' >&2; exit 2; }
+  fi
+fi
 if ((INVENTAR)); then
   remote pruefen >"$OUT/vorher.json" 2>>"$OUT/winrm.log"
   printf 'Laufordner: %s\n' "$OUT"

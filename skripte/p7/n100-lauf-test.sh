@@ -68,7 +68,11 @@ while :; do sleep 1; done
 MOCK
 cat >"$T/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-printf 200
+if [[ "${MOCK_FAIL:-}" == http-timeout ]]; then printf 502
+elif [[ "${MOCK_FAIL:-}" == http502 && ! -e "$MOCK_ROOT/http-first" ]]; then
+  touch "$MOCK_ROOT/http-first"; printf 502
+else printf 200
+fi
 MOCK
 cat >"$T/bin/ss" <<'MOCK'
 #!/usr/bin/env bash
@@ -79,7 +83,8 @@ export PATH="$T/bin:$PATH"
 printf '%s\n' 'Write-Output "synthetischer Stop"' >"$T/stopp.ps1"
 export MOO_N100_STOPP_SKRIPT="$T/stopp.ps1" MOO_N100_NOTIZ="$T/offline-test.md"
 args=(--koordinator --diagnose --zeitlimit 30
-  --efi "$ROOT/build/p7-t25/stick/BOOTX64.EFI" --kern "$ROOT/build/p7-t25/stick/KERN.ELF"
+  --efi "$ROOT/build/p7-t25/rueckkehr/LADER-AUTO.EFI" --kern "$ROOT/build/p7-t25/stick/KERN.ELF"
+  --rueckfall-kern "$ROOT/build/p7-t25/rueckkehr/RUECKFALL.ELF"
   --usb-serie USBTEST --partition '{11111111-2222-3333-4444-555555555555}'
   --stick-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
 bash "$ROOT/skripte/p7/n100-lauf.sh" --trocken >"$T/trocken.log"
@@ -91,8 +96,11 @@ if bash "$ROOT/skripte/p7/n100-lauf.sh" --koordinator --diagnose --sekunden 90 >
 fi
 test ! -e "$T/trace"
 echo 'PASS: Ungeschuetzter Langlauf wird verweigert'
-for phase in ok normal safety upload pruefen server capture pausieren stop booten; do
-  extra=()
+for phase in ok normal safety http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
+  extra=(--synapse-zeitlimit 5)
+  if [[ "$phase" == http502 ]]; then extra=(--synapse-zeitlimit 15); fi
+  if [[ "$phase" == rueckfall ]]; then extra+=(--rueckfall-kern "$ROOT/build/p7-t25/stick/KERN.ELF"); fi
+  if [[ "$phase" == loader ]]; then extra+=(--efi "$ROOT/build/p7-t25/rueckkehr/LADER.EFI"); fi
   export MOCK_MODE=diag
   if [[ "$phase" == normal ]]; then extra=(--modus 1); export MOCK_MODE=normal; fi
   if [[ "$phase" == safety ]]; then extra=(--watchdog-test); export MOCK_MODE=safety; fi
@@ -105,9 +113,9 @@ for phase in ok normal safety upload pruefen server capture pausieren stop boote
   rc=$?
   set -e
   cp "$T/trace" "$T/$phase-trace"
-  if [[ "$phase" == ok || "$phase" == normal || "$phase" == safety ]]; then test "$rc" -eq 0; else test "$rc" -ne 0; fi
+  if [[ "$phase" == ok || "$phase" == normal || "$phase" == safety || "$phase" == http502 ]]; then test "$rc" -eq 0; else test "$rc" -ne 0; fi
   case "$phase" in
-    ok|normal|safety|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
+    ok|normal|safety|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
     *) if grep -qx zurueck "$T/trace"; then echo 'FAIL: unberuehrten Remote-Zustand restauriert' >&2; exit 1; fi;;
   esac
   if [[ -s "$T/server.pid" ]]; then

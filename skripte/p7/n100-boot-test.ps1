@@ -4,6 +4,9 @@ $ErrorActionPreference='Stop'
 $UsbSerial='USBTEST'
 $PartitionGuid='{11111111-2222-3333-4444-555555555555}'
 $StickSha256='a'*64
+$RueckfallSha256='c'*64
+$script:badFallback=$false
+$script:efiPath='path \EFI\BOOT\BOOTX64.EFI'
 $Eintrag='{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}'
 $WaechterWarAn=$true
 $SynapseGestoppt=$false
@@ -30,8 +33,14 @@ function Volume-Geraet { param($Pfad)
     '\Device\HarddiskVolume7'
 }
 function Get-FileHash { param($LiteralPath,$Algorithm)
-    if ($Algorithm -ne 'SHA256' -or !$LiteralPath.EndsWith('EFI\BOOT\BOOTX64.EFI')) {throw 'Falscher Hashpfad'}
-    [pscustomobject]@{Hash=$(if($script:badHash){'b'*64}else{$StickSha256})}
+    if ($Algorithm -ne 'SHA256') {throw 'Falscher Hashalgorithmus'}
+    if ($LiteralPath.EndsWith('EFI\BOOT\BOOTX64.EFI')) {
+        return [pscustomobject]@{Hash=$(if($script:badHash){'b'*64}else{$StickSha256})}
+    }
+    if ($LiteralPath.EndsWith('EFI\MOO\KERN.ELF')) {
+        return [pscustomobject]@{Hash=$(if($script:badFallback){'b'*64}else{$RueckfallSha256})}
+    }
+    throw 'Falscher Hashpfad'
 }
 function Get-CimInstance { param($ClassName)
     if ($ClassName -ne 'Win32_OperatingSystem') {throw 'Falsche Klasse'}
@@ -50,7 +59,7 @@ function Stop-ScheduledTask { param($TaskName)
 function Start-ScheduledTask { param($TaskName) $script:trace.Add("start $TaskName") }
 function Bcd-Lesen { param($Objekt)
     if($Objekt -eq 'firmware') {
-        return "Firmware Application (101fffff)`r`nidentifier $Eintrag`r`ndevice partition=\Device\HarddiskVolume7`r`ndescription BELIEBIG`r`n"
+        return "Firmware Application (101fffff)`r`nidentifier $Eintrag`r`ndevice partition=\Device\HarddiskVolume7`r`n$script:efiPath`r`ndescription BELIEBIG`r`n"
     }
     if($Objekt -ne '{fwbootmgr}') {throw 'Falscher BCD-Lesepfad'}
     $text=$script:manager
@@ -92,6 +101,15 @@ $script:wrongBus=$false
 $script:badHash=$true
 Muss-Scheitern {Bestand} 'Falscher Stick-Loaderhash abgelehnt'
 $script:badHash=$false
+$script:badFallback=$true
+Muss-Scheitern {Bestand} 'Alter lokaler Rueckfallkern wird vor Pause/Boot abgelehnt'
+$script:badFallback=$false
+Assert ($script:trace.Count -eq 0) 'Rueckfall-Pruefung aendert keinen Remote-Zustand'
+$script:efiPath='path \EFI\MOO\ALTER-LADER.EFI'
+Muss-Scheitern {Bestand} 'Abweichender Firmware-Dateipfad wird abgelehnt'
+$script:efiPath=''
+Muss-Scheitern {Bestand} 'Nicht belegter Firmware-Dateipfad wird abgelehnt'
+$script:efiPath='path \EFI\BOOT\BOOTX64.EFI'
 $script:sequence='{bbbbbbbb-cccc-dddd-eeee-ffffffffffff}'
 Muss-Scheitern {Bestand} 'Vorhandene Einmal-Bootfolge nicht ueberschrieben'
 $script:sequence=''

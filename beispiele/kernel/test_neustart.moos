@@ -22,6 +22,8 @@ statisch TESTLAUF_ZUSTAND: [u64; 10] auf 0
 @nativ
 konstante TL_RESET: [u8; _] auf "MOO-KERNEL NEUSTART "
 @nativ
+konstante TL_RUECKFALL: [u8; _] auf "MOO-KERNEL RUECKFALL OHNE USB "
+@nativ
 konstante TL_FADT: [u8; _] auf "MOO-KERNEL RESET FADT GAS "
 @nativ
 konstante TL_CF9: [u8; _] auf "MOO-KERNEL RESET CF9 "
@@ -136,9 +138,9 @@ funktion testlauf_starten(fadt: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -
         setze scharf: bool auf falsch
         wenn modus != 0:
             wenn tsc != 0:
-                wenn modus == 1 oder modus == 2:
+                wenn modus == 1 oder modus == 2 oder modus == 3:
                     setze scharf auf tl_tco_n100(testlauf_konfig(2))
-                sonst wenn modus == 100 oder modus == 101:
+                sonst wenn modus == 100 oder modus == 101 oder modus == 103:
                     setze scharf auf tl_tco_ich9(bi, map, testlauf_konfig(2))
             wenn scharf:
                 log(adresse_von(TL_TCO_AN), testlauf_konfig(2))
@@ -246,6 +248,20 @@ funktion tl_tco_start(basis: u64, sekunden: u64) -> bool:
         tl_setze(6, basis)
         tl_setze(7, 1)
         gib_zurück wahr
+
+# Lokaler Rueckfall: kein USB-/Framebuffer-Test, nur Bedienung und Reset.
+# Modi3/103 werden ausschliesslich in einer privaten ELF-Kopie gesetzt.
+@nativ
+funktion testlauf_rueckfall(loggen: u64) -> void:
+    unsicher:
+        wenn testlauf_konfig(3) != 3 und testlauf_konfig(3) != 103:
+            gib_zurück
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        wenn testlauf_konfig(1) == 0 oder testlauf_konfig(1) > 30:
+            testlauf_neustart(loggen)
+        log(adresse_von(TL_RUECKFALL), testlauf_konfig(1))
+        solange wahr:
+            testlauf_poll(loggen)
 
 # Ausschliesslich die auf dem N100 gelesene Konfiguration d3ea9834.
 # TCO_LOCK[12] betrifft SMI_EN.TCO_EN, NICHT TCO_TMR_HALT[11].

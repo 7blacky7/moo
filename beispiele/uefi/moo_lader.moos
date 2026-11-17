@@ -442,6 +442,199 @@ funktion guid_gleich(a: u64, b: u64) -> bool:
     unsicher:
         gib_zurück speicher_lesen(a, 8) == speicher_lesen(b, 8) und speicher_lesen(a + 8, 8) == speicher_lesen(b + 8, 8)
 
+# P7-T25: opt-in fuer private Testloader, BootOrder bleibt unveraendert.
+# UEFI2.10A 3.1.1/3.1.3 (BootNext, EFI_LOAD_OPTION), 8.2 (Variablen).
+# https://uefi.org/specs/UEFI/2.10_A/03_Boot_Manager.html
+# Layout: edk2 MdePkg/Include/Uefi/UefiSpec.h und Protocol/DevicePath.h.
+@nativ
+statisch RUECKKEHR_KONFIG: [u64; 2] auf [0x353254524F4F4D21, 0]
+@nativ
+konstante RF_GUID: [u64; 2] auf [0x11D293CA8BE4DF61, 0x8C2B0398E0000DAA]
+@nativ
+konstante RF_ORDER: [u16; _] auf "BootOrder"
+@nativ
+konstante RF_NEXT: [u16; _] auf "BootNext"
+@nativ
+konstante RF_BOOT: [u16; _] auf "Boot0000"
+@nativ
+konstante RF_WINDOWS: [u16; _] auf "\\efi\\microsoft\\boot\\bootmgfw.efi"
+@nativ
+konstante RF_OK: [u8; _] auf "MOO-LADER RUECKKEHR BOOTNEXT "
+@nativ
+konstante RF_FEHLER: [u8; _] auf "MOO-LADER RUECKKEHR FEHLER "
+@nativ
+konstante W_RF_FEHLER: [u16; _] auf "Moo-Lader: sichere Windows-Rueckkehr nicht belegt, kein Kernstart\r\n"
+
+struktur EfiLaufzeitDienste:
+    kopf_signatur: u64
+    kopf_revision: u32
+    kopf_groesse: u32
+    kopf_crc: u32
+    kopf_reserviert: u32
+    rt_get_time: u64
+    rt_set_time: u64
+    rt_get_wakeup_time: u64
+    rt_set_wakeup_time: u64
+    rt_set_virtual_address_map: u64
+    rt_convert_pointer: u64
+    rt_get_variable: u64
+    rt_get_next_variable_name: u64
+    rt_set_variable: u64
+
+@nativ
+funktion rf_fehler(schritt: u64) -> bool:
+    unsicher:
+        meldung(adresse_von(RF_FEHLER), schritt)
+        gib_zurück falsch
+
+# Genau ein aktiver GPT-HD/FilePath/End-Pfad; Beschreibung wird nie benutzt.
+@nativ
+funktion rf_windows_option(p: u64, laenge: u64) -> bool:
+    unsicher:
+        wenn laenge < 8 oder laenge > 4096 oder (speicher_lesen(p, 4) & 1) == 0:
+            gib_zurück falsch
+        setze pfadlaenge: u64 auf u64(speicher_lesen(p + 4, 2))
+        setze pos: u64 auf 6
+        solange pos + 2 <= laenge und speicher_lesen(p + pos, 2) != 0:
+            setze pos auf pos + 2
+        wenn pos + 2 > laenge:
+            gib_zurück falsch
+        setze pos auf pos + 2
+        wenn pfadlaenge < 4 oder pfadlaenge > laenge - pos:
+            gib_zurück falsch
+        setze ende: u64 auf pos + pfadlaenge
+        setze hd: bool auf falsch
+        setze datei: bool auf falsch
+        setze typ: u64 auf 0
+        setze untertyp: u64 auf 0
+        setze n: u64 auf 0
+        setze j: u64 auf 0
+        setze erwartet: u64 auf 0
+        setze zeichen: u64 auf 0
+        solange pos + 4 <= ende:
+            setze typ auf u64(speicher_lesen(p + pos, 1))
+            setze untertyp auf u64(speicher_lesen(p + pos + 1, 1))
+            setze n auf u64(speicher_lesen(p + pos + 2, 2))
+            wenn n < 4 oder n > ende - pos:
+                gib_zurück falsch
+            wenn typ == 0x7F:
+                gib_zurück untertyp == 0xFF und n == 4 und pos + n == ende und hd und datei
+            wenn typ == 4 und untertyp == 1:
+                wenn hd oder datei oder n != 42:
+                    gib_zurück falsch
+                wenn speicher_lesen(p + pos + 40, 1) != 2 oder speicher_lesen(p + pos + 41, 1) != 2:
+                    gib_zurück falsch
+                wenn speicher_lesen(p + pos + 4, 4) == 0 oder speicher_lesen(p + pos + 16, 8) == 0 oder (speicher_lesen(p + pos + 24, 8) == 0 und speicher_lesen(p + pos + 32, 8) == 0):
+                    gib_zurück falsch
+                setze hd auf wahr
+            sonst wenn typ == 4 und untertyp == 4:
+                wenn nicht hd oder datei oder n < 6 oder (n & 1) != 0:
+                    gib_zurück falsch
+                setze j auf 4
+                solange j < n:
+                    setze erwartet auf u64(speicher_lesen(adresse_von(RF_WINDOWS) + j - 4, 2))
+                    setze zeichen auf u64(speicher_lesen(p + pos + j, 2))
+                    wenn zeichen >= 65 und zeichen <= 90:
+                        setze zeichen auf zeichen + 32
+                    wenn zeichen != erwartet:
+                        gib_zurück falsch
+                    wenn erwartet == 0:
+                        wenn j + 2 != n:
+                            gib_zurück falsch
+                        setze datei auf wahr
+                        stopp
+                    setze j auf j + 2
+                wenn nicht datei:
+                    gib_zurück falsch
+            sonst wenn datei:
+                gib_zurück falsch
+            setze pos auf pos + n
+        gib_zurück falsch
+
+@nativ
+funktion rf_bootname(ziel: u64, nummer: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        setze ziffer: u64 auf 0
+        solange i < 4:
+            speicher_schreiben(ziel + i * 2, als(u16, speicher_lesen(adresse_von(RF_BOOT) + i * 2, 2)), 2)
+            setze ziffer auf (nummer >> ((3 - i) * 4)) & 15
+            wenn ziffer < 10:
+                setze ziffer auf ziffer + 48
+            sonst:
+                setze ziffer auf ziffer + 55
+            speicher_schreiben(ziel + 8 + i * 2, als(u16, ziffer), 2)
+            setze i auf i + 1
+        speicher_schreiben(ziel + 16, 0, 2)
+
+# Arbeit: UINTN size@0, UINT32 attrs@8, Boot####@64, Order@256, Option@4096.
+@nativ
+funktion rf_lesen(rt: u64, name: u64, arbeit: u64, puffer: u64, max: u64) -> u64:
+    unsicher:
+        speicher_schreiben(arbeit, max, 8)
+        speicher_schreiben(arbeit + 8, 0, 4)
+        gib_zurück ruf5(dienst(rt, versatz_von(EfiLaufzeitDienste, rt_get_variable)), name, adresse_von(RF_GUID), arbeit + 8, arbeit, puffer)
+
+@nativ
+funktion rueckkehr_vorbereiten(st: u64, bs: u64) -> bool:
+    unsicher:
+        setze modus: u64 auf speicher_lesen(adresse_von(RUECKKEHR_KONFIG) + 8, 8)
+        wenn modus == 0:
+            gib_zurück wahr
+        wenn modus != 1:
+            gib_zurück rf_fehler(1)
+        setze rt: u64 auf dienst(st, versatz_von(EfiSystemTabelle, laufzeitdienste))
+        wenn rt == 0 oder speicher_lesen(rt, 8) != 0x56524553544E5552 oder u64(speicher_lesen(rt + 12, 4)) < groesse_von(EfiLaufzeitDienste):
+            gib_zurück rf_fehler(2)
+        setze arbeit: u64 auf seiten(bs, 3)
+        wenn arbeit == 0:
+            gib_zurück rf_fehler(3)
+        wenn rf_lesen(rt, adresse_von(RF_ORDER), arbeit, arbeit + 256, 256) != 0:
+            gib_zurück rf_fehler(4)
+        setze orderlaenge: u64 auf speicher_lesen(arbeit, 8)
+        wenn orderlaenge == 0 oder orderlaenge > 256 oder (orderlaenge & 1) != 0 oder speicher_lesen(arbeit + 8, 4) != 7:
+            gib_zurück rf_fehler(5)
+        setze i: u64 auf 0
+        setze kandidat: u64 auf 0x10000
+        setze nummer: u64 auf 0
+        setze status: u64 auf 0
+        solange i < orderlaenge:
+            setze nummer auf u64(speicher_lesen(arbeit + 256 + i, 2))
+            rf_bootname(arbeit + 64, nummer)
+            setze status auf rf_lesen(rt, arbeit + 64, arbeit, arbeit + 4096, 4096)
+            wenn status != 0:
+                gib_zurück rf_fehler(6)
+            wenn rf_windows_option(arbeit + 4096, speicher_lesen(arbeit, 8)):
+                wenn kandidat != 0x10000:
+                    gib_zurück rf_fehler(7)
+                setze kandidat auf nummer
+            setze i auf i + 2
+        wenn kandidat == 0x10000:
+            gib_zurück rf_fehler(8)
+        setze status auf rf_lesen(rt, adresse_von(RF_NEXT), arbeit, arbeit + 16, 2)
+        wenn status == 0:
+            # Nur eine bereits identische Rueckkehr akzeptieren; nie fremde Ziele loeschen.
+            wenn speicher_lesen(arbeit, 8) != 2 oder speicher_lesen(arbeit + 8, 4) != 7 oder u64(speicher_lesen(arbeit + 16, 2)) != kandidat:
+                gib_zurück rf_fehler(9)
+        sonst:
+            wenn status != 0x800000000000000E:
+                gib_zurück rf_fehler(10)
+            speicher_schreiben(arbeit + 16, als(u16, kandidat), 2)
+            wenn ruf5(dienst(rt, versatz_von(EfiLaufzeitDienste, rt_set_variable)), adresse_von(RF_NEXT), adresse_von(RF_GUID), 7, 2, arbeit + 16) != 0:
+                gib_zurück rf_fehler(11)
+        wenn rf_lesen(rt, adresse_von(RF_NEXT), arbeit, arbeit + 16, 2) != 0 oder speicher_lesen(arbeit, 8) != 2 oder u64(speicher_lesen(arbeit + 16, 2)) != kandidat:
+            gib_zurück rf_fehler(12)
+        # Firmware-Nebenwirkung erkennen, keine dauerhafte Variable restaurieren/schreiben.
+        wenn rf_lesen(rt, adresse_von(RF_ORDER), arbeit, arbeit + 4096, 256) != 0 oder speicher_lesen(arbeit, 8) != orderlaenge:
+            gib_zurück rf_fehler(13)
+        setze i auf 0
+        solange i < orderlaenge:
+            wenn speicher_lesen(arbeit + 256 + i, 1) != speicher_lesen(arbeit + 4096 + i, 1):
+                gib_zurück rf_fehler(14)
+            setze i auf i + 1
+        meldung(adresse_von(RF_OK), kandidat)
+        gib_zurück wahr
+
 # ---------------- Kern-Datei ----------------
 # \EFI\MOO\KERN.ELF vom Dateisystem auf geraet lesen. Ergebnis: Puffer (Pool)
 # oder 0; die Laenge steht danach in *ausgabe.
@@ -673,6 +866,9 @@ funktion efi_main(bild: u64, st: u64) -> u64:
         setze con auf dienst(st, versatz_von(EfiSystemTabelle, con_out))
         wenn con != 0:
             ruf2(dienst(con, versatz_von(EfiTextAusgabe, to_output_string)), con, adresse_von(W_START))
+        wenn nicht rueckkehr_vorbereiten(st, bs):
+            schirm(st, bs, adresse_von(W_RF_FEHLER), wahr)
+            gib_zurück FEHLER_LADEN
         # Boot-Info (1 Seite) und Arbeitsspeicher fuer den Kern (16 Seiten)
         setze bi auf seiten(bs, 1)
         setze arbeit auf seiten(bs, 16)
