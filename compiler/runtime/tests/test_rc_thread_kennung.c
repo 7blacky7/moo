@@ -65,3 +65,56 @@ int main(void) {
     puts("MOO_RC_THREAD_KENNUNG_PASS");
     return 0;
 }
+
+/* Wie die Capture-Harnesses: nur die benutzten Komponenten verknuepfen.
+ * MSVC verlangt auch Anbieter fuer Referenzen aus unbenutzten Funktionen.
+ * Diese Adapter duerfen nie erreicht werden und liefern KEINE Ersatzwerte.
+ * RC-Inlines und moo_global_fremd kommen ausschliesslich aus Produktcode. */
+#if defined(_MSC_VER) || defined(MOO_RC_KENNUNG_LINK_STUBS)
+#include <stdlib.h>
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable:4100)
+#define MOO_RC_TEST_NORETURN __declspec(noreturn)
+#else
+#define MOO_RC_TEST_NORETURN __attribute__((noreturn))
+#endif
+static MOO_RC_TEST_NORETURN void moo_rc_test_fremdpfad(const char* name) {
+    fprintf(stderr, "FATAL: unbenutzter Runtime-Pfad im RC-Vertragstest: %s\n", name);
+    abort();
+}
+#define MOO_RC_TEST_DEP(typ, name, params) \
+    typ name params { moo_rc_test_fremdpfad(#name); }
+MOO_RC_TEST_DEP(void*, moo_alloc, (size_t size))
+MOO_RC_TEST_DEP(MooValue, moo_bool, (bool v))
+MOO_RC_TEST_DEP(int, moo_buffer_alleinbesitz, (MooValue value))
+MOO_RC_TEST_DEP(bool, moo_func_aritaet_ok, (MooFunc* fn, int32_t n))
+MOO_RC_TEST_DEP(bool, moo_ist_geteilt, (MooValue v))
+MOO_RC_TEST_DEP(bool, moo_ist_heap_wert, (MooValue v))
+MOO_RC_TEST_DEP(void, moo_mt_aktivieren, (void))
+MOO_RC_TEST_DEP(void, moo_native_thread_markieren, (void))
+MOO_RC_TEST_DEP(MooValue, moo_none, (void))
+MOO_RC_TEST_DEP(MooValue, moo_number, (double v))
+MOO_RC_TEST_DEP(void, moo_release, (MooValue v))
+MOO_RC_TEST_DEP(void, moo_retain, (MooValue v))
+MOO_RC_TEST_DEP(MooValue, moo_string_new, (const char* s))
+MOO_RC_TEST_DEP(void, moo_teilen, (MooValue v))
+MOO_RC_TEST_DEP(void, moo_throw, (MooValue error))
+MOO_RC_TEST_DEP(const char*, moo_type_name, (MooValue v))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_0, (MooValue func))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_1, (MooValue func, MooValue a0))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_2, (MooValue func, MooValue a0, MooValue a1))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_3, (MooValue func, MooValue a0, MooValue a1, MooValue a2))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_4, (MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_5, (MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_6, (MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_7, (MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6))
+MOO_RC_TEST_DEP(MooValue, moo_func_call_8, (MooValue func, MooValue a0, MooValue a1, MooValue a2, MooValue a3, MooValue a4, MooValue a5, MooValue a6, MooValue a7))
+void (*moo_sperre_freigabe_haken)(void*) = NULL;
+#undef MOO_RC_TEST_DEP
+#undef MOO_RC_TEST_NORETURN
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
+#endif
+
