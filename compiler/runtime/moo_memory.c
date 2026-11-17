@@ -6,6 +6,11 @@
 
 // Prueft ob ein MooValue ein Heap-Objekt ist (hat refcount)
 static inline bool is_heap_type(uint64_t tag) {
+    /* P2-T114: Atom/Sperre liegen oberhalb der reservierten 30/31. Den
+       seltenen Bereich getrennt pruefen: sonst wird aus der 32-Bit-Maske
+       der haeufigen Typen auf x86 ein movabs im retain/release-Pfad. */
+    if (MOO_RC_SELTEN(tag > MOO_HANDLE))
+        return tag == MOO_ATOM || tag == MOO_SPERRE;
     return tag == MOO_STRING || tag == MOO_ERROR || tag == MOO_LIST || tag == MOO_DICT ||
            tag == MOO_OBJECT || tag == MOO_FUNC || tag == MOO_SOCKET ||
            tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_DATABASE ||
@@ -13,7 +18,7 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_VOXELWORLD || tag == MOO_FRAME || tag == MOO_GIF ||
            tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
            tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT ||
-           tag == MOO_HANDLE || tag == MOO_ATOM || tag == MOO_SPERRE;
+           tag == MOO_HANDLE;
 }
 
 bool moo_ist_heap_wert(MooValue v) {
@@ -57,11 +62,25 @@ static void free_list(MooList* l);
 static void free_dict(MooDict* d);
 static void free_object(MooObject* o);
 
+/* Den seltenen Destruktor-Dispatch vom haeufigen Dekrement trennen.
+ * Sonst liegen selbst Rueckspruenge fuer Zahlen/noch lebende Werte erst
+ * hinter dem Switch-Prolog (P2-T114, x86-Disassembly). */
+#if defined(__GNUC__) || defined(__clang__)
+static void moo_letzte_referenz_freigeben(MooValue v) __attribute__((noinline));
+#elif defined(_MSC_VER)
+static __declspec(noinline) void moo_letzte_referenz_freigeben(MooValue v);
+#else
+static void moo_letzte_referenz_freigeben(MooValue v);
+#endif
+
 MOO_HEISS void moo_release(MooValue v) {
     if (!is_heap_type(v.tag)) return;
     int32_t* rc = get_refcount_ptr(v);
-    if (MOO_RC_SELTEN(!rc) || !moo_rc_dec(rc)) return;
+    if (MOO_RC_SELTEN(!rc)) return;
+    if (MOO_RC_SELTEN(moo_rc_dec(rc))) moo_letzte_referenz_freigeben(v);
+}
 
+static void moo_letzte_referenz_freigeben(MooValue v) {
     // refcount == 0 → freigeben
     switch (v.tag) {
         case MOO_STRING:

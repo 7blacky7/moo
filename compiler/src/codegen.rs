@@ -2793,8 +2793,8 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    /// P2-T114 B: i1 "laeuft auf einem Moo-Worker", einmal je Funktion am
-    /// Anfang des Eintrittsblocks erzeugt (dominiert jeden Zugriff).
+    /// P2-T114: Thread-Kennung einmal im Eintrittsblock, vor dessen
+    /// Terminierung erzeugt; dominiert jeden spaeteren globalen Zugriff.
     fn global_fremd_flag(&self, funktion: FunctionValue<'ctx>, fname: &str) -> Result<inkwell::values::IntValue<'ctx>, String> {
         use inkwell::values::AsValueRef;
         let fname = format!("{fname}@{:p}", funktion.as_value_ref());
@@ -2803,7 +2803,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
         let entry = funktion.get_first_basic_block().ok_or("Funktion ohne Eintrittsblock")?;
         let b = self.context.create_builder();
-        match entry.get_first_instruction() {
+        // P2-T114: Nicht vor Parametern/Retains laden. Sonst muss das Flag
+        // fremde Aufrufe ueberleben; beim ersten Zugriff im Entry verhindert
+        // das etwa x86 cmpb direkt aus TLS. Vor dem Entry-Terminator bleibt
+        // die Definition auch fuer Zugriffe in verschiedenen Zweigen dominant.
+        match entry.get_terminator() {
             Some(i) => b.position_before(&i),
             None => b.position_at_end(entry),
         }

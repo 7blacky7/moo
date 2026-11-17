@@ -226,6 +226,9 @@ MooValue moo_neq(MooValue a, MooValue b) {
 }
 
 MooValue moo_lt(MooValue a, MooValue b) {
+    // Der haeufige Zahlenvergleich braucht keine allgemeinen Konverter.
+    if (a.tag == MOO_NUMBER && b.tag == MOO_NUMBER)
+        return moo_bool(MV_NUM(a) < MV_NUM(b));
     if (a.tag == MOO_STRING && b.tag == MOO_STRING)
         return moo_bool(strcmp(MV_STR(a)->chars, MV_STR(b)->chars) < 0);
     return moo_bool(moo_as_number(a) < moo_as_number(b));

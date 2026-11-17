@@ -201,11 +201,20 @@ static void post_uebernehmen(MooPostfach* w) {
    Bibliotheken); nur der Hauptthread setzt sich vor main auf 0. */
 MOO_TLS uint8_t moo_ist_moo_worker = 1;
 
+#if defined(__GNUC__) || defined(__clang__) || defined(_MSC_VER)
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((constructor))
+#endif
 static void moo_hauptthread_markieren(void) {
     moo_ist_moo_worker = 0;
 }
+#if defined(_MSC_VER) && !defined(__clang__)
+/* MSVC besitzt kein GNU-constructor-Attribut. Auch vor dem ersten starte
+   muss der Hauptthread bereits Besitzer sein; fremde C-Threads bleiben 1. */
+#pragma section(".CRT$XCU", read)
+__declspec(allocate(".CRT$XCU"))
+void (__cdecl* const moo_hauptthread_initialisierung)(void) = moo_hauptthread_markieren;
+#endif
 #endif
 /* Thread-Marke: ihre Adresse kennzeichnet den Thread (warten, Sperre). */
 static MOO_TLS char moo_thread_marke;
@@ -360,8 +369,8 @@ static MooValue moo_thread_starten(MooValue func, MooValue arg, int32_t n_args) 
     }
     // P2-T112: Ab hier erreichen zwei Threads Funktion (Captures), Argument
     // und Globale. Markieren, solange dieser Thread sie noch allein haelt.
-#if !defined(__GNUC__) && !defined(__clang__)
-    /* MSVC ohne Konstruktor: der erste starte kommt aus dem Hauptthread
+#if !defined(__GNUC__) && !defined(__clang__) && !defined(_MSC_VER)
+    /* Fallback ohne Startkonstruktor: der erste starte kommt aus dem Hauptthread
        (Worker gibt es erst danach); C-Threads davor gelten als Besitzer. */
     {
         static int markiert = 0;
