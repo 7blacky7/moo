@@ -2,7 +2,7 @@
   "format": 2,
   "compiler_sha256": "b5a3e809dab215072f8dd4c092bb5a0008dbeee2a9864fb76807331a6a8767d9",
   "normalization": "module-header-root-v2",
-  "batch": "34751",
+  "batch": "34753",
   "provenance_attestation": "caller-provided-unverified",
   "compiler_runtime_inventory_sha256": "7b7af4f3fe2cabfffbfb35b9aa6eea6a3450202307f88eb2dfd8d147b4b30f7a",
   "snapshot_ref": null,
@@ -128,7 +128,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "9c797cd101d308b41099b20911767df6f5d4729d7855a6d6b674e2cf64b23015",
+    "sha256": "f4e8a070784651aca7daafdbe7fe4ad4d9446f64c96423c18b641d4254811490",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -252,7 +252,7 @@
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
-      "beispiele/kernel/it8613_wdt.moos": "e9970913432a28982d24f446efbf94e8b26f532b337fdd6c12072dd3b79d50d3",
+      "beispiele/kernel/it8613_wdt.moos": "419bc84a573e1cb3a1a197c995f215559871d1b71494d6576c2ec68d1f9c1e1d",
       "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
@@ -613,7 +613,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "871afb60bade1ccc7d04cf2652b5dead3eb8d31019f3d9108b8e8bf3095f4ab9",
+    "sha256": "db8dfa272058ab7bd3097af4def726eb99537f65f04e5368872d9a7972c5b916",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -737,7 +737,7 @@
       "beispiele/json_schema.moos": "b3dc429118d16122fa68ad0d196ce9b205905a61f286757c756c3ebd0be079f1",
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
-      "beispiele/kernel/it8613_wdt.moos": "e9970913432a28982d24f446efbf94e8b26f532b337fdd6c12072dd3b79d50d3",
+      "beispiele/kernel/it8613_wdt.moos": "419bc84a573e1cb3a1a197c995f215559871d1b71494d6576c2ec68d1f9c1e1d",
       "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
@@ -2434,7 +2434,7 @@
     },
     "beispiele/kernel/it8613_wdt.moos": {
       "status": "ok",
-      "sha256": "14de9933c101b5788ab41020542720aee251b7903ff75b98a5ba6fe8da240bbd"
+      "sha256": "a57053437ab0eccfd51f36b3cc9dddcf2c9ea9d9a74b66ec3a130a2124bb3511"
     },
     "beispiele/kernel/moo_bootvertrag.moos": {
       "status": "ok",
@@ -2466,11 +2466,11 @@
     },
     "beispiele/kernel/test_neustart.moos": {
       "status": "ok",
-      "sha256": "ad2db28ce43190bee256e238a47db19c73be5fc16b31901b5695f37040fcc35a"
+      "sha256": "4015593d93a478d28da2dd2d24e45b23029fe0ff25c7a99cdd0c6bf7aef8ff8d"
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "0502bf33ae86be52dab7527530185c644b616dc9e5b7cf5f08ff5d647b960cf0"
+      "sha256": "54369412e144cc9d5a31bff4d5820145e4eceb114b0bcfdf35030f479bf317ed"
     },
     "beispiele/kernel/usb_speicher.moos": {
       "status": "ok",

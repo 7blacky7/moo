@@ -22,6 +22,8 @@ konstante IT8613_REG23: [u8; _] auf "MOO-KERNEL IT8613 REG 23H "
 @nativ
 konstante IT8613_REG2D: [u8; _] auf "MOO-KERNEL IT8613 REG 2DH "
 @nativ
+konstante IT8613_SAFETY_CTRL_READBACK: [u8; _] auf "MOO-KERNEL IT8613 SAFETY CTRL QUITTIERUNG READBACK "
+@nativ
 konstante IT8613_SAFETY_MESSZEIT: [u8; _] auf "MOO-KERNEL IT8613 SAFETY MESSZEIT MS "
 @nativ
 konstante IT8613_FEHLT: [u8; _] auf "MOO-KERNEL IT8613 NICHT BELEGT "
@@ -163,6 +165,29 @@ funktion it8613_programmieren(port: u16, zeit: u8, vor_start: bool) -> u8:
         it8613_register_schreiben(port, 0x02, 0x02)
         gib_zurück ergebnis
 
+# FreeBSD itwd.c:108–116 quittiert den Status mit 0 in 71h[0].
+# Readback von Status und Taktbit prüft die Quittierung auf dem IT8613.
+@nativ
+funktion it8613_safety_ctrl_quittieren(port: u16, loggen: u64) -> bool:
+    unsicher:
+        setze gelesen: bool auf falsch
+        setze ctrl: u8 auf 0
+        setze readback: u8 auf 0
+        wenn it8613_konfiguration_oeffnen(port) == 0x8613:
+            setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+            it8613_register_schreiben(port, 0x07, 7)
+            wenn it8613_register_lesen(port, 0x07) == 7:
+                setze ctrl auf it8613_register_lesen(port, 0x71)
+                it8613_register_schreiben(port, 0x71, ctrl & 0xFE)
+                setze readback auf it8613_register_lesen(port, 0x71)
+                setze gelesen auf wahr
+            it8613_register_schreiben(port, 0x07, vorher)
+        it8613_register_schreiben(port, 0x02, 0x02)
+        wenn gelesen:
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+            log(adresse_von(IT8613_SAFETY_CTRL_READBACK), u64(readback))
+        gib_zurück gelesen und (readback & 0x09) == (ctrl & 0x08)
+
 # Die Probe liest bis zur ursprünglichen Softwarefrist. Der Config-Mode
 # ist zwischen zwei Proben geschlossen; in diesem Fenster gibt es keinen Reload.
 @nativ
@@ -196,6 +221,10 @@ funktion it8613_kurzlauf(sekunden: u64, watchdog: u64, hz: u64, safety: bool, lo
             log(adresse_von(IT8613_NEIN), u64(ergebnis))
             gib_zurück
         log(adresse_von(IT8613_VOR_START_AUS), 0)
+        wenn safety:
+            wenn nicht it8613_safety_ctrl_quittieren(port, loggen):
+                log(adresse_von(IT8613_NEIN), 3)
+                gib_zurück
         setze ergebnis auf it8613_programmieren(port, u8(watchdog), falsch)
         wenn ergebnis != 1:
             log(adresse_von(IT8613_NEIN), u64(ergebnis))
