@@ -4,7 +4,7 @@
 # Seite0..63 xHCI inkl.Scratchpads;64 Daten;65 CBW/CSW/GPT-Kopf/Kontext;66 CRC-Tabelle.
 # Seite67..98 haelt die komplette, auf128KiB begrenzte GPT-Eintragstabelle.
 # IN-Ring Seite7, OUT-Ring Seite9; HID benutzt die Arena erst nach Controller-Stopp.
-aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us
+aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us, xh_inventar_roh
 aus "../uefi/hardware_pci" importiere nt_mmio_glocke32, takt
 aus "../uefi/hardware_crc" importiere hw_crc_tabelle
 aus "./speicher_gpt" importiere gp_hex_ziffer, gp_guid_format, gp_kopf, gp_eintrag, gp_kontext, gp_anzahl, gp_lesen
@@ -180,6 +180,8 @@ funktion ms_interface(desc: u64, laenge: u64, speed: u64) -> bool:
 
 @nativ
 konstante MS_T_SERIE: [u8; _] auf "MOO-KERNEL USB MSC SERIE GEPRUEFT "
+@nativ
+konstante MS_T_SERIE_ROH: [u8; _] auf "MOO-KERNEL USB MSC SERIEN-DESKRIPTOR BYTES "
 
 # Die Modellkennung allein ist keine eindeutige Medienfreigabe.
 # ASCII-Zielserie gegen den tatsaechlichen USB-UTF16-String vergleichen.
@@ -214,9 +216,15 @@ funktion ms_seriennummer() -> bool:
         setze sprache auf u64(speicher_lesen(p + 2, 2))
         wenn sprache == 0:
             gib_zurück falsch
+        xh_null(p, 255)
         wenn nicht xh_control((u64(255) << 48) | (sprache << 32) | ((u64(0x0300) | idx) << 16) | 0x0680, p, 255):
             gib_zurück falsch
-        gib_zurück ms_serien_text(p, xh(43), ms(27))
+        setze laenge: u64 auf xh(43)
+        setze ok: bool auf ms_serien_text(p, laenge, ms(27))
+        wenn nicht ok und laenge > 0 und laenge <= 255:
+            xh_log(adresse_von(MS_T_SERIE_ROH), laenge)
+            xh_inventar_roh(p, laenge)
+        gib_zurück ok
 
 @nativ
 funktion ms_ep_context(input: u64, dci: u64, ring: u64, paket: u64, burst: u64, eingang: bool) -> void:

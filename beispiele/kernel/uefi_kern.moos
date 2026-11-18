@@ -19,11 +19,11 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
-aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii, usb_inventar
 aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
-aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall
-aus "../uefi/hardware_pci" importiere takt
+aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
+aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
 
 # P7-T26: Explizit freigegebener Boot-Stick aus dem N100-Inventar.
@@ -43,6 +43,13 @@ funktion usb_leseziel(index: u64) -> u64:
 # Private QEMU-Kopie patcht diesen 64-Byte-Datenvertrag, nie Produkt-Testwerte.
 @nativ
 statisch NVME_LESEN_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 1, 0, 0, 0, 0, 0]
+
+# Sammler nur in einer privaten ELF-Kopie einschalten. Feld 2 ist die PCI-ID
+# des expliziten NVMe-Inventarziels. Inventar startet keine I/O-Queue.
+@nativ
+statisch SAMMEL_ZIEL: [u64; 3] auf [0x4C4D4D41534F4F4D, 0, 0]
+@nativ
+statisch NVME_INVENTAR_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 0, 0, 0, 0, 0, 0]
 
 # UEFI-Speicherdeskriptor (Spec 2.10, 7.2 GetMemoryMap); Schrittweite aus der Boot-Info.
 struktur EfiSpeicherDeskriptor:
@@ -2016,6 +2023,120 @@ funktion eingabe_taste(c: u8) -> void:
         speicher_schreiben(adresse_von(EINGABE_N), n, 8)
         eingabe_zeigen()
 
+@nativ
+konstante SAM_T_START: [u8; _] auf "MOO-KERNEL SAMMEL START "
+@nativ
+konstante SAM_T_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL ENDE "
+@nativ
+konstante SAM_T_PCI_START: [u8; _] auf "MOO-KERNEL SAMMEL PCI START "
+@nativ
+konstante SAM_T_PCI_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL PCI ENDE "
+@nativ
+konstante SAM_T_BDF: [u8; _] auf "MOO-KERNEL SAMMEL PCI BDF "
+@nativ
+konstante SAM_T_ID: [u8; _] auf "MOO-KERNEL SAMMEL PCI ID "
+@nativ
+konstante SAM_T_KLASSE: [u8; _] auf "MOO-KERNEL SAMMEL PCI KLASSE REV "
+@nativ
+konstante SAM_T_BAR0: [u8; _] auf "MOO-KERNEL SAMMEL PCI BAR0 ROH "
+@nativ
+konstante SAM_T_PCI_ZIEL: [u8; _] auf "MOO-KERNEL SAMMEL PCI NVME-KANDIDATEN "
+@nativ
+konstante SAM_T_USB_START: [u8; _] auf "MOO-KERNEL SAMMEL USB START "
+@nativ
+konstante SAM_T_USB_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL USB ENDE "
+@nativ
+konstante SAM_T_MSC_START: [u8; _] auf "MOO-KERNEL SAMMEL USB-MSC START "
+@nativ
+konstante SAM_T_MSC_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL USB-MSC ENDE "
+@nativ
+konstante SAM_T_NVME_START: [u8; _] auf "MOO-KERNEL SAMMEL NVME START "
+@nativ
+konstante SAM_T_NVME_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL NVME ENDE "
+@nativ
+konstante SAM_T_NVME_ZIEL: [u8; _] auf "MOO-KERNEL SAMMEL NVME ZIEL BDF "
+@nativ
+konstante SAM_T_NVME_PROFIL: [u8; _] auf "MOO-KERNEL SAMMEL NVME GPT-PROFIL "
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion sammel_wartung(log: u64) -> void:
+    unsicher:
+        netz_spuelen()
+        testlauf_poll(log)
+
+# PCI-Konfigurationsmechanismus 1 (Segment 0), nur lesen. Treffer brauchen
+# NVMe-Klasse und die explizite Vendor-/Device-ID aus dem privaten Laufprofil.
+@nativ
+funktion sammel_pci(ziel_id: u64) -> u64:
+    unsicher:
+        setze bdf: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze kandidaten: u64 auf 0
+        setze ziel: u64 auf 65536
+        solange bdf < 65536:
+            setze addr: u32 auf u32(0x80000000 | (bdf << 8))
+            setze id: u64 auf u64(nt_cfg_lese32(addr))
+            wenn (id & 0xFFFF) == 0xFFFF:
+                wenn (bdf & 7) == 0:
+                    setze bdf auf bdf + 7
+            sonst:
+                setze klasse_wert: u64 auf u64(nt_cfg_lese32(addr | 8))
+                meldung(adresse_von(SAM_T_BDF), bdf)
+                meldung(adresse_von(SAM_T_ID), id)
+                meldung(adresse_von(SAM_T_KLASSE), klasse_wert)
+                meldung(adresse_von(SAM_T_BAR0), u64(nt_cfg_lese32(addr | 0x10)))
+                setze anzahl auf anzahl + 1
+                wenn id == ziel_id und (klasse_wert >> 8) == 0x010802:
+                    setze ziel auf bdf
+                    setze kandidaten auf kandidaten + 1
+                sammel_wartung(adresse_von(meldung))
+            setze bdf auf bdf + 1
+        meldung(adresse_von(SAM_T_PCI_ZIEL), kandidaten)
+        meldung(adresse_von(SAM_T_PCI_ENDE), anzahl)
+        wenn kandidaten != 1:
+            gib_zurück 65536
+        gib_zurück ziel
+
+@nativ
+funktion sammel_lauf(tsc: u64, bi: u64) -> void:
+    unsicher:
+        setze log: u64 auf adresse_von(meldung)
+        setze map: u64 auf adresse_von(kern_mmio_abbilden)
+        meldung(adresse_von(SAM_T_START), 1)
+        meldung(adresse_von(SAM_T_PCI_START), 1)
+        setze bdf: u64 auf sammel_pci(speicher_lesen(adresse_von(SAMMEL_ZIEL) + 16, 8))
+        sammel_wartung(log)
+
+        meldung(adresse_von(SAM_T_USB_START), 1)
+        setze usb_ok: bool auf usb_inventar(pfa_nehme(64), tsc, bi, map, log, adresse_von(sammel_wartung))
+        meldung(adresse_von(SAM_T_USB_ENDE), u64(usb_ok))
+        sammel_wartung(log)
+
+        meldung(adresse_von(SAM_T_MSC_START), 1)
+        setze msc_ok: bool auf usb_speicher_pruefen(pfa_nehme(99), tsc, bi, map, log, usb_leseziel(1), usb_leseziel(2), adresse_von(USB_LESEN_SERIE))
+        meldung(adresse_von(SAM_T_MSC_ENDE), u64(msc_ok))
+        sammel_wartung(log)
+
+        meldung(adresse_von(SAM_T_NVME_START), 1)
+        meldung(adresse_von(SAM_T_NVME_ZIEL), bdf)
+        setze nv_ok: bool auf falsch
+        setze lesen: u64 auf adresse_von(NVME_LESEN_ZIEL)
+        setze lesen_bdf: u64 auf speicher_lesen(lesen + 8, 8)
+        setze voll: bool auf bdf < 65536 und lesen_bdf == bdf
+        meldung(adresse_von(SAM_T_NVME_PROFIL), u64(voll))
+        wenn bdf < 65536:
+            wenn voll:
+                setze nv_ok auf nvme_pruefen(pfa_nehme(39), tsc, bi, map, log, lesen)
+            sonst wenn lesen_bdf == 65536:
+                setze inventar: u64 auf adresse_von(NVME_INVENTAR_ZIEL)
+                speicher_schreiben(inventar + 8, bdf, 8)
+                setze nv_ok auf nvme_pruefen(pfa_nehme(39), tsc, bi, map, log, inventar)
+        meldung(adresse_von(SAM_T_NVME_ENDE), u64(nv_ok))
+        sammel_wartung(log)
+        meldung(adresse_von(SAM_T_ENDE), 1)
+        sammel_wartung(log)
+
 # ---------------- Kern ----------------
 @nativ
 @einstieg
@@ -2056,6 +2177,7 @@ funktion kern_haupt(bi: u64) -> void:
         setze t_neu: u64 auf 0
         setze t_zeile: u64 auf 0
         setze schirm_ok: bool auf falsch
+        setze sammeln: bool auf speicher_lesen(adresse_von(SAMMEL_ZIEL) + 8, 8) == 1
         seriell_init()
         text(adresse_von(T_START))
         # Laeuft der Kern wirklich in der oberen Haelfte? RIP und RSP direkt lesen.
@@ -2134,8 +2256,18 @@ funktion kern_haupt(bi: u64) -> void:
         testlauf_poll(adresse_von(meldung))
         testlauf_rueckfall(adresse_von(meldung))
         # Ausschliesslich nach dem Rueckfall-Guard; DMA bleibt dauerhaft im PFA.
-        wenn speicher_lesen(adresse_von(NVME_LESEN_ZIEL) + 8, 8) < 65536:
-            nvme_pruefen(pfa_nehme(39), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(NVME_LESEN_ZIEL))
+        wenn sammeln:
+            setze modus: u64 auf testlauf_konfig(3)
+            # ADL-N SMBus D31:F4 (Intel 759604, 15.1.17/18). Modus 1
+            # hat den IT8613 gestartet, testlauf_poll faellt bei Fehler sofort zurueck.
+            wenn modus != 1 und nt_cfg_lese32(0x8000FC00) == 0x54A38086:
+                testlauf_neustart(adresse_von(meldung))
+            sammel_lauf(tsc, bi)
+            wenn modus == 1:
+                testlauf_neustart(adresse_von(meldung))
+        sonst:
+            wenn speicher_lesen(adresse_von(NVME_LESEN_ZIEL) + 8, 8) < 65536:
+                nvme_pruefen(pfa_nehme(39), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(NVME_LESEN_ZIEL))
         meldung(adresse_von(T_FORMATE), formate_pruefen())
         # Bildschirm: alles ueber den Surface-Kern in den Rueckpuffer, dann Present.
         setze schirm_ok auf fb != 0 und breite >= 160 und hoehe >= 200 und breite <= 3840 und hoehe <= 2160 und format <= 2 und stride >= breite
@@ -2205,7 +2337,8 @@ funktion kern_haupt(bi: u64) -> void:
         meldung(adresse_von(T_USB_TEST), u64(usb_report_pruefen()))
         # Erst die lesende Boot-Stick-Diagnose, dann den HID-Host neu initialisieren.
         # Der Rueckfallzweig weiter oben kehrt nicht hierher zurueck.
-        usb_speicher_pruefen(pfa_nehme(99), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), usb_leseziel(1), usb_leseziel(2), adresse_von(USB_LESEN_SERIE))
+        wenn nicht sammeln:
+            usb_speicher_pruefen(pfa_nehme(99), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), usb_leseziel(1), usb_leseziel(2), adresse_von(USB_LESEN_SERIE))
         # PFA besitzt die DMA-Seiten dauerhaft. Kein Firmware-Speicher wird benutzt.
         setze usb_dma auf pfa_nehme(64)
         setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
