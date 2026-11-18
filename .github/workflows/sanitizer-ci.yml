@@ -5,6 +5,11 @@ name: Runtime Sanitizers
 # werden vom Runner einzeln als SKIP mit Begruendung ausgegeben.
 on:
   push:
+    paths:
+      - ".github/workflows/sanitizer-ci.yml"
+      - "compiler/runtime/**"
+      # Die Font-Include-Pruefung in run_sanitize.sh scannt C/C++-Dateien im ganzen Compilerbaum.
+      - "compiler/**/*.[cChH]*"
   pull_request:
   workflow_dispatch:
 

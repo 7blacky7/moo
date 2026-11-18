@@ -5,6 +5,28 @@ name: Core Test Suite
 # nicht durch continue-on-error als erfolgreiche Core-Suite erscheinen.
 on:
   push:
+    paths:
+      - ".github/workflows/core-ci.yml"
+      - ".cargo/**"
+      - "compiler/.cargo/**"
+      - "compiler/Cargo.toml"
+      - "compiler/Cargo.lock"
+      - "compiler/build.rs"
+      - "compiler/build_aritaet.rs"
+      - "compiler/src/**"
+      - "compiler/runtime/**"
+      # build.rs kann auf Nicht-Windows-Hosts auch das MinGW-Archiv bauen.
+      - "skripte/p2/windows_minipc/runtime_mingw.sh"
+      - "skripte/p2/windows_minipc/db_abwesend.c"
+      - "compiler/tests/**"
+      - "stdlib/**"
+      # run_all.sh und die zusaetzlichen Core-Gates verwenden diese Eingaben.
+      - "scripts/game-test-runner.sh"
+      - "skripte/p2/ffi/klein_roundtrip.sh"
+      - "skripte/p2/runtime/rc_geteilt_stress.sh"
+      - "beispiele/snake_plus_selftest.moos"
+      - "beispiele/domain/game/world/siedler3_selftest.moos"
+      - "beispiele/voxel_sandbox_selftest.moos"
   pull_request:
   workflow_dispatch:
 

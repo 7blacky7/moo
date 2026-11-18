@@ -5,6 +5,21 @@ name: Database CI
 # einen lokalen PostgreSQL-Server mit SCRAM-SHA-256. Kein externer Testserver.
 on:
   push:
+    paths:
+      - ".github/workflows/db-ci.yml"
+      - ".cargo/**"
+      - "compiler/Cargo.toml"
+      - "compiler/Cargo.lock"
+      - "compiler/build.rs"
+      - "compiler/build_aritaet.rs"
+      - "compiler/src/**"
+      - "compiler/runtime/**"
+      # build.rs kann auf Nicht-Windows-Hosts auch das MinGW-Archiv bauen.
+      - "skripte/p2/windows_minipc/runtime_mingw.sh"
+      - "skripte/p2/windows_minipc/db_abwesend.c"
+      # SQLite-Tests samt .expected und Vorlage fuer den PostgreSQL-Wire-Test.
+      - "compiler/tests/test_db*"
+      - "beispiele/domain/db/postgres_client.moos"
   pull_request:
   workflow_dispatch:
 
