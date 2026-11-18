@@ -99,6 +99,8 @@ konstante TL_PMCON_B: [u8; _] auf "MOO-KERNEL TCO PMC GEN_PMCON_B "
 @nativ
 konstante TL_ETR3: [u8; _] auf "MOO-KERNEL TCO PMC ETR3 "
 @nativ
+konstante TL_ACPI_TMR_CTL: [u8; _] auf "MOO-KERNEL TCO PMC ACPI_TMR_CTL "
+@nativ
 konstante TL_HPR: [u8; _] auf "MOO-KERNEL TCO PMC HPR_CAUSE0 "
 
 @nativ
@@ -223,6 +225,8 @@ funktion tl_pch_status(loggen: u64) -> void:
             log(adresse_von(TL_SMI_EN), u64(smi_en))
             log(adresse_von(TL_SMI_STS), u64(smi_sts))
         wenn mmio != 0:
+            # 759604-003, 13.3.69: ACPI_TIM_DIS[1] haelt den PCH-PM-Timer an.
+            log(adresse_von(TL_ACPI_TMR_CTL), u64(nt_mmio_lese32(mmio + 0x18FC)))
             # 759604-003, 13.3.75: TCO_WDT[6] meldet den zweiten Ablauf.
             log(adresse_von(TL_HPR), u64(nt_mmio_lese32(mmio + 0x192C)))
 
