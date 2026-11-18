@@ -4,7 +4,7 @@
 # Einsprung moo_kern_start (@nackt): cli, eigener Stack (KERN_STAPEL, in Moo),
 # kern_haupt(boot_info). Der Loader (beispiele/uefi/moo_lader.moos) hat
 # ExitBootServices schon gerufen; hier gibt es keine Firmwaredienste mehr.
-# P7-T6 (alles in Moo, C nur der vorhandene Surface-Kern moo_surface_core.c):
+# P7-T6: Kernlogik in Moo, Darstellung mit dem vorhandenen C-Surface-Kern:
 #   - eigene GDT (64-Bit-Code/Daten), lgdt + Segmentneuladen
 #   - eigene Seitentabellen: Identitaet 0..N GiB (2-MiB-Seiten), Framebuffer,
 #     Kern in der oberen Haelfte (4-KiB-Seiten) -> CR3
@@ -650,15 +650,18 @@ funktion text(adr: u64) -> void:
             setze i auf i + 1
 
 @nativ
+funktion hex_ziffer(wert: u64, index: u64) -> u8:
+    setze ziffer: u8 auf als(u8, (wert >> (60 - index * 4)) & 15)
+    wenn ziffer < 10:
+        gib_zurück ziffer + 48
+    gib_zurück ziffer + 55
+
+@nativ
 funktion hex(wert: u64) -> void:
     unsicher:
         setze i: u64 auf 0
         solange i < 16:
-            setze ziffer: u8 auf u8((wert >> (60 - i * 4)) & 15)
-            wenn ziffer < 10:
-                zeichen(ziffer + 48)
-            sonst:
-                zeichen(ziffer + 55)
+            zeichen(hex_ziffer(wert, i))
             setze i auf i + 1
 
 @nativ
@@ -1923,6 +1926,43 @@ funktion netz_starten(bi: u64, tsc_us: u64) -> u64:
         meldung(adresse_von(T_NETZ_LINK), link)
         gib_zurück n
 
+# Diese Zeile liegt zwischen Diagnosekonsole und Eingabefeld.
+@nativ
+konstante T_KONSOLEN_STATUS: [u8; _] auf "PFA FREI 0000000000000000   TIMER TICKS 0000000000000000"
+@nativ
+statisch KONSOLEN_STATUS: [u8; 56] auf 0
+
+@nativ
+funktion konsolen_status(pfa_frei: u64, ticks: u64) -> void:
+    unsicher:
+        wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
+            gib_zurück
+        setze s: u64 auf adresse_von(SCHIRM)
+        setze breite: u64 auf speicher_lesen(s + versatz_von(Schirm, s_breite), 8)
+        setze links: u64 auf 52
+        setze laenge: u64 auf 56
+        wenn breite < 2 * links + 4 * laenge:
+            gib_zurück
+        setze skala: i32 auf 2
+        wenn breite < 2 * links + 8 * laenge:
+            setze skala auf 1
+        setze kern: u64 auf speicher_lesen(s + versatz_von(Schirm, s_kern), 8)
+        setze unten: u64 auf kon(versatz_von(Konsole, k_unten))
+        setze zeile: u64 auf adresse_von(KONSOLEN_STATUS)
+        setze i: u64 auf 0
+        solange i < laenge:
+            speicher_schreiben(zeile + i, speicher_lesen(adresse_von(T_KONSOLEN_STATUS) + i, 1), 1)
+            setze i auf i + 1
+        # Die 16-stelligen Hexwerte beginnen in der Vorlage bei Byte 9 und 40.
+        setze i auf 0
+        solange i < 16:
+            speicher_schreiben(zeile + 9 + i, hex_ziffer(pfa_frei, i), 1)
+            speicher_schreiben(zeile + 40 + i, hex_ziffer(ticks, i), 1)
+            setze i auf i + 1
+        moo_surface_core_rect(zeiger(kern), 40, i32(unten), i32(breite) - 80, 20, rgba(20, 55, 75))
+        moo_surface_core_text_3x5(zeiger(kern), i32(links), i32(unten + 5), skala, zeiger(zeile), laenge, rgba(200, 230, 255))
+        schirm_zeilen(unten, unten + 20)
+
 # Fester Eingabebereich unterhalb der rollenden Diagnosekonsole.
 @nativ
 statisch EINGABE: [u8; 256] auf 0
@@ -2184,7 +2224,9 @@ funktion kern_haupt(bi: u64) -> void:
                 bis_unterbrechung_warten()
                 setze warte auf warte + 1
             unterbrechungen_aus()
-        meldung(adresse_von(T_TIMER_TICKS), hw(10))
+        setze ticks: u64 auf hw(10)
+        meldung(adresse_von(T_TIMER_TICKS), ticks)
+        konsolen_status(pfa_frei, ticks)
         wenn tastatur_ok:
             meldung(adresse_von(T_TASTATUR_SCAN), hw(11))
         text(adresse_von(T_OK))
