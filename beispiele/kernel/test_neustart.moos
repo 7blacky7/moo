@@ -354,11 +354,11 @@ funktion tl_it8613_messreihe(loggen: u64) -> void:
             gib_zurück
         tl_warten(2000)
         log(adresse_von(TL_IT8613_MESSZEIT), (takt() - anfang) / pro_ms)
-        wenn nicht it8613_port_lesen(port, loggen):
+        wenn nicht it8613_port_lesen(port, loggen, falsch):
             gib_zurück
         tl_warten(68000)
         log(adresse_von(TL_IT8613_MESSZEIT), (takt() - anfang) / pro_ms)
-        wenn it8613_port_lesen(port, loggen):
+        wenn it8613_port_lesen(port, loggen, falsch):
             log(adresse_von(TL_IT8613_FERTIG), (takt() - anfang) / pro_ms)
 
 @nativ

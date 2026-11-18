@@ -18,6 +18,12 @@ konstante IT8613_LSB: [u8; _] auf "MOO-KERNEL IT8613 WDT TIMEOUT LSB "
 @nativ
 konstante IT8613_MSB: [u8; _] auf "MOO-KERNEL IT8613 WDT TIMEOUT MSB "
 @nativ
+konstante IT8613_REG23: [u8; _] auf "MOO-KERNEL IT8613 REG 23H "
+@nativ
+konstante IT8613_REG2D: [u8; _] auf "MOO-KERNEL IT8613 REG 2DH "
+@nativ
+konstante IT8613_SAFETY_MESSZEIT: [u8; _] auf "MOO-KERNEL IT8613 SAFETY MESSZEIT MS "
+@nativ
 konstante IT8613_FEHLT: [u8; _] auf "MOO-KERNEL IT8613 NICHT BELEGT "
 @nativ
 konstante IT8613_AN: [u8; _] auf "MOO-KERNEL IT8613 SCHARF SEKUNDEN "
@@ -66,7 +72,7 @@ funktion it8613_konfiguration_oeffnen(port: u16) -> u16:
         gib_zurück (hoch << 8) | u16(it8613_register_lesen(port, 0x21))
 
 @nativ
-funktion it8613_port_lesen(port: u16, loggen: u64) -> bool:
+funktion it8613_port_lesen(port: u16, loggen: u64, mit_takt: bool) -> bool:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
         setze id: u16 auf it8613_konfiguration_oeffnen(port)
@@ -76,7 +82,11 @@ funktion it8613_port_lesen(port: u16, loggen: u64) -> bool:
         setze cfg: u8 auf 0
         setze lsb: u8 auf 0
         setze msb: u8 auf 0
+        setze reg23: u8 auf 0
+        setze reg2d: u8 auf 0
         wenn id == 0x8613:
+            wenn mit_takt:
+                setze reg23 auf it8613_register_lesen(port, 0x23)
             setze vorher: u8 auf it8613_register_lesen(port, 0x07)
             it8613_register_schreiben(port, 0x07, 7)
             wenn it8613_register_lesen(port, 0x07) == 7:
@@ -85,6 +95,9 @@ funktion it8613_port_lesen(port: u16, loggen: u64) -> bool:
                 setze cfg auf it8613_register_lesen(port, 0x72)
                 setze lsb auf it8613_register_lesen(port, 0x73)
                 setze msb auf it8613_register_lesen(port, 0x74)
+                wenn mit_takt:
+                    # Coreboot it8613e.h:13–20 ordnet 2Dh[2:1] LDN 7 zu.
+                    setze reg2d auf it8613_register_lesen(port, 0x2D)
                 setze gefunden auf wahr
             it8613_register_schreiben(port, 0x07, vorher)
         it8613_register_schreiben(port, 0x02, 0x02)
@@ -96,15 +109,18 @@ funktion it8613_port_lesen(port: u16, loggen: u64) -> bool:
             log(adresse_von(IT8613_CFG), u64(cfg))
             log(adresse_von(IT8613_LSB), u64(lsb))
             log(adresse_von(IT8613_MSB), u64(msb))
+            wenn mit_takt:
+                log(adresse_von(IT8613_REG23), u64(reg23))
+                log(adresse_von(IT8613_REG2D), u64(reg2d))
         gib_zurück gefunden
 
 @nativ
 funktion it8613_suchen(loggen: u64) -> u16:
     unsicher:
         wenn nt_cfg_lese32(0x8000FC00) == 0x54A38086:
-            wenn it8613_port_lesen(0x2E, loggen):
+            wenn it8613_port_lesen(0x2E, loggen, falsch):
                 gib_zurück 0x2E
-            wenn it8613_port_lesen(0x4E, loggen):
+            wenn it8613_port_lesen(0x4E, loggen, falsch):
                 gib_zurück 0x4E
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
         log(adresse_von(IT8613_FEHLT), 1)
@@ -147,6 +163,23 @@ funktion it8613_programmieren(port: u16, zeit: u8, vor_start: bool) -> u8:
         it8613_register_schreiben(port, 0x02, 0x02)
         gib_zurück ergebnis
 
+# Die Probe liest bis zur ursprünglichen Softwarefrist. Der Config-Mode
+# ist zwischen zwei Proben geschlossen; in diesem Fenster gibt es keinen Reload.
+@nativ
+funktion it8613_safety_beobachten(port: u16, start: u64, hz: u64, sekunden: u64, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze frist: u64 auf hz * sekunden
+        setze faellig: u64 auf 0
+        setze vergangen: u64 auf takt() - start
+        solange vergangen < frist:
+            wenn vergangen >= faellig:
+                setze faellig auf vergangen + hz
+                log(adresse_von(IT8613_SAFETY_MESSZEIT), vergangen * 1000 / hz)
+                it8613_port_lesen(port, loggen, wahr)
+            assembler(ziel="x86_64", code="pause", clobber=[])
+            setze vergangen auf takt() - start
+
 @nativ
 funktion it8613_kurzlauf(sekunden: u64, watchdog: u64, hz: u64, safety: bool, loggen: u64) -> void:
     unsicher:
@@ -170,24 +203,25 @@ funktion it8613_kurzlauf(sekunden: u64, watchdog: u64, hz: u64, safety: bool, lo
             gib_zurück
         wenn ergebnis == 1:
             setze start: u64 auf takt()
-            setze letzte_bedienung: u64 auf start
-            setze pings: u64 auf 0
             log(adresse_von(IT8613_AN), watchdog)
             wenn safety:
                 log(adresse_von(IT8613_SAFETY), watchdog)
-            solange ergebnis == 1 und takt() - start < hz * sekunden:
-                setze jetzt: u64 auf takt()
-                wenn nicht safety und jetzt - letzte_bedienung >= hz:
-                    setze ergebnis auf it8613_programmieren(port, u8(watchdog), falsch)
-                    wenn ergebnis == 1:
-                        setze letzte_bedienung auf jetzt
-                        setze pings auf pings + 1
-                        log(adresse_von(IT8613_PING), pings)
-                    sonst:
-                        log(adresse_von(IT8613_PING_FEHLER), u64(ergebnis))
-                assembler(ziel="x86_64", code="pause", clobber=[])
-            wenn safety:
+                it8613_safety_beobachten(port, start, hz, sekunden, loggen)
                 log(adresse_von(IT8613_SAFETY_FRIST), sekunden)
+            sonst:
+                setze letzte_bedienung: u64 auf start
+                setze pings: u64 auf 0
+                solange ergebnis == 1 und takt() - start < hz * sekunden:
+                    setze jetzt: u64 auf takt()
+                    wenn jetzt - letzte_bedienung >= hz:
+                        setze ergebnis auf it8613_programmieren(port, u8(watchdog), falsch)
+                        wenn ergebnis == 1:
+                            setze letzte_bedienung auf jetzt
+                            setze pings auf pings + 1
+                            log(adresse_von(IT8613_PING), pings)
+                        sonst:
+                            log(adresse_von(IT8613_PING_FEHLER), u64(ergebnis))
+                    assembler(ziel="x86_64", code="pause", clobber=[])
         wenn it8613_programmieren(port, 0, falsch) != 1:
             log(adresse_von(IT8613_AUS_FEHLER), 1)
             # Der Safety-Lauf hat eine Software-Rueckkehrfrist auch bei fehlendem Stopp-Readback.
