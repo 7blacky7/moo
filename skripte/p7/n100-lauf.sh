@@ -58,20 +58,25 @@ while (($#)); do
       '--modus 4 --sekunden 190 --watchdog-sekunden 180: Ablauf ohne Bedienung beobachten, Software-Reset bei Fristablauf.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
+      '--modus 7 --sekunden 45 --watchdog-sekunden 10: IT8613-Safety ohne Bedienung, Software-Rueckfall nach 45 s.' \
       '--loader-konfigurieren QUELLE ZIEL: sichere Rueckkehr nur in privater PE-Kopie aktivieren.' \
       '--kern-konfigurieren QUELLE ZIEL [--sekunden N]: nur private ELF-Kopie konfigurieren.' \
       '--aufraeumen build/n100-laeufe/ZEIT --koordinator: Wiederherstellung erneut versuchen.'; exit 0;;
     *) printf 'Unbekanntes Argument: %s\n' "$1" >&2; exit 2;;
   esac
 done
-[[ "$SYNAPSE_LIMIT" =~ ^[0-9]+$ && "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|3|4|5|6|100|101|103|104)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
+[[ "$SYNAPSE_LIMIT" =~ ^[0-9]+$ && "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|3|4|5|6|7|100|101|103|104)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
 ((SYNAPSE_LIMIT>=5 && SYNAPSE_LIMIT<=1800 && SEKUNDEN>=1 && SEKUNDEN<=600 && WATCHDOG_S>=6 && WATCHDOG_S<=600 && ZEITLIMIT>=30 && ZEITLIMIT<=1800)) || { echo 'Ungueltiges Zeitlimit' >&2; exit 2; }
 if (( (MODUS==4 || MODUS==104) && SEKUNDEN<WATCHDOG_S+5 )); then
   echo 'TCO-Beobachtung braucht mindestens Watchdog-Dauer plus 5 Sekunden' >&2
   exit 2
 fi
-if ((MODUS==5 && (WATCHDOG_S>30 || SEKUNDEN<=WATCHDOG_S || SEKUNDEN>60))); then
+if (((MODUS==5 || MODUS==7) && (WATCHDOG_S>30 || SEKUNDEN<=WATCHDOG_S || SEKUNDEN>60))); then
   echo 'IT8613 braucht 6–30 Watchdog-Sekunden und einen laengeren Kurzlauf bis 60 Sekunden' >&2
+  exit 2
+fi
+if ((MODUS==7 && SEKUNDEN<WATCHDOG_S+5)); then
+  echo 'IT8613-Safety braucht mindestens Watchdog-Dauer plus 5 Sekunden' >&2
   exit 2
 fi
 if ((MODUS==6 && SEKUNDEN!=70)); then
@@ -173,7 +178,7 @@ if ((TROCKEN)); then
   if ((MODUS==6)); then
     printf '%s\n' '2. Private Kern-Kopie: Modus 6, lesende IT8613-Messreihe bei 0, 2 und 70 s.'
   else
-    printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=Bedienen,2=Stillstand,4=Beobachten,5=IT8613)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
+    printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=Bedienen,2=Stillstand,4=Beobachten,5=IT8613,7=IT8613-Safety)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
   fi
   printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
@@ -181,18 +186,22 @@ if ((TROCKEN)); then
   if ((MODUS==4)); then
     printf '6. TCO BEOBACHTUNG START und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
   elif ((MODUS==5)); then
-    printf '6. IT8613 SCHARF, BEDIENT, AUS, NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
+    printf '6. IT8613 VOR START AUS, SCHARF, BEDIENT, AUS, NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
   elif ((MODUS==6)); then
     printf '6. IT8613 MESSREIHE FERTIG, NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
+  elif ((MODUS==7)); then
+    printf '6. IT8613 SAFETY OHNE BEDIENUNG, physische Resetbeobachtung und Windows-Bootzeit (Limit %ss).\n' "$ZEITLIMIT"
   else
     printf '6. Netz-Abschluss MOO-KERNEL NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
   fi
   printf '%s\n' '7. Eigene Bootsequence, Waechter, Synapse, tcpdump und Server aufraeumen; netz-server restauriert IP/NM/Firewall.'
   printf '%s\n' 'Ergebnisse: build/n100-laeufe/<UTC-Zeit>/; Offline-Notizen: build/notizen/synapse-offline.md.'
   if ((MODUS==5)); then
-    printf '%s\n' 'IT8613-Vertrag: N100 8086:54A3, Chip-ID 8613, initialer Timeout 0. Diagnose zuerst.'
+    printf '%s\n' 'IT8613-Vertrag: N100 8086:54A3, Chip-ID 8613. Stopp vor dem Start mit Null-Readback, dann Scharfschaltung.'
   elif ((MODUS==6)); then
     printf '%s\n' 'IT8613-Messreihe: gleiche Register im selben Boot lesen, danach Software-Rueckkehr.'
+  elif ((MODUS==7)); then
+    printf '%s\n' 'IT8613-Safety: belegter Stopp vor Start, keine Bedienung, Software-Rueckfall bei Fristablauf.'
   else
     printf '%s\n' 'Safety-Vertrag: N100 8086:54A3, Basis0x400, TCOCTL0x101, CNT0x1800, Strap0; sonst vor USB abbrechen und zuruecksetzen.'
   fi
@@ -208,7 +217,7 @@ if [[ -n "$KONFIG_QUELLE" ]]; then
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
 if [[ -z "$RESTORE" ]] && ((INVENTAR==0)); then
-  ((MODUS<=2 || MODUS==4 || MODUS==5 || MODUS==6)) || { echo 'Modi 3 und 100+ sind nur fuer private Kernkopien vorgesehen' >&2; exit 2; }
+  ((MODUS<=2 || MODUS==4 || MODUS==5 || MODUS==6 || MODUS==7)) || { echo 'Modi 3 und 100+ sind nur fuer private Kernkopien vorgesehen' >&2; exit 2; }
   if ((MODUS==0)); then
     ((DIAGNOSE && SEKUNDEN<=30)) || { echo 'Lesediagnose ohne Watchdog ist auf30s begrenzt' >&2; exit 2; }
   elif ((MODUS==1 && SEKUNDEN+5>=WATCHDOG_S)); then
@@ -361,6 +370,8 @@ while ((SECONDS<bis)); do
     grep -q 'MOO-KERNEL TCO SAFETY OHNE BEDIENUNG' "$OUT/netz.log" && ende=1
   elif ((MODUS==4)); then
     grep -q 'MOO-KERNEL TCO BEOBACHTUNG START' "$OUT/netz.log" && ende=1
+  elif ((MODUS==7)); then
+    grep -Eq 'MOO-KERNEL (IT8613 SAFETY OHNE BEDIENUNG|NEUSTART)' "$OUT/netz.log" && ende=1
   elif grep -q 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
     if ((MODUS==0 || MODUS==5 || MODUS==6)) || grep -q 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN' "$OUT/netz.log"; then ende=1; fi
   fi
@@ -375,11 +386,12 @@ while ((SECONDS<bis)); do
             echo 'Neue Windows-Bootzeit ohne protokollierte TCO-Beobachtungsfrist. Resetursache aus Registerdaten ermitteln.'
           fi
         elif ((MODUS==5)); then
-          if ! grep -Fq 'MOO-KERNEL IT8613 SCHARF SEKUNDEN ' "$OUT/netz.log" ||
+          if ! grep -Fq 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' "$OUT/netz.log" ||
+             ! grep -Fq 'MOO-KERNEL IT8613 SCHARF SEKUNDEN ' "$OUT/netz.log" ||
              ! grep -Fq 'MOO-KERNEL IT8613 BEDIENT ' "$OUT/netz.log" ||
              ! grep -Fq 'MOO-KERNEL IT8613 AUS 0000000000000000' "$OUT/netz.log" ||
              grep -Eq 'MOO-KERNEL IT8613 (SCHARFSCHALTUNG VERWEIGERT|BEDIENUNG FEHLER|ABSCHALTEN FEHLER)' "$OUT/netz.log"; then
-            echo 'FEHLER: Windows zurueck, aber IT8613-Bedienung oder Abschalten nicht belegt.' >&2
+            echo 'FEHLER: Windows zurueck, aber IT8613-Stopp, Bedienung oder Abschalten nicht belegt.' >&2
             exit 1
           fi
           echo 'IT8613-Bedienung, Abschalten und neue Windows-Bootzeit belegt'
@@ -389,6 +401,18 @@ while ((SECONDS<bis)); do
             exit 1
           fi
           echo 'IT8613-Messreihe und neue Windows-Bootzeit belegt'
+        elif ((MODUS==7)); then
+          if grep -Eq 'MOO-KERNEL (IT8613 SAFETY SOFTWARE FRIST|NEUSTART)' "$OUT/netz.log"; then
+            echo 'IT8613-Safety: Software-Rueckkehr protokolliert. Hardware-Reset bleibt unbelegt.' >&2
+            exit 1
+          fi
+          if ! grep -Fq 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' "$OUT/netz.log" ||
+             ! grep -Fq 'MOO-KERNEL IT8613 SCHARF SEKUNDEN ' "$OUT/netz.log" ||
+             grep -Eq 'MOO-KERNEL IT8613 (BEDIENT|SCHARFSCHALTUNG VERWEIGERT)' "$OUT/netz.log"; then
+            echo 'FEHLER: IT8613-Safety-Ablauf nicht vollstaendig belegt.' >&2
+            exit 1
+          fi
+          echo 'IT8613-Safety-Start und neue Windows-Bootzeit belegt. Physischen Reset und Zeitpunkt am N100 auswerten.'
         else
           echo 'Kern-Abschluss und neue Windows-Bootzeit belegt'
         fi

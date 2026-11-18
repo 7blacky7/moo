@@ -64,8 +64,11 @@ case "${MOCK_MODE:-diag}" in
   safety) printf '%s\n' 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN 00000000000000B4' 'MOO-KERNEL TCO SAFETY OHNE BEDIENUNG 00000000000000B4';;
   beobachten) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4';;
   beobachten-frist) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4' 'MOO-KERNEL TCO BEOBACHTUNG FRIST 000000000002E630' 'MOO-KERNEL NEUSTART 00000000000000BE';;
-  it8613) printf '%s\n' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL IT8613 AUS 0000000000000000' 'MOO-KERNEL NEUSTART 0000000000000019';;
-  it8613-ohne-aus) printf '%s\n' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL NEUSTART 0000000000000019';;
+  it8613) printf '%s\n' 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL IT8613 AUS 0000000000000000' 'MOO-KERNEL NEUSTART 0000000000000019';;
+  it8613-ohne-aus) printf '%s\n' 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL NEUSTART 0000000000000019';;
+  it8613-ohne-vorstopp) printf '%s\n' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL IT8613 AUS 0000000000000000' 'MOO-KERNEL NEUSTART 0000000000000019';;
+  it8613-safety) printf '%s\n' 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 SAFETY OHNE BEDIENUNG 000000000000000A';;
+  it8613-safety-rueckfall) printf '%s\n' 'MOO-KERNEL IT8613 VOR START AUS 0000000000000000' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 SAFETY OHNE BEDIENUNG 000000000000000A' 'MOO-KERNEL IT8613 SAFETY SOFTWARE FRIST SEKUNDEN 000000000000002D' 'MOO-KERNEL IT8613 AUS 0000000000000000' 'MOO-KERNEL NEUSTART 000000000000002D';;
   messreihe) printf '%s\n' 'MOO-KERNEL IT8613 MESSREIHE FERTIG 0000000000011170' 'MOO-KERNEL NEUSTART 0000000000000046';;
   messreihe-unvollstaendig) printf '%s\n' 'MOO-KERNEL IT8613 MESSZEIT MS 0000000000000000' 'MOO-KERNEL NEUSTART 0000000000000046';;
   *) printf '%s\n' 'MOO-KERNEL NEUSTART 0000000000000014';;
@@ -114,7 +117,7 @@ fi
 test ! -e "$T/trace"
 grep -Fq 'IT8613 braucht' "$T/it8613-zu-kurz.log"
 echo 'PASS: IT8613-Zeitvertrag wird vor WinRM geprueft'
-for phase in ok normal safety beobachten beobachten-frist it8613 it8613-ohne-aus messreihe messreihe-unvollstaendig http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
+for phase in ok normal safety beobachten beobachten-frist it8613 it8613-ohne-aus it8613-ohne-vorstopp it8613-safety it8613-safety-rueckfall messreihe messreihe-unvollstaendig http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
   extra=(--synapse-zeitlimit 5)
   if [[ "$phase" == http502 ]]; then extra=(--synapse-zeitlimit 15); fi
   if [[ "$phase" == rueckfall ]]; then extra+=(--rueckfall-kern "$ROOT/build/p7-t25/stick/KERN.ELF"); fi
@@ -125,8 +128,10 @@ for phase in ok normal safety beobachten beobachten-frist it8613 it8613-ohne-aus
   if [[ "$phase" == beobachten || "$phase" == beobachten-frist ]]; then
     extra=(--modus 4 --sekunden 190); export MOCK_MODE="$phase"
   fi
-  if [[ "$phase" == it8613* ]]; then
+  if [[ "$phase" == it8613 || "$phase" == it8613-ohne-* ]]; then
     extra+=(--modus 5 --sekunden 25 --watchdog-sekunden 10); export MOCK_MODE="$phase"
+  elif [[ "$phase" == it8613-safety* ]]; then
+    extra+=(--modus 7 --sekunden 45 --watchdog-sekunden 10); export MOCK_MODE="$phase"
   elif [[ "$phase" == messreihe* ]]; then
     extra+=(--it8613-messreihe); export MOCK_MODE="$phase"
   fi
@@ -140,19 +145,21 @@ for phase in ok normal safety beobachten beobachten-frist it8613 it8613-ohne-aus
   set -e
   cp "$T/trace" "$T/$phase-trace"
   case "$phase" in
-    ok|normal|safety|beobachten|beobachten-frist|it8613|messreihe|http502) test "$rc" -eq 0;;
+    ok|normal|safety|beobachten|beobachten-frist|it8613|it8613-safety|messreihe|http502) test "$rc" -eq 0;;
     *) test "$rc" -ne 0;;
   esac
   case "$phase" in
     beobachten) grep -q 'ohne protokollierte TCO-Beobachtungsfrist' "$T/$phase-konsole.log";;
     beobachten-frist) grep -q 'Software-Reset eingeleitet' "$T/$phase-konsole.log";;
     it8613) grep -Fq 'IT8613-Bedienung, Abschalten und neue Windows-Bootzeit belegt' "$T/$phase-konsole.log";;
-    it8613-ohne-aus) grep -Fq 'Windows zurueck, aber IT8613-Bedienung oder Abschalten nicht belegt' "$T/$phase-konsole.log";;
+    it8613-ohne-aus|it8613-ohne-vorstopp) grep -Fq 'Windows zurueck, aber IT8613-Stopp, Bedienung oder Abschalten nicht belegt' "$T/$phase-konsole.log";;
+    it8613-safety) grep -Fq 'Physischen Reset und Zeitpunkt am N100 auswerten' "$T/$phase-konsole.log";;
+    it8613-safety-rueckfall) grep -Fq 'Software-Rueckkehr protokolliert' "$T/$phase-konsole.log";;
     messreihe) grep -Fq 'IT8613-Messreihe und neue Windows-Bootzeit belegt' "$T/$phase-konsole.log";;
     messreihe-unvollstaendig) grep -Fq 'Windows zurueck, aber IT8613-Messreihe unvollstaendig' "$T/$phase-konsole.log";;
   esac
   case "$phase" in
-    ok|normal|safety|beobachten|beobachten-frist|it8613|it8613-ohne-aus|messreihe|messreihe-unvollstaendig|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
+    ok|normal|safety|beobachten|beobachten-frist|it8613|it8613-ohne-aus|it8613-ohne-vorstopp|it8613-safety|it8613-safety-rueckfall|messreihe|messreihe-unvollstaendig|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
     *) if grep -qx zurueck "$T/trace"; then echo 'FAIL: unberuehrten Remote-Zustand restauriert' >&2; exit 1; fi;;
   esac
   if [[ -s "$T/server.pid" ]]; then
