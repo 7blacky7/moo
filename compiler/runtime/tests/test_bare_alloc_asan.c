@@ -330,6 +330,30 @@ static void teste_allocator(void) {
     CHECK(kern_alloc_c(1u) == NULL, "exakte Mini-Region danach voll");
     kern_frei_c(p1);
 
+    /* --- Realloc nutzt dieselbe Arena und erhaelt Daten bei Wachstum/OOM. */
+    kern_heap_init_c(start, ende);
+    p1 = kern_realloc_c(NULL, 12u);
+    CHECK(p1 != NULL, "realloc(NULL) allokiert");
+    if (p1) {
+        memset(p1, 0x5C, 12u);
+        CHECK(kern_realloc_c(p1, 16u) == p1, "passende Kapazitaet bleibt am Ort");
+        CHECK(kern_realloc_c(p1, UINT64_MAX) == NULL, "realloc-OOM meldet NULL");
+        CHECK(kern_as_double(kern_speicher_belegt()) == 16.0,
+              "realloc-OOM erhaelt den alten Block");
+        p2 = kern_realloc_c(p1, 80u);
+        CHECK(p2 && p2 != p1, "realloc vergroessert den Block");
+        if (p2) {
+            for (i = 0u; i < 12u; ++i)
+                CHECK(((const unsigned char*)p2)[i] == 0x5C, "realloc erhaelt Nutzdaten");
+            CHECK(kern_as_double(kern_speicher_belegt()) == 80.0,
+                  "realloc bucht alten Block aus");
+            CHECK(kern_realloc_c(p2, 0u) == NULL, "realloc(p,0) gibt frei");
+            CHECK(kern_as_double(kern_speicher_belegt()) == 0.0, "realloc-Block ist recycelt");
+        } else {
+            kern_frei_c(p1);
+        }
+    }
+
     /* --- Wrapper-Heapinit: invalid fail-closed; Pointer <=2^53 ---------- */
     kern_speicher_init(moo_number(NAN), moo_number((double)ende));
     CHECK(kern_alloc_c(1u) == NULL, "heap-init NaN deaktiviert Heap");

@@ -7,6 +7,11 @@
 
 // Prueft ob ein MooValue ein Heap-Objekt ist (hat refcount)
 static inline bool is_heap_type(uint64_t tag) {
+#ifdef MOO_UEFI_COLLECTIONS
+    return tag == MOO_STRING || tag == MOO_ERROR || tag == MOO_LIST ||
+           tag == MOO_DICT || tag == MOO_OBJECT || tag == MOO_FUNC ||
+           tag == MOO_FRAME || tag == MOO_SURFACE;
+#else
     /* P2-T114: Atom/Sperre liegen oberhalb der reservierten 30/31. Den
        seltenen Bereich getrennt pruefen: sonst wird aus der 32-Bit-Maske
        der haeufigen Typen auf x86 ein movabs im retain/release-Pfad. */
@@ -20,6 +25,7 @@ static inline bool is_heap_type(uint64_t tag) {
            tag == MOO_VIDEO || tag == MOO_TENSOR || tag == MOO_KAMERA ||
            tag == MOO_MIKRO || tag == MOO_SURFACE || tag == MOO_BUFFER || tag == MOO_STRUCT ||
            tag == MOO_HANDLE;
+#endif
 }
 
 bool moo_ist_heap_wert(MooValue v) {
@@ -115,6 +121,7 @@ static void moo_letzte_referenz_freigeben(MooValue v) {
             free(f);
             break;
         }
+#ifndef MOO_UEFI_COLLECTIONS
         case MOO_SOCKET:
             moo_socket_free(moo_val_as_ptr(v));
             break;
@@ -148,9 +155,11 @@ static void moo_letzte_referenz_freigeben(MooValue v) {
             moo_voxel_free(moo_val_as_ptr(v));
 #endif
             break;
+#endif
         case MOO_FRAME:
             moo_frame_free(moo_val_as_ptr(v));
             break;
+#ifndef MOO_UEFI_COLLECTIONS
         case MOO_GIF:
             moo_gif_handle_free(moo_val_as_ptr(v));
             break;
@@ -189,6 +198,7 @@ static void moo_letzte_referenz_freigeben(MooValue v) {
                Quellliste ohne moo_handle.c linkbar bleiben. */
             free(moo_val_as_ptr(v));
             break;
+#endif
         case MOO_SURFACE:
 #ifdef MOO_HAS_SURFACE
             moo_surface_free(moo_val_as_ptr(v));
@@ -542,11 +552,19 @@ void moo_mt_aktivieren(void) {
 
 // === Allokation ===
 
+#ifdef MOO_UEFI_COLLECTIONS
+extern _Noreturn void kern_panic(const char* msg);
+#endif
+
 void* moo_alloc(size_t size) {
     void* ptr = malloc(size);
     if (!ptr) {
+#ifdef MOO_UEFI_COLLECTIONS
+        kern_panic("moo: Speicher voll");
+#else
         fprintf(stderr, "moo: Speicher voll!\n");
         exit(1);
+#endif
     }
     return ptr;
 }
@@ -554,8 +572,12 @@ void* moo_alloc(size_t size) {
 void* moo_realloc(void* ptr, size_t size) {
     void* new_ptr = realloc(ptr, size);
     if (!new_ptr) {
+#ifdef MOO_UEFI_COLLECTIONS
+        kern_panic("moo: Speicher voll");
+#else
         fprintf(stderr, "moo: Speicher voll!\n");
         exit(1);
+#endif
     }
     return new_ptr;
 }

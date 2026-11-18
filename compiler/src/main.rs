@@ -2094,11 +2094,13 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     if profile {
         compiler.set_profiling(true);
     }
-    // Bare-Metal-Kernel-Modus (Plan-010): kern_*-Builtins nur im
-    // --no-stdlib/*-bare-Build, oder mit explizitem --erlaube-kern.
-    // MUSS vor compile_program() gesetzt sein (Guard greift im Codegen).
+    // UEFI-Apps mit Standard-Runtime verwenden den Bare-Systemzugriff und
+    // behalten das Ownership der dynamischen Werte. --no-stdlib wählt weiter
+    // das Minimalprofil für Loader und Kernel.
+    let uefi_runtime = link_triple == "x86_64-unknown-uefi" && !no_stdlib && !kernel;
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
-    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
+    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern || uefi_runtime);
+    compiler.set_bare_runtime_refcounts(uefi_runtime);
     compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)?;
     // P2-T43: MSVC-COFF traegt @bibliothek selbst (.drectve /DEFAULTLIB).

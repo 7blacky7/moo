@@ -216,6 +216,8 @@ pub struct CodeGen<'ctx> {
     // Bare-Metal-Kernel-Modus (Plan-010): erlaubt die kern_*-Builtins.
     // Gesetzt von der CLI bei --no-stdlib / *-bare-Target oder --erlaube-kern.
     bare_mode: bool,
+    // UEFI mit Container-Runtime verwaltet dynamische Werte per Refcount.
+    bare_runtime_refcounts: bool,
     // P011-A1/A3: Funktionen UND Daten-Globals mit @benutzt/@einstieg bzw.
     // @rohdaten_u32 — werden am Ende von compile_program in das
     // llvm.used-Global geschrieben (DCE-Schutz).
@@ -320,6 +322,7 @@ impl<'ctx> CodeGen<'ctx> {
             test_names: Vec::new(),
             profiling: false,
             bare_mode: false,
+            bare_runtime_refcounts: false,
             used_globals: Vec::new(),
             sektionen: Vec::new(),
             global_pruefplan: Default::default(),
@@ -345,6 +348,10 @@ impl<'ctx> CodeGen<'ctx> {
     /// explizites hosted-Opt-in uebergeben wurde. Steuert die kern_*-Builtins.
     pub fn set_bare_mode(&mut self, enabled: bool) {
         self.bare_mode = enabled;
+    }
+
+    pub fn set_bare_runtime_refcounts(&mut self, enabled: bool) {
+        self.bare_runtime_refcounts = enabled;
     }
 
     /// Wache fuer kern_*-Builtins: harte hosted/bare-Trennung (GPT-Luecke 1+2,
@@ -2173,10 +2180,11 @@ impl<'ctx> CodeGen<'ctx> {
     fn call_rt_void(&self, func: FunctionValue<'ctx>, args: &[BasicMetadataValueEnum<'ctx>], name: &str)
         -> Result<(), String>
     {
-        // P7-T20: moo_retain/moo_release sind in allen Bare-Runtimes
-        // (moo_bare.c, boot/uefi_rt.c, boot/stage2_rt.c) No-ops. Der Aufruf
-        // kostet nur Zeit, weil der Compiler den externen Rumpf nicht sieht.
-        if self.bare_mode && (func == self.rt.moo_release || func == self.rt.moo_retain) {
+        // Minimale Bare-Runtimes brauchen keine Refcounts. Die UEFI-App
+        // mit Container-Runtime verwendet dieselben Ownership-Aufrufe wie hosted.
+        if self.bare_mode && !self.bare_runtime_refcounts
+            && (func == self.rt.moo_release || func == self.rt.moo_retain)
+        {
             return Ok(());
         }
         if self.windows_x64_abi() {

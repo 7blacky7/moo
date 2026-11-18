@@ -219,6 +219,28 @@ void kern_frei_c(void* p) {
     g_belegt -= block->size;
 }
 
+/* Der alte Block bleibt bei OOM gueltig. Freie Kapazitaet im bestehenden
+ * Block darf der Aufrufer ohne Umbuchung weiterverwenden. */
+void* kern_realloc_c(void* p, uint64_t n) {
+    if (!p) return kern_alloc_c(n);
+    if (n == 0u) {
+        kern_frei_c(p);
+        return 0;
+    }
+
+    KernBlock* block = kern_find_payload((uintptr_t)p);
+    if (!block || block->frei)
+        kern_panic("kern_realloc: kein belegter Blockanfang");
+    if (n <= block->size) return p;
+
+    unsigned char* neu = (unsigned char*)kern_alloc_c(n);
+    if (!neu) return 0;
+    const unsigned char* alt = (const unsigned char*)p;
+    for (uint64_t i = 0; i < block->size; ++i) neu[i] = alt[i];
+    kern_frei_c(p);
+    return neu;
+}
+
 /* ----------------------------------------------------------------------
  * moo-Builtin-Wrapper (MooValue)
  * ---------------------------------------------------------------------- */

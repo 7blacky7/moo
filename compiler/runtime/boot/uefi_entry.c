@@ -26,7 +26,11 @@ typedef unsigned int u32;
 typedef unsigned short u16;
 typedef unsigned char u8;
 
+#ifdef MOO_UEFI_COLLECTIONS
+extern int main(void);
+#else
 extern void moo_efi_haupt(void);
+#endif
 
 static void outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p)); }
 static u8 inb(u16 p) { u8 v; __asm__ volatile("inb %1,%0" : "=a"(v) : "Nd"(p)); return v; }
@@ -834,7 +838,12 @@ u64 efi_main(void *ImageHandle, void *SystemTable) {
     moo_netz_da = moo_uefi_net_init(SystemTable);
     marker(moo_netz_da ? "MOO-UEFI-NETZ-OK\n" : "MOO-UEFI-NETZ-FEHLT\n");
 #endif
-    moo_efi_haupt();            /* in moo kompilierter Code */
+#ifdef MOO_UEFI_COLLECTIONS
+    /* Der Moo-Top-Level initialisiert die Module und startet die App. */
+    main();
+#else
+    moo_efi_haupt();
+#endif
     marker("MOO-UEFI-OK\n");    /* nach moo -> beweist saubere Rueckkehr */
     for (;;) { __asm__ volatile("hlt"); }
     return 0;

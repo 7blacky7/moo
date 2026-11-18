@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "1df8498fdaf15883a42370cab824b41209f4bf62b543e1978edb51e189033944",
+  "compiler_sha256": "7d52e63690b60f9def5fe61ce8b796fff96f5068d883a17b6f7a3df8bebf560e",
   "normalization": "module-header-root-v2",
-  "batch": "34732",
+  "batch": "34738",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "0cce0425f321c0d50b7da30abcf0799bcb5a0b581112e816ddcbb8d98f7d94be",
+  "compiler_runtime_inventory_sha256": "7b7af4f3fe2cabfffbfb35b9aa6eea6a3450202307f88eb2dfd8d147b4b30f7a",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -123,7 +123,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "57bf31280c8409892180067fd33a42828de4c826adfbd67062e265e0c9ebee1c",
+    "sha256": "02fcbae66ceec63893efde240e4604e9d5650abf058fb732f35bd17db79acf0d",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -477,7 +477,7 @@
       "beispiele/todo.moos": "846de5b0bd4253b27a05979dab074c05ff7baa3c1b2c6193e852db7d1cf7221f",
       "beispiele/tower_defense.moos": "55b7830a11d21ece90ab22b173bab1f3377f85d7405effa528b8b5826f32f7b2",
       "beispiele/tron.moos": "e66230b716ae7b74a12960476ff4ef21230ec66fe47c0ad35393402dcf13b83d",
-      "beispiele/uefi/hallo_uefi.moos": "291ebc485916f0df0dc98b2086c6ee7de75621c772f4381f2d4b20f47a8c2c25",
+      "beispiele/uefi/hallo_uefi.moos": "7df16d63b588932327c8ecf730d1ec265a47e27db197a3f58687c5bb688ce512",
       "beispiele/uefi/hardware_crc.moos": "818df28eff6d0df9f4c1db83835ca7e35bc13cb949eb67582ec3f70db4c1f226",
       "beispiele/uefi/hardware_pci.moos": "34ed21f9f09b6cca63ed3d47d36c0366367527ae114a7ec9e00f908b49ec331d",
       "beispiele/uefi/moo_lader.moos": "a82905f510f3de2931557825937db4c8ff4e1b78113638d89a6cf665905a1e34",
@@ -607,7 +607,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "751c216e68844585a95b9fb0b5885e65d778b5e682ea533760e4a41db14b9bec",
+    "sha256": "99b08925e1c159f82eec86ab0684ea614062f9da3c83873e33288be5920ed57d",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -961,7 +961,7 @@
       "beispiele/todo.moos": "846de5b0bd4253b27a05979dab074c05ff7baa3c1b2c6193e852db7d1cf7221f",
       "beispiele/tower_defense.moos": "55b7830a11d21ece90ab22b173bab1f3377f85d7405effa528b8b5826f32f7b2",
       "beispiele/tron.moos": "e66230b716ae7b74a12960476ff4ef21230ec66fe47c0ad35393402dcf13b83d",
-      "beispiele/uefi/hallo_uefi.moos": "291ebc485916f0df0dc98b2086c6ee7de75621c772f4381f2d4b20f47a8c2c25",
+      "beispiele/uefi/hallo_uefi.moos": "7df16d63b588932327c8ecf730d1ec265a47e27db197a3f58687c5bb688ce512",
       "beispiele/uefi/hardware_crc.moos": "818df28eff6d0df9f4c1db83835ca7e35bc13cb949eb67582ec3f70db4c1f226",
       "beispiele/uefi/hardware_pci.moos": "34ed21f9f09b6cca63ed3d47d36c0366367527ae114a7ec9e00f908b49ec331d",
       "beispiele/uefi/moo_lader.moos": "a82905f510f3de2931557825937db4c8ff4e1b78113638d89a6cf665905a1e34",
@@ -1761,6 +1761,7 @@
       "compiler/tests/p7/nativ_uefi_dyn.moos": "c1a9b38c82c0bd81fd086e644e7aa970b62dcb4255f8ecec082520dc7036f3e9",
       "compiler/tests/p7/nativ_uefi_dyn_trap.moos": "f07df999f90d4208ffe2305d8206089cf225add153cdfa0dfd045a7965187520",
       "compiler/tests/p7/nativ_uefi_typ_trap.moos": "a645cd261facfe5fe85e05956539301af2011c431bedcb3bcbd28b908f21b584",
+      "compiler/tests/p7/t12_uefi_probe.moos": "95a2b97a7b58f8061180790a6f775b5e6b229a1e06b78216e1e76ad03721e53b",
       "compiler/tests/regression/erde12_lib/welt_hilfe.moos": "b17502daaa8c37dc0c1f59eed11663afa175b8b7c4db54eeacaa03c16bc33a3f",
       "compiler/tests/regression/test_abi_matrix.moos": "d80f164d75c59257189fcf83b56d0971cdec125310d5991917f46111c143b006",
       "compiler/tests/regression/test_aes_roundtrip.moos": "9927fdadba2754603e5bd50eb01612c6559cc63f71cabb9dc45f34d1e4e54c6a",
@@ -3346,7 +3347,7 @@
     },
     "beispiele/uefi/hallo_uefi.moos": {
       "status": "ok",
-      "sha256": "6c28699f4a7b6600614f0072e3a99760a5adfb9e7bafd95e6a5e363bdb6115ab"
+      "sha256": "7281eb234d50ffbf9cb4e14548a7ac7724bf66ad8268adc1b8e578dfb5e42bcc"
     },
     "beispiele/uefi/hardware_crc.moos": {
       "status": "ok",

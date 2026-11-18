@@ -11,8 +11,9 @@
 #   compiler/runtime/moo_native_math.c       (P2-T58: Float-%/** nativer Funktionen, kein libm)
 #
 # Phasen:
-#   1) moo -> PE/COFF (--target x86_64-unknown-uefi), file-Check
-#   2) C-Runtime -> COFF (clang --target=x86_64-w64-windows-gnu -ffreestanding)
+#   1) Moo für x86_64-unknown-uefi, Demo und runtime-Prüfung als LLVM-IR
+#   2) Clang/MinGW freestanding baut die C-Runtime. Im Standardprofil wird
+#      der erreichbare Code aus Moo- und C-Bitcode als COFF ausgegeben.
 #   3) lld-link -> PE32+ EFI application (BOOTX64.EFI), /nodefaultlib /opt:ref
 #   4) GPT-Disk mit ESP + EFI/BOOT/BOOTX64.EFI, OVMF-Boot mit -vga std,
 #      Marker MOO-UEFI-ENTRY / GOP-OK / HEAP-OK / OK (debugcon 0xE9) sowie
@@ -51,6 +52,8 @@ elif [ "$PRUEFUNG" = "lader" ]; then
 elif [ "$PRUEFUNG" = "netz-kern" ]; then
   # P7-T5: N100-Weg; Stick-App ist der Netz-Lader (Ablauf s. u.).
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_lader.moos}"
+elif [ "$PRUEFUNG" = "runtime" ]; then
+  MOO_SRC="$ROOT/compiler/tests/p7/t12_uefi_probe.moos"
 elif [ "$PRUEFUNG" = "nativ" ]; then
   # P7-T17: @nativ-Aufruf mit dynamischen Werten (eigene App, Negativfall s. u.).
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/compiler/tests/p7/nativ_uefi_dyn.moos}"
@@ -676,34 +679,62 @@ printf '#include <stdlib.h>\n#include <math.h>\n' \
   || skip "MinGW-Header fuer x86_64-w64-windows-gnu fehlen (stdlib.h/math.h)" \
        "sudo pacman -S mingw-w64-headers" "Header fehlen — UEFI-Smoke uebersprungen."
 
-phase 1 "moo -> PE/COFF (--target x86_64-unknown-uefi)"
-"$BIN" compile "$MOO_SRC" --no-stdlib --target x86_64-unknown-uefi \
-    -o "$OUT/uefi_moo.obj" 2>"$OUT/moo.err" | sed 's/^/      /'
-[ -f "$OUT/uefi_moo.obj" ] || { sed 's/^/      | /' "$OUT/moo.err"; fail "moo-COFF nicht gebaut"; }
-file "$OUT/uefi_moo.obj" | grep -qi "COFF" || fail "moo-Objekt ist kein COFF"
-echo "      OK: $(file -b "$OUT/uefi_moo.obj")"
+FORMAT=obj
+CLANG_EMIT=()
+if [ "$PRUEFUNG" = "runtime" ] || [ "$MOO_SRC" -ef "$ROOT/beispiele/uefi/hallo_uefi.moos" ]; then
+  for t in llvm-link opt llc; do
+    command -v "$t" >/dev/null 2>&1 || fail "LLVM-Werkzeug fehlt: $t"
+  done
+  phase 1 "Moo mit Standard-Runtime -> LLVM-Bitcode"
+  "$BIN" compile "$MOO_SRC" --target x86_64-unknown-uefi --emit-ir \
+      -o "$OUT/uefi_moo.ll" >"$OUT/moo.err" 2>&1 \
+    || { sed 's/^/      | /' "$OUT/moo.err"; fail "Moo-IR nicht gebaut"; }
+  opt -mtriple=x86_64-w64-windows-gnu "$OUT/uefi_moo.ll" -o "$OUT/uefi_moo.bc" \
+    || fail "Moo-Bitcode nicht gebaut"
+  FORMAT=bc
+  CLANG_EMIT=(-emit-llvm)
+  CFLAGS+=(-DMOO_UEFI_COLLECTIONS -DMOO_HAS_SURFACE -D_CRTBLD -D__USE_MINGW_ANSI_STDIO=0)
+  RT_SOURCES+=(moo_value.c moo_memory.c moo_string.c moo_list.c moo_dict.c
+              moo_stdlib.c moo_print.c moo_frame.c moo_net.c)
+else
+  phase 1 "moo -> PE/COFF (--target x86_64-unknown-uefi)"
+  "$BIN" compile "$MOO_SRC" --no-stdlib --target x86_64-unknown-uefi \
+      -o "$OUT/uefi_moo.obj" >"$OUT/moo.err" 2>&1 \
+    || { sed 's/^/      | /' "$OUT/moo.err"; fail "moo-COFF nicht gebaut"; }
+  file "$OUT/uefi_moo.obj" | grep -qi "COFF" || fail "moo-Objekt ist kein COFF"
+  echo "      OK: $(file -b "$OUT/uefi_moo.obj")"
+fi
 
-phase 2 "Entry + Runtime + Surface -> COFF (clang --target=x86_64-w64-windows-gnu)"
+phase 2 "Entry + Runtime + Surface ($FORMAT, clang --target=x86_64-w64-windows-gnu)"
 : >"$OUT/cc.err"
-clang "${CFLAGS[@]}" -DMOO_UEFI_SURFACE -c "$ENTRY_C" -o "$OUT/uefi_entry.obj" 2>>"$OUT/cc.err" \
+clang "${CFLAGS[@]}" "${CLANG_EMIT[@]}" -DMOO_UEFI_SURFACE -c "$ENTRY_C" -o "$OUT/uefi_entry.$FORMAT" 2>>"$OUT/cc.err" \
   || { sed 's/^/      | /' "$OUT/cc.err"; fail "uefi_entry.c-Build fehlgeschlagen"; }
-clang "${CFLAGS[@]}" -DMOO_UEFI_USE_BARE_RUNTIME -c "$RT_C" -o "$OUT/uefi_rt.obj" 2>>"$OUT/cc.err" \
+clang "${CFLAGS[@]}" "${CLANG_EMIT[@]}" -DMOO_UEFI_USE_BARE_RUNTIME -c "$RT_C" -o "$OUT/uefi_rt.$FORMAT" 2>>"$OUT/cc.err" \
   || { sed 's/^/      | /' "$OUT/cc.err"; fail "uefi_rt.c-Build fehlgeschlagen"; }
-clang "${CFLAGS[@]}" -c "$ROOT/compiler/runtime/boot/uefi_net.c" -o "$OUT/uefi_net.obj" 2>>"$OUT/cc.err" \
+clang "${CFLAGS[@]}" "${CLANG_EMIT[@]}" -c "$ROOT/compiler/runtime/boot/uefi_net.c" -o "$OUT/uefi_net.$FORMAT" 2>>"$OUT/cc.err" \
   || { sed 's/^/      | /' "$OUT/cc.err"; fail "uefi_net.c-Build fehlgeschlagen"; }
-OBJS=("$OUT/uefi_entry.obj" "$OUT/uefi_moo.obj" "$OUT/uefi_rt.obj" "$OUT/uefi_net.obj")
+OBJS=("$OUT/uefi_entry.$FORMAT" "$OUT/uefi_moo.$FORMAT" "$OUT/uefi_rt.$FORMAT" "$OUT/uefi_net.$FORMAT")
 for src in "${RT_SOURCES[@]}"; do
-  obj="$OUT/${src%.c}.obj"
-  clang "${CFLAGS[@]}" -c "$ROOT/compiler/runtime/$src" -o "$obj" 2>>"$OUT/cc.err" \
+  obj="$OUT/${src%.c}.$FORMAT"
+  clang "${CFLAGS[@]}" "${CLANG_EMIT[@]}" -c "$ROOT/compiler/runtime/$src" -o "$obj" 2>>"$OUT/cc.err" \
     || { sed 's/^/      | /' "$OUT/cc.err"; fail "$src-Build fehlgeschlagen"; }
   OBJS+=("$obj")
 done
-echo "      OK: ${#OBJS[@]} COFF-Objekte (Entry, moo, rt, ${RT_SOURCES[*]})"
 
 phase 3 "lld-link -> PE32+ EFI application"
+if [ "$FORMAT" = "bc" ]; then
+  # Die gemeinsame Runtime enthaelt auch Host-Funktionen. LLVM entfernt
+  # unerreichbaren Code samt Importen vor dem COFF-Link, ab efi_main.
+  llvm-link "${OBJS[@]}" -o "$OUT/uefi_all.bc" || fail "LLVM-Module nicht verbunden"
+  opt -passes=internalize,globaldce -internalize-public-api-list=efi_main,_fltused \
+      "$OUT/uefi_all.bc" -o "$OUT/uefi_live.bc" || fail "UEFI-Bitcode nicht reduziert"
+  llc -mtriple=x86_64-unknown-uefi -filetype=obj "$OUT/uefi_live.bc" -o "$OUT/uefi_app.obj" \
+    || fail "UEFI-COFF nicht gebaut"
+  OBJS=("$OUT/uefi_app.obj")
+fi
 lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /opt:ref \
-    /out:"$OUT/BOOTX64.EFI" "${OBJS[@]}" 2>"$OUT/link.err" | sed 's/^/      /'
-[ -f "$OUT/BOOTX64.EFI" ] || { sed 's/^/      | /' "$OUT/link.err"; fail "BOOTX64.EFI nicht gelinkt"; }
+    /out:"$OUT/BOOTX64.EFI" "${OBJS[@]}" >"$OUT/link.err" 2>&1 \
+  || { sed 's/^/      | /' "$OUT/link.err"; fail "BOOTX64.EFI nicht gelinkt"; }
 file "$OUT/BOOTX64.EFI" | grep -qiE "EFI.*application|PE32\\+" || fail "kein PE32+ EFI-Binary"
 echo "      OK: $(file -b "$OUT/BOOTX64.EFI")"
 
@@ -752,6 +783,7 @@ TREIBER="${MOO_UEFI_TREIBER-$ROOT/build/p7-ipxe/intel.efidrv}"
 [ "$PRUEFUNG" = "lader" ] && TREIBER=""
 [ "$PRUEFUNG" = "netz-kern" ] && TREIBER=""
 [ "${PRUEFUNG#nativ}" != "$PRUEFUNG" ] && TREIBER=""
+[ "$PRUEFUNG" = "runtime" ] && TREIBER=""
 NIC_ROM=""
 TREIBER_ERWARTET="FEHLT"
 if [ -n "$TREIBER" ] && [ -f "$TREIBER" ]; then
@@ -832,7 +864,7 @@ if [ "$PRUEFUNG" = "e1000" ]; then
   echo "############################################################"
   exit 0
 fi
-if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
+if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ] || [ "$PRUEFUNG" = "runtime" ]; then
   # P7-T17: @nativ-Systemkoerper mit dynamischen Werten im UEFI-Profil.
   # Virtio-Block vermeidet QEMU11-IDE-SIGSEGV vor EFI-Entry.
   # Die App schreibt Zeilen "N <wert>" auf COM1. nativ: alle Werte exakt
@@ -848,14 +880,27 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ]; then
       >"$OUT/qemu.log" 2>&1 &
   QPID=$!
   ENDE="N 999"; [ "$PRUEFUNG" = "nativ-trap" ] && ENDE="N 111"
+  MARKER_LOG="$SERIAL_LOG"
+  if [ "$PRUEFUNG" = "runtime" ]; then
+    MARKER_LOG="$DEBUG_LOG"
+    ENDE="MOO-UEFI-OK"
+  fi
   for ((i = 0; i < WAIT_S + 20; i++)); do
-    tr -d '\r' <"$SERIAL_LOG" 2>/dev/null | grep -qax "$ENDE" && break
+    tr -d '\r' <"$MARKER_LOG" 2>/dev/null | grep -qax "$ENDE" && break
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
   done
   # Negativfall: Zeit fuer (verbotene) Folgezeilen nach dem Trap.
   [ "$PRUEFUNG" = "nativ-trap" ] && sleep 5
   kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
+  if [ "$PRUEFUNG" = "runtime" ]; then
+    grep -aE "MOO-UEFI|KERN-PANIK" "$DEBUG_LOG" | sed 's/^/      | /'
+    for m in MOO-UEFI-RUNTIME-WERTE-OK MOO-UEFI-RUNTIME-ARENA-OK MOO-UEFI-OK; do
+      grep -qax "$m" "$DEBUG_LOG" || fail "Runtime-Marker fehlt: $m"
+    done
+    echo "# ERGEBNIS: Runtime-Pruefung gruen (Werte, Callback und Tasten-Arena unter OVMF)."
+    exit 0
+  fi
   tr -d '\r' <"$SERIAL_LOG" | grep -a '^N ' | sed 's/^/      | /'
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.

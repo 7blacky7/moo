@@ -17,7 +17,7 @@ MooValue moo_to_string(MooValue v) {
     switch (v.tag) {
         case MOO_NUMBER: {
             double n = MV_NUM(v);
-            if (n == (int64_t)n)
+            if (n >= -0x1p63 && n < 0x1p63 && n == (int64_t)n)
                 snprintf(buf, sizeof(buf), "%lld", (long long)n);
             else
                 snprintf(buf, sizeof(buf), "%g", n);
@@ -152,17 +152,19 @@ MooValue moo_to_string(MooValue v) {
             return moo_string_new("<Socket>");
         case MOO_WEBSERVER:
             return moo_string_new("<WebServer>");
-        case MOO_TENSOR:
-            // Delegiert an moo_tensor.c (liefert +1 owning String).
-            return moo_tensor_to_string(v);
         case MOO_SURFACE:
             return moo_string_new("<Oberflaeche>");
         case MOO_BUFFER:
             return moo_string_new("<Puffer>");
+#ifndef MOO_UEFI_COLLECTIONS
+        case MOO_TENSOR:
+            // Delegiert an moo_tensor.c (liefert +1 owning String).
+            return moo_tensor_to_string(v);
         case MOO_STRUCT:
             return moo_struct_text(v);
         case MOO_HANDLE:
             return moo_string_new(moo_handle_text(v));
+#endif
         case MOO_ATOM:
             return moo_string_new("<Atom>");
         case MOO_SPERRE:
@@ -172,12 +174,22 @@ MooValue moo_to_string(MooValue v) {
     }
 }
 
+#ifdef MOO_UEFI_COLLECTIONS
+extern void moo_uefi_print(const char *text);
+#endif
+
 void moo_print(MooValue v) {
     // P2-T44: nach einem neuen Konvertierungsfehler keine Ausgabe; der Fehler
     // liegt im try-Zustand und wird vom Compiler nach dem Statement geprueft.
     // Mit beim Eintritt gesetztem Flag (MOO_STRENG-Meldung) wird gedruckt.
     int vorher = moo_error_flag;
     MooValue s = moo_to_string(v);
-    if (!MOO_PRINT_ABBRUCH(vorher)) printf("%s\n", MV_STR(s)->chars);
+    if (!MOO_PRINT_ABBRUCH(vorher)) {
+#ifdef MOO_UEFI_COLLECTIONS
+        moo_uefi_print(MV_STR(s)->chars);
+#else
+        printf("%s\n", MV_STR(s)->chars);
+#endif
+    }
     if (v.tag != MOO_STRING) moo_release(s);
 }

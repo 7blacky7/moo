@@ -138,6 +138,7 @@ MooValue kern_speicher_peak(void);                /* Peak-belegt (high-water) */
 /* C-Seite (vom Boot-Trampolin genutzt). */
 void  kern_heap_init_c(uintptr_t start, uintptr_t ende);
 void* kern_alloc_c(uint64_t n);
+void* kern_realloc_c(void* p, uint64_t n);       /* NULL bei OOM, p bleibt gültig */
 void  kern_frei_c(void* p);
 
 /* ======================================================================

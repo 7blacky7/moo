@@ -1,0 +1,47 @@
+# QEMU/OVMF-Pruefung des UEFI-Profils mit der gemeinsamen Runtime.
+importiere ui_moo_surface
+
+funktion probe_klick(aktionen, w):
+    aktionen.hinzufügen(w["text"])
+
+funktion probe_tasten(anzahl):
+    unsicher:
+        setze n auf 0
+        setze taste auf ""
+        solange n < anzahl:
+            setze taste auf kern_taste_lesen()
+            setze n auf n + 1
+
+funktion moo_efi_haupt():
+    unsicher:
+        setze k auf uim_surface_wurzel(320, 240)
+        setze aktionen auf []
+        setze callback auf (w) => probe_klick(aktionen, w)
+        setze w auf uim_knopf("Probe", 8, 8, 100, 24, callback)
+        uim_hinzu(k, w)
+        setze teile auf "Moo UEFI".teilen(" ")
+        wenn länge(teile) != 2 oder teile[0] + " " + teile[1] != "Moo UEFI":
+            zeige "MOO-UEFI-RUNTIME-STRING-FEHLER"
+            gib_zurück falsch
+        uim_surface_taste(k, "Tab", wahr, 0)
+        uim_surface_taste(k, "Return", wahr, 0)
+        uim_surface_maus(k, 16, 16, wahr)
+        uim_surface_maus(k, 16, 16, falsch)
+        wenn länge(aktionen) != 2 oder aktionen[0] != "Probe" oder aktionen[1] != "Probe":
+            zeige "MOO-UEFI-RUNTIME-CALLBACK-FEHLER"
+            gib_zurück falsch
+        wenn uim_surface_zeichne(k) == falsch oder kern_bild_zeige(uim_surface_handle(k)) == falsch:
+            zeige "MOO-UEFI-RUNTIME-BILD-FEHLER"
+            gib_zurück falsch
+        zeige "MOO-UEFI-RUNTIME-WERTE-OK"
+
+        probe_tasten(1024)
+        setze belegt auf kern_speicher_belegt()
+        setze peak auf kern_speicher_peak()
+        probe_tasten(262144)
+        wenn kern_speicher_belegt() != belegt oder kern_speicher_peak() != peak:
+            zeige "MOO-UEFI-RUNTIME-ARENA-FEHLER"
+            gib_zurück falsch
+        zeige "MOO-UEFI-RUNTIME-ARENA-OK"
+
+moo_efi_haupt()

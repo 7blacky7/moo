@@ -796,7 +796,9 @@ void moo_channel_close(MooValue channel);
 // je Thread: ein Fehler in einem Moo-Thread erreicht weder das versuche noch
 // die Fehlerpruefung eines anderen Threads. Die Bare-Runtime linkt
 // moo_error.c nicht und ist davon nicht beruehrt.
-#if defined(__cplusplus)
+#if defined(MOO_UEFI_COLLECTIONS)
+#define MOO_TLS
+#elif defined(__cplusplus)
 #define MOO_TLS thread_local
 #elif defined(_MSC_VER)
 #define MOO_TLS __declspec(thread)

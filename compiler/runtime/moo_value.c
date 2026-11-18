@@ -1,5 +1,8 @@
 #include "moo_runtime.h"
 
+#ifdef MOO_UEFI_COLLECTIONS
+#include "moo_bare_wert.h"
+#else
 MooValue moo_number(double n) {
     MooValue v;
     v.tag = MOO_NUMBER;
@@ -20,6 +23,7 @@ MooValue moo_none(void) {
     v.data = 0;
     return v;
 }
+#endif
 
 MooValue moo_error(const char* msg) {
     MooError* e = (MooError*)malloc(sizeof(MooError));
@@ -33,15 +37,27 @@ MooValue moo_error(const char* msg) {
     return v;
 }
 
-bool moo_is_number(MooValue v) { return v.tag == MOO_NUMBER; }
+bool moo_is_number(MooValue v) {
+#ifdef MOO_UEFI_COLLECTIONS
+    return moo_wert_ist_zahl(v.tag);
+#else
+    return v.tag == MOO_NUMBER;
+#endif
+}
 bool moo_is_string(MooValue v) { return v.tag == MOO_STRING; }
 bool moo_is_bool(MooValue v)   { return v.tag == MOO_BOOL; }
+#ifndef MOO_UEFI_COLLECTIONS
 bool moo_is_none(MooValue v)   { return v.tag == MOO_NONE; }
+#endif
 bool moo_is_list(MooValue v)   { return v.tag == MOO_LIST; }
 bool moo_is_dict(MooValue v)   { return v.tag == MOO_DICT; }
 
 bool moo_is_truthy(MooValue v) {
     switch (v.tag) {
+#ifdef MOO_UEFI_COLLECTIONS
+        case MOO_WERT_TAG_I64:
+        case MOO_WERT_TAG_U64: return v.data != 0;
+#endif
         case MOO_NUMBER: return MV_NUM(v) != 0.0;
         case MOO_STRING: return MV_STR(v)->length > 0;
         case MOO_BOOL:   return MV_BOOL(v);
@@ -54,6 +70,10 @@ bool moo_is_truthy(MooValue v) {
 
 const char* moo_type_name(MooValue v) {
     switch (v.tag) {
+#ifdef MOO_UEFI_COLLECTIONS
+        case MOO_WERT_TAG_I64:
+        case MOO_WERT_TAG_U64:
+#endif
         case MOO_NUMBER: return "Zahl";
         case MOO_STRING: return "Text";
         case MOO_BOOL:   return "Wahrheitswert";
@@ -75,7 +95,11 @@ const char* moo_type_name(MooValue v) {
 }
 
 double moo_as_number(MooValue v) {
+#ifdef MOO_UEFI_COLLECTIONS
+    if (moo_wert_ist_zahl(v.tag)) return MOO_WERT_DOUBLE(v);
+#else
     if (v.tag == MOO_NUMBER) return MV_NUM(v);
+#endif
     if (v.tag == MOO_BOOL) return MV_BOOL(v) ? 1.0 : 0.0;
     return 0.0;
 }

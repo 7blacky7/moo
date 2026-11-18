@@ -1,40 +1,15 @@
-# hallo_uefi.moos — moo als UEFI-Application (P011-E1 -> F1, P7-T2 Bildschirm + Eingabe).
+# hallo_uefi.moos – MoOS-Oberfläche als UEFI-Anwendung.
 #
-# Build (reproduzierbar via scripts/uefi-smoke.sh):
-#   moo-compiler compile hallo_uefi.moos --no-stdlib \
-#       --target x86_64-unknown-uefi -o uefi_moo.obj   (echtes PE/COFF)
-#   clang --target=x86_64-w64-windows-gnu -ffreestanding:
-#       boot/uefi_entry.c (-DMOO_UEFI_SURFACE), boot/uefi_rt.c (-DMOO_UEFI_USE_BARE_RUNTIME),
-#       moo_bare.c, moo_bare_alloc.c, moo_freestanding_mem.c,
-#       moo_surface_core.c, moo_surface.c            (vorhandener Surface-Kern)
-#   lld-link /subsystem:efi_application /entry:efi_main -> BOOTX64.EFI
-#   GPT-Disk mit ESP + EFI/BOOT/BOOTX64.EFI, Boot via OVMF.
+# Build und Bootprüfung mit scripts/uefi-smoke.sh. Der UEFI-Einstieg richtet
+# GOP, Heap und Eingabegeräte ein, dann läuft der Moo-Moduleinstieg.
+# ui_moo verwaltet Knöpfe, Fokus und Mausereignisse auf der RGBA-Surface.
+# kern_bild_zeige überträgt die Surface in den GOP-Framebuffer.
 #
-# Der UEFI-Entry efi_main (compiler/runtime/boot/uefi_entry.c) sendet
-# 'MOO-UEFI-ENTRY', ermittelt GOP-Framebuffer ('MOO-UEFI-GOP-OK'), Heap
-# ('MOO-UEFI-HEAP-OK') und Zeigerprotokoll ('MOO-UEFI-MAUS-OK' / '-FEHLT'),
-# ruft dann moo_efi_haupt() (hier) und sendet nach dessen Rueckkehr
-# 'MOO-UEFI-OK' — die Rueckkehr erfolgt, wenn der Benutzer Escape drueckt.
-#
-# P7-T2: Bild und Bedienung entstehen komplett in Moo:
-#   - surface_*-Builtins zeichnen (compiler/runtime/moo_surface.c), Masse aus
-#     surface_text_breite/surface_text_hoehe (Font 19 px * Skala).
-#   - kern_bild_breite/kern_bild_hoehe liefern die Framebuffer-Masse,
-#     kern_bild_zeige(surface) kopiert in den GOP-Speicher.
-#   - Eingabe wird gepollt: kern_eingabe_warten() blockiert bis Tastatur/Maus
-#     etwas melden; kern_taste_lesen() liefert ui_moo-Tastennamen ("Tab",
-#     "Return", "Up", ..., "" = keine Taste); kern_maus_vorhanden/lesen/x/y/
-#     gedrueckt entsprechen der 2D-API maus_x/maus_y/maus_gedrueckt.
-#   Marker auf COM1: MOO-UEFI-MOO, -BILD, -TASTE, -FOKUS <i>, -AKTION <i>, -KLICK.
-#   - Netzwerk-Konsole (P7-T9): kern_netz_sende(text) schickt eine Zeile als
-#     UDP-Broadcast an 255.255.255.255:7777 (boot/uefi_net.c, SNP); ohne Netz
-#     liefert es falsch. Mitlesen auf Linux: z. B. `socat -u UDP-RECV:7777 -`
-#     oder `tcpdump -nn udp port 7777` (hier nicht gebaut, nur dokumentiert).
-#
-# WICHTIG: Im UEFI-Boot-Services-Environment ist SSE bereits aktiv (die
-# Firmware nutzt es selbst). Serielle Ausgabe geht ueber COM1-Port-I/O
-# (port_schreibe16, P011-B1); OVMF/QEMU haben COM1.
+# COM1 protokolliert Start, Bild, Taste, Fokus, Aktion und Klick.
+# Die Netz-Konsole sendet Zeilen per UDP-Broadcast auf Port 7777.
+# Escape beendet die Ereignisschleife.
 
+importiere ui_moo_surface
 aus "./netz_treiber" importiere nt_pci_init, nt_ports_oeffnen, nt_anzahl, nt_port, nt_link, nt_udp_log, nt_log, nt_status_text, nt_dma, nt_dez
 
 # P7-T15: Logzeile auf allen eigenen Ports (Moo-I226-Treiber) mit Link senden;
@@ -146,9 +121,7 @@ funktion marker_klick():
     sende(10)
 
 # ---------------------------------------------------------------------------
-# Layout: alle Masse aus surface_text_hoehe/surface_text_breite, damit
-# Zeichnen und Treffertest dieselben Zahlen benutzen (QEMU 1280x800 wie
-# N100 1720x1440). Keine Moo-Globals: der UEFI-Pfad ruft kein main().
+# Layout in GOP-Pixeln. Die Widgets bekommen dieselben Maße wie das Panel.
 # ---------------------------------------------------------------------------
 funktion knopf_name(i):
     wenn i == 0:
@@ -183,27 +156,40 @@ funktion lay_knopf_x(i):
         gib_zurück x0
     gib_zurück x0 + lay_knopf_b(0) + 16
 
-# Welcher Knopf liegt unter (x, y)? -1 = keiner.
-funktion knopf_treffer(x, y):
-    setze i auf 0
-    solange i < 2:
-        setze kx auf lay_knopf_x(i)
-        setze ky auf lay_knopf_y()
-        wenn x >= kx und x < kx + lay_knopf_b(i) und y >= ky und y < ky + lay_knopf_h():
-            gib_zurück i
-        setze i auf i + 1
-    gib_zurück 0 - 1
+funktion demo_aktion(zustand, widget):
+    zustand["anzahl"] = zustand["anzahl"] + 1
+    zustand["aktion"] = widget["text"]
+    zustand["index"] = widget["demo_index"]
+    gib_zurück nichts
 
-# Knopf i zeichnen; mit Fokusrahmen (bernstein), wenn fokussiert.
-funktion zeichne_knopf(bild, i, fokussiert, fr, fg, fb, tr, tg, tb):
-    setze x auf lay_knopf_x(i)
-    setze y auf lay_knopf_y()
-    setze kb auf lay_knopf_b(i)
-    setze kh auf lay_knopf_h()
-    wenn fokussiert:
-        surface_roundrect(bild, x - 3, y - 3, kb + 6, kh + 6, 13, 255, 196, 64, 255)
-    surface_roundrect(bild, x, y, kb, kh, 10, fr, fg, fb, 255)
-    surface_text(bild, x + 12, y + 12, 1, knopf_name(i), tr, tg, tb, 255)
+funktion demo_ui(b, h, zustand):
+    setze k auf uim_surface_wurzel(b, h)
+    wenn k == nichts:
+        gib_zurück nichts
+    # Kopfzeile, Panel und Status sind die GOP-Demo; ui_moo zeichnet die Widgets.
+    k["hintergrund_zeichnen"] = falsch
+    setze thema auf uim_theme_dunkel()
+    thema["schrift"] = 19
+    thema["flaeche"] = [52, 70, 94, 255]
+    thema["text"] = [241, 247, 250, 255]
+    thema["akzent"] = [255, 196, 64, 255]
+    uim_theme_setze(k, thema)
+    setze callback auf (w) => demo_aktion(zustand, w)
+    für i in [0, 1]:
+        setze knopf auf uim_knopf(knopf_name(i), lay_knopf_x(i), lay_knopf_y(), lay_knopf_b(i), lay_knopf_h(), callback)
+        knopf["demo_index"] = i
+        uim_hinzu(k, knopf)
+        wenn i == 0:
+            uim_zustand_setze(k, knopf, "focused")
+    gib_zurück k
+
+funktion demo_aktion_melden(zustand, vorher, maus, ports, puf):
+    wenn zustand["anzahl"] == vorher:
+        gib_zurück nichts
+    wenn maus:
+        marker_klick()
+    marker_aktion(zustand["index"])
+    netz_log(ports, puf, zustand["aktion"])
 
 # Mauszeiger als Fadenkreuz (dunkler Rand, weisse Linien) nur mit surface_rect.
 funktion zeichne_zeiger(bild, x, y):
@@ -243,7 +229,7 @@ funktion zeichne_status(bild, b, h, taste, aktion, maus_da, ports, tpuf):
 # Gesamtes Bild in die vorhandene Surface zeichnen (kein neues surface_new
 # pro Frame: Heap ist eine feste Arena). Akzentlinie wird nach einer Aktion
 # bernstein statt tuerkis — sichtbare Reaktion und Pixelprobe fuer das Gate.
-funktion moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf):
+funktion moo_efi_zeichnen(k, bild, b, h, taste, aktion, maus_da, mx, my, ports, tpuf, widgets):
     setze rand auf 16
     # Deckendes Rechteck statt surface_clear: beachtet die Clip-Region
     # (moo_efi_bereich), surface_clear loescht immer die ganze Surface.
@@ -276,8 +262,8 @@ funktion moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, por
     surface_roundrect(bild, panel_x, panel_y, panel_b, panel_h, 16, 30, 45, 65, 255)
     surface_text(bild, panel_x + innen, zeile1_y, 2, "MOO UEFI SCREEN", 241, 247, 250, 255)
     surface_text(bild, panel_x + innen, zeile2_y, 2, "MOOS STARTET", 116, 219, 191, 255)
-    zeichne_knopf(bild, 0, fokus == 0, 73, 192, 169, 14, 21, 35)
-    zeichne_knopf(bild, 1, fokus == 1, 52, 70, 94, 241, 247, 250)
+    wenn widgets:
+        uim_surface_zeichne(k)
 
     zeichne_status(bild, b, h, taste, aktion, maus_da, ports, tpuf)
     wenn maus_da:
@@ -286,12 +272,15 @@ funktion moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, por
 # P7-T13: Nur ein Rechteck neu zeichnen. Die ganze Szene laeuft durch, alle
 # surface_*-Aufrufe sind aber auf das Rechteck geclippt: Pixelarbeit nur dort,
 # Ergebnis pixelgleich zum Vollbild (jede Szene zeichnet den aktuellen Zustand).
-funktion moo_efi_bereich(bild, x, y, bb, hh, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf):
+funktion moo_efi_bereich(k, bild, x, y, bb, hh, b, h, taste, aktion, maus_da, mx, my, ports, tpuf):
     wenn bb <= 0 oder hh <= 0:
         gib_zurück falsch
     wenn surface_clip_push(bild, x, y, bb, hh) == falsch:
         gib_zurück falsch
-    moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+    # Der Fokusrahmen reicht zwei Pixel über die Knopfzeile hinaus.
+    setze ky auf lay_knopf_y()
+    setze widgets auf y + hh > ky - 3 und y < ky + lay_knopf_h() + 3
+    moo_efi_zeichnen(k, bild, b, h, taste, aktion, maus_da, mx, my, ports, tpuf, widgets)
     surface_clip_pop(bild)
     gib_zurück wahr
 
@@ -323,14 +312,15 @@ funktion moo_efi_haupt():
         marker_moo()
         setze b auf kern_bild_breite()
         setze h auf kern_bild_hoehe()
-        setze fokus auf 0
         setze taste auf ""
-        setze aktion auf ""
+        setze zustand auf {"anzahl": 0, "aktion": "", "index": 0}
+        setze k auf demo_ui(b, h, zustand)
+        wenn k == nichts:
+            gib_zurück falsch
+        setze bild auf uim_surface_handle(k)
         setze maus_da auf kern_maus_vorhanden()
         setze mx auf b / 2
         setze my auf h / 2
-        setze gedrueckt auf falsch
-        setze bild auf surface_new(b, h)
         # P7-T15: eigene I226-Ports oeffnen (ohne Geraet: 0 Ports, "I226 FEHLT").
         setze ports auf nt_ports_oeffnen(nt_pci_init(), 2)
         setze puf auf nt_dma(2048)
@@ -344,13 +334,12 @@ funktion moo_efi_haupt():
         # P7-T13: Zeitmessung je Bild. Erster kern_ticks-Aufruf kalibriert (10 ms).
         kern_ticks()
         setze zpuf auf nt_dma(128)
-        moo_efi_zeichnen(bild, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+        moo_efi_zeichnen(k, bild, b, h, taste, "", maus_da, mx, my, ports, tpuf, wahr)
         wenn kern_bild_zeige(bild):
             marker_bild()
         netz_log(ports, puf, "MOO-NET MOOS STARTET")
-        # P7-T13: Zustand des zuletzt gezeigten Bilds (fuer Teil-Neuzeichnen).
-        setze fokus_alt auf fokus
-        setze aktion_alt auf aktion
+
+        setze aktion_alt auf ""
         setze mx_alt auf mx
         setze my_alt auf my
         setze status_h auf surface_text_hoehe(1) + 16
@@ -366,42 +355,38 @@ funktion moo_efi_haupt():
                 setze taste auf t
                 marker_taste()
                 netz_log(ports, puf, t)
+                setze vorher auf zustand["anzahl"]
                 wenn t == "Tab" oder t == "Right" oder t == "Down" oder t == "Left" oder t == "Up":
-                    setze fokus auf (fokus + 1) % 2
-                    marker_fokus(fokus)
-                wenn t == "Return" oder t == "space":
-                    setze aktion auf knopf_name(fokus)
-                    marker_aktion(fokus)
-                    netz_log(ports, puf, aktion)
+                    uim_surface_taste(k, "Tab", wahr, 0)
+                    setze fokus auf k["fokus"]
+                    wenn fokus != nichts:
+                        marker_fokus(fokus["demo_index"])
+                sonst:
+                    uim_surface_taste(k, t, wahr, 0)
+                demo_aktion_melden(zustand, vorher, falsch, ports, puf)
                 wenn t == "Escape":
                     setze laeuft auf falsch
                 setze t auf kern_taste_lesen()
-            wenn maus_da:
-                wenn kern_maus_lesen():
-                    setze neu_bild auf wahr
-                    setze mx auf kern_maus_x()
-                    setze my auf kern_maus_y()
-                    setze jetzt auf kern_maus_gedrückt()
-                    wenn jetzt und gedrueckt == falsch:
-                        setze treffer auf knopf_treffer(mx, my)
-                        wenn treffer >= 0:
-                            setze fokus auf treffer
-                            setze aktion auf knopf_name(treffer)
-                            marker_klick()
-                            marker_aktion(treffer)
-                    setze gedrueckt auf jetzt
+            wenn maus_da und kern_maus_lesen():
+                setze neu_bild auf wahr
+                setze mx auf kern_maus_x()
+                setze my auf kern_maus_y()
+                setze vorher auf zustand["anzahl"]
+                uim_surface_bewegung(k, mx, my)
+                uim_surface_maus(k, mx, my, kern_maus_gedrückt())
+                demo_aktion_melden(zustand, vorher, wahr, ports, puf)
             wenn neu_bild:
+                setze aktion auf zustand["aktion"]
+                setze widgets_neu auf k["backend_zustand"]["ungueltig"]
                 setze t0 auf kern_ticks()
-                # Nur Bereiche, deren Inhalt vom Zustand abhaengt (Rest ist statisch).
-                moo_efi_bereich(bild, 0, h - status_h, b, status_h, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                moo_efi_bereich(k, bild, 0, h - status_h, b, status_h, b, h, taste, aktion, maus_da, mx, my, ports, tpuf)
                 wenn aktion != aktion_alt:
-                    moo_efi_bereich(bild, 0, lay_kopf_h(), b, 4, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
-                wenn fokus != fokus_alt:
-                    moo_efi_bereich(bild, knoepfe_x, lay_knopf_y() - 3, knoepfe_b, lay_knopf_h() + 6, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
+                    moo_efi_bereich(k, bild, 0, lay_kopf_h(), b, 4, b, h, taste, aktion, maus_da, mx, my, ports, tpuf)
+                wenn widgets_neu:
+                    moo_efi_bereich(k, bild, knoepfe_x, lay_knopf_y() - 3, knoepfe_b, lay_knopf_h() + 6, b, h, taste, aktion, maus_da, mx, my, ports, tpuf)
                 wenn maus_da und (mx != mx_alt oder my != my_alt):
-                    moo_efi_bereich(bild, mx_alt - 9, my_alt - 9, 19, 19, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
-                    moo_efi_bereich(bild, mx - 9, my - 9, 19, 19, b, h, fokus, taste, aktion, maus_da, mx, my, ports, tpuf)
-                setze fokus_alt auf fokus
+                    moo_efi_bereich(k, bild, mx_alt - 9, my_alt - 9, 19, 19, b, h, taste, aktion, maus_da, mx, my, ports, tpuf)
+                    moo_efi_bereich(k, bild, mx - 9, my - 9, 19, 19, b, h, taste, aktion, maus_da, mx, my, ports, tpuf)
                 setze aktion_alt auf aktion
                 setze mx_alt auf mx
                 setze my_alt auf my
@@ -409,3 +394,5 @@ funktion moo_efi_haupt():
                 kern_bild_zeige(bild)
                 setze t2 auf kern_ticks()
                 zeit_melden(ports, puf, zpuf, t1 - t0, t2 - t1)
+
+moo_efi_haupt()

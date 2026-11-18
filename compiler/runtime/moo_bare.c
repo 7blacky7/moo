@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef MOO_UEFI_COLLECTIONS
+#include "moo_runtime.h"
+#else
 // === MooValue (gleiche 16-Byte Struktur wie volle Runtime) ===
 typedef enum {
     MOO_NUMBER = 0,
@@ -20,6 +23,7 @@ typedef struct {
     uint64_t tag;
     uint64_t data;
 } MooValue;
+#endif
 
 // Zugriff
 static inline double bare_as_double(MooValue v) {
@@ -161,6 +165,10 @@ BARE_SCHNELL(moo_div, moo_number(x_ / y_))
 BARE_SCHNELL(moo_mod, moo_number(x_ - (double)(int64_t)(x_ / y_) * y_))
 
 static MooValue moo_add_kalt(MooValue a, MooValue b) {
+#ifdef MOO_UEFI_COLLECTIONS
+    if (a.tag == MOO_STRING || b.tag == MOO_STRING)
+        return moo_string_concat(a, b);
+#endif
     BARE_PAAR;
     if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_wert64(x + y, t);
     return moo_number(as_num(a) + as_num(b));
@@ -225,6 +233,10 @@ static bool bare_eq(MooValue a, MooValue b) {
         return a.tag == b.tag && bare_str_eq(a, b);
     if (a.tag == MOO_NONE || b.tag == MOO_NONE) return a.tag == b.tag;
     if (a.tag == MOO_BOOL && b.tag == MOO_BOOL) return (bool)a.data == (bool)b.data;
+#ifdef MOO_UEFI_COLLECTIONS
+    /* Container und Funktionen haben keine numerische Gleichheit. */
+    if (!moo_wert_ist_zahl(a.tag) || !moo_wert_ist_zahl(b.tag)) return false;
+#endif
     {
         BARE_PAAR;
         if (bare_paar(a, b, &x, &y, &nx, &ny, &t)) return bare_vergleich(x, nx, y, ny) == 0;
@@ -257,6 +269,7 @@ BARE_VERGLEICH(moo_gte, >=)
 #undef BARE_VERGLEICH
 
 // === Logik ===
+#ifndef MOO_UEFI_COLLECTIONS
 bool moo_is_truthy(MooValue v) {
     if (v.tag == MOO_NUMBER) return bare_as_double(v) != 0.0;
     if (v.tag == MOO_BOOL) return (bool)v.data;
@@ -267,6 +280,7 @@ bool moo_is_truthy(MooValue v) {
     }
     return false;
 }
+#endif
 MooValue moo_and(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) && moo_is_truthy(b)); }
 MooValue moo_or(MooValue a, MooValue b) { return moo_bool(moo_is_truthy(a) || moo_is_truthy(b)); }
 MooValue moo_not(MooValue v) { return moo_bool(!moo_is_truthy(v)); }
@@ -605,9 +619,11 @@ void kern_lidt(MooValue basis, MooValue limit) {
 #endif
 }
 
-// === Retain/Release (no-ops im Bare-Metal Modus) ===
+#ifndef MOO_UEFI_COLLECTIONS
+// === Retain/Release im Minimalprofil ===
 void moo_retain(MooValue v) { (void)v; }
 void moo_release(MooValue v) { (void)v; }
+#endif
 
 // === Stubs fuer Funktionen die der Codegen referenziert ===
 // Diese tun nichts im Bare-Metal Modus
@@ -626,5 +642,7 @@ bool moo_is_none(MooValue v) { return v.tag == MOO_NONE; }
 // moo_throw/moo_print sind WEAK: ein Kernel-Build mit moo_bare_console.c
 // liefert eine STARKE moo_print (seriell + VGA). Ohne Console bleiben diese
 // No-Op-Defaults aktiv (reiner Embedded-Pfad ohne Ausgabe).
+#ifndef MOO_UEFI_COLLECTIONS
 __attribute__((weak)) void moo_throw(MooValue v) { (void)v; /* Kein Error-Handling im Bare-Metal */ }
 __attribute__((weak)) void moo_print(MooValue v) { (void)v; /* Kein printf im Bare-Metal */ }
+#endif

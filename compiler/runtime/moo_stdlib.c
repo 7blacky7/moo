@@ -6,7 +6,9 @@
 // unistd.h wurde hier nie genutzt (verifiziert: keine POSIX-only-Aufrufe in
 // dieser Datei) und brach den MSVC-Build (C1083) — P013, CI-Run 27437564015.
 
+#ifndef MOO_UEFI_COLLECTIONS
 static bool random_seeded = false;
+#endif
 
 MooValue moo_abs(MooValue v) { return moo_number(fabs(moo_as_number(v))); }
 MooValue moo_sqrt(MooValue v) { return moo_number(sqrt(moo_as_number(v))); }
@@ -56,17 +58,21 @@ MooValue moo_max(MooValue a, MooValue b) {
     return moo_number(na > nb ? na : nb);
 }
 
+#ifndef MOO_UEFI_COLLECTIONS
 MooValue moo_random(void) {
     if (!random_seeded) { srand((unsigned)time(NULL)); random_seeded = true; }
     return moo_number((double)rand() / RAND_MAX);
 }
+#endif
 
 MooValue moo_index_get(MooValue container, MooValue index) {
     switch (container.tag) {
         case MOO_LIST:   return moo_list_get(container, index);
         case MOO_DICT:   return moo_dict_get(container, index);
         case MOO_STRING: return moo_string_index(container, index);
+#ifndef MOO_UEFI_COLLECTIONS
         case MOO_BUFFER: return moo_buffer_index_get(container, index);
+#endif
         default:         return moo_none();
     }
 }
@@ -75,7 +81,9 @@ void moo_index_set(MooValue container, MooValue index, MooValue value) {
     switch (container.tag) {
         case MOO_LIST: moo_list_set(container, index, value); break;
         case MOO_DICT: moo_dict_set(container, index, value); break;
+#ifndef MOO_UEFI_COLLECTIONS
         case MOO_BUFFER: moo_buffer_index_set(container, index, value); break;
+#endif
         default: break;
     }
 }
@@ -85,8 +93,10 @@ MooValue moo_length(MooValue v) {
         case MOO_STRING: return moo_number((double)MV_STR(v)->length);
         case MOO_LIST:   return moo_number((double)MV_LIST(v)->length);
         case MOO_DICT:   return moo_number((double)MV_DICT(v)->count);
+#ifndef MOO_UEFI_COLLECTIONS
         /* P2-T50 A1: Elementanzahl des Puffers bzw. der Ansicht. */
         case MOO_BUFFER: return moo_number((double)moo_buffer_len(moo_val_as_ptr(v)));
+#endif
         default:         return moo_number(0);
     }
 }

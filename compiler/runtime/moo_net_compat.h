@@ -41,6 +41,7 @@ static inline moo_ssize_t moo_send(moo_sockfd_t fd, const void* buf, size_t len,
 }
 static inline void moo_sock_nosigpipe(moo_sockfd_t fd) { (void)fd; }
 
+#ifndef MOO_UEFI_COLLECTIONS
 /* WSAStartup einmal pro Translation-Unit beim Programmstart (vor main).
  * GCC/MinGW: __attribute__((constructor)) ueber die CRT-.ctors.
  * MSVC: Funktionspointer in der CRT-Initializer-Section .CRT$XCU.
@@ -62,6 +63,7 @@ static void moo_net_wsa_init_(void) {
     (void)WSAStartup(MAKEWORD(2, 2), &wsa);
 }
 #endif
+#endif /* !MOO_UEFI_COLLECTIONS */
 
 #else /* POSIX */
 
