@@ -12,7 +12,7 @@
 # NO_REBOOT bei Version>=6 in TCO1_CNT[0], nicht im alten PMC/GCS.
 # Diese Diagnose schreibt KEIN TCO-/SMI-/PMC-/PCI-Konfigurationsregister.
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32, nt_mmio_lese32, nt_mmio_schreibe32
-aus "it8613_wdt" importiere it8613_suchen, it8613_kurzlauf
+aus "it8613_wdt" importiere it8613_suchen, it8613_kurzlauf, it8613_port_lesen
 
 # Im ELF eindeutig markierter Testvertrag. Der Runner darf nur die Daten
 # einer privaten Build-Kopie konfigurieren, niemals den Quelltext.
@@ -110,6 +110,10 @@ konstante TL_BEOB_START: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG START "
 konstante TL_BEOB_MS: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG MS "
 @nativ
 konstante TL_BEOB_FRIST: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG FRIST "
+@nativ
+konstante TL_IT8613_MESSZEIT: [u8; _] auf "MOO-KERNEL IT8613 MESSZEIT MS "
+@nativ
+konstante TL_IT8613_FERTIG: [u8; _] auf "MOO-KERNEL IT8613 MESSREIHE FERTIG "
 
 @nativ
 funktion testlauf_konfig(index: u64) -> u64:
@@ -307,7 +311,7 @@ funktion testlauf_starten(fadt: u64, lpit: u64, bi: u64, tsc: u64, map: u64, log
         setze beobachten: bool auf modus == 4 oder modus == 104
         wenn modus == 0:
             it8613_suchen(loggen)
-        wenn modus != 0 und modus != 5:
+        wenn modus != 0 und modus != 5 und modus != 6:
             # Die Beobachtungsfrist deckt beide Intervalle samt Timertoleranz ab.
             wenn tsc != 0 und (nicht beobachten oder (sekunden >= 5 und sekunden <= 600 und watchdog <= sekunden - 5)):
                 wenn modus == 1 oder modus == 2 oder modus == 3 oder modus == 4:
@@ -335,6 +339,27 @@ funktion tl_warten(ms: u64) -> void:
                 gib_zurück
             assembler(ziel="x86_64", code="pause", clobber=[])
             setze budget auf budget - 1
+
+@nativ
+funktion tl_it8613_messreihe(loggen: u64) -> void:
+    unsicher:
+        setze pro_ms: u64 auf tl_wert(3) / 1000
+        wenn pro_ms == 0 oder testlauf_konfig(1) != 70:
+            gib_zurück
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze anfang: u64 auf takt()
+        log(adresse_von(TL_IT8613_MESSZEIT), 0)
+        setze port: u16 auf it8613_suchen(loggen)
+        wenn port == 0:
+            gib_zurück
+        tl_warten(2000)
+        log(adresse_von(TL_IT8613_MESSZEIT), (takt() - anfang) / pro_ms)
+        wenn nicht it8613_port_lesen(port, loggen):
+            gib_zurück
+        tl_warten(68000)
+        log(adresse_von(TL_IT8613_MESSZEIT), (takt() - anfang) / pro_ms)
+        wenn it8613_port_lesen(port, loggen):
+            log(adresse_von(TL_IT8613_FERTIG), (takt() - anfang) / pro_ms)
 
 @nativ
 funktion testlauf_neustart(loggen: u64) -> void:
@@ -395,6 +420,10 @@ funktion testlauf_poll(loggen: u64) -> void:
         wenn tl_wert(9) != 0:
             testlauf_neustart(loggen)
         setze modus: u64 auf testlauf_konfig(3)
+        wenn modus == 6:
+            tl_it8613_messreihe(loggen)
+            testlauf_neustart(loggen)
+            gib_zurück
         wenn modus == 5:
             it8613_kurzlauf(sekunden, testlauf_konfig(2), tl_wert(3), loggen)
             testlauf_neustart(loggen)
