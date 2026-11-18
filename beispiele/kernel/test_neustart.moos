@@ -12,14 +12,14 @@
 # NO_REBOOT bei Version>=6 in TCO1_CNT[0], nicht im alten PMC/GCS.
 # Diese Diagnose schreibt KEIN TCO-/SMI-/PMC-/PCI-Konfigurationsregister.
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32, nt_mmio_lese32, nt_mmio_schreibe32
-aus "it8613_wdt" importiere it8613_suchen, it8613_kurzlauf, it8613_port_lesen
+aus "it8613_wdt" importiere it8613_suchen, it8613_kurzlauf, it8613_port_lesen, it8613_starten, it8613_bedienen, it8613_abschalten
 
 # Im ELF eindeutig markierter Testvertrag. Der Runner darf nur die Daten
 # einer privaten Build-Kopie konfigurieren, niemals den Quelltext.
 @nativ
 statisch TESTLAUF_KONFIG: [u64; 4] auf [0x353254504F4F4D21, 90, 180, 0]
 @nativ
-statisch TESTLAUF_ZUSTAND: [u64; 12] auf 0
+statisch TESTLAUF_ZUSTAND: [u64; 13] auf 0  # Slot 12: aktiver IT8613-Config-Port
 @nativ
 konstante TL_RESET: [u8; _] auf "MOO-KERNEL NEUSTART "
 @nativ
@@ -305,28 +305,36 @@ funktion testlauf_starten(fadt: u64, lpit: u64, bi: u64, tsc: u64, map: u64, log
         log(adresse_von(TL_FADT), tl_wert(0))
         testlauf_tco_lesen(fadt, lpit, bi, map, loggen)
         setze modus: u64 auf testlauf_konfig(3)
-        setze scharf: bool auf falsch
         setze watchdog: u64 auf testlauf_konfig(2)
         setze sekunden: u64 auf testlauf_konfig(1)
-        setze beobachten: bool auf modus == 4 oder modus == 104
         wenn modus == 0:
             it8613_suchen(loggen)
-        wenn modus != 0 und modus != 5 und modus != 6 und modus != 7:
-            # Die Beobachtungsfrist deckt beide Intervalle samt Timertoleranz ab.
-            wenn tsc != 0 und (nicht beobachten oder (sekunden >= 5 und sekunden <= 600 und watchdog <= sekunden - 5)):
-                wenn modus == 1 oder modus == 2 oder modus == 3 oder modus == 4:
-                    setze scharf auf tl_tco_n100(watchdog)
-                sonst wenn modus == 100 oder modus == 101 oder modus == 103 oder modus == 104:
-                    setze scharf auf tl_tco_ich9(bi, map, watchdog)
-            wenn scharf:
-                log(adresse_von(TL_TCO_AN), testlauf_konfig(2))
-                log(adresse_von(TL_TCO_TMR_NEU), u64(port_lese16(u16(tl_wert(6) + 0x12))))
-                log(adresse_von(TL_TCO_CNT_NEU), u64(port_lese16(u16(tl_wert(6) + 8))))
-                wenn modus == 2 oder modus == 101:
-                    log(adresse_von(TL_TCO_SAFETY), testlauf_konfig(2))
-            sonst:
-                log(adresse_von(TL_TCO_NEIN), modus)
-                tl_setze(9, 1)
+            gib_zurück
+        wenn modus == 1 oder modus == 3:
+            wenn tsc != 0 und sekunden > 0 und sekunden <= 600 und (modus == 1 oder sekunden <= 30):
+                setze port: u16 auf it8613_starten(watchdog, falsch, loggen)
+                wenn port != 0:
+                    tl_setze(12, u64(port))
+                    tl_setze(5, takt())
+                    gib_zurück
+            tl_setze(9, 1)
+            gib_zurück
+        wenn modus == 5 oder modus == 6 oder modus == 7:
+            gib_zurück
+        setze scharf: bool auf falsch
+        # TCO aktiv ausschliesslich auf der ICH9-Emulator-Konfiguration.
+        wenn tsc != 0 und (modus != 104 oder (sekunden >= 5 und sekunden <= 600 und watchdog <= sekunden - 5)):
+            wenn modus == 100 oder modus == 101 oder modus == 103 oder modus == 104:
+                setze scharf auf tl_tco_ich9(bi, map, watchdog)
+        wenn scharf:
+            log(adresse_von(TL_TCO_AN), watchdog)
+            log(adresse_von(TL_TCO_TMR_NEU), u64(port_lese16(u16(tl_wert(6) + 0x12))))
+            log(adresse_von(TL_TCO_CNT_NEU), u64(port_lese16(u16(tl_wert(6) + 8))))
+            wenn modus == 101:
+                log(adresse_von(TL_TCO_SAFETY), watchdog)
+        sonst:
+            log(adresse_von(TL_TCO_NEIN), modus)
+            tl_setze(9, 1)
 
 @nativ
 funktion tl_warten(ms: u64) -> void:
@@ -365,6 +373,9 @@ funktion tl_it8613_messreihe(loggen: u64) -> void:
 funktion testlauf_neustart(loggen: u64) -> void:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        wenn tl_wert(12) != 0:
+            it8613_abschalten(u16(tl_wert(12)), falsch, loggen)
+            tl_setze(12, 0)
         log(adresse_von(TL_RESET), testlauf_konfig(1))
         # TX darf abschliessen, bevor die Plattform zurueckgesetzt wird.
         tl_warten(20)
@@ -393,7 +404,7 @@ funktion testlauf_neustart(loggen: u64) -> void:
 # Beobachtung vor USB und Massenspeicher. Ab Start der Uhr schreibt dieser
 # Pfad weder TCO_RLD noch Statusbits. Bei Fristablauf folgt der Software-Reset.
 @nativ
-funktion tl_tco_beobachten(sekunden: u64, n100: bool, loggen: u64) -> void:
+funktion tl_tco_beobachten(sekunden: u64, loggen: u64) -> void:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
         setze start: u64 auf tl_wert(5)
@@ -406,7 +417,7 @@ funktion tl_tco_beobachten(sekunden: u64, n100: bool, loggen: u64) -> void:
             wenn ms >= faellig:
                 setze faellig auf ms + 1000
                 log(adresse_von(TL_BEOB_MS), ms)
-                tl_tco_status(basis, n100, loggen)
+                tl_tco_status(basis, falsch, loggen)
                 tl_pch_status(loggen)
             wenn ms >= sekunden * 1000:
                 log(adresse_von(TL_BEOB_FRIST), ms)
@@ -428,13 +439,18 @@ funktion testlauf_poll(loggen: u64) -> void:
             it8613_kurzlauf(sekunden, testlauf_konfig(2), tl_wert(3), modus == 7, loggen)
             testlauf_neustart(loggen)
             gib_zurück
-        wenn tl_wert(7) != 0 und (modus == 4 oder modus == 104):
-            tl_tco_beobachten(sekunden, modus == 4, loggen)
-        wenn tl_wert(7) != 0 und (modus == 2 oder modus == 101):
+        wenn tl_wert(7) != 0 und modus == 104:
+            tl_tco_beobachten(sekunden, loggen)
+        wenn tl_wert(7) != 0 und modus == 101:
             # Sicherheitsnachweis: echter Stillstand, IRQs aus, keine Soft-Resetfolge.
             assembler(ziel="x86_64", code="cli", clobber=[])
             solange wahr:
                 assembler(ziel="x86_64", code="hlt", clobber=[])
+        wenn tl_wert(12) != 0 und takt() - tl_wert(5) >= tl_wert(3):
+            tl_setze(8, tl_wert(8) + 1)
+            wenn nicht it8613_bedienen(u16(tl_wert(12)), u8(testlauf_konfig(2)), tl_wert(8), loggen):
+                testlauf_neustart(loggen)
+            tl_setze(5, takt())
         tl_tco_bedienen(loggen)
         # 0 bedeutet interaktiv. Ein fehlender kalibrierter TSC darf einen
         # befristeten Test nicht endlos machen: dann nach Diagnose resetten.
@@ -493,19 +509,6 @@ funktion testlauf_rueckfall(loggen: u64) -> void:
         log(adresse_von(TL_RUECKFALL), testlauf_konfig(1))
         solange wahr:
             testlauf_poll(loggen)
-
-# Ausschliesslich die auf dem N100 gelesene Konfiguration d3ea9834.
-# TCO_LOCK[12] betrifft SMI_EN.TCO_EN, NICHT TCO_TMR_HALT[11].
-# Linux v6.12 iTCO_wdt:488-531 nutzt fuer v6 ebenfalls kein SMI_EN.
-@nativ
-funktion tl_tco_n100(sekunden: u64) -> bool:
-    unsicher:
-        wenn nt_cfg_lese32(0x8000FC00) != 0x54A38086 oder nt_cfg_lese32(0x8000FC50) != 0x401 oder nt_cfg_lese32(0x8000FC54) != 0x101:
-            gib_zurück falsch
-        wenn port_lese16(u16(0x408)) != 0x1800 oder (port_lese16(u16(0x406)) & 4) != 0:
-            gib_zurück falsch
-        # NO_REBOOT muss bereits 0 sein. Kein Firmware-/PMC-Override.
-        gib_zurück tl_tco_start(0x400, sekunden)
 
 # Opt-in-Emulatorpfad, NICHT als N100-Beleg verwenden.
 # Intel ICH9 DS316972: PMBASE+60 TCO, RCBA+3410 GCS.NO_REBOOT[5].
