@@ -54,14 +54,19 @@ while (($#)); do
       '--synapse-zeitlimit N: eigenes Startlimit nach Windows-Rueckkehr (Standard600s).' \
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern + 180s Hardware-Watchdog; --watchdog-test weist den Reset bei Stillstand nach.' \
+      '--modus 4 --sekunden 190 --watchdog-sekunden 180: Ablauf ohne Bedienung beobachten, Software-Reset bei Fristablauf.' \
       '--loader-konfigurieren QUELLE ZIEL: sichere Rueckkehr nur in privater PE-Kopie aktivieren.' \
       '--kern-konfigurieren QUELLE ZIEL [--sekunden N]: nur private ELF-Kopie konfigurieren.' \
       '--aufraeumen build/n100-laeufe/ZEIT --koordinator: Wiederherstellung erneut versuchen.'; exit 0;;
     *) printf 'Unbekanntes Argument: %s\n' "$1" >&2; exit 2;;
   esac
 done
-[[ "$SYNAPSE_LIMIT" =~ ^[0-9]+$ && "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|3|100|101|103)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
+[[ "$SYNAPSE_LIMIT" =~ ^[0-9]+$ && "$SEKUNDEN" =~ ^[0-9]+$ && "$ZEITLIMIT" =~ ^[0-9]+$ && "$WATCHDOG_S" =~ ^[0-9]+$ && "$MODUS" =~ ^(0|1|2|3|4|100|101|103|104)$ ]] || { echo 'Zeiten muessen ganze Sekunden sein' >&2; exit 2; }
 ((SYNAPSE_LIMIT>=5 && SYNAPSE_LIMIT<=1800 && SEKUNDEN>=1 && SEKUNDEN<=600 && WATCHDOG_S>=6 && WATCHDOG_S<=600 && ZEITLIMIT>=30 && ZEITLIMIT<=1800)) || { echo 'Ungueltiges Zeitlimit' >&2; exit 2; }
+if (( (MODUS==4 || MODUS==104) && SEKUNDEN<WATCHDOG_S+5 )); then
+  echo 'TCO-Beobachtung braucht mindestens Watchdog-Dauer plus 5 Sekunden' >&2
+  exit 2
+fi
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
 
 kern_kopie() {
@@ -91,8 +96,9 @@ for i in range(count):
         pos = data.find(magic, pos + 1, start + length)
 if len(hits) != 1:
     raise SystemExit("Testvertrag nicht eindeutig in schreibbarem PT_LOAD")
-# 0: Lesen; 1: N100+Pings; 2: Stillstand; 3: kurzer Rueckfall ohne USB.
-# 100/101/103: ausschliesslich ICH9-QEMU.
+# 0: Lesen. 1: N100+Pings. 2: Stillstand. 3: kurzer Rueckfall ohne USB.
+# 4: begrenzte Ablaufbeobachtung ohne Bedienung.
+# 100/101/103/104: ausschliesslich ICH9-QEMU.
 struct.pack_into("<QQQ", data, hits[0] + 8, seconds, watchdog, mode)
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_bytes(data)
@@ -151,11 +157,15 @@ if ((TROCKEN)); then
   printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Dateien.'
   printf '1. USB-ESP per Seriennummer+GPT-GUID+NT-Geraetepfad+SHA256 belegen: %s %s %s\n' "$USB_SERIE" "$PARTITION" "$STICK_SHA"
   printf 'Lokalen Rueckfallkern (20s,180s iTCO,Modus3) und ESP-SHA pruefen: %s\n' "$RUECKFALL"
-  printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=Bedienen,2=Stillstand)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
+  printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=Bedienen,2=Stillstand,4=Beobachten)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
   printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
-  printf '6. Netz-Abschluss MOO-KERNEL NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
+  if ((MODUS==4)); then
+    printf '6. TCO BEOBACHTUNG START und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
+  else
+    printf '6. Netz-Abschluss MOO-KERNEL NEUSTART und neue Windows-Bootzeit abwarten (Limit %ss).\n' "$ZEITLIMIT"
+  fi
   printf '%s\n' '7. Eigene Bootsequence, Waechter, Synapse, tcpdump und Server aufraeumen; netz-server restauriert IP/NM/Firewall.'
   printf '%s\n' 'Ergebnisse: build/n100-laeufe/<UTC-Zeit>/; Offline-Notizen: build/notizen/synapse-offline.md.'
   printf '%s\n' 'Safety-Vertrag: N100 8086:54A3, Basis0x400, TCOCTL0x101, CNT0x1800, Strap0; sonst vor USB abbrechen und zuruecksetzen.'
@@ -171,7 +181,7 @@ if [[ -n "$KONFIG_QUELLE" ]]; then
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
 if [[ -z "$RESTORE" ]] && ((INVENTAR==0)); then
-  ((MODUS<=2)) || { echo 'ICH9-Testmodi sind nur fuer private QEMU-Kernkopien erlaubt' >&2; exit 2; }
+  ((MODUS<=2 || MODUS==4)) || { echo 'Modi 3 und 100+ sind nur fuer private Kernkopien vorgesehen' >&2; exit 2; }
   if ((MODUS==0)); then
     ((DIAGNOSE && SEKUNDEN<=30)) || { echo 'Lesediagnose ohne Watchdog ist auf30s begrenzt' >&2; exit 2; }
   elif ((MODUS==1 && SEKUNDEN+5>=WATCHDOG_S)); then
@@ -322,6 +332,8 @@ while ((SECONDS<bis)); do
   ende=0
   if ((MODUS==2)); then
     grep -q 'MOO-KERNEL TCO SAFETY OHNE BEDIENUNG' "$OUT/netz.log" && ende=1
+  elif ((MODUS==4)); then
+    grep -q 'MOO-KERNEL TCO BEOBACHTUNG START' "$OUT/netz.log" && ende=1
   elif grep -q 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
     if ((MODUS==0)) || grep -q 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN' "$OUT/netz.log"; then ende=1; fi
   fi
@@ -329,7 +341,15 @@ while ((SECONDS<bis)); do
     if timeout --foreground 50s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" run \
       '$os=Get-CimInstance Win32_OperatingSystem; $os.LastBootUpTime.ToUniversalTime().ToString("o")' >"$OUT/windows-boot.txt" 2>>"$OUT/winrm.log"; then
       if [[ "$(tr -d '\r\n' <"$OUT/windows-boot.txt")" != "$(json_wert last_boot)" ]]; then
-        echo 'Kern-Abschluss und neue Windows-Bootzeit belegt'
+        if ((MODUS==4)); then
+          if grep -q 'MOO-KERNEL TCO BEOBACHTUNG FRIST' "$OUT/netz.log"; then
+            echo 'TCO-Beobachtungsfrist erreicht. Software-Reset eingeleitet und neue Windows-Bootzeit belegt.'
+          else
+            echo 'Neue Windows-Bootzeit ohne protokollierte TCO-Beobachtungsfrist. Resetursache aus Registerdaten ermitteln.'
+          fi
+        else
+          echo 'Kern-Abschluss und neue Windows-Bootzeit belegt'
+        fi
         exit 0
       fi
     fi

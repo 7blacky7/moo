@@ -2085,9 +2085,11 @@ funktion kern_haupt(bi: u64) -> void:
             setze acpi_ok auf acpi_starten(rsdp)
         meldung(adresse_von(T_ACPI), acpi_ok)
         setze fadt_reset: u64 auf 0
+        setze lpit: u64 auf 0
         wenn rsdp != 0:
             setze fadt_reset auf acpi_tabelle(rsdp, 0x50434146)
-        testlauf_starten(fadt_reset, bi, tsc, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
+            setze lpit auf acpi_tabelle(rsdp, 0x5449504C)
+        testlauf_starten(fadt_reset, lpit, bi, tsc, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
         netz_spuelen()
         testlauf_poll(adresse_von(meldung))
         testlauf_rueckfall(adresse_von(meldung))

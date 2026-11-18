@@ -62,6 +62,8 @@ printf '%s\n' 'PCAP-MOCK'
 case "${MOCK_MODE:-diag}" in
   normal) printf '%s\n' 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN 00000000000000B4' 'MOO-KERNEL NEUSTART 0000000000000014';;
   safety) printf '%s\n' 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN 00000000000000B4' 'MOO-KERNEL TCO SAFETY OHNE BEDIENUNG 00000000000000B4';;
+  beobachten) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4';;
+  beobachten-frist) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4' 'MOO-KERNEL TCO BEOBACHTUNG FRIST 000000000002E630' 'MOO-KERNEL NEUSTART 00000000000000BE';;
   *) printf '%s\n' 'MOO-KERNEL NEUSTART 0000000000000014';;
 esac
 while :; do sleep 1; done
@@ -96,7 +98,13 @@ if bash "$ROOT/skripte/p7/n100-lauf.sh" --koordinator --diagnose --sekunden 90 >
 fi
 test ! -e "$T/trace"
 echo 'PASS: Ungeschuetzter Langlauf wird verweigert'
-for phase in ok normal safety http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
+if bash "$ROOT/skripte/p7/n100-lauf.sh" --koordinator --modus 4 --sekunden 184 >"$T/beobachtung-zu-kurz.log" 2>&1; then
+  echo 'FAIL: TCO-Beobachtung mit verfruehtem Software-Reset wurde akzeptiert' >&2; exit 1
+fi
+test ! -e "$T/trace"
+grep -q 'mindestens Watchdog-Dauer plus 5 Sekunden' "$T/beobachtung-zu-kurz.log"
+echo 'PASS: Zu kurze TCO-Beobachtungsfrist wird vor WinRM verweigert'
+for phase in ok normal safety beobachten beobachten-frist http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
   extra=(--synapse-zeitlimit 5)
   if [[ "$phase" == http502 ]]; then extra=(--synapse-zeitlimit 15); fi
   if [[ "$phase" == rueckfall ]]; then extra+=(--rueckfall-kern "$ROOT/build/p7-t25/stick/KERN.ELF"); fi
@@ -104,6 +112,9 @@ for phase in ok normal safety http502 http-timeout rueckfall loader upload pruef
   export MOCK_MODE=diag
   if [[ "$phase" == normal ]]; then extra=(--modus 1); export MOCK_MODE=normal; fi
   if [[ "$phase" == safety ]]; then extra=(--watchdog-test); export MOCK_MODE=safety; fi
+  if [[ "$phase" == beobachten || "$phase" == beobachten-frist ]]; then
+    extra=(--modus 4 --sekunden 190); export MOCK_MODE="$phase"
+  fi
   export MOCK_FAIL="$phase" MOO_N100_AUSGABE="$T/$phase"
   : >"$T/trace"
   : >"$T/capture.pid"
@@ -113,9 +124,16 @@ for phase in ok normal safety http502 http-timeout rueckfall loader upload pruef
   rc=$?
   set -e
   cp "$T/trace" "$T/$phase-trace"
-  if [[ "$phase" == ok || "$phase" == normal || "$phase" == safety || "$phase" == http502 ]]; then test "$rc" -eq 0; else test "$rc" -ne 0; fi
   case "$phase" in
-    ok|normal|safety|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
+    ok|normal|safety|beobachten|beobachten-frist|http502) test "$rc" -eq 0;;
+    *) test "$rc" -ne 0;;
+  esac
+  case "$phase" in
+    beobachten) grep -q 'ohne protokollierte TCO-Beobachtungsfrist' "$T/$phase-konsole.log";;
+    beobachten-frist) grep -q 'Software-Reset eingeleitet' "$T/$phase-konsole.log";;
+  esac
+  case "$phase" in
+    ok|normal|safety|beobachten|beobachten-frist|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
     *) if grep -qx zurueck "$T/trace"; then echo 'FAIL: unberuehrten Remote-Zustand restauriert' >&2; exit 1; fi;;
   esac
   if [[ -s "$T/server.pid" ]]; then

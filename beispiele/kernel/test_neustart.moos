@@ -1,4 +1,4 @@
-# P7-T25: Testlauf-Reset und zuerst ausschliesslich lesende iTCO-Diagnose.
+# P7-T25: Testlauf-Reset, Watchdog und lesende N100-Diagnose.
 # Intel N-Series Datasheet Vol.2, 759604-003:
 # https://cdrdv2.intel.com/v1/dl/getContent/759604?fileName=759604-003.pdf
 # 15.1.17/18 S.1065/1066: D31:F4, TCOBASE[15:5], TCOCTL[8].
@@ -18,7 +18,7 @@ aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32, nt_mmio_lese32, nt_mm
 @nativ
 statisch TESTLAUF_KONFIG: [u64; 4] auf [0x353254504F4F4D21, 90, 180, 0]
 @nativ
-statisch TESTLAUF_ZUSTAND: [u64; 10] auf 0
+statisch TESTLAUF_ZUSTAND: [u64; 12] auf 0
 @nativ
 konstante TL_RESET: [u8; _] auf "MOO-KERNEL NEUSTART "
 @nativ
@@ -65,6 +65,50 @@ konstante TL_TCO_NEIN: [u8; _] auf "MOO-KERNEL TCO SCHARFSCHALTUNG VERWEIGERT "
 konstante TL_TCO_SAFETY: [u8; _] auf "MOO-KERNEL TCO SAFETY OHNE BEDIENUNG "
 
 @nativ
+konstante TL_RLD: [u8; _] auf "MOO-KERNEL TCO TCO_RLD "
+@nativ
+konstante TL_STS1: [u8; _] auf "MOO-KERNEL TCO TCO1_STS "
+@nativ
+konstante TL_CNT2: [u8; _] auf "MOO-KERNEL TCO TCO2_CNT "
+@nativ
+konstante TL_PMC_PCI: [u8; _] auf "MOO-KERNEL TCO PMC D31F2 PCI "
+@nativ
+konstante TL_PMC_CMD: [u8; _] auf "MOO-KERNEL TCO PMC PCI COMMAND "
+@nativ
+konstante TL_PMC_BAR0: [u8; _] auf "MOO-KERNEL TCO PMC PCI BAR0 "
+@nativ
+konstante TL_PMC_BAR0_HI: [u8; _] auf "MOO-KERNEL TCO PMC PCI BAR0 HIGH "
+@nativ
+konstante TL_PMC_BAR2: [u8; _] auf "MOO-KERNEL TCO PMC PCI BAR2 "
+@nativ
+konstante TL_PMC_BASIS: [u8; _] auf "MOO-KERNEL TCO PMC PWRMBASE "
+@nativ
+konstante TL_PMC_FEHLT: [u8; _] auf "MOO-KERNEL TCO PMC NICHT BELEGT "
+@nativ
+konstante TL_PM_BASIS: [u8; _] auf "MOO-KERNEL TCO ACPI-PM BASIS "
+@nativ
+konstante TL_PM_FEHLT: [u8; _] auf "MOO-KERNEL TCO ACPI-PM NICHT BELEGT "
+@nativ
+konstante TL_SMI_EN: [u8; _] auf "MOO-KERNEL TCO SMI_EN "
+@nativ
+konstante TL_SMI_STS: [u8; _] auf "MOO-KERNEL TCO SMI_STS "
+@nativ
+konstante TL_PMCON_A: [u8; _] auf "MOO-KERNEL TCO PMC GEN_PMCON_A "
+@nativ
+konstante TL_PMCON_B: [u8; _] auf "MOO-KERNEL TCO PMC GEN_PMCON_B "
+@nativ
+konstante TL_ETR3: [u8; _] auf "MOO-KERNEL TCO PMC ETR3 "
+@nativ
+konstante TL_HPR: [u8; _] auf "MOO-KERNEL TCO PMC HPR_CAUSE0 "
+
+@nativ
+konstante TL_BEOB_START: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG START "
+@nativ
+konstante TL_BEOB_MS: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG MS "
+@nativ
+konstante TL_BEOB_FRIST: [u8; _] auf "MOO-KERNEL TCO BEOBACHTUNG FRIST "
+
+@nativ
 funktion testlauf_konfig(index: u64) -> u64:
     unsicher:
         gib_zurück speicher_lesen(adresse_von(TESTLAUF_KONFIG) + index * 8, 8)
@@ -79,37 +123,154 @@ funktion tl_setze(index: u64, wert: u64) -> void:
     unsicher:
         speicher_schreiben(adresse_von(TESTLAUF_ZUSTAND) + index * 8, wert, 8)
 
-# Genauer BDF 00:1f.4; kein Scan beliebiger I/O-Adressen.
+# Intel 759604-003, 13.2.1: PM1a_EVT liegt bei PMBASE + 0.
+# ACPI FADT: PM1a_EVT_BLK bei 56, X_PM1a_EVT_BLK (GAS) bei 148.
 @nativ
-funktion testlauf_tco_lesen(loggen: u64) -> void:
+funktion tl_pm_basis_fadt(fadt: u64) -> u64:
+    unsicher:
+        wenn fadt == 0:
+            gib_zurück 0
+        setze laenge: u64 auf u64(speicher_lesen(fadt + 4, 4))
+        wenn laenge < 116 oder (speicher_lesen(fadt + 112, 4) & 0x100000) != 0 oder speicher_lesen(fadt + 88, 1) != 4:
+            gib_zurück 0
+        setze basis: u64 auf u64(speicher_lesen(fadt + 56, 4))
+        wenn laenge >= 160 und speicher_lesen(fadt + 152, 8) != 0:
+            wenn speicher_lesen(fadt + 148, 1) != 1 oder speicher_lesen(fadt + 150, 1) != 0:
+                gib_zurück 0
+            setze basis auf speicher_lesen(fadt + 152, 8)
+        wenn basis > 0xFF80 oder (basis & 0x7F) != 0:
+            gib_zurück 0
+        gib_zurück basis
+
+# Linux v6.12 intel/pmc/core.c:1179-1195,1362-1364 und tgl.c:288-306:
+# Auf Gracemont liegt der LPIT-SystemMemory-Residenzzaehler bei PWRMBASE + 0x193C.
+# LPIT und GAS: Linux include/acpi/actbl2.h:882-921 und actbl.h:91-99.
+@nativ
+funktion tl_pwrm_basis_lpit(lpit: u64) -> u64:
+    unsicher:
+        wenn lpit == 0:
+            gib_zurück 0
+        setze gesamt: u64 auf u64(speicher_lesen(lpit + 4, 4))
+        setze eintrag: u64 auf 36
+        solange eintrag + 16 <= gesamt:
+            setze adr: u64 auf lpit + eintrag
+            setze laenge: u64 auf u64(speicher_lesen(adr + 4, 4))
+            wenn laenge < 16 oder laenge > gesamt - eintrag:
+                gib_zurück 0
+            wenn laenge >= 56 und speicher_lesen(adr, 4) == 0 und speicher_lesen(adr + 12, 4) == 0:
+                wenn speicher_lesen(adr + 36, 1) == 0 und speicher_lesen(adr + 38, 1) == 0:
+                    setze zaehler: u64 auf speicher_lesen(adr + 40, 8)
+                    wenn (zaehler & 0x1FFF) == 0x193C:
+                        gib_zurück zaehler - 0x193C
+            setze eintrag auf eintrag + laenge
+        gib_zurück 0
+
+# Intel 759604-003, 13.1.2/5/6/9: D31:F2 Command, BAR0 (8 KiB), BAR2 (I/O).
+# Bei verborgener PCI-Funktion verwenden wir die belegten ACPI-Tabelleneintraege.
+@nativ
+funktion tl_pmc_lesen(fadt: u64, lpit: u64, bi: u64, map: u64, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze pci_id: u32 auf nt_cfg_lese32(0x8000FA00)
+        setze pwrm: u64 auf 0
+        setze pm_basis: u64 auf 0
+        log(adresse_von(TL_PMC_PCI), u64(pci_id))
+        wenn (pci_id & 0xFFFF) == 0x8086:
+            setze command: u32 auf nt_cfg_lese32(0x8000FA04) & 0xFFFF
+            setze bar0: u32 auf nt_cfg_lese32(0x8000FA10)
+            setze bar0_hi: u32 auf nt_cfg_lese32(0x8000FA14)
+            setze bar2: u32 auf nt_cfg_lese32(0x8000FA20)
+            log(adresse_von(TL_PMC_CMD), u64(command))
+            log(adresse_von(TL_PMC_BAR0), u64(bar0))
+            log(adresse_von(TL_PMC_BAR0_HI), u64(bar0_hi))
+            log(adresse_von(TL_PMC_BAR2), u64(bar2))
+            wenn (command & 2) != 0 und (bar0 & 0x1FFF) == 4:
+                setze pwrm auf (u64(bar0_hi) << 32) | u64(bar0 & 0xFFFFE000)
+            wenn (command & 1) != 0 und (bar2 & 0xFFFF007F) == 1:
+                setze pm_basis auf u64(bar2 & 0xFF80)
+        sonst wenn pci_id == 0xFFFFFFFF:
+            setze pm_basis auf tl_pm_basis_fadt(fadt)
+            setze pwrm auf tl_pwrm_basis_lpit(lpit)
+        log(adresse_von(TL_PM_BASIS), pm_basis)
+        tl_setze(10, pm_basis)
+        wenn pm_basis == 0:
+            log(adresse_von(TL_PM_FEHLT), 1)
+        log(adresse_von(TL_PMC_BASIS), pwrm)
+        wenn pwrm == 0 oder pwrm >= 0x1000000000000:
+            log(adresse_von(TL_PMC_FEHLT), 1)
+            gib_zurück
+        setze mmio: u64 auf abbilden(bi, pwrm, 0x2000)
+        wenn mmio == 0:
+            log(adresse_von(TL_PMC_FEHLT), 2)
+            gib_zurück
+        tl_setze(11, mmio)
+        # 759604-003, 13.3.1/2/4.
+        log(adresse_von(TL_PMCON_A), u64(nt_mmio_lese32(mmio + 0x1020)))
+        log(adresse_von(TL_PMCON_B), u64(nt_mmio_lese32(mmio + 0x1024)))
+        log(adresse_von(TL_ETR3), u64(nt_mmio_lese32(mmio + 0x1048)))
+
+@nativ
+funktion tl_pch_status(loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze pm_basis: u64 auf tl_wert(10)
+        setze mmio: u64 auf tl_wert(11)
+        wenn pm_basis != 0:
+            # 759604-003, 13.2.5/6: TCO_EN und TCO_STS sind jeweils Bit 13.
+            setze smi_en: u32 auf port_lese32(u16(pm_basis + 0x30))
+            setze smi_sts: u32 auf port_lese32(u16(pm_basis + 0x34))
+            log(adresse_von(TL_SMI_EN), u64(smi_en))
+            log(adresse_von(TL_SMI_STS), u64(smi_sts))
+        wenn mmio != 0:
+            # 759604-003, 13.3.75: TCO_WDT[6] meldet den zweiten Ablauf.
+            log(adresse_von(TL_HPR), u64(nt_mmio_lese32(mmio + 0x192C)))
+
+@nativ
+funktion tl_tco_status(basis: u32, n100: bool, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        # 759604-003, 38.1.1/4-7/11. Lesen von RLD liefert den laufenden Zaehler.
+        setze rld: u16 auf port_lese16(u16(basis))
+        setze sts1: u16 auf port_lese16(u16(basis + 4))
+        setze sts2: u16 auf port_lese16(u16(basis + 6))
+        setze cnt: u16 auf port_lese16(u16(basis + 8))
+        setze cnt2: u16 auf port_lese16(u16(basis + 0x0A))
+        setze tmr: u16 auf port_lese16(u16(basis + 0x12))
+        log(adresse_von(TL_RLD), u64(rld))
+        log(adresse_von(TL_STS1), u64(sts1))
+        log(adresse_von(TL_STS2), u64(sts2))
+        log(adresse_von(TL_CNT), u64(cnt))
+        log(adresse_von(TL_CNT2), u64(cnt2))
+        log(adresse_von(TL_TMR), u64(tmr))
+        wenn n100:
+            log(adresse_von(TL_STRAP), u64((sts2 >> 2) & 1))
+            log(adresse_von(TL_NR), u64(cnt & 1))
+
+# Genauer SMBus-BDF 00:1f.4 belegt die Registerbelegung des N100.
+@nativ
+funktion testlauf_tco_lesen(fadt: u64, lpit: u64, bi: u64, map: u64, loggen: u64) -> void:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
         setze pci_id: u32 auf nt_cfg_lese32(0x8000FC00)
-        setze basis: u32 auf 0
-        setze kontrolle: u32 auf 0
-        setze cnt: u16 auf 0
         log(adresse_von(TL_PCI), u64(pci_id))
         wenn pci_id != 0x54A38086:
             log(adresse_von(TL_FEHLT), 1)
             gib_zurück
-        setze basis auf nt_cfg_lese32(0x8000FC50)
-        setze kontrolle auf nt_cfg_lese32(0x8000FC54)
+        setze basis: u32 auf nt_cfg_lese32(0x8000FC50)
+        setze kontrolle: u32 auf nt_cfg_lese32(0x8000FC54)
         log(adresse_von(TL_BASIS), u64(basis))
         log(adresse_von(TL_CTL), u64(kontrolle))
+        tl_pmc_lesen(fadt, lpit, bi, map, loggen)
+        tl_pch_status(loggen)
         wenn (kontrolle & 0x100) == 0 oder (basis & 0xFFFF0000) != 0 oder (basis & 0xFFE0) == 0 oder (basis & 0x1E) != 0:
             log(adresse_von(TL_FEHLT), 2)
             gib_zurück
-        setze basis auf basis & 0xFFE0
-        setze cnt auf port_lese16(u16(basis + 8))
-        log(adresse_von(TL_CNT), u64(cnt))
-        log(adresse_von(TL_TMR), u64(port_lese16(u16(basis + 0x12))))
-        log(adresse_von(TL_STS2), u64(port_lese16(u16(basis + 6))))
-        log(adresse_von(TL_STRAP), u64((port_lese16(u16(basis + 6)) >> 2) & 1))
-        log(adresse_von(TL_NR), u64(cnt & 1))
+        tl_tco_status(basis & 0xFFE0, wahr, loggen)
         log(adresse_von(TL_NUR), 1)
 
 @nativ
-funktion testlauf_starten(fadt: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -> void:
+funktion testlauf_starten(fadt: u64, lpit: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -> void:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
         setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
@@ -133,15 +294,19 @@ funktion testlauf_starten(fadt: u64, bi: u64, tsc: u64, map: u64, loggen: u64) -
                     tl_setze(1, u64(speicher_lesen(fadt + 128, 1)))
                     tl_setze(2, raum)
         log(adresse_von(TL_FADT), tl_wert(0))
-        testlauf_tco_lesen(loggen)
+        testlauf_tco_lesen(fadt, lpit, bi, map, loggen)
         setze modus: u64 auf testlauf_konfig(3)
         setze scharf: bool auf falsch
+        setze watchdog: u64 auf testlauf_konfig(2)
+        setze sekunden: u64 auf testlauf_konfig(1)
+        setze beobachten: bool auf modus == 4 oder modus == 104
         wenn modus != 0:
-            wenn tsc != 0:
-                wenn modus == 1 oder modus == 2 oder modus == 3:
-                    setze scharf auf tl_tco_n100(testlauf_konfig(2))
-                sonst wenn modus == 100 oder modus == 101 oder modus == 103:
-                    setze scharf auf tl_tco_ich9(bi, map, testlauf_konfig(2))
+            # Die Beobachtungsfrist deckt beide Intervalle samt Timertoleranz ab.
+            wenn tsc != 0 und (nicht beobachten oder (sekunden >= 5 und sekunden <= 600 und watchdog <= sekunden - 5)):
+                wenn modus == 1 oder modus == 2 oder modus == 3 oder modus == 4:
+                    setze scharf auf tl_tco_n100(watchdog)
+                sonst wenn modus == 100 oder modus == 101 oder modus == 103 oder modus == 104:
+                    setze scharf auf tl_tco_ich9(bi, map, watchdog)
             wenn scharf:
                 log(adresse_von(TL_TCO_AN), testlauf_konfig(2))
                 log(adresse_von(TL_TCO_TMR_NEU), u64(port_lese16(u16(tl_wert(6) + 0x12))))
@@ -193,13 +358,39 @@ funktion testlauf_neustart(loggen: u64) -> void:
         solange wahr:
             assembler(ziel="x86_64", code="hlt", clobber=[])
 
+# Beobachtung vor USB und Massenspeicher. Ab Start der Uhr schreibt dieser
+# Pfad weder TCO_RLD noch Statusbits. Bei Fristablauf folgt der Software-Reset.
+@nativ
+funktion tl_tco_beobachten(sekunden: u64, n100: bool, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze start: u64 auf tl_wert(5)
+        setze pro_ms: u64 auf tl_wert(3) / 1000
+        setze basis: u32 auf u32(tl_wert(6))
+        setze faellig: u64 auf 0
+        log(adresse_von(TL_BEOB_START), testlauf_konfig(2))
+        solange wahr:
+            setze ms: u64 auf (takt() - start) / pro_ms
+            wenn ms >= faellig:
+                setze faellig auf ms + 1000
+                log(adresse_von(TL_BEOB_MS), ms)
+                tl_tco_status(basis, n100, loggen)
+                tl_pch_status(loggen)
+            wenn ms >= sekunden * 1000:
+                log(adresse_von(TL_BEOB_FRIST), ms)
+                testlauf_neustart(loggen)
+            assembler(ziel="x86_64", code="pause", clobber=[])
+
 @nativ
 funktion testlauf_poll(loggen: u64) -> void:
     unsicher:
         setze sekunden: u64 auf testlauf_konfig(1)
         wenn tl_wert(9) != 0:
             testlauf_neustart(loggen)
-        wenn tl_wert(7) != 0 und (testlauf_konfig(3) == 2 oder testlauf_konfig(3) == 101):
+        setze modus: u64 auf testlauf_konfig(3)
+        wenn tl_wert(7) != 0 und (modus == 4 oder modus == 104):
+            tl_tco_beobachten(sekunden, modus == 4, loggen)
+        wenn tl_wert(7) != 0 und (modus == 2 oder modus == 101):
             # Sicherheitsnachweis: echter Stillstand, IRQs aus, keine Soft-Resetfolge.
             assembler(ziel="x86_64", code="cli", clobber=[])
             solange wahr:
