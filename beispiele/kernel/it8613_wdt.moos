@@ -1,0 +1,173 @@
+# IT8613E: Linux v6.12 drivers/watchdog/it87_wdt.c:39–87,115–155,159–212,283–304.
+# Coreboot 694450ff2b7a util/superiotool/ite.c:379–406,1924–1929,1964–1967.
+# Clock-Quelle in LDN 7, 71h[3] laut src/superio/ite/it8613e/it8613e.h:6–20.
+aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
+
+@nativ
+konstante IT8613_PORT: [u8; _] auf "MOO-KERNEL IT8613 PORT "
+@nativ
+konstante IT8613_ID: [u8; _] auf "MOO-KERNEL IT8613 CHIP ID "
+@nativ
+konstante IT8613_REV: [u8; _] auf "MOO-KERNEL IT8613 CHIP REV "
+@nativ
+konstante IT8613_CTRL: [u8; _] auf "MOO-KERNEL IT8613 WDT CTRL "
+@nativ
+konstante IT8613_CFG: [u8; _] auf "MOO-KERNEL IT8613 WDT CFG "
+@nativ
+konstante IT8613_LSB: [u8; _] auf "MOO-KERNEL IT8613 WDT TIMEOUT LSB "
+@nativ
+konstante IT8613_MSB: [u8; _] auf "MOO-KERNEL IT8613 WDT TIMEOUT MSB "
+@nativ
+konstante IT8613_FEHLT: [u8; _] auf "MOO-KERNEL IT8613 NICHT BELEGT "
+@nativ
+konstante IT8613_AN: [u8; _] auf "MOO-KERNEL IT8613 SCHARF SEKUNDEN "
+@nativ
+konstante IT8613_NEIN: [u8; _] auf "MOO-KERNEL IT8613 SCHARFSCHALTUNG VERWEIGERT "
+@nativ
+konstante IT8613_PING: [u8; _] auf "MOO-KERNEL IT8613 BEDIENT "
+@nativ
+konstante IT8613_PING_FEHLER: [u8; _] auf "MOO-KERNEL IT8613 BEDIENUNG FEHLER "
+@nativ
+konstante IT8613_AUS: [u8; _] auf "MOO-KERNEL IT8613 AUS "
+@nativ
+konstante IT8613_AUS_FEHLER: [u8; _] auf "MOO-KERNEL IT8613 ABSCHALTEN FEHLER "
+
+@nativ
+funktion it8613_register_lesen(port: u16, index: u8) -> u8:
+    unsicher:
+        setze datenport: u16 auf port + 1
+        port_schreibe(port, index)
+        gib_zurück port_lese(datenport)
+
+@nativ
+funktion it8613_register_schreiben(port: u16, index: u8, wert: u8) -> void:
+    unsicher:
+        setze datenport: u16 auf port + 1
+        port_schreibe(port, index)
+        port_schreibe(datenport, wert)
+
+@nativ
+funktion it8613_konfiguration_oeffnen(port: u16) -> u16:
+    unsicher:
+        port_schreibe(port, 0x87)
+        port_schreibe(port, 0x01)
+        port_schreibe(port, 0x55)
+        wenn port == 0x2E:
+            port_schreibe(port, 0x55)
+        sonst:
+            port_schreibe(port, 0xAA)
+        setze hoch: u16 auf u16(it8613_register_lesen(port, 0x20))
+        gib_zurück (hoch << 8) | u16(it8613_register_lesen(port, 0x21))
+
+@nativ
+funktion it8613_port_lesen(port: u16, loggen: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze id: u16 auf it8613_konfiguration_oeffnen(port)
+        setze gefunden: bool auf falsch
+        setze rev: u8 auf 0
+        setze ctrl: u8 auf 0
+        setze cfg: u8 auf 0
+        setze lsb: u8 auf 0
+        setze msb: u8 auf 0
+        wenn id == 0x8613:
+            setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+            it8613_register_schreiben(port, 0x07, 7)
+            wenn it8613_register_lesen(port, 0x07) == 7:
+                setze rev auf it8613_register_lesen(port, 0x22) & 0x0F
+                setze ctrl auf it8613_register_lesen(port, 0x71)
+                setze cfg auf it8613_register_lesen(port, 0x72)
+                setze lsb auf it8613_register_lesen(port, 0x73)
+                setze msb auf it8613_register_lesen(port, 0x74)
+                setze gefunden auf wahr
+            it8613_register_schreiben(port, 0x07, vorher)
+        it8613_register_schreiben(port, 0x02, 0x02)
+        log(adresse_von(IT8613_PORT), u64(port))
+        log(adresse_von(IT8613_ID), u64(id))
+        wenn gefunden:
+            log(adresse_von(IT8613_REV), u64(rev))
+            log(adresse_von(IT8613_CTRL), u64(ctrl))
+            log(adresse_von(IT8613_CFG), u64(cfg))
+            log(adresse_von(IT8613_LSB), u64(lsb))
+            log(adresse_von(IT8613_MSB), u64(msb))
+        gib_zurück gefunden
+
+@nativ
+funktion it8613_suchen(loggen: u64) -> u16:
+    unsicher:
+        wenn nt_cfg_lese32(0x8000FC00) == 0x54A38086:
+            wenn it8613_port_lesen(0x2E, loggen):
+                gib_zurück 0x2E
+            wenn it8613_port_lesen(0x4E, loggen):
+                gib_zurück 0x4E
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        log(adresse_von(IT8613_FEHLT), 1)
+        gib_zurück 0
+
+# Rueckgabe 0: ohne Programmierung verweigert. 1: Readback passt.
+# 2: Schreibversuch, Readback offen. Aufrufer muss das Abschalten belegen.
+# Linux it87_wdt.c:159–177 startet/laedt mit TOV1|KRST|PWROK (0xD0).
+# Coreboot src/superio/ite/common/early_serial.c:137–144 stoppt mit drei Nullbytes.
+@nativ
+funktion it8613_programmieren(port: u16, zeit: u8, erster_start: bool) -> u8:
+    unsicher:
+        setze ergebnis: u8 auf 0
+        wenn it8613_konfiguration_oeffnen(port) == 0x8613:
+            setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+            it8613_register_schreiben(port, 0x07, 7)
+            wenn it8613_register_lesen(port, 0x07) == 7 und (nicht erster_start oder (it8613_register_lesen(port, 0x73) | it8613_register_lesen(port, 0x74)) == 0):
+                setze cfg: u8 auf 0
+                wenn zeit != 0:
+                    setze cfg auf 0xD0
+                it8613_register_schreiben(port, 0x72, cfg)
+                setze ergebnis auf 2
+                wenn zeit == 0 oder it8613_register_lesen(port, 0x72) == cfg:
+                    it8613_register_schreiben(port, 0x73, zeit)
+                    it8613_register_schreiben(port, 0x74, 0)
+                    setze lsb: u8 auf it8613_register_lesen(port, 0x73)
+                    setze msb: u8 auf it8613_register_lesen(port, 0x74)
+                    wenn it8613_register_lesen(port, 0x72) == cfg und msb == 0 und lsb <= zeit und (zeit == 0 oder lsb != 0):
+                        setze ergebnis auf 1
+            it8613_register_schreiben(port, 0x07, vorher)
+        it8613_register_schreiben(port, 0x02, 0x02)
+        gib_zurück ergebnis
+
+@nativ
+funktion it8613_kurzlauf(sekunden: u64, watchdog: u64, hz: u64, loggen: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        wenn hz == 0 oder watchdog < 6 oder watchdog > 30 oder sekunden <= watchdog oder sekunden > 60:
+            log(adresse_von(IT8613_NEIN), 0)
+            gib_zurück
+        setze port: u16 auf it8613_suchen(loggen)
+        wenn port == 0:
+            log(adresse_von(IT8613_NEIN), 0)
+            gib_zurück
+        setze ergebnis: u8 auf it8613_programmieren(port, u8(watchdog), wahr)
+        wenn ergebnis != 1:
+            log(adresse_von(IT8613_NEIN), u64(ergebnis))
+        wenn ergebnis == 0:
+            gib_zurück
+        wenn ergebnis == 1:
+            setze start: u64 auf takt()
+            setze letzte_bedienung: u64 auf start
+            setze pings: u64 auf 0
+            log(adresse_von(IT8613_AN), watchdog)
+            solange ergebnis == 1 und takt() - start < hz * sekunden:
+                setze jetzt: u64 auf takt()
+                wenn jetzt - letzte_bedienung >= hz:
+                    setze ergebnis auf it8613_programmieren(port, u8(watchdog), falsch)
+                    wenn ergebnis == 1:
+                        setze letzte_bedienung auf jetzt
+                        setze pings auf pings + 1
+                        log(adresse_von(IT8613_PING), pings)
+                    sonst:
+                        log(adresse_von(IT8613_PING_FEHLER), u64(ergebnis))
+                assembler(ziel="x86_64", code="pause", clobber=[])
+        wenn it8613_programmieren(port, 0, falsch) != 1:
+            log(adresse_von(IT8613_AUS_FEHLER), 1)
+            # Ohne bestätigtes Abschalten nur noch den Hardware-Watchdog wirken lassen.
+            assembler(ziel="x86_64", code="cli", clobber=[])
+            solange wahr:
+                assembler(ziel="x86_64", code="hlt", clobber=[])
+        log(adresse_von(IT8613_AUS), 0)

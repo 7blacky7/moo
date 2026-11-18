@@ -12,6 +12,7 @@
 # NO_REBOOT bei Version>=6 in TCO1_CNT[0], nicht im alten PMC/GCS.
 # Diese Diagnose schreibt KEIN TCO-/SMI-/PMC-/PCI-Konfigurationsregister.
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32, nt_mmio_lese32, nt_mmio_schreibe32
+aus "it8613_wdt" importiere it8613_suchen, it8613_kurzlauf
 
 # Im ELF eindeutig markierter Testvertrag. Der Runner darf nur die Daten
 # einer privaten Build-Kopie konfigurieren, niemals den Quelltext.
@@ -304,7 +305,9 @@ funktion testlauf_starten(fadt: u64, lpit: u64, bi: u64, tsc: u64, map: u64, log
         setze watchdog: u64 auf testlauf_konfig(2)
         setze sekunden: u64 auf testlauf_konfig(1)
         setze beobachten: bool auf modus == 4 oder modus == 104
-        wenn modus != 0:
+        wenn modus == 0:
+            it8613_suchen(loggen)
+        wenn modus != 0 und modus != 5:
             # Die Beobachtungsfrist deckt beide Intervalle samt Timertoleranz ab.
             wenn tsc != 0 und (nicht beobachten oder (sekunden >= 5 und sekunden <= 600 und watchdog <= sekunden - 5)):
                 wenn modus == 1 oder modus == 2 oder modus == 3 oder modus == 4:
@@ -392,6 +395,10 @@ funktion testlauf_poll(loggen: u64) -> void:
         wenn tl_wert(9) != 0:
             testlauf_neustart(loggen)
         setze modus: u64 auf testlauf_konfig(3)
+        wenn modus == 5:
+            it8613_kurzlauf(sekunden, testlauf_konfig(2), tl_wert(3), loggen)
+            testlauf_neustart(loggen)
+            gib_zurück
         wenn tl_wert(7) != 0 und (modus == 4 oder modus == 104):
             tl_tco_beobachten(sekunden, modus == 4, loggen)
         wenn tl_wert(7) != 0 und (modus == 2 oder modus == 101):

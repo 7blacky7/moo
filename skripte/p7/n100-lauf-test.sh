@@ -64,6 +64,8 @@ case "${MOCK_MODE:-diag}" in
   safety) printf '%s\n' 'MOO-KERNEL TCO SCHARF GESAMT-SEKUNDEN 00000000000000B4' 'MOO-KERNEL TCO SAFETY OHNE BEDIENUNG 00000000000000B4';;
   beobachten) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4';;
   beobachten-frist) printf '%s\n' 'MOO-KERNEL TCO BEOBACHTUNG START 00000000000000B4' 'MOO-KERNEL TCO BEOBACHTUNG FRIST 000000000002E630' 'MOO-KERNEL NEUSTART 00000000000000BE';;
+  it8613) printf '%s\n' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL IT8613 AUS 0000000000000000' 'MOO-KERNEL NEUSTART 0000000000000019';;
+  it8613-ohne-aus) printf '%s\n' 'MOO-KERNEL IT8613 SCHARF SEKUNDEN 000000000000000A' 'MOO-KERNEL IT8613 BEDIENT 0000000000000001' 'MOO-KERNEL NEUSTART 0000000000000019';;
   *) printf '%s\n' 'MOO-KERNEL NEUSTART 0000000000000014';;
 esac
 while :; do sleep 1; done
@@ -104,7 +106,13 @@ fi
 test ! -e "$T/trace"
 grep -q 'mindestens Watchdog-Dauer plus 5 Sekunden' "$T/beobachtung-zu-kurz.log"
 echo 'PASS: Zu kurze TCO-Beobachtungsfrist wird vor WinRM verweigert'
-for phase in ok normal safety beobachten beobachten-frist http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
+if bash "$ROOT/skripte/p7/n100-lauf.sh" --koordinator --modus 5 --sekunden 10 --watchdog-sekunden 10 >"$T/it8613-zu-kurz.log" 2>&1; then
+  echo 'FAIL: IT8613-Lauf muss laenger als ein Watchdog-Intervall sein' >&2; exit 1
+fi
+test ! -e "$T/trace"
+grep -Fq 'IT8613 braucht' "$T/it8613-zu-kurz.log"
+echo 'PASS: IT8613-Zeitvertrag wird vor WinRM geprueft'
+for phase in ok normal safety beobachten beobachten-frist it8613 it8613-ohne-aus http502 http-timeout rueckfall loader upload pruefen server capture pausieren stop booten; do
   extra=(--synapse-zeitlimit 5)
   if [[ "$phase" == http502 ]]; then extra=(--synapse-zeitlimit 15); fi
   if [[ "$phase" == rueckfall ]]; then extra+=(--rueckfall-kern "$ROOT/build/p7-t25/stick/KERN.ELF"); fi
@@ -114,6 +122,9 @@ for phase in ok normal safety beobachten beobachten-frist http502 http-timeout r
   if [[ "$phase" == safety ]]; then extra=(--watchdog-test); export MOCK_MODE=safety; fi
   if [[ "$phase" == beobachten || "$phase" == beobachten-frist ]]; then
     extra=(--modus 4 --sekunden 190); export MOCK_MODE="$phase"
+  fi
+  if [[ "$phase" == it8613* ]]; then
+    extra+=(--modus 5 --sekunden 25 --watchdog-sekunden 10); export MOCK_MODE="$phase"
   fi
   export MOCK_FAIL="$phase" MOO_N100_AUSGABE="$T/$phase"
   : >"$T/trace"
@@ -125,15 +136,17 @@ for phase in ok normal safety beobachten beobachten-frist http502 http-timeout r
   set -e
   cp "$T/trace" "$T/$phase-trace"
   case "$phase" in
-    ok|normal|safety|beobachten|beobachten-frist|http502) test "$rc" -eq 0;;
+    ok|normal|safety|beobachten|beobachten-frist|it8613|http502) test "$rc" -eq 0;;
     *) test "$rc" -ne 0;;
   esac
   case "$phase" in
     beobachten) grep -q 'ohne protokollierte TCO-Beobachtungsfrist' "$T/$phase-konsole.log";;
     beobachten-frist) grep -q 'Software-Reset eingeleitet' "$T/$phase-konsole.log";;
+    it8613) grep -Fq 'IT8613-Bedienung, Abschalten und neue Windows-Bootzeit belegt' "$T/$phase-konsole.log";;
+    it8613-ohne-aus) grep -Fq 'Windows zurueck, aber IT8613-Bedienung oder Abschalten nicht belegt' "$T/$phase-konsole.log";;
   esac
   case "$phase" in
-    ok|normal|safety|beobachten|beobachten-frist|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
+    ok|normal|safety|beobachten|beobachten-frist|it8613|it8613-ohne-aus|http502|http-timeout|pausieren|stop|booten) grep -qx zurueck "$T/trace";;
     *) if grep -qx zurueck "$T/trace"; then echo 'FAIL: unberuehrten Remote-Zustand restauriert' >&2; exit 1; fi;;
   esac
   if [[ -s "$T/server.pid" ]]; then

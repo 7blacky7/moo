@@ -61,6 +61,14 @@
       "proof": "P7-T26: typisierter xHCI/BOT/SCSI/GPT-Baustein, Standalone-IR mit Hardwarezugriffen braucht das Bare-Profil; native Protokollorakel unter OVMF"
     },
     {
+      "path": "beispiele/kernel/it8613_wdt.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T25: nativer IT8613E-Watchdog, Standalone-IR im Bare-Profil"
+    },
+    {
       "path": "beispiele/kernel/test_neustart.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],
