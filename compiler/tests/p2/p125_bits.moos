@@ -1,0 +1,121 @@
+# P2-T125: gemeinsame Bitprimitiven, unabhaengige C++-Orakel.
+
+@nativ
+funktion p125_rol8(wort: u8, zaehler: u64) -> u8:
+    gib_zurück rotieren_links(wort, zaehler)
+
+@nativ
+funktion p125_ror8(wort: u8, zaehler: u64) -> u8:
+    gib_zurück rotate_right(wort, zaehler)
+
+@nativ
+funktion p125_hi8(a: u8, b: u8) -> u8:
+    gib_zurück mul_hoch(a, b)
+
+@nativ
+funktion p125_carry8(a: u8, b: u8) -> bool:
+    gib_zurück add_carry(a, b)
+
+@nativ
+funktion p125_eq8(a: u8, b: u8) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_sel8(flag: bool, a: u8, b: u8) -> u8:
+    gib_zurück ct_select(flag, a, b)
+
+@nativ
+funktion p125_rol16(wort: u16, zaehler: u64) -> u16:
+    gib_zurück rotieren_links(wort, zaehler)
+
+@nativ
+funktion p125_ror16(wort: u16, zaehler: u64) -> u16:
+    gib_zurück rotate_right(wort, zaehler)
+
+@nativ
+funktion p125_hi16(a: u16, b: u16) -> u16:
+    gib_zurück mul_hoch(a, b)
+
+@nativ
+funktion p125_carry16(a: u16, b: u16) -> bool:
+    gib_zurück add_carry(a, b)
+
+@nativ
+funktion p125_eq16(a: u16, b: u16) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_sel16(flag: bool, a: u16, b: u16) -> u16:
+    gib_zurück ct_select(flag, a, b)
+
+@nativ
+funktion p125_rol32(wort: u32, zaehler: u64) -> u32:
+    gib_zurück rotieren_links(wort, zaehler)
+
+@nativ
+funktion p125_ror32(wort: u32, zaehler: u64) -> u32:
+    gib_zurück rotate_right(wort, zaehler)
+
+@nativ
+funktion p125_hi32(a: u32, b: u32) -> u32:
+    gib_zurück mul_hoch(a, b)
+
+@nativ
+funktion p125_carry32(a: u32, b: u32) -> bool:
+    gib_zurück add_carry(a, b)
+
+@nativ
+funktion p125_eq32(a: u32, b: u32) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_sel32(flag: bool, a: u32, b: u32) -> u32:
+    gib_zurück ct_select(flag, a, b)
+
+@nativ
+funktion p125_rol64(wort: u64, zaehler: u64) -> u64:
+    gib_zurück rotieren_links(wort, zaehler)
+
+@nativ
+funktion p125_ror64(wort: u64, zaehler: u64) -> u64:
+    gib_zurück rotate_right(wort, zaehler)
+
+@nativ
+funktion p125_hi64(a: u64, b: u64) -> u64:
+    gib_zurück mul_hoch(a, b)
+
+@nativ
+funktion p125_carry64(a: u64, b: u64) -> bool:
+    gib_zurück add_carry(a, b)
+
+@nativ
+funktion p125_eq64(a: u64, b: u64) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_sel64(flag: bool, a: u64, b: u64) -> u64:
+    gib_zurück ct_select(flag, a, b)
+
+@nativ
+funktion p125_neg(wort: u64) -> u64:
+    gib_zurück rotieren_links(wort, -1)
+
+@nativ
+funktion p125_sys(wort: u64, zaehler: u64) -> u64:
+    unsicher:
+        setze ergebnis: u64 auf rotate_left(wort, zaehler)
+        gib_zurück ergebnis
+
+@nativ
+funktion p125_inline(a: u64, b: u64, geheim: u64) -> u64:
+    gib_zurück konstantzeit_auswahl(konstantzeit_gleich(geheim, 0), a + 1, b * 3)
+
+@nativ
+funktion p125_hw(ziel: ptr[u32], a: u32, b: u32, zaehler: u64) -> void:
+    unsicher:
+        volatile_schreiben(ziel, konstantzeit_auswahl(add_uebertrag(a, b), mul_hoch(a, b), rotieren_rechts(a, zaehler)))
+
+@nativ
+funktion p125_hw_sel(ziel: ptr[u32], flag: bool, a: u32, b: u32) -> void:
+    unsicher:
+        volatile_schreiben(ziel, konstantzeit_auswahl(flag, a, b))

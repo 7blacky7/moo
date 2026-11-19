@@ -67,7 +67,11 @@ statisch TCP_RAHMEN: [u8; 1514] auf 0
 
 @nativ
 funktion tcp_abstand(von_seq: u64, bis_seq: u64) -> u64:
-    gib_zurück (bis_seq + 0x100000000 - von_seq) & 0xFFFFFFFF
+    gib_zurück als(u64, als_wrap(u32, bis_seq) - als_wrap(u32, von_seq))
+
+@nativ
+funktion tcp_addieren(seq: u64, anzahl: u64) -> u64:
+    gib_zurück als(u64, als_wrap(u32, seq) + als_wrap(u32, anzahl))
 
 @nativ
 funktion tcp_fenster() -> u64:
@@ -157,7 +161,7 @@ funktion tcp_ack_senden() -> void:
 funktion tcp_neues_segment(flags: u64, daten: u64) -> void:
     unsicher:
         setze seq: u64 auf TCP_SLOT.senden
-        TCP_SLOT.senden = (seq + daten + u64(flags != 0)) & 0xFFFFFFFF
+        TCP_SLOT.senden = tcp_addieren(seq, daten + u64(flags != 0))
         TCP_SLOT.tx_daten = daten
         TCP_SLOT.tx_flags = flags
         TCP_SLOT.tx_zeit = takt()
@@ -235,7 +239,7 @@ funktion netz_tcp_wartung(tsc_us: u64) -> void:
             # ACK mit SND.UNA-1 fordert eine Antwort mit aktuellem Fenster
             # an (Linux v6.12 tcp_output.c:4288-4305).
             wenn vergangen >= tsc_us * 1000000 und (una != nxt oder TCP_SLOT.ring_belegt != 0 oder TCP_SLOT.will_fin != 0):
-                tcp_sende_segment((una + 0xFFFFFFFF) & 0xFFFFFFFF, 0, 0)
+                tcp_sende_segment(tcp_abstand(1, una), 0, 0)
                 TCP_SLOT.tx_zeit = jetzt
             gib_zurück
         wenn una == nxt:
@@ -294,7 +298,7 @@ funktion tcp_beginnen(p: u64, nic: u64, ip: u64, quelle: u64, kopf: u64) -> void
         setze seq: u64 auf nt_r32(p, 38)
         setze mac: u64 auf u64(speicher_lesen(p + 6, 4)) | (u64(speicher_lesen(p + 10, 2)) << 32)
         # TSC-basierte Startsequenz fuer das isolierte Echo-Testnetz.
-        setze iss: u64 auf ((takt() >> 10) ^ quelle ^ nt_r16(p, 34)) & 0xFFFFFFFF
+        setze iss: u64 auf als(u64, als_wrap(u32, (takt() >> 10) ^ quelle ^ nt_r16(p, 34)))
         TCP_SLOT.zustand = TCP_SYN_RCVD
         TCP_SLOT.nic = nic
         TCP_SLOT.lokal_ip = ip
@@ -302,7 +306,7 @@ funktion tcp_beginnen(p: u64, nic: u64, ip: u64, quelle: u64, kopf: u64) -> void
         TCP_SLOT.lokal_port = nt_r16(p, 36)
         TCP_SLOT.peer_port = nt_r16(p, 34)
         TCP_SLOT.peer_mac = mac
-        TCP_SLOT.empfang = (seq + 1) & 0xFFFFFFFF
+        TCP_SLOT.empfang = tcp_addieren(seq, 1)
         TCP_SLOT.unbestaetigt = iss
         TCP_SLOT.senden = iss
         TCP_SLOT.aktiv = takt()
@@ -395,7 +399,7 @@ funktion tcp_daten_annehmen(quelle: u64, seq: u64, daten: u64, fin: u64) -> void
             setze anzahl auf anzahl + 1
             TCP_SLOT.peer_fin = 1
             TCP_SLOT.will_fin = 1
-        TCP_SLOT.empfang = (erwartet + anzahl) & 0xFFFFFFFF
+        TCP_SLOT.empfang = tcp_addieren(erwartet, anzahl)
 
 @nativ
 funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, echo_aktiv: bool, ssh_aktiv: bool) -> void:
@@ -423,7 +427,7 @@ funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, e
         setze erwartet: u64 auf TCP_SLOT.empfang
         setze fin: u64 auf flags & 1
         wenn tcp_geschlossen():
-            wenn fin != 0 und ((seq + daten + 1) & 0xFFFFFFFF) == erwartet:
+            wenn fin != 0 und (tcp_addieren(seq, daten + 1)) == erwartet:
                 tcp_ack_senden()
                 TCP_SLOT.aktiv = takt()
             gib_zurück
@@ -432,7 +436,7 @@ funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, e
                 tcp_verwerfen()
             gib_zurück
         wenn (flags & 2) != 0:
-            wenn zustand == TCP_SYN_RCVD und flags == 2 und daten == 0 und ((seq + 1) & 0xFFFFFFFF) == erwartet:
+            wenn zustand == TCP_SYN_RCVD und flags == 2 und daten == 0 und (tcp_addieren(seq, 1)) == erwartet:
                 tcp_sende_segment(TCP_SLOT.unbestaetigt, 2, 0)
             gib_zurück
         wenn (flags & 0x10) == 0:

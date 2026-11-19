@@ -30,9 +30,104 @@ Integer-`+`, `-`, `*` und unäres Minus laufen modulo 2 hoch N über, für vorze
 
 Integerdivision rundet gegen null; der Rest trägt das Vorzeichen des Dividenden. Division oder Rest durch null, `MIN / -1`, `MIN % -1` und Schiebebeträge außerhalb `0..N-1` sind Fehler. Statisch erkennbare Fehler werden beim Kompilieren gemeldet; dynamische Fehler sind hosted fangbar und ohne Handler ein definierter Abbruch. Im Bare-Profil behandelt sie ein nicht zurückkehrender Ziel-Hook. Rechtsverschiebung ist bei signed arithmetisch, bei unsigned logisch.
 
-Der geplante Standardcast `als(T, x)` ist geprüft. Integer außerhalb des Zielbereichs und Floatwerte mit Bruchteil, NaN, Unendlich oder außerhalb des Integerzielbereichs ergeben einen Fehler. Gewolltes Wrapping, Sättigung und Rundung werden ausdrücklich angefordert; sie heißen `als_wrap(T, x)` (Wrapping) und `als_saettigend(T, x)` (Sättigung). Siehe `beispiele/nativ/02_ganzzahl_semantik.moos` und `beispiele/nativ/03_casts.moos`. Integer→Float und Float→Float erlauben dokumentierte Rundung, aber kein stilles endlich→unendlich; für exakte Rundreisen ist eine separate Prüfung vorgesehen.
+Der Standardcast `als(T, x)` ist geprüft. Integer außerhalb des Zielbereichs und Floatwerte mit Bruchteil, NaN, Unendlich oder außerhalb des Integerzielbereichs ergeben einen Fehler. Gewolltes Wrapping, Sättigung und Rundung werden ausdrücklich angefordert; sie heißen `als_wrap(T, x)` (Wrapping) und `als_saettigend(T, x)` (Sättigung). Siehe `beispiele/nativ/02_ganzzahl_semantik.moos` und `beispiele/nativ/03_casts.moos`. Integer→Float und Float→Float erlauben dokumentierte Rundung, aber kein stilles endlich→unendlich; für exakte Rundreisen ist eine separate Prüfung vorgesehen.
 
 Die Float-Grundsemantik folgt IEEE für `f32` und `f64`, einschließlich NaN, Inf, vorzeichenbehafteter Null und graduellem Unterlauf. Reassociation, implizite FMA-Kontraktion, Flush-to-zero und Fast-Math sind standardmäßig aus; abweichende Optimierungen erfordern ein ausdrückliches Opt-in.
+
+
+### Native Bit- und Krypto-Bausteine (P2-T125)
+
+Die vorhandene Modulo-Semantik von Ganzzahloperatoren und `als_wrap(T, x)`
+bleibt unverändert. Für TCP-Sequenzen genügt zum Beispiel
+`als(u64, als_wrap(u32, seq) + als_wrap(u32, anzahl))`: Die Addition findet
+in `u32` statt, die anschließende Erweiterung nach `u64` ist verlustfrei.
+
+| Deutsch / Englisch | Vertrag |
+|---|---|
+| `rotieren_links(x, n)` / `rotate_left` | Bitrotation innerhalb des Ganzzahltyps von x; n ist ganzzahlig und wird modulo Wortbreite genommen. Auch 0, Wortbreite und negative Bitmuster sind definiert. |
+| `rotieren_rechts(x, n)` / `rotate_right` | Wie oben, in Gegenrichtung; kein geprüfter Shift. |
+| `mul_hoch(a, b)` / `mul_high` | Obere Hälfte des vollständigen unsigned Produkts; a und b haben denselben Typ u8/u16/u32/u64. Die untere Hälfte ist das vorhandene `a * b`. |
+| `add_uebertrag(a, b)` / `add_carry` | bool für den unsigned Übertrag von a+b, gleiche unsigned Operandentypen; die Summe ist das vorhandene `a + b`. |
+| `konstantzeit_gleich(a, b)` / `ct_equal` | bool, gleiche Ganzzahltypen oder zwei puffer[u8]. Pufferlängen sind öffentlich; bei gleicher Länge werden alle Bytes verglichen, ohne frühen Abbruch nach Nutzdaten. |
+| `konstantzeit_auswahl(bedingung, a, b)` / `ct_select` | bool-Bedingung und zwei gleiche Ganzzahltypen. Beide Alternativen sind Werte; die Auswahl verwendet Register-Bitoperationen ohne bedingten Sprung, auch nach Inlining. |
+| `loeschen_sicher(bytes)` / `secure_zero` | void, beschreibbarer puffer[u8]. Jedes Byte wird durch einen volatile Store auf null gesetzt; auch ein danach unbeobachteter lokaler Puffer wird gelöscht. |
+
+`importiere nativ_bits` stellt `BreitesProdukt` mit `niedrig: u64` und
+`hoch: u64` bereit. `mul_breit(a, b)` liefert das vollständige 64×64-Produkt;
+`mul_add_breit(a, b, addend, uebertrag)` liefert a*b+addend+uebertrag mit
+zwei u64-Addenden und allen Überträgen als 128-Bit-Ergebnis. Es wird kein
+impliziter, öffentlicher 128-Bit-Skalartyp eingeführt.
+
+Die skalaren Bitoperatoren sind in Pure-, System- und Hardware-Körpern
+verfügbar. Byteprimitive verwenden die bestehenden geprüften Byteansichten
+im System-Emitter, hosted und Bare/UEFI. `@liest` erlaubt den Vergleich,
+verbietet aber das Löschen. Rohzeiger werden weiterhin ausdrücklich in
+`unsicher:` zu einer Byteansicht mit Länge verbunden; eine leere Ansicht
+darf einen Nullzeiger tragen, eine nichtleere Ansicht nicht.
+
+Der Konstantzeit-Vertrag bezieht sich auf geheime Nutzdaten bei öffentlichen
+Längen und gültigen Adressen, auf den erzeugten Kontrollfluss und die
+Speicheradressen der Primitive. Ein anschließendes `wenn ct_equal(...)`
+im Aufrufer ist eine eigene, datenabhängige Verzweigung. Register, ältere
+Kopien oder bereits freigegebener Speicher werden durch ein Puffer-Wipe
+nicht mitgelöscht. Die gehärtete Auswahl und der Bytevergleich sind für
+x86_64 und AArch64 freigegeben; weitere Ziele erhalten eine klare Diagnose.
+
+Auf x86_64 liefern `rdrand_verfuegbar()`/`rdrand_available()` und
+`rdseed_verfuegbar()`/`rdseed_available()` öffentlich lesbare bool-Merkmale.
+`rdrand64(ziel: ptr[u64])` und `rdseed64(ziel: ptr[u64])` stehen in
+`unsicher:` und liefern den tatsächlichen CF eines einzigen
+Instruktionsversuchs. Fehlendes CPU-Merkmal oder CF=0 liefert falsch und
+lässt das Ziel unverändert; CF=1 schreibt den gelieferten Wert, auch null.
+Die CPUID-Blattgrenzen werden geprüft. Es gibt weder versteckte Wiederholung
+noch Software-Fallback oder DRBG in diesen Operationen. Andere Architekturen
+erhalten eine x86_64-Diagnose.
+
+Nachweise: `mise -C skripte/p2/zahlen run bitops` und `crypto` prüfen
+u8..u64-Randwerte, drei Zieltripel, O2/O3, Inlining, Bytevergleich/Wipe,
+RFC 8439 und NIST-SHA256 gegen vorhandene C-Provider sowie deterministische
+CF-Modelle. Der bestehende Core-Runner enthält `p2_native_bits`.
+
+### Entscheidungsvorlage: T(x) und als(T, x) (noch nicht umgesetzt)
+
+P2-T125 ändert keine bestehende Konstruktor- oder Cast-Semantik. Der
+Option-A-Kompatibilitätsfix bleibt maßgeblich. Der aktuelle Unterschied
+ist eine Eigenschaft des Emitters, nicht bloß des Funktionszwecks:
+
+| Schreibweise | Aktueller Stand |
+|---|---|
+| `als(T, x)` | geprüfte Konversion; die Bereichsprüfung bleibt erhalten |
+| `als_wrap(T, x)` | bereits vorhandene explizite Integer-Verengung modulo 2^N |
+| `T(x)` im System-Emitter | Integer-Verengung abschneidend, Erweiterung nach Signedness der Quelle; außerdem bestehende bool-/Zeigerkonversionen |
+| `T(x)` im engen Hardware-Emitter | typgebender Kontext für einen passenden Parameter oder ein Literal, kein allgemeiner Ersatz für eine Konversion zwischen Parametertypen |
+| `T(x)` im Pure-Emitter | klare Diagnose mit Vorschlag `als(T, wert)`; kein stiller Alias |
+
+Entscheidbare Varianten:
+
+1. **Explizite Operationen, schrittweise Ablösung der Konstruktorform
+   (Empfehlung):** `als` bleibt geprüft, `als_wrap` bleibt modulo.
+   Bestehende `T(x)`-Stellen laufen zunächst unverändert weiter und erhalten
+   später eine gezielte Migrationsdiagnose mit Vorschlag passend zur
+   bisherigen Operation. Ein zusätzlicher Name `abschneiden(T, x)` wäre
+   höchstens ein Integer-Alias von `als_wrap`, keine neue Semantik.
+   Vorteil: kein erneuter SCSI-/Wireformat-Bruch und keine Doppelbedeutung
+   neuer Programme. Nachteil: Übergangszeit mit bestehender Konstruktorform.
+2. **T(x) künftig überall geprüft:** erst alle bisherigen Integer-Verengungen
+   explizit nach `als_wrap` migrieren, bool-/Zeigeroperationen separat
+   benennen, danach Konstruktoren in allen Emittern an `als` anschließen.
+   Vorteil: eine geprüfte Standardform. Nachteil: bewusster Sprachbruch;
+   ohne vollständige Migration können bisher gültige Hardwarepfade abbrechen.
+3. **T(x) künftig überall modulo:** Pure und enger Hardware-Emitter werden
+   erst nach ausdrücklichem Entscheid an die System-Konversion angeglichen;
+   `als` bleibt geprüft. Vorteil: bisheriger Systemcode bleibt kompatibel.
+   Nachteil: zwei optisch ähnliche Standardformen mit unterschiedlichem
+   Fehlerverhalten; bool, Zeiger und Float brauchen weiterhin eigene Regeln.
+
+Für jede Änderung sind zeichenpräzise Diagnosen, ein Vorher/Nachher-Inventar
+der betroffenen Aufrufe sowie getrennte System-/Hardware-/Pure- und
+Wireformat-Regressionsfälle erforderlich. Kein automatischer Vorschlag darf
+eine geprüfte Konversion still durch Modulo oder umgekehrt ersetzen.
+Die Entscheidung und eine eventuelle Einführung von `abschneiden` bleiben offen.
 
 ## Zusammengesetzte Typen und Layout
 

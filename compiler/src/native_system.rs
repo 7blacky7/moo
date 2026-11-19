@@ -476,6 +476,7 @@ impl LiestPruefung<'_> {
         }
         match callee {
             "länge" | "laenge" | "length" | "len" => None,
+            _ if i < 2 && matches!(callee, "konstantzeit_gleich" | "ct_equal") => None,
             _ if i == 0 && byte_zugriff(callee).is_some_and(|(schreiben, _, _)| !schreiben) => None,
             "puffer_zeiger" | "buffer_pointer" if unsicher => None,
             "puffer_zeiger" | "buffer_pointer" =>
@@ -497,6 +498,7 @@ pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize, 
             | "speicher_lesen" | "mem_read" | "speicher_schreiben" | "mem_write"
             | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
             | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write")
+            || crate::native_crypto::rng_name(name).is_some_and(|(_, query)| !query)
             || crate::native_hardware::ist_rohzugriff(name)
     }
     fn ausdruck(expr: &Expr) -> Option<(String, usize, (usize, usize))> {
@@ -1462,6 +1464,23 @@ pub(crate) fn is_system_body(body: &[Stmt], params: &[String]) -> bool {
 /// danach hoechstens ein abschliessendes gib_zurück (oder leerer Koerper).
 /// Alles andere ohne unsicher: laeuft im System-Emitter im Sicher-Modus.
 pub(crate) fn is_pure_slice(body: &[Stmt]) -> bool {
+    // P2-T125: CPU-Merkmalsabfragen brauchen den System-Emitter auch ohne
+    // kuenstlichen Kontrollfluss oder unsicher:-Block. Skalare Bitoperatoren
+    // bleiben reine Ausdruecke und benutzen weiterhin ihren vorhandenen Pfad.
+    fn cpu(expr: &Expr) -> bool {
+        match expr {
+            Expr::FunctionCall { name, args, .. } => crate::native_crypto::rng_name(name).is_some()
+                || args.iter().any(cpu),
+            Expr::BinaryOp { left, right, .. } => cpu(left) || cpu(right),
+            Expr::UnaryOp { operand, .. } => cpu(operand),
+            _ => false,
+        }
+    }
+    if body.iter().any(|stmt| match stmt {
+        Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+        | Stmt::Return(Some(value), _) => cpu(value),
+        _ => false,
+    }) { return false; }
     let locals = match body.split_last() {
         None => return true,
         Some((Stmt::Return(_, _), locals)) => locals,
@@ -3422,6 +3441,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             },
             Expr::FunctionCall { name, args, .. } => {
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
+                if !self.callees.contains_key(name) {
+                    if crate::native_crypto::rng_name(name).is_some() { return Some(STy::Bool); }
+                    if let Some(art) = crate::native_arithmetic::bit_art(name) {
+                        return if art.liefert_bool() { Some(STy::Bool) }
+                            else { args.get(art.daten_index()).and_then(|a| self.infer(a)) };
+                    }
+                }
                 // P2-T34: teilbar/verschiebbar liefern bool (ADR §13).
                 if crate::native_arithmetic::pruef_art(name).is_some() { return Some(STy::Bool); }
                 // P2-T34: als(T, x) / als_wrap / als_saettigend liefern T.
@@ -4366,6 +4392,74 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
     }
 
+
+
+    fn crypto_bytes(&mut self, args: &[Expr], wipe: bool) -> Result<Option<SVal<'ctx>>, String> {
+        if args.len() != if wipe { 1 } else { 2 } {
+            return Err("Byte-Primitive erwartet secure_zero(puffer[u8]) bzw. ct_equal(puffer[u8], puffer[u8])".into());
+        }
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        for arg in args {
+            let ty = STy::Buffer(NType::U8);
+            let v = self.expr(arg, Some(&ty))?;
+            self.expect(&v, &ty, "Krypto-Byteansicht")?;
+            let view = v.value.into_struct_value();
+            values.push(self.builder.build_extract_value(view, 0, "crypto.data").map_err(e)?.into());
+            values.push(self.builder.build_extract_value(view, 1, "crypto.len").map_err(e)?.into());
+        }
+        let f = crate::native_crypto::bytes(self.context, self.module, wipe)?;
+        let call = self.builder.build_call(f, &values, "crypto.bytes").map_err(e)?;
+        self.call_result(call, if wipe { None } else { Some(STy::Bool) })
+    }
+
+    fn crypto_rng(&mut self, name: &str, args: &[Expr]) -> Result<Option<SVal<'ctx>>, String> {
+        let (seed, query) = crate::native_crypto::rng_name(name).ok_or("RNG-Art fehlt")?;
+        if args.len() != if query { 0 } else { 1 } {
+            return Err(format!("{name} erwartet {}", if query { "keine Argumente" } else { "einen ptr[u64]-Zielzeiger" }));
+        }
+        let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        if !query {
+            let ty = STy::Ptr(NativeTypeId::Pointer { address_space: 0, pointee: Box::new(NativeTypeId::Scalar(ScalarType::U64)) });
+            let v = self.expr(&args[0], Some(&ty))?;
+            self.expect(&v, &ty, "RNG-Ziel")?;
+            values.push(v.value.into());
+        }
+        let f = crate::native_crypto::rng(self.context, self.module, seed, query)?;
+        let call = self.builder.build_call(f, &values, "rng.cf").map_err(e)?;
+        self.call_result(call, Some(STy::Bool))
+    }
+
+    fn bit_call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>) -> Result<Option<SVal<'ctx>>, String> {
+        use crate::native_arithmetic::BitArt;
+        let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
+        if args.len() != art.aritaet() {
+            return Err(format!("{name}(...) erwartet {} Argumente", art.aritaet()));
+        }
+        if art == BitArt::Gleich && matches!(self.infer(&args[0]), Some(STy::Buffer(_))) {
+            return self.crypto_bytes(args, false);
+        }
+        let data = art.daten_index();
+        let ty = (if art.liefert_bool() { None } else { expected.cloned() })
+            .or_else(|| self.infer(&args[data]))
+            .or_else(|| self.infer(&args[if data == 1 { 2 } else { 1 }]))
+            .ok_or_else(|| format!("{name}: Operandentyp fehlt"))?;
+        let STy::Int(_) = ty else { return Err(format!("{name}: Ganzzahloperanden erwartet")); };
+        let mut values = Vec::with_capacity(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let target = if art == BitArt::Auswahl && i == 0 { STy::Bool }
+                else if matches!(art, BitArt::Links | BitArt::Rechts) && i == 1 {
+                    self.infer(arg).unwrap_or_else(|| ty.clone())
+                } else { ty.clone() };
+            let value = self.expr(arg, Some(&target))?;
+            self.expect(&value, &target, name)?;
+            let nty = match value.ty { STy::Int(n) => n, STy::Bool => NType::Bool,
+                _ => return Err(format!("{name}: Ganzzahl/bool erwartet")) };
+            values.push(NValue::checked(self.context, nty, value.value)?);
+        }
+        let value = crate::native_arithmetic::bit_operation(self.context, &self.builder, self.module, art, &values)?;
+        Ok(Some(SVal { ty: STy::from_ntype(value.ty)?, value: value.value }))
+    }
+
     fn call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>, statement: bool) -> Result<Option<SVal<'ctx>>, String> {
         let (register_name, register_op) = crate::native_hardware::register_write(name)
             .unwrap_or((name, crate::native_hardware::RegisterWrite::Value));
@@ -4386,6 +4480,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let eigener = self.function.get_name().to_str().ok()
                 .and_then(|n| n.strip_prefix("__moo_native.")) == Some(name);
             let erlaubt = crate::native_arithmetic::pruef_art(name).is_some()
+                || crate::native_arithmetic::bit_art(name).is_some()
+                || crate::native_crypto::wipe_name(name)
+                || crate::native_crypto::rng_name(name).is_some_and(|(_, query)| query)
                 || crate::native_arithmetic::cast_art(name).is_some()
                 || self.callees.contains_key(name) || eigener
                 || self.layouts.layout(name).is_some()
@@ -4398,6 +4495,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
         }
         if !self.callees.contains_key(name) {
+            if crate::native_crypto::wipe_name(name) { return self.crypto_bytes(args, true); }
+            if crate::native_crypto::rng_name(name).is_some() { return self.crypto_rng(name, args); }
+            if crate::native_arithmetic::bit_art(name).is_some() { return self.bit_call(name, args, expected); }
             if matches!(name, "byteansicht" | "byte_view") { return self.byteansicht(args).map(Some); }
             if let Some((schreiben, ty, be)) = byte_zugriff(name) {
                 return self.byte_wort(name, args, schreiben, ty, be);

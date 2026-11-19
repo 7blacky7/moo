@@ -1,0 +1,3 @@
+@nativ
+funktion p125_falsch(flag: u64, a: u64, b: u64) -> u64:
+    gib_zurück konstantzeit_auswahl(flag, a, b)

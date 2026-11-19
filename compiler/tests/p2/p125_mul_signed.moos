@@ -1,0 +1,3 @@
+@nativ
+funktion p125_unzulaessig(a: i64, b: i64) -> i64:
+    gib_zurück mul_hoch(a, b)

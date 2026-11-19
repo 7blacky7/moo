@@ -322,6 +322,29 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, true)?.value.into_int_value()),
                 _ => Err("Hardwarezugriff: negatives Operand muss ein Integerliteral sein".into()),
             },
+            Expr::Boolean(value) if expected == NType::Bool =>
+                Ok(self.context.bool_type().const_int(u64::from(*value), false)),
+            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::bit_art(name).is_some() => {
+                use crate::native_arithmetic::BitArt;
+                let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
+                if args.len() != art.aritaet() {
+                    return Err(format!("{name}(...) erwartet {} Argumente", art.aritaet()));
+                }
+                let ty = if art.liefert_bool() {
+                    if expected != NType::Bool { return Err(format!("{name}(...) liefert bool")); }
+                    self.scalar_type(&args[0])?
+                } else { expected };
+                let mut values = Vec::with_capacity(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    let target = if art == BitArt::Auswahl && i == 0 { NType::Bool }
+                        else if matches!(art, BitArt::Links | BitArt::Rechts) && i == 1 {
+                            self.scalar_type(arg)?
+                        } else { ty };
+                    values.push(NValue::checked(self.context, target, self.scalar(arg, target)?.into())?);
+                }
+                Ok(crate::native_arithmetic::bit_operation(self.context, &self.builder, self.module, art, &values)?
+                    .value.into_int_value())
+            }
             // P7-T22: Typumwandlung wie im ADR, z. B. port_lese32(u16(0xCFC)).
             Expr::FunctionCall { name, args, .. } if NType::from_name(name).is_some_and(is_integer) => {
                 let ty = NType::from_name(name).ok_or("Typname fehlt")?;
@@ -373,6 +396,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             },
             Expr::NativeNumber { text, .. } => Ok(crate::codegen_native::literal_default_type(text)),
             Expr::UnaryOp { operand, .. } => self.scalar_type(operand),
+            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::bit_art(name).is_some() => {
+                let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
+                if art.liefert_bool() { Ok(NType::Bool) }
+                else { self.scalar_type(args.get(art.daten_index()).ok_or("Bitoperation: Operand fehlt")?) }
+            }
             Expr::FunctionCall { name, args, .. } => NType::from_name(name)
                 .or_else(|| if crate::native_arithmetic::cast_art(name).is_some() {
                     match args.first() { Some(Expr::Identifier(ty)) => NType::from_name(ty), _ => None }

@@ -1,0 +1,3 @@
+@nativ
+funktion p125_unzulaessig(p: ptr[u64]) -> bool:
+    gib_zurück rdrand64(p)

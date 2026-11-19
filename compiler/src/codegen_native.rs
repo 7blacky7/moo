@@ -697,6 +697,29 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
                 crate::native_arithmetic::int_binary(context, builder, op, left, right, failure)
             }
         }
+        Expr::FunctionCall { name, args, .. } if !pure_functions.contains_key(name)
+            && crate::native_arithmetic::bit_art(name).is_some() =>
+        {
+            let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
+            if args.len() != art.aritaet() {
+                return Err(format!("{name}(...) erwartet {} Argumente", art.aritaet()));
+            }
+            let ty = if art.liefert_bool() {
+                if expected != NType::Bool { return Err(format!("{name}(...) liefert bool")); }
+                operand_type(&args[0], &args[1], slots, pure_functions)
+                    .ok_or_else(|| format!("{name}: Operandentyp fehlt"))?
+            } else { expected };
+            let mut values = Vec::with_capacity(args.len());
+            for (i, arg) in args.iter().enumerate() {
+                let target = if art == crate::native_arithmetic::BitArt::Auswahl && i == 0 {
+                    NType::Bool
+                } else if matches!(art, crate::native_arithmetic::BitArt::Links | crate::native_arithmetic::BitArt::Rechts) && i == 1 {
+                    pure_infer(arg, slots, pure_functions).unwrap_or(ty)
+                } else { ty };
+                values.push(lower_nontrapping_expr(context, builder, arg, target, slots, failure, fehler, pure_functions)?);
+            }
+            crate::native_arithmetic::bit_operation(context, builder, fehler.module, art, &values)
+        }
         // P2-T34 / ADR §13: Vorpruefung mit Status: teilbar(a, b), verschiebbar(a, n) -> bool.
         Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::pruef_art(name).is_some() => {
             let op = crate::native_arithmetic::pruef_art(name).ok_or("Pruefart fehlt")?;
@@ -854,6 +877,12 @@ fn pure_infer<'ctx>(
             _ => operand_type(left, right, slots, pure_functions),
         },
         Expr::FunctionCall { name, args, .. } => {
+            if !pure_functions.contains_key(name) {
+                if let Some(art) = crate::native_arithmetic::bit_art(name) {
+                    return if art.liefert_bool() { Some(NType::Bool) }
+                        else { args.get(art.daten_index()).and_then(|a| pure_infer(a, slots, pure_functions)) };
+                }
+            }
             if crate::native_arithmetic::pruef_art(name).is_some() {
                 return Some(NType::Bool);
             }
@@ -1119,7 +1148,8 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
         // ist ein Blatt (moo_native_math.c, nichttrappend).
         let edges = match graph.get(name) {
             Some(edges) => edges,
-            None if crate::native_arithmetic::trig_art(name).is_some() => {
+            None if crate::native_arithmetic::trig_art(name).is_some()
+                || crate::native_arithmetic::bit_art(name).is_some() => {
                 done.insert(name.to_owned());
                 return Ok(());
             }

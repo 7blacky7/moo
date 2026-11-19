@@ -1,0 +1,18 @@
+# Ein Versuch, Rueckgabe=CF; falscher Status laesst den Zielwert unveraendert.
+@nativ
+funktion p125_rdrand(p: ptr[u64]) -> bool:
+    unsicher:
+        gib_zurück rdrand64(p)
+
+@nativ
+funktion p125_rdseed(p: ptr[u64]) -> bool:
+    unsicher:
+        gib_zurück rdseed64(p)
+
+@nativ
+funktion p125_has_rdrand() -> bool:
+    gib_zurück rdrand_verfuegbar()
+
+@nativ
+funktion p125_has_rdseed() -> bool:
+    gib_zurück rdseed_available()

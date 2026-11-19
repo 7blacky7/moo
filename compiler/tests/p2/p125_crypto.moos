@@ -1,0 +1,186 @@
+# Pruefbare Zusammensetzung der Sprachprimitive, keine Provider-Ablösung.
+importiere nativ_bits
+
+@nativ
+funktion p125_wide(a: u64, b: u64, c: u64, d: u64, ausgabe: ptr[u64]) -> void:
+    unsicher:
+        setze wert: BreitesProdukt auf mul_add_breit(a, b, c, d)
+        setze ausgabe[0] auf wert.niedrig
+        setze ausgabe[1] auf wert.hoch
+
+@nativ
+funktion p125_bytes(a: ptr[u8], n: u64, b: ptr[u8], m: u64) -> bool:
+    unsicher:
+        gib_zurück ct_equal(byteansicht(a, n), byteansicht(b, m))
+
+@nativ
+@liest(1)
+@liest(2)
+funktion p125_geliehen(a: puffer[u8], b: puffer[u8]) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_wipe(a: ptr[u8], n: u64) -> void:
+    unsicher:
+        loeschen_sicher(byteansicht(a, n))
+
+@nativ
+funktion p125_deadwipe() -> u64:
+    setze geheim: [u8; 8] auf [1, 2, 3, 4, 5, 6, 7, 8]
+    secure_zero(byteansicht(geheim))
+    gib_zurück 7
+
+# RFC 8439 2.3.2: 20 ChaCha-Runden, u32-Wrap und Rotation.
+@nativ
+funktion p125_chacha(ein: ptr[u32], ausgabe: ptr[u32]) -> void:
+    unsicher:
+        setze x0: u32 auf ein[0]
+        setze x1: u32 auf ein[1]
+        setze x2: u32 auf ein[2]
+        setze x3: u32 auf ein[3]
+        setze x4: u32 auf ein[4]
+        setze x5: u32 auf ein[5]
+        setze x6: u32 auf ein[6]
+        setze x7: u32 auf ein[7]
+        setze x8: u32 auf ein[8]
+        setze x9: u32 auf ein[9]
+        setze x10: u32 auf ein[10]
+        setze x11: u32 auf ein[11]
+        setze x12: u32 auf ein[12]
+        setze x13: u32 auf ein[13]
+        setze x14: u32 auf ein[14]
+        setze x15: u32 auf ein[15]
+        setze runde: u64 auf 0
+        solange runde < 10:
+            setze x0 auf x0 + x4
+            setze x12 auf rotieren_links(x12 ^ x0, 16)
+            setze x8 auf x8 + x12
+            setze x4 auf rotieren_links(x4 ^ x8, 12)
+            setze x0 auf x0 + x4
+            setze x12 auf rotieren_links(x12 ^ x0, 8)
+            setze x8 auf x8 + x12
+            setze x4 auf rotieren_links(x4 ^ x8, 7)
+            setze x1 auf x1 + x5
+            setze x13 auf rotieren_links(x13 ^ x1, 16)
+            setze x9 auf x9 + x13
+            setze x5 auf rotieren_links(x5 ^ x9, 12)
+            setze x1 auf x1 + x5
+            setze x13 auf rotieren_links(x13 ^ x1, 8)
+            setze x9 auf x9 + x13
+            setze x5 auf rotieren_links(x5 ^ x9, 7)
+            setze x2 auf x2 + x6
+            setze x14 auf rotieren_links(x14 ^ x2, 16)
+            setze x10 auf x10 + x14
+            setze x6 auf rotieren_links(x6 ^ x10, 12)
+            setze x2 auf x2 + x6
+            setze x14 auf rotieren_links(x14 ^ x2, 8)
+            setze x10 auf x10 + x14
+            setze x6 auf rotieren_links(x6 ^ x10, 7)
+            setze x3 auf x3 + x7
+            setze x15 auf rotieren_links(x15 ^ x3, 16)
+            setze x11 auf x11 + x15
+            setze x7 auf rotieren_links(x7 ^ x11, 12)
+            setze x3 auf x3 + x7
+            setze x15 auf rotieren_links(x15 ^ x3, 8)
+            setze x11 auf x11 + x15
+            setze x7 auf rotieren_links(x7 ^ x11, 7)
+            setze x0 auf x0 + x5
+            setze x15 auf rotieren_links(x15 ^ x0, 16)
+            setze x10 auf x10 + x15
+            setze x5 auf rotieren_links(x5 ^ x10, 12)
+            setze x0 auf x0 + x5
+            setze x15 auf rotieren_links(x15 ^ x0, 8)
+            setze x10 auf x10 + x15
+            setze x5 auf rotieren_links(x5 ^ x10, 7)
+            setze x1 auf x1 + x6
+            setze x12 auf rotieren_links(x12 ^ x1, 16)
+            setze x11 auf x11 + x12
+            setze x6 auf rotieren_links(x6 ^ x11, 12)
+            setze x1 auf x1 + x6
+            setze x12 auf rotieren_links(x12 ^ x1, 8)
+            setze x11 auf x11 + x12
+            setze x6 auf rotieren_links(x6 ^ x11, 7)
+            setze x2 auf x2 + x7
+            setze x13 auf rotieren_links(x13 ^ x2, 16)
+            setze x8 auf x8 + x13
+            setze x7 auf rotieren_links(x7 ^ x8, 12)
+            setze x2 auf x2 + x7
+            setze x13 auf rotieren_links(x13 ^ x2, 8)
+            setze x8 auf x8 + x13
+            setze x7 auf rotieren_links(x7 ^ x8, 7)
+            setze x3 auf x3 + x4
+            setze x14 auf rotieren_links(x14 ^ x3, 16)
+            setze x9 auf x9 + x14
+            setze x4 auf rotieren_links(x4 ^ x9, 12)
+            setze x3 auf x3 + x4
+            setze x14 auf rotieren_links(x14 ^ x3, 8)
+            setze x9 auf x9 + x14
+            setze x4 auf rotieren_links(x4 ^ x9, 7)
+            setze runde auf runde + 1
+        setze ausgabe[0] auf x0 + ein[0]
+        setze ausgabe[1] auf x1 + ein[1]
+        setze ausgabe[2] auf x2 + ein[2]
+        setze ausgabe[3] auf x3 + ein[3]
+        setze ausgabe[4] auf x4 + ein[4]
+        setze ausgabe[5] auf x5 + ein[5]
+        setze ausgabe[6] auf x6 + ein[6]
+        setze ausgabe[7] auf x7 + ein[7]
+        setze ausgabe[8] auf x8 + ein[8]
+        setze ausgabe[9] auf x9 + ein[9]
+        setze ausgabe[10] auf x10 + ein[10]
+        setze ausgabe[11] auf x11 + ein[11]
+        setze ausgabe[12] auf x12 + ein[12]
+        setze ausgabe[13] auf x13 + ein[13]
+        setze ausgabe[14] auf x14 + ein[14]
+        setze ausgabe[15] auf x15 + ein[15]
+
+# FIPS 180-4 SHA-256 Kompressionsfunktion; Padding im unabhaengigen C++-Orakel.
+@nativ
+funktion p125_sha_block(ein: ptr[u32], ausgabe: ptr[u32]) -> void:
+    unsicher:
+        setze k: [u32; 64] auf [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2]
+        setze w: [u32; 64] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze i: u64 auf 0
+        solange i < 16:
+            setze w[i] auf ein[i]
+            setze i auf i + 1
+        solange i < 64:
+            setze v: u32 auf w[i - 15]
+            setze z: u32 auf w[i - 2]
+            setze s0: u32 auf rotieren_rechts(v, 7) ^ rotieren_rechts(v, 18) ^ (v >> 3)
+            setze s1: u32 auf rotieren_rechts(z, 17) ^ rotieren_rechts(z, 19) ^ (z >> 10)
+            setze w[i] auf w[i - 16] + s0 + w[i - 7] + s1
+            setze i auf i + 1
+        setze a: u32 auf 0x6a09e667
+        setze b: u32 auf 0xbb67ae85
+        setze c: u32 auf 0x3c6ef372
+        setze d: u32 auf 0xa54ff53a
+        setze e: u32 auf 0x510e527f
+        setze f: u32 auf 0x9b05688c
+        setze g: u32 auf 0x1f83d9ab
+        setze h: u32 auf 0x5be0cd19
+        setze i auf 0
+        solange i < 64:
+            setze sum1: u32 auf rotieren_rechts(e, 6) ^ rotieren_rechts(e, 11) ^ rotieren_rechts(e, 25)
+            setze wahl: u32 auf (e & f) ^ ((e ^ 0xFFFFFFFF) & g)
+            setze t1: u32 auf h + sum1 + wahl + k[i] + w[i]
+            setze sum0: u32 auf rotieren_rechts(a, 2) ^ rotieren_rechts(a, 13) ^ rotieren_rechts(a, 22)
+            setze mehrheit: u32 auf (a & b) ^ (a & c) ^ (b & c)
+            setze t2: u32 auf sum0 + mehrheit
+            setze h auf g
+            setze g auf f
+            setze f auf e
+            setze e auf d + t1
+            setze d auf c
+            setze c auf b
+            setze b auf a
+            setze a auf t1 + t2
+            setze i auf i + 1
+        setze ausgabe[0] auf a + 0x6a09e667
+        setze ausgabe[1] auf b + 0xbb67ae85
+        setze ausgabe[2] auf c + 0x3c6ef372
+        setze ausgabe[3] auf d + 0xa54ff53a
+        setze ausgabe[4] auf e + 0x510e527f
+        setze ausgabe[5] auf f + 0x9b05688c
+        setze ausgabe[6] auf g + 0x1f83d9ab
+        setze ausgabe[7] auf h + 0x5be0cd19

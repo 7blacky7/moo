@@ -1,0 +1,21 @@
+# Native Ganzzahlbausteine. +, -, * wrappen bereits in der Breite des Typs.
+# als_wrap(T, x) ist die vorhandene explizite Verengung modulo 2^Breite.
+# Keine Aenderung an T(x) oder am geprueften als(T, x).
+struktur BreitesProdukt:
+    niedrig: u64
+    hoch: u64
+
+@nativ
+funktion mul_breit(a: u64, b: u64) -> BreitesProdukt:
+    gib_zurück BreitesProdukt(a * b, mul_hoch(a, b))
+
+# a*b + addend + uebertrag als vollstaendiges 128-Bit-Ergebnis.
+# Das Maximum (2^64-1)^2 + 2*(2^64-1) ist genau 2^128-1.
+@nativ
+funktion mul_add_breit(a: u64, b: u64, addend: u64, uebertrag: u64) -> BreitesProdukt:
+    setze unten: u64 auf a * b
+    setze erster: bool auf add_uebertrag(unten, addend)
+    setze summe: u64 auf unten + addend
+    setze zweiter: bool auf add_uebertrag(summe, uebertrag)
+    setze oben: u64 auf mul_hoch(a, b) + konstantzeit_auswahl(erster, 1, 0) + konstantzeit_auswahl(zweiter, 1, 0)
+    gib_zurück BreitesProdukt(summe + uebertrag, oben)

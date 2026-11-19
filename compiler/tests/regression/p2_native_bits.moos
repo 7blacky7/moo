@@ -1,0 +1,63 @@
+importiere nativ_bits
+@nativ
+funktion p125_rol32(x: u32, n: u64) -> u32:
+    gib_zurück rotieren_links(x, n)
+
+@nativ
+funktion p125_ror64(x: u64, n: u64) -> u64:
+    gib_zurück rotieren_rechts(x, n)
+
+@nativ
+funktion p125_hi64(a: u64, b: u64) -> u64:
+    gib_zurück mul_hoch(a, b)
+
+@nativ
+funktion p125_carry8(a: u8, b: u8) -> bool:
+    gib_zurück add_uebertrag(a, b)
+
+@nativ
+funktion p125_eq32(a: u32, b: u32) -> bool:
+    gib_zurück konstantzeit_gleich(a, b)
+
+@nativ
+funktion p125_sel16(flag: bool, a: u16, b: u16) -> u16:
+    gib_zurück konstantzeit_auswahl(flag, a, b)
+
+
+@nativ
+funktion p125_modulo() -> u32:
+    gib_zurück als_wrap(u32, 0x100000001) + 0xFFFFFFFF
+
+@nativ
+funktion p125_maxprodukt() -> bool:
+    setze wert: BreitesProdukt auf mul_add_breit(0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF)
+    gib_zurück wert.niedrig == 0xFFFFFFFFFFFFFFFF und wert.hoch == 0xFFFFFFFFFFFFFFFF
+
+@nativ
+@liest(1)
+@liest(2)
+funktion p125_lesevergleich(a: puffer[u8], b: puffer[u8]) -> bool:
+    gib_zurück ct_equal(a, b)
+
+@nativ
+funktion p125_byteblock() -> bool:
+    setze a: [u8; 4] auf [255, 7, 9, 3]
+    setze b: [u8; 4] auf [255, 7, 9, 3]
+    wenn nicht p125_lesevergleich(byteansicht(a), byteansicht(b)):
+        gib_zurück falsch
+    setze b[3] auf 4
+    wenn ct_equal(byteansicht(a), byteansicht(b)):
+        gib_zurück falsch
+    loeschen_sicher(byteansicht(a))
+    gib_zurück a[0] == 0 und a[1] == 0 und a[2] == 0 und a[3] == 0
+
+zeige p125_modulo()
+zeige p125_rol32(1, 32)
+zeige p125_ror64(8, 65)
+zeige p125_hi64(0x100000000, 0x100000000)
+zeige p125_carry8(255, 1)
+zeige p125_eq32(99, 99)
+zeige p125_sel16(wahr, 7, 8)
+zeige p125_sel16(falsch, 7, 8)
+zeige p125_maxprodukt()
+zeige p125_byteblock()

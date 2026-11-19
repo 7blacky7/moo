@@ -1,5 +1,4 @@
 //! LLVM-Bausteine fuer native Integer-Arithmetik (P2-T11).
-//! Noch nicht an den nativen Ausdrucks- oder Fehlerpfad angebunden.
 //! Der Aufrufer muss fuer Div/Rem/Shift einen Fehlerblock derselben Funktion
 //! uebergeben. Dieser Block muss den jeweiligen Fehlervertrag umsetzen und darf
 //! nicht zur ungueltigen LLVM-Operation zurueckfallen.
@@ -768,4 +767,130 @@ pub(crate) fn cast<'ctx>(
         return NValue::checked(context, target, narrowed.into());
     }
     Err(format!("Konversion {source:?} -> {target:?} ist nicht definiert"))
+}
+
+
+/// P2-T125: Bitoperationen mit totaler Zaehler-/Modulo-Semantik. Die
+/// bestehenden +,-,* und als_wrap bleiben unveraendert.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BitArt { Links, Rechts, MulHoch, AddUebertrag, Gleich, Auswahl }
+
+impl BitArt {
+    pub(crate) fn daten_index(self) -> usize { usize::from(self == Self::Auswahl) }
+    pub(crate) fn liefert_bool(self) -> bool { matches!(self, Self::AddUebertrag | Self::Gleich) }
+    pub(crate) fn aritaet(self) -> usize { if self == Self::Auswahl { 3 } else { 2 } }
+}
+
+pub(crate) fn bit_art(name: &str) -> Option<BitArt> {
+    Some(match name {
+        "rotieren_links" | "rotate_left" => BitArt::Links,
+        "rotieren_rechts" | "rotate_right" => BitArt::Rechts,
+        "mul_hoch" | "mul_high" => BitArt::MulHoch,
+        "add_uebertrag" | "add_carry" => BitArt::AddUebertrag,
+        "konstantzeit_gleich" | "ct_equal" => BitArt::Gleich,
+        "konstantzeit_auswahl" | "ct_select" => BitArt::Auswahl,
+        _ => return None,
+    })
+}
+
+pub(crate) fn bit_operation<'ctx>(
+    context: &'ctx Context, builder: &Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>, art: BitArt, args: &[NValue<'ctx>],
+) -> Result<NValue<'ctx>, String> {
+    if args.len() != art.aritaet() {
+        return Err(format!("Native Bitoperation erwartet {} Argumente", art.aritaet()));
+    }
+    let data = &args[art.daten_index()];
+    let width = int_width(data.ty).ok_or("Native Bitoperation braucht einen Ganzzahltyp i8..u64")?;
+    if args.iter().any(|v| v.value.get_type() != v.ty.llvm_type(context)) {
+        return Err("Bitoperation: LLVM-Wert passt nicht zum Quelltyp".into());
+    }
+    let a = data.value.into_int_value();
+    if art == BitArt::Auswahl {
+        if args[0].ty != NType::Bool || args[2].ty != data.ty {
+            return Err("konstantzeit_auswahl(bedingung, a, b) braucht bool und zwei gleiche Ganzzahltypen".into());
+        }
+        let i64t = context.i64_type();
+        let extend = |v| if width == 64 { Ok(v) } else {
+            builder.build_int_z_extend(v, i64t, "ct.extend").map_err(|e| e.to_string())
+        };
+        let a = extend(a)?;
+        let b = extend(args[2].value.into_int_value())?;
+        let mask = builder.build_int_s_extend(args[0].value.into_int_value(), i64t, "ct.mask")
+            .map_err(|e| e.to_string())?;
+        let triple = module.get_triple();
+        let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
+        // Die opaque Barriere verhindert auch nach Inlining, dass LLVM die
+        // Auswahl in geheimnisabhaengigen Kontrollfluss umformt.
+        let (code, constraints) = if triple.starts_with("x86_64") {
+            ("xor $2, $0\nand $3, $0\nxor $2, $0", "=&r,0,r,r,~{flags}")
+        } else if triple.starts_with("aarch64") || triple.starts_with("arm64") {
+            ("eor $0, $1, $2\nand $0, $0, $3\neor $0, $0, $2", "=&r,r,r,r")
+        } else {
+            return Err(format!("konstantzeit_auswahl: Ziel '{triple}' ist noch nicht freigegeben (x86_64/AArch64)"));
+        };
+        let ty = i64t.fn_type(&[i64t.into(), i64t.into(), i64t.into()], false);
+        let asm = context.create_inline_asm(ty, code.into(), constraints.into(), true, false, None, false);
+        let call = builder.build_indirect_call(ty, asm, &[a.into(), b.into(), mask.into()], "ct.select")
+            .map_err(|e| e.to_string())?;
+        let value = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+            _ => return Err("Konstantzeit-Auswahl ohne Ergebnis".into()),
+        };
+        let value = if width == 64 { value } else {
+            builder.build_int_truncate(value, data.value.into_int_value().get_type(), "ct.result")
+                .map_err(|e| e.to_string())?
+        };
+        return NValue::checked(context, data.ty, value.into());
+    }
+    let count_width = int_width(args[1].ty).ok_or("Bitoperation braucht ganzzahlige Operanden")?;
+    let b = args[1].value.into_int_value();
+    if matches!(art, BitArt::Links | BitArt::Rechts) {
+        let count = if count_width < width {
+            builder.build_int_z_extend(b, a.get_type(), "rotate.count").map_err(|e| e.to_string())?
+        } else if count_width > width {
+            builder.build_int_truncate(b, a.get_type(), "rotate.count").map_err(|e| e.to_string())?
+        } else { b };
+        let name = if art == BitArt::Links { "llvm.fshl" } else { "llvm.fshr" };
+        let intrinsic = inkwell::intrinsics::Intrinsic::find(name).ok_or("LLVM-Funnelshift fehlt")?;
+        let function = intrinsic.get_declaration(module, &[a.get_type().into()])
+            .ok_or("LLVM-Rotationssignatur fehlt")?;
+        let call = builder.build_call(function, &[a.into(), a.into(), count.into()], "native.rotate")
+            .map_err(|e| e.to_string())?;
+        let value = match call.try_as_basic_value() {
+            inkwell::values::ValueKind::Basic(v) => v,
+            _ => return Err("Rotation ohne Ergebnis".into()),
+        };
+        return NValue::checked(context, data.ty, value);
+    }
+    if args[1].ty != data.ty {
+        return Err("Native Bitoperation braucht zwei gleiche Ganzzahltypen".into());
+    }
+    match art {
+        BitArt::Gleich => {
+            let equal = builder.build_int_compare(IntPredicate::EQ, a, b, "ct.equal").map_err(|e| e.to_string())?;
+            NValue::checked(context, NType::Bool, equal.into())
+        }
+        BitArt::AddUebertrag | BitArt::MulHoch if data.ty.is_signed_integer() =>
+            Err("mul_hoch/add_uebertrag erwarten vorzeichenlose Ganzzahlen u8/u16/u32/u64".into()),
+        BitArt::AddUebertrag => {
+            let sum = builder.build_int_add(a, b, "carry.sum").map_err(|e| e.to_string())?;
+            let carry = builder.build_int_compare(IntPredicate::ULT, sum, a, "carry.bit").map_err(|e| e.to_string())?;
+            NValue::checked(context, NType::Bool, carry.into())
+        }
+        BitArt::MulHoch => {
+            let wide = context.custom_width_int_type(
+                std::num::NonZeroU32::new(width * 2).ok_or("Ungueltige Produktbreite")?,
+            )?;
+            let a = builder.build_int_z_extend(a, wide, "mul.wide.a").map_err(|e| e.to_string())?;
+            let b = builder.build_int_z_extend(b, wide, "mul.wide.b").map_err(|e| e.to_string())?;
+            let product = builder.build_int_mul(a, b, "mul.wide").map_err(|e| e.to_string())?;
+            let high = builder.build_right_shift(product, wide.const_int(width.into(), false), false, "mul.high")
+                .map_err(|e| e.to_string())?;
+            let value = builder.build_int_truncate(high, data.value.into_int_value().get_type(), "mul.high.word")
+                .map_err(|e| e.to_string())?;
+            NValue::checked(context, data.ty, value.into())
+        }
+        _ => Err("Interne Bitoperationsart".into()),
+    }
 }

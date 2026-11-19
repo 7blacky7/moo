@@ -5,3 +5,112 @@ run = "bash test.sh"
 [tasks.test-bare]
 description = "P2-T73: Bare-Laufzeitnachweis der nativen Zahlen/Casts/bool (Multiboot-Kernel in QEMU ueber scripts/kernel-smoke.sh, Trap-Vertrag per Negativmarker)"
 run = "bash bare.sh"
+
+
+
+
+[tasks.tcp-sequenz]
+description = "P2-T125: echte TCP-Sequenzfunktionen gegen unsigned C++-Orakel"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t125-tcp
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+"$compiler" compile beispiele/kernel/uefi_kern.moos --no-stdlib --target x86_64-bare --emit-ir -o "$out/kernel.ll"
+mise exec -- llvm-extract -S --recursive --func=__moo_native.tcp_abstand --func=__moo_native.tcp_addieren "$out/kernel.ll" -o "$out/tcp.ll"
+mise exec -- opt -O3 -S "$out/tcp.ll" -o "$out/tcp.o3.ll"
+mise exec -- llc -O3 -relocation-model=pic -filetype=obj "$out/tcp.o3.ll" -o "$out/tcp.o"
+${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror compiler/tests/p2/p125_tcp_probe.cpp "$out/tcp.o" -o "$out/probe"
+"$out/probe"
+'''
+
+[tasks.crypto]
+description = "P2-T125: breite Produkte, CT-Bytes, Wipe, RFC/NIST und CF gegen C-Provider"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t125-crypto
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/p125_crypto.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --recursive --rfunc='^(__moo_native[.]p125_|__moo_ct_bytes|__moo_secure_zero)' "$out/$target.ll" -o "$out/$target.extract.ll"
+    for level in 2 3; do
+        mise exec -- opt -O"$level" -S "$out/$target.extract.ll" -o "$out/$target.o$level.ll"
+        mise exec -- llc -O"$level" -relocation-model=pic -filetype=obj "$out/$target.o$level.ll" -o "$out/$target.o$level.o"
+        mise exec -- llvm-objdump -d "$out/$target.o$level.o" > "$out/$target.o$level.asm"
+        # Das tote lokale Geheimnis wird weiter fluechtig geloescht.
+        rg -q 'store volatile i8 0' "$out/$target.o$level.ll"
+    done
+done
+"$compiler" compile compiler/tests/p2/p125_rng.moos --no-stdlib --target x86_64-bare --emit-ir -o "$out/rng.ll"
+mise exec -- opt -passes=verify -disable-output "$out/rng.ll"
+mise exec -- llvm-extract -S --recursive --rfunc='^(__moo_native[.]p125_|__moo_rd)' "$out/rng.ll" -o "$out/rng.extract.ll"
+mise exec -- opt -O3 -S "$out/rng.extract.ll" -o "$out/rng.o3.ll"
+mise exec -- llc -O3 -relocation-model=pic -filetype=obj "$out/rng.o3.ll" -o "$out/rng.o"
+mise exec -- llvm-objdump -d "$out/rng.o" > "$out/rng.asm"
+rg -q rdrand "$out/rng.asm"
+rg -q rdseed "$out/rng.asm"
+for source in moo_krypto moo_krypto_chacha; do
+    ${CC:-cc} -std=c11 -O2 -ffunction-sections -fdata-sections -Icompiler/runtime -c "compiler/runtime/$source.c" -o "$out/$source.o"
+done
+${CC:-cc} -std=c11 -O2 -ffunction-sections -fdata-sections -c compiler/runtime/monocypher/monocypher.c -o "$out/monocypher.o"
+${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wl,--gc-sections compiler/tests/p2/p125_crypto_probe.cpp "$out/x86_64-bare.o3.o" "$out/rng.o" "$out/moo_krypto.o" "$out/moo_krypto_chacha.o" "$out/monocypher.o" -o "$out/probe"
+"$out/probe"
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    for level in 2 3; do "$out/probe" --ct-ir "$out/$target.o$level.ll"; done
+done
+for cf in 0 1; do
+    "$out/probe" --rng-model-ir "$out/rng.extract.ll" "$out/rng.model$cf.ll" "$cf"
+    mise exec -- opt -O3 -S "$out/rng.model$cf.ll" -o "$out/rng.model$cf.o3.ll"
+    mise exec -- llc -O3 -relocation-model=pic -filetype=obj "$out/rng.model$cf.o3.ll" -o "$out/rng.model$cf.o"
+    ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror -Wl,--gc-sections compiler/tests/p2/p125_crypto_probe.cpp "$out/x86_64-bare.o3.o" "$out/rng.model$cf.o" "$out/moo_krypto.o" "$out/moo_krypto_chacha.o" "$out/monocypher.o" -o "$out/probe.model$cf"
+    "$out/probe.model$cf" --rng-model "$cf"
+done
+
+for entry in 'p125_wipe_liest:liest' 'p125_rng_unsafe:M-M005' 'p125_mul_signed:vorzeichenlose' 'p125_bytes_falsch:u8'; do
+    source=${entry%:*}
+    diagnostic=${entry#*:}
+    if "$compiler" compile "compiler/tests/p2/$source.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/$source.ll" > "$out/$source.log" 2>&1; then
+        echo "FAIL unerlaubtes Primitive akzeptiert: $source"; exit 1
+    fi
+    rg -qi "$diagnostic" "$out/$source.log"
+done
+if "$compiler" compile compiler/tests/p2/p125_rng.moos --no-stdlib --target aarch64-bare --emit-ir -o "$out/rng-arm.ll" > "$out/rng-arm.log" 2>&1; then
+    echo 'FAIL x86-RNG auf AArch64 akzeptiert'; exit 1
+fi
+rg -q x86_64 "$out/rng-arm.log"
+echo 'PASS P125 Typ-/Leih-/Unsicher-/Architektur-Diagnosen'
+'''
+
+[tasks.bitops]
+description = "P2-T125: Rotation, MulHigh, Carry und CT-Auswahl in Pure/System/Hardware"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t125-bits
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/p125_bits.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --rfunc='^__moo_native[.]p125_' "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- opt -O3 -S "$out/$target.extract.ll" -o "$out/$target.o3.ll"
+    mise exec -- llc -O3 -relocation-model=pic -filetype=obj "$out/$target.o3.ll" -o "$out/$target.o"
+    mise exec -- llvm-objdump -d "$out/$target.o" > "$out/$target.asm"
+done
+${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror compiler/tests/p2/p125_bits_probe.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+# Die skalaren CT-/Carry-/Rotationsfunktionen haben weder Loops noch
+# oeffentliche Guards: jeder bedingte Sprung waere hier ein Fehler.
+if rg -q '\s(j[a-ln-z][a-z]*|loop[a-z]*|b\.[a-z]+|cbz|cbnz|tbz|tbnz)\s' "$out/x86_64-bare.asm" "$out/aarch64-bare.asm"; then
+    echo 'FAIL datenabhaengiger Sprung in skalaren Bitprimitiven'; exit 1
+fi
+if "$compiler" compile compiler/tests/p2/p125_bits_falsch.moos --no-stdlib --target x86_64-bare --emit-ir -o "$out/falsch.ll" > "$out/falsch.log" 2>&1; then
+    echo 'FAIL falscher CT-Flagtyp akzeptiert'; exit 1
+fi
+rg -qi 'bool' "$out/falsch.log"
+echo 'PASS P125 Bits: drei Ziele, O3-IR/ASM ohne bedingte Spruenge, Typdiagnose'
+'''

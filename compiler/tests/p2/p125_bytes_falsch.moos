@@ -1,0 +1,3 @@
+@nativ
+funktion p125_unzulaessig(a: puffer[u16], b: puffer[u16]) -> bool:
+    gib_zurück ct_equal(a, b)

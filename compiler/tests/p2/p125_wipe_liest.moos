@@ -1,0 +1,4 @@
+@nativ
+@liest(1)
+funktion p125_unzulaessig(p: puffer[u8]) -> void:
+    loeschen_sicher(p)

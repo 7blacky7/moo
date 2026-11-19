@@ -2038,7 +2038,9 @@ impl<'ctx> CodeGen<'ctx> {
             use inkwell::values::AsValueRef;
             let shield_kinds = ["optnone", "noinline"].map(Attribute::get_named_enum_kind_id);
             // (Funktion, je Attribut: von uns gesetzt?) — nur eigene Attribute werden entfernt.
-            let mut shielded: Vec<(FunctionValue<'ctx>, [bool; 2])> = Vec::new();
+            // O2 darf unbenutzte interne Helfer loeschen. LLVM-Handles
+            // ueber die Pass-Pipeline hinweg waeren danach ungueltig.
+            let mut shielded: Vec<(String, [bool; 2])> = Vec::new();
             if hosted_x86_system {
                 let native: std::collections::HashSet<_> = self.native_functions.values()
                     .map(|f| f.as_value_ref()).collect();
@@ -2051,16 +2053,18 @@ impl<'ctx> CodeGen<'ctx> {
                             added[i] = true;
                         }
                     }
-                    shielded.push((fun, added));
+                    shielded.push((fun.get_name().to_str().map_err(|e| e.to_string())?.to_owned(), added));
                 }
             }
             self.module.verify()
                 .map_err(|e| format!("LLVM-IR vor O2 ungueltig: {e}"))?;
             self.module.run_passes("default<O2>", &machine, PassBuilderOptions::create())
                 .map_err(|e| format!("LLVM-IR-Optimierung fehlgeschlagen: {e}"))?;
-            for (fun, added) in &shielded {
-                for (i, kind) in shield_kinds.iter().enumerate() {
-                    if added[i] { fun.remove_enum_attribute(AttributeLoc::Function, *kind); }
+            for (name, added) in &shielded {
+                if let Some(fun) = self.module.get_function(name) {
+                    for (i, kind) in shield_kinds.iter().enumerate() {
+                        if added[i] { fun.remove_enum_attribute(AttributeLoc::Function, *kind); }
+                    }
                 }
             }
             self.module.verify()
