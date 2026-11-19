@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Native/Moo vs C benchmark; fails closed while native lowering is incomplete.
+# Last 'suite' (P2-T54): gepaarter Vergleich der sieben nativen Lasten.
 # Last 'summe' (Standard, P2-T30): i64-Schleife nativ vs C -> result.json.
 # Last 'puffer' (P2-T15/T50 C4, Plan bb3878ef): 10^7 f32 fuellen (i % 1024) und
 # in f64 summieren, nativ ueber puffer[f32] vs dynamische Moo-Liste vs C
@@ -7,6 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 last=${1:-summe}
+if [[ $last == suite ]]; then
+    exec bash skripte/p2/bench/native_suite.sh
+fi
 case $last in
     summe)
         out=build/p2-bench/native; pruef=49999995000000; seiten=(c moo)
@@ -17,7 +21,7 @@ case $last in
         c_src=compiler/tests/p2/native_puffer_bench.c; moo_src=compiler/tests/p2/native_puffer_bench.moos
         liste_src=compiler/tests/p2/native_puffer_bench_liste.moos
         note="10^7 f32 fill+f64 sum; storage allocated outside the interval on all sides; Moo interval includes one dynamic/native entry with buffer pin, list side is purely dynamic, C interval includes one function call; process startup excluded" ;;
-    *) echo "Unbekannte Last '$last' (summe|puffer)" >&2; exit 2 ;;
+    *) echo "Unbekannte Last '$last' (summe|puffer|suite)" >&2; exit 2 ;;
 esac
 mkdir -p "$out"
 tmp=$(mktemp -d "$out/run.XXXXXXXX")

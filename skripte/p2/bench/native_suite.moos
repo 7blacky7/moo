@@ -1,0 +1,81 @@
+# P2-T54: typisierte Kerne mit derselben x86-64-C-ABI wie native_suite_ref.c.
+# Der Messrahmen stellt ausreichend große, getrennte Eingabe- und Ausgabepuffer.
+
+struktur Punkt:
+    x: f64
+    y: f64
+
+extern "C" funktion moo_noise_perlin2(seed: i32, x: f32, y: f32) -> f32
+
+@nativ
+@einstieg
+funktion p2_moo_summe(werte: ptr[u64], n: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        setze summe: u64 auf 0
+        solange i < n:
+            setze summe auf summe + werte[i]
+            setze i auf i + 1
+        gib_zurück summe
+
+@nativ
+@einstieg
+funktion p2_moo_vektor(a: ptr[f32], b: ptr[f32], ausgabe: ptr[f32], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            ausgabe[i] = a[i] + b[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+funktion p2_moo_matrix(m: ptr[f32], v: ptr[f32], ausgabe: ptr[f32], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            setze anfang: u64 auf i * 4
+            setze zeile: u64 auf 0
+            solange zeile < 4:
+                ausgabe[anfang + zeile] = m[zeile] * v[anfang] + m[4 + zeile] * v[anfang + 1] + m[8 + zeile] * v[anfang + 2] + m[12 + zeile] * v[anfang + 3]
+                setze zeile auf zeile + 1
+            setze i auf i + 1
+
+@nativ
+@einstieg
+funktion p2_moo_fuellen(ausgabe: ptr[f32], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            ausgabe[i] = als(f32, i % 100)
+            setze i auf i + 1
+
+@nativ
+@einstieg
+funktion p2_moo_objekte(punkte: ptr[Punkt], n: u64) -> f64:
+    unsicher:
+        setze i: u64 auf 0
+        setze summe: f64 auf 0.0
+        solange i < n:
+            setze punkt: Punkt auf punkte[i]
+            setze summe auf summe + (punkt.x + punkt.y)
+            setze i auf i + 1
+        gib_zurück summe
+
+@nativ
+@einstieg
+funktion p2_moo_betrag(wert: f64) -> f64:
+    wenn wert < 0.0:
+        gib_zurück 0.0 - wert
+    gib_zurück wert
+
+@nativ
+@einstieg
+funktion p2_moo_rauschen(koordinaten: ptr[f32], ausgabe: ptr[f32], seed: i32, breite: u64) -> void:
+    unsicher:
+        setze y: u64 auf 0
+        solange y < breite:
+            setze x: u64 auf 0
+            solange x < breite:
+                ausgabe[y * breite + x] = moo_noise_perlin2(seed, koordinaten[x], koordinaten[y])
+                setze x auf x + 1
+            setze y auf y + 1
