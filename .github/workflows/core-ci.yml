@@ -253,6 +253,7 @@ jobs:
           mise -C skripte/p2/zahlen run bitops 2>&1 | tee p125-bits-ci.log
           mise -C skripte/p2/zahlen run crypto 2>&1 | tee p125-crypto-ci.log
           mise -C skripte/p2/zahlen run tcp-sequenz 2>&1 | tee p125-tcp-ci.log
+          mise -C skripte/p2/zahlen run modulo-codegen 2>&1 | tee p127-modulo-ci.log
 
       - name: Check failed system thread starts
         shell: bash

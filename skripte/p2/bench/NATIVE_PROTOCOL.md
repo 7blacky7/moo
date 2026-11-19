@@ -1,8 +1,54 @@
 # P2-T54: native Vergleichsmessungen
 
-Das Leistungsziel **≤ 1,3× C** steht als Vorschlag zur Abstimmung. Die
-Auswertung zeigt den Quotienten je Last. Eine Zielüberschreitung wird als
-Messergebnis protokolliert.
+Das freigegebene Leistungsziel ist **≤ 1,30× C -O2 je Last**, gegen GCC
+und Clang, jeweils auf CPU 28 und CPU 0. Grundlage ist der Zielentscheid
+zu P2-T54/P2-T127 vom 19.11.2026. Maßgeblich sind fünf alternierende
+Paare mit bytegleichen Ergebnissen; die Auswertung zeigt jeden Quotienten.
+Eine Zielüberschreitung bleibt ein sichtbarer Messbefund. Die historischen
+JSON-Feldnamen `pending_proposed_limit` und `meets_proposed_limit` bleiben
+für bestehende Auswerter erhalten; die Grenze ist inzwischen freigegeben.
+
+## P2-T127: Restberechnung nach dem Entrollen
+
+Die Compiler-Kanonisierung nutzt für konstantes unsigned `d != 0` und
+`c & !((d & -d) - 1) == 0` die Identität
+`(x | c) % d == (x % d) | c`. Gemeinsame Teilausdrücke werden danach mit
+EarlyCSE zusammengeführt. Signed-Rest, dynamische Teiler und nicht passende
+Masken bleiben unverändert. Pointer-Alignment und Inbounds-Annahmen bleiben
+unverändert. Das Testziel `mise -C skripte/p2/zahlen run modulo-codegen`
+prüft 108.195 C++-Orakelfälle, drei echte Compiler-Objektziele und einen
+einzigen Rest im skalaren x86-Paar.
+
+Drei vollständige Wiederholungen auf dem lokalen Messrechner, jeweils fünf
+alternierende C/Moo-Paare je Last, ergeben folgende Medianquotienten
+(Moo/C, Minimum bis Maximum der drei Suite-Läufe):
+
+| CPU | C-Compiler | Füllen | Rauschen |
+| --- | --- | --- | --- |
+| 28 | Clang | 0,901–0,953 | 0,998–1,068 |
+| 0 | Clang | 0,888–0,932 | 0,907–1,145 |
+| 28 | GCC | 0,607–0,658 | 0,976–1,045 |
+| 0 | GCC | 0,647–0,796 | 0,886–1,054 |
+
+Alle 84 Lastquotienten liegen bei höchstens 1,283; alle Ergebnisbytes sind
+identisch. Die Füllen-Ausgangsmessung desselben Protokolls lag gegen Clang
+bei 1,559 (CPU 28) und 1,662 (CPU 0). Quellen von Rechenkern, C-Referenz und
+Messrahmen sind unverändert. Compiler-SHA256:
+`476074b6a7b5fb8d3d9283f9006853bc7536a3dc48e4a0157576ed006b26fac5`.
+
+Der historische Rauschen/GCC-Ausreißer von 1,35 auf CPU 0 ist in den drei
+Wiederholungen nicht reproduzierbar. Der Moo-Rauschen-Maschinencode vor und
+nach der Änderung ist identisch. Zusammen mit der Streuung der Rohwerte
+spricht das für Messrauschen; eine Codegen-Verbesserung für Rauschen wird
+daraus nicht abgeleitet.
+
+Lokale Rohbelege: `build/p2-t127/matrix-v2-full.json`,
+`matrix-v2-summary.json`, `basis.json` und `gates/*rauschen*.asm`.
+Die einzelnen Suite-Verzeichnisse liegen im isolierten Prüfstand
+`build/p2-t127/gate/build/p2-bench/native-suite/run.*/`.
+Synapse-Testjobs: `0d19a3f5` (12 Suites), `f8d1d94c` (Auswertung),
+`2c04f88f` (Rauschen-ASM), `1d24796c` (Modulo-Gate).
+
 
 ```bash
 CARGO_TARGET_DIR=/home/blacky/dev/moo/build/p7-t25/target \

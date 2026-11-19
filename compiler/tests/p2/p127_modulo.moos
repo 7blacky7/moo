@@ -1,0 +1,110 @@
+# P2-T127: allgemeine Modulo-Identitaet, Gegenbeispiele und unaligned Fuellen.
+
+@nativ
+@einstieg
+funktion p127_case_0(x: u8) -> u8:
+    gib_zurück (x % 6) + ((x | 1) % 6)
+
+@nativ
+@einstieg
+funktion p127_case_1(x: u8) -> u8:
+    gib_zurück (x % 12) + ((x | 3) % 12)
+
+@nativ
+@einstieg
+funktion p127_case_2(x: u8) -> u8:
+    gib_zurück (x % 100) + ((x | 1) % 100)
+
+@nativ
+@einstieg
+funktion p127_case_3(x: u8) -> u8:
+    gib_zurück (x % 192) + ((x | 63) % 192)
+
+@nativ
+@einstieg
+funktion p127_case_4(x: u8) -> u8:
+    gib_zurück (x % 100) + ((x | 4) % 100)
+
+@nativ
+@einstieg
+funktion p127_case_5(x: u8) -> u8:
+    gib_zurück (x % 99) + ((x | 1) % 99)
+
+@nativ
+@einstieg
+funktion p127_case_6(x: u16) -> u16:
+    gib_zurück (x % 100) + ((x | 3) % 100)
+
+@nativ
+@einstieg
+funktion p127_case_7(x: u16) -> u16:
+    gib_zurück (x % 768) + ((x | 255) % 768)
+
+@nativ
+@einstieg
+funktion p127_case_8(x: u16) -> u16:
+    gib_zurück (x % 1024) + ((x | 511) % 1024)
+
+@nativ
+@einstieg
+funktion p127_case_9(x: u32) -> u32:
+    gib_zurück (x % 120) + ((x | 7) % 120)
+
+@nativ
+@einstieg
+funktion p127_case_10(x: u32) -> u32:
+    gib_zurück (x % 1000) + ((x | 7) % 1000)
+
+@nativ
+@einstieg
+funktion p127_case_11(x: u32) -> u32:
+    gib_zurück (x % 4294967280) + ((x | 15) % 4294967280)
+
+@nativ
+@einstieg
+funktion p127_case_12(x: u32) -> u32:
+    gib_zurück (x % 100) + ((x | 7) % 100)
+
+@nativ
+@einstieg
+funktion p127_pair64(x: u64) -> u64:
+    gib_zurück (x % 100) + ((x | 1) % 100)
+
+@nativ
+@einstieg
+funktion p127_case_14(x: u64) -> u64:
+    gib_zurück (x % 100) + ((x | 3) % 100)
+
+@nativ
+@einstieg
+funktion p127_case_15(x: u64) -> u64:
+    gib_zurück (x % 9223372036854775808) + ((x | 4611686018427387905) % 9223372036854775808)
+
+@nativ
+@einstieg
+funktion p127_case_16(x: u64) -> u64:
+    gib_zurück (x % 99) + ((x | 1) % 99)
+
+@nativ
+@einstieg
+funktion p127_signed64(x: i64) -> i64:
+    gib_zurück (x % 100) + ((x | 1) % 100)
+
+@nativ
+@einstieg
+funktion p127_variable_mask(x: u64, maske: u64) -> u64:
+    gib_zurück (x % 100) + ((x | maske) % 100)
+
+@nativ
+@einstieg
+funktion p127_variable_divisor(x: u64, teiler: u64) -> u64:
+    gib_zurück (x % teiler) + ((x | 1) % teiler)
+
+@nativ
+@einstieg
+funktion p127_fuellen(ziel: ptr[f32], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < n:
+            setze ziel[i] auf als(f32, i % 100)
+            setze i auf i + 1

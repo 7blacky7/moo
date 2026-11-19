@@ -1,0 +1,20 @@
+# P2-T127: dieselben Modulo-Grenzen auch im Hosted-Core-Lauf.
+importiere "../p2/p127_modulo"
+
+@nativ
+funktion p127_kerncheck() -> bool:
+    wenn p127_pair64(0xFFFFFFFFFFFFFFFF) != 30:
+        gib_zurück falsch
+    wenn p127_signed64(-100) != -99:
+        gib_zurück falsch
+    wenn p127_case_4(96) != 96:
+        gib_zurück falsch
+    wenn p127_case_5(98) != 98:
+        gib_zurück falsch
+    wenn p127_variable_mask(96, 4) != 96:
+        gib_zurück falsch
+    wenn p127_variable_divisor(199, 99) != 2:
+        gib_zurück falsch
+    gib_zurück wahr
+
+zeige p127_kerncheck()

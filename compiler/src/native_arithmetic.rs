@@ -894,3 +894,62 @@ pub(crate) fn bit_operation<'ctx>(
         _ => Err("Interne Bitoperationsart".into()),
     }
 }
+
+
+/// P2-T127: konstantes unsigned Modulo durch niederwertiges OR ziehen.
+/// Ist d ein Vielfaches von 2^k und c < 2^k, gilt fuer jedes x:
+///     (x | c) % d == (x % d) | c.
+/// Denn Modulo d erhaelt die unteren k Bits; OR kann innerhalb dieses
+/// Blocks weder tragen noch die Quotientengrenze erreichen. Das gilt auch
+/// ohne disjoint-/nuw-Annahme und fuer alle Integer-Bitmuster. So kann CSE
+/// entrollte Nachbarn zusammenfassen, bevor LoopStrengthReduce getrennte
+/// Induktionsvariablen bildet. Keine Aenderung an signed Rest/Fehlerpfaden.
+pub(crate) fn konstante_reste_kanonisieren<'ctx>(
+    context: &'ctx Context, module: &inkwell::module::Module<'ctx>,
+) -> Result<usize, String> {
+    use inkwell::attributes::{Attribute, AttributeLoc};
+    use inkwell::values::{BasicValue, BasicValueEnum, InstructionOpcode, InstructionValue, IntValue};
+    fn operand<'ctx>(inst: InstructionValue<'ctx>, index: u32) -> Option<IntValue<'ctx>> {
+        match inst.get_operand(index)?.value()? {
+            BasicValueEnum::IntValue(value) => Some(value),
+            _ => None,
+        }
+    }
+    let builder = context.create_builder();
+    let optnone = Attribute::get_named_enum_kind_id("optnone");
+    let mut changed = 0;
+    for function in module.get_functions() {
+        // Die bestehende Hosted-Abschirmung des dynamischen Pfads respektieren.
+        if function.get_enum_attribute(AttributeLoc::Function, optnone).is_some() { continue; }
+        for block in function.get_basic_blocks() {
+            let mut next = block.get_first_instruction();
+            while let Some(rem) = next {
+                next = rem.get_next_instruction();
+                if rem.get_opcode() != InstructionOpcode::URem { continue; }
+                let (Some(dividend), Some(divisor)) = (operand(rem, 0), operand(rem, 1)) else { continue; };
+                // get_zero_extended_constant ist fuer unsere Skalarbreiten exakt.
+                if dividend.get_type().get_bit_width() > 64 { continue; }
+                let Some(d) = divisor.get_zero_extended_constant().filter(|d| *d != 0) else { continue; };
+                let Some(or) = dividend.as_instruction_value().filter(|i| i.get_opcode() == InstructionOpcode::Or) else { continue; };
+                let (Some(a), Some(b)) = (operand(or, 0), operand(or, 1)) else { continue; };
+                let (source, mask, c) = if let Some(c) = b.get_zero_extended_constant() {
+                    (a, b, c)
+                } else if let Some(c) = a.get_zero_extended_constant() {
+                    (b, a, c)
+                } else { continue; };
+                let low_mask = (d & d.wrapping_neg()).wrapping_sub(1);
+                if c == 0 || c & !low_mask != 0 { continue; }
+                builder.position_before(&rem);
+                let base = builder.build_int_unsigned_rem(source, divisor, "native.rem.base")
+                    .map_err(|e| e.to_string())?;
+                let folded = builder.build_or(base, mask, "native.rem.low")
+                    .map_err(|e| e.to_string())?;
+                let replacement = folded.as_instruction_value().ok_or("Modulo-OR ohne Instruktion")?;
+                rem.replace_all_uses_with(&replacement);
+                rem.erase_from_basic_block();
+                changed += 1;
+            }
+        }
+    }
+    Ok(changed)
+}

@@ -9,6 +9,30 @@ run = "bash bare.sh"
 
 
 
+
+[tasks.modulo-codegen]
+description = "P2-T127: Modulo-Regel im tatsaechlichen Compiler-Objekt, Typ-/Align-Randwerte"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t127-modulo
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile compiler/tests/p2/p127_modulo.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    # Der Fold laeuft nach O2 in write_object: kein externes opt/llc als Ersatz.
+    "$compiler" compile compiler/tests/p2/p127_modulo.moos --no-stdlib --target "$target" -o "$out/$target.raw.o"
+done
+mise exec -- llvm-objcopy --localize-symbol=main "$out/x86_64-bare.raw.o" "$out/x86_64-bare.o"
+${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror compiler/tests/p2/p127_modulo_probe.cpp "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+mise exec -- llvm-objdump -d --disassemble-symbols=p127_pair64 "$out/x86_64-bare.o" > "$out/paar.asm"
+# Konstantes 64-Bit-Modulo100 wird per breiter Multiplikation gesenkt.
+test "$(rg -c '[[:space:]]mulq[[:space:]]' "$out/paar.asm")" -eq 1
+echo 'PASS P127 ASM: ein Rest statt zwei im skalaren Paar'
+'''
+
 [tasks.tcp-sequenz]
 description = "P2-T125: echte TCP-Sequenzfunktionen gegen unsigned C++-Orakel"
 dir = "{{config_root}}/../../.."

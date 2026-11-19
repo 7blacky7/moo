@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "3f9e0e1d870aaac29145e4f6394706b5317bc55db9784779645b50bdb2753500",
+  "compiler_sha256": "476074b6a7b5fb8d3d9283f9006853bc7536a3dc48e4a0157576ed006b26fac5",
   "normalization": "module-header-root-v2",
-  "batch": "34868",
+  "batch": "34874",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "fe041e69f3c583e7cb23255cdce2ee8702f1f6e34aab8076d82582375ed25b83",
-  "snapshot_ref": "903b0886c952b1c898c26ca630c53a05f841927f",
+  "compiler_runtime_inventory_sha256": "81d3abbc4adb6931ccb9eb82b8a2952f9c19174db1da59fd6dd20b222517d590",
+  "snapshot_ref": "d8243d533b68252fdc511a71e72ed538bcf3e989",
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
@@ -692,8 +692,10 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "fbe9a493ae05d61eaef2f60685d4236b0c7c6619ae55d25b5d494ae886c730f2",
+    "sha256": "e00917346534e6dda7a9f481051f8fd1af32cfa85865beda61d9e48a33412069",
     "files": {
+      "compiler/tests/p2/p127_modulo.moos": "fcdfb46164a981936fc365c8a13a7ead431007e5a2290a08e34c7afd67f614ba",
+      "compiler/tests/regression/p2_native_modulo.moos": "8dc7456e3752fb672903b392f544c3483dcd41aea6920b5c48cec7be7b8dda7a",
       "compiler/tests/p2/p125_bits.moos": "c19d60f6224331c55afbc2aa158145ab7a3c313cf74485e6917eb1bd54f0eada",
       "compiler/tests/p2/p125_bits_falsch.moos": "262ca198a6fe1f361d03af49a47a297d21fb418ed1126905c10b59c1b02bfefc",
       "compiler/tests/p2/p125_bytes_falsch.moos": "93cf429c69f49ae0fbfdbc23230e436e421c3ce6d8b0e02c1389e3ec5f00c83c",

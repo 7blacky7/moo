@@ -2060,6 +2060,14 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| format!("LLVM-IR vor O2 ungueltig: {e}"))?;
             self.module.run_passes("default<O2>", &machine, PassBuilderOptions::create())
                 .map_err(|e| format!("LLVM-IR-Optimierung fehlgeschlagen: {e}"))?;
+            if crate::native_arithmetic::konstante_reste_kanonisieren(self.context, &self.module)? != 0 {
+                // Nach dem Entrollen gemeinsame Modulos zusammenfassen. Der
+                // dynamische Hosted-Pfad traegt noch seine optnone-Abschirmung.
+                // Kein zweites InstCombine: dessen disjoint-Markierung am
+                // Rest-OR laesst den Backendpfad wieder zwei Modulos bilden.
+                self.module.run_passes("function(early-cse)", &machine, PassBuilderOptions::create())
+                    .map_err(|e| format!("Native Modulo-Nachoptimierung fehlgeschlagen: {e}"))?;
+            }
             for (name, added) in &shielded {
                 if let Some(fun) = self.module.get_function(name) {
                     for (i, kind) in shield_kinds.iter().enumerate() {
