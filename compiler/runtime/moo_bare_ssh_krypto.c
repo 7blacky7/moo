@@ -7,6 +7,7 @@ enum {
     SSH_PACKET_MAX = 35000,
     SSH_TAG_BYTES = 16,
     SSH_KEY_BYTES = 64,
+    SSH_AUTH_PREFIX_MAX = 128,
 };
 
 /* Ein TCP-Slot. Hostkey und DRBG leben bis zum Ende des Laufprofils.
@@ -16,6 +17,7 @@ static uint8_t host_public[32];
 static uint8_t host_secret[64];
 static MooSha256Ctx exchange_hash;
 static uint8_t send_key[SSH_KEY_BYTES], recv_key[SSH_KEY_BYTES];
+static uint8_t session_id[32];
 static bool boot_ready, keys_ready;
 
 static uint8_t *bytes_at(uint64_t address)
@@ -69,6 +71,7 @@ void moo_bare_ssh_clear(void)
     crypto_wipe(&exchange_hash, sizeof(exchange_hash));
     crypto_wipe(send_key, sizeof(send_key));
     crypto_wipe(recv_key, sizeof(recv_key));
+    crypto_wipe(session_id, sizeof(session_id));
     keys_ready = false;
 }
 
@@ -149,6 +152,7 @@ uint64_t moo_bare_ssh_exchange(uint64_t q_client, uint64_t host_blob,
         hash_string(&exchange_hash, q_server, 32);
         moo_krypto_sha256_update(&exchange_hash, k, k_len);
         moo_krypto_sha256_final(&exchange_hash, h);
+        memcpy(session_id, h, sizeof(session_id));
         crypto_ed25519_sign(q_server + 32, host_secret, h, sizeof(h));
         derive_key(recv_key, k, k_len, h, 'C');
         derive_key(send_key, k, k_len, h, 'D');
@@ -227,23 +231,89 @@ uint64_t moo_bare_ssh_open(uint64_t address, uint64_t n, uint64_t sequence)
     return open_with_key(bytes_at(address), n, recv_key, nonce);
 }
 
-/* Vertragsprobe fuer die anschliessende Public-Key-Anmeldung. Der
- * Status der Signaturpruefung ist getrennt von Schluessel-Bytes. */
 typedef enum {
     SSH_CREDENTIAL_MISSING,
     SSH_CREDENTIAL_LOCKED,
     SSH_CREDENTIAL_ACTIVE,
 } CredentialState;
 
+static bool credential_key(CredentialState state,
+                           const uint8_t *stored, size_t stored_n,
+                           const uint8_t *offered, size_t offered_n)
+{
+    if (state != SSH_CREDENTIAL_ACTIVE || stored_n != 32 || offered_n != 32 ||
+        !stored || !offered)
+        return false;
+    return crypto_verify32(stored, offered) == 0;
+}
+
 static bool credential_matches(CredentialState state,
                                const uint8_t *stored, size_t stored_n,
                                const uint8_t *offered, size_t offered_n,
                                size_t signature_n, int verification)
 {
-    if (state != SSH_CREDENTIAL_ACTIVE || stored_n != 32 || offered_n != 32 ||
-        signature_n != 64 || verification != 0 || !stored || !offered)
+    if (signature_n != 64 || verification != 0)
         return false;
-    return crypto_verify32(stored, offered) == 0;
+    return credential_key(state, stored, stored_n, offered, offered_n);
+}
+
+/* Der unsignierte Test kann nur PK_OK ausloesen. */
+uint64_t moo_bare_ssh_key_erlaubt(uint64_t state, uint64_t stored, uint64_t offered)
+{
+    return state == SSH_CREDENTIAL_ACTIVE &&
+           credential_key(SSH_CREDENTIAL_ACTIVE, bytes_at(stored), 32, bytes_at(offered), 32);
+}
+
+/* RFC 4252 7. Das signierte Praefix endet unmittelbar vor dem Signatur-String. */
+static bool userauth(const uint8_t id[32], CredentialState state,
+                     const uint8_t *stored, const uint8_t *offered,
+                     const uint8_t *prefix, size_t prefix_n,
+                     const uint8_t *signature, size_t signature_n)
+{
+    if (state != SSH_CREDENTIAL_ACTIVE || !stored || !offered || !prefix ||
+        prefix_n == 0 || prefix_n > SSH_AUTH_PREFIX_MAX || !signature || signature_n != 64)
+        return false;
+
+    uint8_t signed_data[36 + SSH_AUTH_PREFIX_MAX];
+    put_u32be(signed_data, 32);
+    memcpy(signed_data + 4, id, 32);
+    memcpy(signed_data + 36, prefix, prefix_n);
+    const int rc = crypto_ed25519_check(signature, offered, signed_data, 36 + prefix_n);
+    crypto_wipe(signed_data, sizeof(signed_data));
+    return credential_matches(state, stored, 32, offered, 32, signature_n, rc);
+}
+
+uint64_t moo_bare_ssh_userauth(uint64_t state, uint64_t stored, uint64_t offered,
+                              uint64_t prefix, uint64_t prefix_n, uint64_t signature)
+{
+    return keys_ready && state == SSH_CREDENTIAL_ACTIVE &&
+           userauth(session_id, SSH_CREDENTIAL_ACTIVE, bytes_at(stored), bytes_at(offered),
+                    bytes_at(prefix), prefix_n, bytes_at(signature), 64);
+}
+
+static bool userauth_kat(void)
+{
+    const uint8_t id[32] = {0x4d}, other_session[32] = {0x53};
+    const uint8_t prefix[] = "moo-auth-kat";
+    uint8_t message[36 + sizeof(prefix) - 1] = {0, 0, 0, 32};
+    uint8_t seed[32] = {0x73}, public[32], secret[64], signature[64], altered[64];
+
+    memcpy(message + 4, id, sizeof(id));
+    memcpy(message + 36, prefix, sizeof(prefix) - 1);
+    crypto_ed25519_key_pair(secret, public, seed);
+    crypto_ed25519_sign(signature, secret, message, sizeof(message));
+    crypto_wipe(secret, sizeof(secret));
+    crypto_wipe(seed, sizeof(seed));
+    memcpy(altered, signature, sizeof(altered));
+    altered[0] ^= 1;
+
+    const size_t n = sizeof(prefix) - 1;
+    return userauth(id, SSH_CREDENTIAL_ACTIVE, public, public, prefix, n, signature, 64) &&
+           !userauth(id, SSH_CREDENTIAL_ACTIVE, public, public, prefix, n, altered, 64) &&
+           !userauth(other_session, SSH_CREDENTIAL_ACTIVE, public, public, prefix, n, signature, 64) &&
+           !userauth(id, SSH_CREDENTIAL_LOCKED, public, public, prefix, n, signature, 64) &&
+           !userauth(id, SSH_CREDENTIAL_ACTIVE, public, public, prefix, n, signature, 65) &&
+           !userauth(id, SSH_CREDENTIAL_ACTIVE, public, public, prefix, SIZE_MAX, signature, 64);
 }
 
 static bool credential_kat(void)
@@ -302,5 +372,6 @@ static bool tag_kat(void)
 
 uint64_t moo_bare_ssh_sicherheit_pruefen(void)
 {
-    return (uint64_t)credential_kat() | ((uint64_t)tag_kat() << 1);
+    return (uint64_t)credential_kat() | ((uint64_t)tag_kat() << 1) |
+           ((uint64_t)userauth_kat() << 2);
 }

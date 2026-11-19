@@ -27,6 +27,31 @@ case "$*" in
   *) echo 'UNBEKANNTER REMOTE-MOCK VERWEIGERT' >&2; exit 99;;
 esac
 echo "$action" >>"$MOCK_ROOT/trace"
+if [[ "$action" == pruefen && -n "${MOCK_SSH_KOPIE:-}" ]]; then
+  "$REAL_UV" run --no-project --offline python -B - "$MOCK_SSH_KOPIE" <<'PY'
+import base64
+import pathlib
+import struct
+import subprocess
+import sys
+
+lauf = pathlib.Path(sys.argv[1])
+keys = list(lauf.glob(".ssh-laufkey.*/id"))
+assert len(keys) == 1
+key = keys[0]
+assert (key.stat().st_mode & 0o077) == 0
+felder = subprocess.check_output(["ssh-keygen", "-y", "-f", str(key)]).split()
+assert felder[0] == b"ssh-ed25519"
+blob = base64.b64decode(felder[1], validate=True)
+assert len(blob) == 51
+kern = (lauf / "moo.kern").read_bytes()
+magie = b"MOOSAU01"
+assert kern.count(magie) == 1
+pos = kern.index(magie)
+assert kern[pos + 8:pos + 48] == struct.pack("<Q", 2) + blob[19:]
+PY
+  echo 'ssh-laufkey-belegt' >>"$MOCK_ROOT/trace"
+fi
 if [[ "$action" == "${MOCK_FAIL:-}" ]]; then exit 17; fi
 case "$action" in
   pruefen) printf '%s\n' '{"entry":"{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}","watcher_enabled":true,"usb_serial":"USBTEST","partition_guid":"{11111111-2222-3333-4444-555555555555}","stick_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","last_boot":"2026-11-16T20:00:00.0000000Z"}';;
@@ -218,5 +243,21 @@ for phase in ok normal normal-ohne-quittierung it8613 it8613-ohne-aus it8613-ohn
   done <"$T/capture.pid"
   echo "PASS: Phase $phase RC$rc; nur eigene Zustaende restauriert, Prozesse beendet"
 done
+if [[ "${MOO_N100_TEST_SSH_INFO:-0}" == 1 ]]; then
+  info_out="$T/ssh-info"
+  : >"$T/trace"
+  rc=0
+  MOCK_FAIL=pruefen MOCK_SSH_KOPIE="$info_out" MOO_N100_AUSGABE="$info_out" \
+    bash "$ROOT/skripte/p7/n100-lauf.sh" "${args[@]}" --ssh-info --modus 1 --sekunden 20 --watchdog-sekunden 10 \
+    >"$T/ssh-info-lauf.log" 2>&1 || rc=$?
+  test "$rc" -eq 17 || { cat "$T/ssh-info-lauf.log"; exit 1; }
+  grep -qx 'ssh-laufkey-belegt' "$T/trace"
+  (
+    shopt -s nullglob
+    reste=("$info_out"/.ssh-laufkey.*)
+    test "${#reste[@]}" -eq 0
+  )
+  echo 'PASS: SSH-Laufkey passt zur Kernkopie und ist nach Vorbereitungsabbruch geloescht'
+fi
 echo "Artefakte: $T"
 echo 'N100-RUNNER MOCK OK'

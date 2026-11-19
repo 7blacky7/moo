@@ -4,7 +4,7 @@
 # und noch ungesendete Bytes. ACKs geben Platz im Empfangsfenster frei.
 aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_kopiere, nt_mac, nt_senden, nt_link, nt_pseudo_pruefsumme, nt_ipv4_antwortkopf
 aus "../uefi/hardware_pci" importiere takt
-aus "netz_ssh" importiere ssh_verbinden, ssh_empfangsfrei, ssh_empfangen, ssh_ausgabe_adresse, ssh_ausgabe_laenge, ssh_ausgabe_quittieren, ssh_fertig, ssh_schliessen
+aus "netz_ssh" importiere ssh_verbinden, ssh_empfangsfrei, ssh_empfangen, ssh_ausgabe_adresse, ssh_ausgabe_laenge, ssh_ausgabe_quittieren, ssh_fertig, ssh_schliessen, ssh_kanal_fortsetzen
 
 @nativ
 konstante TCP_HTTP_PORT: u64 auf 8080
@@ -208,6 +208,7 @@ funktion tcp_verwerfen() -> void:
 @nativ
 funktion tcp_ssh_ausgeben() -> void:
     unsicher:
+        ssh_kanal_fortsetzen()
         setze n: u64 auf ssh_ausgabe_laenge()
         wenn n > TCP_RING_GROESSE - tcp_wert(versatz_von(TcpSlot, ring_belegt)):
             gib_zurück
@@ -234,6 +235,8 @@ funktion netz_tcp_wartung(tsc_us: u64) -> void:
             gib_zurück
         wenn nicht nt_link(tcp_wert(versatz_von(TcpSlot, nic))):
             gib_zurück
+        wenn zustand == TCP_ESTABLISHED und tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_SSH_PORT:
+            tcp_ssh_ausgeben()
         setze vergangen: u64 auf jetzt - tcp_wert(versatz_von(TcpSlot, tx_zeit))
         setze una: u64 auf tcp_wert(versatz_von(TcpSlot, unbestaetigt))
         setze nxt: u64 auf tcp_wert(versatz_von(TcpSlot, senden))

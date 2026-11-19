@@ -128,11 +128,12 @@ esac
 
 case "$NETZ_SSH" in
   0) ;;
-  1)
+  1|2)
     [ "$NETZ_TRANSPORT" = 1 ] || fail "SSH braucht TRANSPORT=1"
     command -v ssh >/dev/null || fail "SSH-Gate braucht OpenSSH"
+    [ "$NETZ_SSH" != 2 ] || command -v ssh-keygen >/dev/null || fail "SSH-Info-Gate braucht ssh-keygen"
     ;;
-  *) fail "SSH: 0 oder 1" ;;
+  *) fail "SSH: 0, 1 (KEX) oder 2 (moo-info)" ;;
 esac
 
 case "$NETZ_PING" in
@@ -158,8 +159,17 @@ if [ -n "${MOO_UEFI_OUT:-}" ]; then
   echo "      Artefakte bleiben in: $OUT"
 else
   OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_uefi_smoke.XXXXXX")"
-  trap 'rm -rf "$OUT"' EXIT
 fi
+
+SSH_TEST_KEY_VERZ=
+uefi_artefakte_aufraeumen() {
+  if [ -n "$SSH_TEST_KEY_VERZ" ]; then
+    rm -f -- "$SSH_TEST_KEY_VERZ/id" "$SSH_TEST_KEY_VERZ/id.pub" "$SSH_TEST_KEY_VERZ/fremd" "$SSH_TEST_KEY_VERZ/fremd.pub"
+    rmdir -- "$SSH_TEST_KEY_VERZ"
+  fi
+  [ -n "${MOO_UEFI_OUT:-}" ] || rm -rf -- "$OUT"
+}
+trap uefi_artefakte_aufraeumen EXIT
 
 # UDP-Nutzlasten gegen jede vollstaendige COM1-Kernzeile pruefen (auch vor NIC-Init).
 kern_netz_pruefen() {
@@ -491,13 +501,22 @@ if sys.argv[4] == "1":
     vertrag = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter TCP-Echo-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
-if sys.argv[5] == "1":
+if sys.argv[5] in ("1", "2"):
     vertrag = struct.pack("<2Q", 0x31304853534F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter SSH-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
 path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "IPv4-Vertrag in privater ELF-Kopie"
+  fi
+  if [ "$NETZ_SSH" = 2 ]; then
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    SSH_TEST_KEY_VERZ="$(mktemp -d -- "$OUT/.ssh-qemu.XXXXXX")" || fail "SSH-Testkey-Verzeichnis"
+    ssh-keygen -q -t ed25519 -N '' -f "$SSH_TEST_KEY_VERZ/id" || fail "Ed25519-Testkey"
+    ssh-keygen -q -t ed25519 -N '' -f "$SSH_TEST_KEY_VERZ/fremd" || fail "Fremder Ed25519-Testkey"
+    uv run --no-project --offline python -B "$ROOT/skripte/p7/ssh_laufprofil.py" "$OUT/KERN.ELF" "$SSH_TEST_KEY_VERZ/id.pub" ||
+      fail "SSH-Auth-Vertrag in privater ELF-Kopie"
   fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
@@ -623,13 +642,26 @@ PY
     uv run --no-project --offline python "$ROOT/skripte/p7/tcp-fenster-qemu.py" >"$OUT/tcp-fenster.log" 2>&1 && TCP_FENSTER_OK=1
   fi
   SSH_OK=0
-  if [ "$NETZ_SSH" = 1 ] && [ "$TRANSPORT_OK" = 1 ] &&
+  if [ "$NETZ_SSH" != 0 ] && [ "$TRANSPORT_OK" = 1 ] &&
      grep -aqF 'MOO-KERNEL NETZ SSH BEREIT 0000000000000001' "$OUT/serial.log"; then
-    {
-      bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$OUT" &&
-      bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$OUT/ssh-zweite-verbindung" &&
-      uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
-    } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
+    ssh_test() {
+      bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$@"
+    }
+    if [ "$NETZ_SSH" = 2 ]; then
+      {
+        ssh_test "$OUT/ssh-fremd" fremd "$SSH_TEST_KEY_VERZ/fremd" &&
+        ssh_test "$OUT/ssh-passwort" passwort &&
+        ssh_test "$OUT" info "$SSH_TEST_KEY_VERZ/id" &&
+        ssh_test "$OUT/ssh-zweite-verbindung" info "$SSH_TEST_KEY_VERZ/id" &&
+        uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
+      } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
+    else
+      {
+        ssh_test "$OUT" &&
+        ssh_test "$OUT/ssh-zweite-verbindung" &&
+        uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
+      } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
+    fi
   fi
   # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
   # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
@@ -966,15 +998,25 @@ PY
     [ ! -f "$OUT/tcp-fenster.log" ] || sed 's/^/      | /' "$OUT/tcp-fenster.log"
     [ "$TCP_FENSTER_OK" -eq 1 ] || fail "TCP-Fenster-/Wiederholungsprobe ueber $NETZ_PING fehlgeschlagen"
   fi
-  if [ "$NETZ_SSH" = 1 ]; then
+  if [ "$NETZ_SSH" != 0 ]; then
     [ ! -f "$OUT/ssh-probe.log" ] || sed 's/^/      | /' "$OUT/ssh-probe.log"
-    [ "$SSH_OK" -eq 1 ] || fail "OpenSSH-Transportprobe ueber $NETZ_PING fehlgeschlagen"
+    [ "$SSH_OK" -eq 1 ] || fail "OpenSSH-Probe ueber $NETZ_PING fehlgeschlagen"
+    ssh_verbindungen=2
+    [ "$NETZ_SSH" != 2 ] || ssh_verbindungen=4
     for marker in KEXINIT NEWKEYS SERVICE; do
-      [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq 2 ] ||
-        fail "Zwei vollstaendige SSH-Verbindungen fehlen ($marker)"
+      [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq "$ssh_verbindungen" ] ||
+        fail "Vollstaendige SSH-Transporte fehlen ($marker)"
     done
     [ "$(grep -acF 'MOO-KERNEL NETZ SSH FEHLER 0000000000000002' "$OUT/serial.log")" -eq 4 ] ||
       fail "Vier Abweisungen vor NEWKEYS fehlen"
+    if [ "$NETZ_SSH" = 2 ]; then
+      grep -aqF 'MOO-KERNEL NETZ SSH AUTH ABGELEHNT 0000000000000002' "$OUT/serial.log" ||
+        fail "Fremder Testkey wurde nicht vom Kern abgewiesen"
+      for marker in 'AUTH OK' 'MOO-INFO'; do
+        [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq 2 ] ||
+          fail "Zwei erfolgreich abgeschlossene Moo-Info-Sessions fehlen ($marker)"
+      done
+    fi
   fi
   if [ "$KRYPTO" != 0 ]; then
     uv run --no-project --offline python "$ROOT/skripte/p7/krypto-nachweis.py" "$OUT/serial.log" "$KRYPTO" >"$OUT/krypto.log" 2>&1 || {

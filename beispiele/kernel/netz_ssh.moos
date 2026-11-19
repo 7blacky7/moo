@@ -1,7 +1,7 @@
-# P7-T11: initialer SSH-2-Transport auf dem geordneten TCP-Stream.
-# RFC 4251/4253, 8709 und 8731. Paketkrypto folgt OpenSSH PROTOCOL.chacha20poly1305.
+# P7-T11: SSH-2-Transport, Ed25519-Userauth und ein Session-Kanal.
+# RFC 4251–4254, 8709 und 8731. Paketkrypto folgt OpenSSH PROTOCOL.chacha20poly1305.
 aus "../uefi/netz_geraet" importiere nt_kopiere, nt_b8, nt_b32, nt_r32
-aus "../uefi/hardware_pci" importiere nt_null
+aus "../uefi/hardware_pci" importiere nt_null, takt
 
 extern "C" funktion moo_bare_ssh_boot() -> u64
 extern "C" funktion moo_bare_ssh_sicherheit_pruefen() -> u64
@@ -14,6 +14,8 @@ extern "C" funktion moo_bare_ssh_exchange(client: u64, host_blob: u64, host_n: u
 extern "C" funktion moo_bare_ssh_length(paket: u64, seq: u64) -> u64
 extern "C" funktion moo_bare_ssh_seal(paket: u64, laenge: u64, seq: u64) -> u64
 extern "C" funktion moo_bare_ssh_open(paket: u64, laenge: u64, seq: u64) -> u64
+extern "C" funktion moo_bare_ssh_key_erlaubt(zustand: u64, erwartet: u64, angeboten: u64) -> u64
+extern "C" funktion moo_bare_ssh_userauth(zustand: u64, erwartet: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64
 
 @nativ
 konstante SSH_EINGANG_MAX: u64 auf 35000
@@ -45,6 +47,97 @@ konstante SSH_MSG_NEWKEYS: u64 auf 21
 konstante SSH_MSG_ECDH_INIT: u64 auf 30
 @nativ
 konstante SSH_MSG_ECDH_REPLY: u64 auf 31
+@nativ
+konstante SSH_PHASE_AUTH: u64 auf 7
+@nativ
+konstante SSH_PHASE_KANAL: u64 auf 8
+@nativ
+konstante SSH_PHASE_SITZUNG: u64 auf 9
+@nativ
+konstante SSH_PHASE_KANAL_ENDE: u64 auf 10
+@nativ
+konstante SSH_MSG_USERAUTH_REQUEST: u64 auf 50
+@nativ
+konstante SSH_MSG_USERAUTH_FAILURE: u64 auf 51
+@nativ
+konstante SSH_MSG_USERAUTH_SUCCESS: u64 auf 52
+@nativ
+konstante SSH_MSG_USERAUTH_PK_OK: u64 auf 60
+@nativ
+konstante SSH_MSG_CHANNEL_OPEN: u64 auf 90
+@nativ
+konstante SSH_MSG_CHANNEL_OPEN_CONFIRMATION: u64 auf 91
+@nativ
+konstante SSH_MSG_CHANNEL_OPEN_FAILURE: u64 auf 92
+@nativ
+konstante SSH_MSG_CHANNEL_WINDOW_ADJUST: u64 auf 93
+@nativ
+konstante SSH_MSG_CHANNEL_DATA: u64 auf 94
+@nativ
+konstante SSH_MSG_CHANNEL_EOF: u64 auf 96
+@nativ
+konstante SSH_MSG_CHANNEL_CLOSE: u64 auf 97
+@nativ
+konstante SSH_MSG_CHANNEL_REQUEST: u64 auf 98
+@nativ
+konstante SSH_MSG_CHANNEL_SUCCESS: u64 auf 99
+@nativ
+konstante SSH_MSG_CHANNEL_FAILURE: u64 auf 100
+@nativ
+konstante SSH_PROFIL_AKTIV: u64 auf 2
+@nativ
+konstante SSH_AUTH_UNGUELTIG: u64 auf 0
+@nativ
+konstante SSH_AUTH_METHODE: u64 auf 1
+@nativ
+konstante SSH_AUTH_KEY: u64 auf 2
+@nativ
+konstante SSH_AUTH_SIGNATUR: u64 auf 3
+@nativ
+konstante SSH_AUTH_PROBE: u64 auf 4
+@nativ
+konstante SSH_AUTH_OK: u64 auf 5
+
+@nativ
+konstante SSH_KONTO: [u8; _] auf "moo"
+@nativ
+konstante SSH_KONTO_N: u64 auf 3
+@nativ
+konstante SSH_CONNECTION: [u8; _] auf "ssh-connection"
+@nativ
+konstante SSH_CONNECTION_N: u64 auf 14
+@nativ
+konstante SSH_PUBLICKEY: [u8; _] auf "publickey"
+@nativ
+konstante SSH_PUBLICKEY_N: u64 auf 9
+@nativ
+konstante SSH_PASSWORT: [u8; _] auf "password"
+@nativ
+konstante SSH_PASSWORT_N: u64 auf 8
+@nativ
+konstante SSH_SESSION: [u8; _] auf "session"
+@nativ
+konstante SSH_SESSION_N: u64 auf 7
+@nativ
+konstante SSH_EXEC: [u8; _] auf "exec"
+@nativ
+konstante SSH_EXEC_N: u64 auf 4
+@nativ
+konstante SSH_INFO_BEFEHL: [u8; _] auf "moo-info"
+@nativ
+konstante SSH_INFO_BEFEHL_N: u64 auf 8
+@nativ
+konstante SSH_EXIT_STATUS: [u8; _] auf "exit-status"
+@nativ
+konstante SSH_EXIT_STATUS_N: u64 auf 11
+@nativ
+konstante SSH_INFO_KOPF: [u8; _] auf "kernel=MoOS Bare 0.1\nuptime_ms="
+@nativ
+konstante SSH_INFO_KOPF_N: u64 auf 31
+@nativ
+konstante SSH_INFO_FREI: [u8; _] auf "\nfree_bytes="
+@nativ
+konstante SSH_INFO_FREI_N: u64 auf 12
 
 @nativ
 konstante SSH_IDENT: [u8; _] auf "SSH-2.0-MooBare_0.1\r\n"
@@ -111,6 +204,21 @@ konstante SSH_LOG_ROLLENTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST ROLLE "
 konstante SSH_LOG_CREDTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST CREDENTIAL "
 @nativ
 konstante SSH_LOG_TAGTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST TAG "
+@nativ
+konstante SSH_LOG_SIGNATURTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST SIGNATUR "
+@nativ
+konstante SSH_LOG_METHODENTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST METHODE "
+@nativ
+konstante SSH_LOG_AUTH: [u8; _] auf "MOO-KERNEL NETZ SSH AUTH OK "
+@nativ
+konstante SSH_LOG_AUTH_ABGELEHNT: [u8; _] auf "MOO-KERNEL NETZ SSH AUTH ABGELEHNT "
+@nativ
+konstante SSH_LOG_INFO: [u8; _] auf "MOO-KERNEL NETZ SSH MOO-INFO "
+
+# ELF-Vertrag MOOSAU01. 0=Transport-Probe, 1=gesperrt, 2=aktiver Public Key.
+@nativ
+@sektion(".data.moo_ssh_auth")
+statisch SSH_AUTH_PROFIL: [u64; 6] auf [0x31305541534F4F4D, 0, 0, 0, 0, 0]
 
 struktur SshVerbindung:
     phase: u64
@@ -120,12 +228,20 @@ struktur SshVerbindung:
     tx_seq: u64
     tx_verschluesselt: u64
     server_init: u64
+    rx_verschluesselt: u64
+    kanal_peer: u64
+    kanal_fenster: u64
+    kanal_max: u64
+    info_pos: u64
+    info_n: u64
 
 @nativ
-statisch SSH_VERBINDUNG: [u64; 7] auf 0
-# Logger und Aktivierung gehoeren zum Boot, die uebrigen Puffer zum TCP-Slot.
+statisch SSH_VERBINDUNG: [u64; 13] auf 0
+# Bootdaten: Logger, Bereit, PFA-Abfrage, erster TSC-Wert und Takte pro ms.
 @nativ
-statisch SSH_BOOT: [u64; 2] auf 0
+statisch SSH_BOOT: [u64; 5] auf 0
+@nativ
+statisch SSH_INFO: [u8; 128] auf 0
 @nativ
 statisch SSH_EINGANG: [u8; 35000] auf 0
 @nativ
@@ -165,16 +281,40 @@ funktion ssh_string_schreiben(ziel: u64, quelle: u64, n: u64) -> u64:
         gib_zurück ziel + 4 + n
 
 @nativ
-funktion ssh_booten(loggen: u64) -> void:
+funktion ssh_profil_zustand() -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(SSH_AUTH_PROFIL) + 8, 8)
+
+@nativ
+funktion ssh_profil_key() -> u64:
+    unsicher:
+        gib_zurück adresse_von(SSH_AUTH_PROFIL) + 16
+
+@nativ
+funktion ssh_profil_gueltig() -> bool:
+    unsicher:
+        setze zustand: u64 auf ssh_profil_zustand()
+        setze key: u64 auf ssh_profil_key()
+        setze leer: bool auf (speicher_lesen(key, 8) | speicher_lesen(key + 8, 8) | speicher_lesen(key + 16, 8) | speicher_lesen(key + 24, 8)) == 0
+        gib_zurück ((zustand == 0 oder zustand == 1) und leer) oder (zustand == SSH_PROFIL_AKTIV und nicht leer)
+
+@nativ
+funktion ssh_booten(loggen: u64, pfa_frei: u64, start_takt: u64, takte_pro_us: u64) -> void:
     unsicher:
         speicher_schreiben(adresse_von(SSH_BOOT), loggen, 8)
+        speicher_schreiben(adresse_von(SSH_BOOT) + 16, pfa_frei, 8)
+        speicher_schreiben(adresse_von(SSH_BOOT) + 24, start_takt, 8)
+        speicher_schreiben(adresse_von(SSH_BOOT) + 32, takte_pro_us * 1000, 8)
         setze rolle: bool auf ssh_rolle_pruefen()
+        setze methode: bool auf ssh_methode_pruefen()
         setze pruefungen: u64 auf moo_bare_ssh_sicherheit_pruefen()
         ssh_log(adresse_von(SSH_LOG_ROLLENTEST), u64(rolle))
         ssh_log(adresse_von(SSH_LOG_CREDTEST), pruefungen & 1)
         ssh_log(adresse_von(SSH_LOG_TAGTEST), (pruefungen >> 1) & 1)
+        ssh_log(adresse_von(SSH_LOG_SIGNATURTEST), (pruefungen >> 2) & 1)
+        ssh_log(adresse_von(SSH_LOG_METHODENTEST), u64(methode))
         setze ok: u64 auf 0
-        wenn rolle und pruefungen == 3:
+        wenn rolle und methode und pruefungen == 7 und ssh_profil_gueltig():
             setze ok auf moo_bare_ssh_boot()
         wenn ok == 1:
             setze pubkey: u64 auf moo_bare_ssh_public()
@@ -399,8 +539,7 @@ funktion ssh_ecdh(p: u64, n: u64) -> bool:
         ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_NEU)
         gib_zurück wahr
 
-# Die geschuetzte Service-Runde liefert den Interop-Beleg fuer beide
-# Richtungen des Paketschutzes. Danach faehrt der TCP-Slot FIN.
+# RFC 4252 4. Service-Runde und Einstieg in die konfigurierte Userauth.
 @nativ
 funktion ssh_dienst(p: u64, n: u64) -> bool:
     unsicher:
@@ -411,18 +550,278 @@ funktion ssh_dienst(p: u64, n: u64) -> bool:
         setze ziel: u64 auf ssh_string_schreiben(nutz + 1, adresse_von(SSH_USERAUTH), SSH_USERAUTH_N)
         wenn nicht ssh_paket_senden(nutz, ziel - nutz):
             gib_zurück falsch
+        ssh_log(adresse_von(SSH_LOG_DIENST), 1)
+        wenn ssh_profil_zustand() != 0:
+            ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_AUTH)
+            gib_zurück wahr
         nt_b8(nutz, 0, SSH_MSG_DISCONNECT)
         nt_b32(nutz, 1, 11)
         setze ziel auf ssh_string_schreiben(nutz + 5, adresse_von(SSH_ABSCHLUSS), SSH_ABSCHLUSS_N)
         nt_b32(ziel, 0, 0)
         wenn nicht ssh_paket_senden(nutz, ziel + 4 - nutz):
             gib_zurück falsch
-        ssh_log(adresse_von(SSH_LOG_DIENST), 1)
         ssh_schliessen()
         gib_zurück wahr
 
-# Protokolltabelle fuer Nachrichten vom Client. Die Stufen nach der
-# geschuetzten Service-Runde brauchen spaeter einen eigenen Auth-Zustand.
+# SSH-Strings koennen leer sein. Null markiert eine unvollstaendige Laenge.
+@nativ
+funktion ssh_feld_ende(p: u64, n: u64, anfang: u64) -> u64:
+    unsicher:
+        wenn anfang == 0 oder anfang > n:
+            gib_zurück 0
+        wenn n - anfang < 4:
+            gib_zurück 0
+        setze l: u64 auf nt_r32(p, anfang)
+        wenn l > n - anfang - 4:
+            gib_zurück 0
+        gib_zurück anfang + 4 + l
+
+@nativ
+funktion ssh_feld_gleich(p: u64, anfang: u64, ende: u64, gesucht: u64, gesucht_n: u64) -> bool:
+    unsicher:
+        wenn ende != anfang + 4 + gesucht_n:
+            gib_zurück falsch
+        gib_zurück ssh_gleiche_bytes(p + anfang + 4, gesucht, gesucht_n)
+
+@nativ
+funktion ssh_ed_blob(p: u64, n: u64, wert_n: u64) -> bool:
+    unsicher:
+        wenn n != 19 + wert_n:
+            gib_zurück falsch
+        gib_zurück nt_r32(p, 0) == SSH_ED_N und ssh_gleiche_bytes(p + 4, adresse_von(SSH_ED), SSH_ED_N) und nt_r32(p, 15) == wert_n
+
+# RFC 4252 7 und RFC 8709 3–4. Der C-Pfad prueft den signierten
+# Original-Praefix zusammen mit der Session-ID aus dem initialen KEX.
+@nativ
+funktion ssh_auth_pruefen(p: u64, n: u64) -> u64:
+    unsicher:
+        setze konto: u64 auf ssh_feld_ende(p, n, 1)
+        setze dienst: u64 auf ssh_feld_ende(p, n, konto)
+        setze methode: u64 auf ssh_feld_ende(p, n, dienst)
+        wenn methode == 0:
+            gib_zurück SSH_AUTH_UNGUELTIG
+        wenn nicht ssh_feld_gleich(p, 1, konto, adresse_von(SSH_KONTO), SSH_KONTO_N) oder nicht ssh_feld_gleich(p, konto, dienst, adresse_von(SSH_CONNECTION), SSH_CONNECTION_N) oder nicht ssh_feld_gleich(p, dienst, methode, adresse_von(SSH_PUBLICKEY), SSH_PUBLICKEY_N):
+            gib_zurück SSH_AUTH_METHODE
+        wenn methode >= n:
+            gib_zurück SSH_AUTH_UNGUELTIG
+        setze signiert: u64 auf u64(speicher_lesen(p + methode, 1))
+        setze alg: u64 auf ssh_feld_ende(p, n, methode + 1)
+        setze blob: u64 auf ssh_feld_ende(p, n, alg)
+        wenn signiert > 1 oder blob == 0:
+            gib_zurück SSH_AUTH_UNGUELTIG
+        wenn nicht ssh_feld_gleich(p, methode + 1, alg, adresse_von(SSH_ED), SSH_ED_N) oder nicht ssh_ed_blob(p + alg + 4, blob - alg - 4, 32):
+            gib_zurück SSH_AUTH_KEY
+        setze key: u64 auf p + alg + 4 + 19
+        setze profil: u64 auf ssh_profil_zustand()
+        setze erlaubt: u64 auf ssh_profil_key()
+        wenn signiert == 0:
+            wenn blob != n:
+                gib_zurück SSH_AUTH_UNGUELTIG
+            wenn moo_bare_ssh_key_erlaubt(profil, erlaubt, key) == 1:
+                gib_zurück SSH_AUTH_PROBE
+            gib_zurück SSH_AUTH_KEY
+        setze signatur: u64 auf ssh_feld_ende(p, n, blob)
+        wenn signatur != n oder signatur == 0:
+            gib_zurück SSH_AUTH_UNGUELTIG
+        wenn nicht ssh_ed_blob(p + blob + 4, signatur - blob - 4, 64):
+            gib_zurück SSH_AUTH_SIGNATUR
+        wenn moo_bare_ssh_userauth(profil, erlaubt, key, p, blob, p + blob + 4 + 19) == 1:
+            gib_zurück SSH_AUTH_OK
+        gib_zurück SSH_AUTH_SIGNATUR
+
+@nativ
+funktion ssh_methode_pruefen() -> bool:
+    unsicher:
+        setze p: u64 auf adresse_von(SSH_NUTZ)
+        nt_b8(p, 0, SSH_MSG_USERAUTH_REQUEST)
+        setze ziel: u64 auf ssh_string_schreiben(p + 1, adresse_von(SSH_KONTO), SSH_KONTO_N)
+        setze ziel auf ssh_string_schreiben(ziel, adresse_von(SSH_CONNECTION), SSH_CONNECTION_N)
+        setze ziel auf ssh_string_schreiben(ziel, adresse_von(SSH_PASSWORT), SSH_PASSWORT_N)
+        nt_b8(ziel, 0, 0)
+        nt_b32(ziel, 1, 0)
+        gib_zurück ssh_auth_pruefen(p, ziel + 5 - p) == SSH_AUTH_METHODE
+
+@nativ
+funktion ssh_auth_antwort(p: u64, n: u64) -> bool:
+    unsicher:
+        setze ergebnis: u64 auf ssh_auth_pruefen(p, n)
+        setze nutz: u64 auf adresse_von(SSH_NUTZ)
+        wenn ergebnis == SSH_AUTH_UNGUELTIG:
+            gib_zurück falsch
+        wenn ergebnis == SSH_AUTH_OK:
+            nt_b8(nutz, 0, SSH_MSG_USERAUTH_SUCCESS)
+            wenn nicht ssh_paket_senden(nutz, 1):
+                gib_zurück falsch
+            ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_KANAL)
+            ssh_log(adresse_von(SSH_LOG_AUTH), 1)
+            gib_zurück wahr
+        wenn ergebnis == SSH_AUTH_PROBE:
+            # Kanonische Kette aus bereits geprueftem Algorithmus und Key.
+            nt_b8(nutz, 0, SSH_MSG_USERAUTH_PK_OK)
+            setze probe_ziel: u64 auf ssh_string_schreiben(nutz + 1, adresse_von(SSH_ED), SSH_ED_N)
+            nt_b32(probe_ziel, 0, 51)
+            setze probe_ziel auf ssh_string_schreiben(probe_ziel + 4, adresse_von(SSH_ED), SSH_ED_N)
+            setze probe_ziel auf ssh_string_schreiben(probe_ziel, ssh_profil_key(), 32)
+            gib_zurück ssh_paket_senden(nutz, probe_ziel - nutz)
+        nt_b8(nutz, 0, SSH_MSG_USERAUTH_FAILURE)
+        setze ziel: u64 auf ssh_string_schreiben(nutz + 1, adresse_von(SSH_PUBLICKEY), SSH_PUBLICKEY_N)
+        nt_b8(ziel, 0, 0)
+        ssh_log(adresse_von(SSH_LOG_AUTH_ABGELEHNT), ergebnis)
+        gib_zurück ssh_paket_senden(nutz, ziel + 1 - nutz)
+
+# RFC 4254 5.1 und 6.1. Ein Session-Kanal mit lokaler ID 0.
+@nativ
+funktion ssh_kanal_oeffnen(p: u64, n: u64) -> bool:
+    unsicher:
+        setze feld: u64 auf ssh_feld_ende(p, n, 1)
+        wenn feld == 0 oder n - feld != 12:
+            gib_zurück falsch
+        setze peer: u64 auf nt_r32(p, feld)
+        setze nutz: u64 auf adresse_von(SSH_NUTZ)
+        wenn nicht ssh_feld_gleich(p, 1, feld, adresse_von(SSH_SESSION), SSH_SESSION_N) oder nt_r32(p, feld + 8) == 0:
+            nt_b8(nutz, 0, SSH_MSG_CHANNEL_OPEN_FAILURE)
+            nt_b32(nutz, 1, peer)
+            nt_b32(nutz, 5, 3)
+            nt_b32(nutz, 9, 0)
+            nt_b32(nutz, 13, 0)
+            gib_zurück ssh_paket_senden(nutz, 17)
+        ssh_setze(versatz_von(SshVerbindung, kanal_peer), peer)
+        ssh_setze(versatz_von(SshVerbindung, kanal_fenster), nt_r32(p, feld + 4))
+        ssh_setze(versatz_von(SshVerbindung, kanal_max), nt_r32(p, feld + 8))
+        nt_b8(nutz, 0, SSH_MSG_CHANNEL_OPEN_CONFIRMATION)
+        nt_b32(nutz, 1, peer)
+        nt_b32(nutz, 5, 0)
+        nt_b32(nutz, 9, 0)
+        nt_b32(nutz, 13, 4096)
+        wenn nicht ssh_paket_senden(nutz, 17):
+            gib_zurück falsch
+        ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_SITZUNG)
+        gib_zurück wahr
+
+@nativ
+funktion ssh_zahl_schreiben(ziel: u64, wert: u64) -> u64:
+    unsicher:
+        setze teiler: u64 auf 1
+        solange wert / teiler >= 10:
+            setze teiler auf teiler * 10
+        solange teiler != 0:
+            nt_b8(ziel, 0, 48 + (wert / teiler) % 10)
+            setze ziel auf ziel + 1
+            setze teiler auf teiler / 10
+        gib_zurück ziel
+
+@nativ
+funktion ssh_info_starten() -> bool:
+    unsicher:
+        setze boot: u64 auf adresse_von(SSH_BOOT)
+        setze takte: u64 auf speicher_lesen(boot + 32, 8)
+        wenn takte == 0:
+            gib_zurück falsch
+        setze frei: ptr[fn[sysv64]() -> u64] auf zeiger(speicher_lesen(boot + 16, 8))
+        setze p: u64 auf adresse_von(SSH_INFO)
+        nt_kopiere(p, adresse_von(SSH_INFO_KOPF), SSH_INFO_KOPF_N)
+        setze ziel: u64 auf ssh_zahl_schreiben(p + SSH_INFO_KOPF_N, (takt() - speicher_lesen(boot + 24, 8)) / takte)
+        nt_kopiere(ziel, adresse_von(SSH_INFO_FREI), SSH_INFO_FREI_N)
+        setze ziel auf ssh_zahl_schreiben(ziel + SSH_INFO_FREI_N, frei())
+        nt_b8(ziel, 0, 10)
+        ssh_setze(versatz_von(SshVerbindung, info_n), ziel + 1 - p)
+        gib_zurück wahr
+
+@nativ
+funktion ssh_kanal_kopf(typ: u64) -> u64:
+    unsicher:
+        setze p: u64 auf adresse_von(SSH_NUTZ)
+        nt_b8(p, 0, typ)
+        nt_b32(p, 1, ssh_wert(versatz_von(SshVerbindung, kanal_peer)))
+        gib_zurück p
+
+@nativ
+funktion ssh_kanal_marke(typ: u64) -> bool:
+    unsicher:
+        gib_zurück ssh_paket_senden(ssh_kanal_kopf(typ), 5)
+
+@nativ
+funktion ssh_kanal_auftrag(p: u64, n: u64) -> bool:
+    unsicher:
+        setze feld: u64 auf ssh_feld_ende(p, n, 5)
+        wenn feld == 0 oder feld >= n:
+            gib_zurück falsch
+        setze antwort: u64 auf u64(speicher_lesen(p + feld, 1))
+        wenn antwort > 1:
+            gib_zurück falsch
+        setze typ: u64 auf SSH_MSG_CHANNEL_FAILURE
+        wenn ssh_wert(versatz_von(SshVerbindung, info_n)) == 0 und ssh_feld_gleich(p, 5, feld, adresse_von(SSH_EXEC), SSH_EXEC_N):
+            setze befehl: u64 auf ssh_feld_ende(p, n, feld + 1)
+            wenn befehl == n und ssh_feld_gleich(p, feld + 1, befehl, adresse_von(SSH_INFO_BEFEHL), SSH_INFO_BEFEHL_N) und ssh_info_starten():
+                setze typ auf SSH_MSG_CHANNEL_SUCCESS
+        gib_zurück antwort == 0 oder ssh_kanal_marke(typ)
+
+# Die TCP-Wartung ruft dies auch ohne neue SSH-Nachrichten auf.
+@nativ
+funktion ssh_kanal_fortsetzen() -> void:
+    unsicher:
+        wenn ssh_wert(versatz_von(SshVerbindung, phase)) != SSH_PHASE_SITZUNG oder ssh_ausgabe_laenge() > SSH_AUSGANG_MAX - 384:
+            gib_zurück
+        setze pos: u64 auf ssh_wert(versatz_von(SshVerbindung, info_pos))
+        setze ende: u64 auf ssh_wert(versatz_von(SshVerbindung, info_n))
+        wenn ende == 0:
+            gib_zurück
+        setze fenster: u64 auf ssh_wert(versatz_von(SshVerbindung, kanal_fenster))
+        setze maxpkt: u64 auf ssh_wert(versatz_von(SshVerbindung, kanal_max))
+        setze n: u64 auf ende - pos
+        wenn n > fenster:
+            setze n auf fenster
+        wenn n > maxpkt:
+            setze n auf maxpkt
+        wenn n != 0:
+            setze datenpaket: u64 auf ssh_kanal_kopf(SSH_MSG_CHANNEL_DATA)
+            ssh_string_schreiben(datenpaket + 5, adresse_von(SSH_INFO) + pos, n)
+            wenn nicht ssh_paket_senden(datenpaket, 9 + n):
+                ssh_fehler()
+                gib_zurück
+            setze pos auf pos + n
+            ssh_setze(versatz_von(SshVerbindung, info_pos), pos)
+            ssh_setze(versatz_von(SshVerbindung, kanal_fenster), fenster - n)
+        wenn pos != ende:
+            gib_zurück
+        # RFC 4254 5.3 und 6.10. Exit-Status, EOF und CLOSE folgen den Daten.
+        setze p: u64 auf ssh_kanal_kopf(SSH_MSG_CHANNEL_REQUEST)
+        setze ziel: u64 auf ssh_string_schreiben(p + 5, adresse_von(SSH_EXIT_STATUS), SSH_EXIT_STATUS_N)
+        nt_b8(ziel, 0, 0)
+        nt_b32(ziel, 1, 0)
+        wenn nicht ssh_paket_senden(p, ziel + 5 - p) oder nicht ssh_kanal_marke(SSH_MSG_CHANNEL_EOF) oder nicht ssh_kanal_marke(SSH_MSG_CHANNEL_CLOSE):
+            ssh_fehler()
+            gib_zurück
+        ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_KANAL_ENDE)
+        ssh_log(adresse_von(SSH_LOG_INFO), 1)
+
+@nativ
+funktion ssh_kanal_nachricht(p: u64, n: u64, typ: u64, phase: u64) -> bool:
+    unsicher:
+        wenn n < 5:
+            gib_zurück falsch
+        wenn nt_r32(p, 1) != 0:
+            gib_zurück falsch
+        wenn typ == SSH_MSG_CHANNEL_WINDOW_ADJUST:
+            wenn n != 9:
+                gib_zurück falsch
+            setze fenster: u64 auf ssh_wert(versatz_von(SshVerbindung, kanal_fenster)) + nt_r32(p, 5)
+            wenn fenster > 0xFFFFFFFF:
+                gib_zurück falsch
+            ssh_setze(versatz_von(SshVerbindung, kanal_fenster), fenster)
+            gib_zurück wahr
+        wenn typ == SSH_MSG_CHANNEL_REQUEST:
+            gib_zurück ssh_kanal_auftrag(p, n)
+        wenn n != 5:
+            gib_zurück falsch
+        wenn typ == SSH_MSG_CHANNEL_CLOSE:
+            wenn phase != SSH_PHASE_KANAL_ENDE und nicht ssh_kanal_marke(SSH_MSG_CHANNEL_CLOSE):
+                gib_zurück falsch
+            ssh_schliessen()
+        gib_zurück wahr
+
+# Protokolltabelle fuer Nachrichten vom Client. Der Abschnitt nach
+# NEWKEYS ist verschluesselt; ein Kanal ist erst nach der Signatur frei.
 @nativ
 funktion ssh_rolle_erlaubt(phase: u64, typ: u64) -> bool:
     wenn phase == SSH_PHASE_INIT:
@@ -433,23 +832,33 @@ funktion ssh_rolle_erlaubt(phase: u64, typ: u64) -> bool:
         gib_zurück typ == SSH_MSG_NEWKEYS
     wenn phase == SSH_PHASE_DIENST:
         gib_zurück typ == SSH_MSG_SERVICE_REQUEST
+    wenn phase == SSH_PHASE_AUTH:
+        gib_zurück typ == SSH_MSG_USERAUTH_REQUEST oder typ == SSH_MSG_DISCONNECT
+    wenn phase == SSH_PHASE_KANAL:
+        gib_zurück typ == SSH_MSG_CHANNEL_OPEN oder typ == SSH_MSG_DISCONNECT
+    wenn phase == SSH_PHASE_SITZUNG oder phase == SSH_PHASE_KANAL_ENDE:
+        gib_zurück typ == SSH_MSG_CHANNEL_WINDOW_ADJUST oder typ == SSH_MSG_CHANNEL_EOF oder typ == SSH_MSG_CHANNEL_CLOSE oder typ == SSH_MSG_DISCONNECT oder (phase == SSH_PHASE_SITZUNG und typ == SSH_MSG_CHANNEL_REQUEST)
     gib_zurück falsch
 
-# Als unabhaengige Erwartung die Draht-IDs fuer die sechs Phasen.
-# Darin liegen u. a. USERAUTH_SUCCESS (52) und CHANNEL_OPEN (90)
-# fuer jede Phase auf dem Ablehnungspfad der produktiven Rollentabelle.
+# Fuenf Draht-IDs je Phase. 52 kommt in keiner Rolle vor, 90 erst nach Auth.
 @nativ
-konstante SSH_ROLLEN_SOLL: [u8; 6] auf [0, 20, 30, 21, 5, 0]
+konstante SSH_ROLLEN_SOLL: [u8; 50] auf [0,0,0,0,0, 20,0,0,0,0, 30,0,0,0,0, 21,0,0,0,0, 5,0,0,0,0, 0,0,0,0,0, 50,1,0,0,0, 90,1,0,0,0, 93,96,97,1,98, 93,96,97,1,0]
 
 @nativ
 funktion ssh_rolle_pruefen() -> bool:
     unsicher:
         setze phase: u64 auf 1
-        solange phase <= 6:
-            setze soll: u64 auf u64(speicher_lesen(adresse_von(SSH_ROLLEN_SOLL) + phase - 1, 1))
+        solange phase <= 10:
+            setze r: u64 auf adresse_von(SSH_ROLLEN_SOLL) + (phase - 1) * 5
             setze typ: u64 auf 0
             solange typ <= 255:
-                wenn ssh_rolle_erlaubt(phase, typ) != (soll != 0 und typ == soll):
+                setze soll: bool auf falsch
+                setze i: u64 auf 0
+                solange typ != 0 und i < 5:
+                    wenn u64(speicher_lesen(r + i, 1)) == typ:
+                        setze soll auf wahr
+                    setze i auf i + 1
+                wenn ssh_rolle_erlaubt(phase, typ) != soll:
                     gib_zurück falsch
                 setze typ auf typ + 1
             setze phase auf phase + 1
@@ -470,10 +879,20 @@ funktion ssh_paket_inhalt(p: u64, n: u64, seq: u64) -> bool:
             wenn n != 1:
                 gib_zurück falsch
             ssh_setze(versatz_von(SshVerbindung, rx_seq), 0)
+            ssh_setze(versatz_von(SshVerbindung, rx_verschluesselt), 1)
             ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_DIENST)
             ssh_log(adresse_von(SSH_LOG_NEU), 1)
             gib_zurück wahr
-        gib_zurück ssh_dienst(p, n)
+        wenn phase == SSH_PHASE_DIENST:
+            gib_zurück ssh_dienst(p, n)
+        wenn typ == SSH_MSG_DISCONNECT:
+            ssh_schliessen()
+            gib_zurück wahr
+        wenn phase == SSH_PHASE_AUTH:
+            gib_zurück ssh_auth_antwort(p, n)
+        wenn phase == SSH_PHASE_KANAL:
+            gib_zurück ssh_kanal_oeffnen(p, n)
+        gib_zurück ssh_kanal_nachricht(p, n, typ, phase)
 
 # Rueckgabe ist die verbrauchte Drahtlaenge. Null bedeutet, dass Bytes
 # fehlen oder ssh_fehler die Verbindung bereits zum Abschluss markiert hat.
@@ -482,7 +901,7 @@ funktion ssh_paket_lesen(p: u64, n: u64) -> u64:
     unsicher:
         wenn n < 4:
             gib_zurück 0
-        setze enc: bool auf ssh_wert(versatz_von(SshVerbindung, phase)) == SSH_PHASE_DIENST
+        setze enc: bool auf ssh_wert(versatz_von(SshVerbindung, rx_verschluesselt)) == 1
         setze seq: u64 auf ssh_wert(versatz_von(SshVerbindung, rx_seq))
         setze l: u64 auf nt_r32(p, 0)
         setze tag: u64 auf 0

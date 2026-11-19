@@ -1494,6 +1494,11 @@ funktion pfa_markiere(rahmen: u64, frei_machen: bool) -> void:
             pfa_setze(1, pfa_wert(1) - 1)
 
 @nativ
+funktion kern_ssh_freie_bytes() -> u64:
+    unsicher:
+        gib_zurück pfa_wert(1) * 4096
+
+@nativ
 funktion pfa_bereich(basis: u64, seiten: u64, frei_machen: bool) -> void:
     unsicher:
         setze i: u64 auf 0
@@ -2327,6 +2332,7 @@ funktion kern_haupt(bi: u64) -> void:
         setze t_zeile: u64 auf 0
         setze schirm_ok: bool auf falsch
         setze sammeln: bool auf speicher_lesen(adresse_von(SAMMEL_ZIEL) + 8, 8) == 1
+        setze kern_start_takt: u64 auf takt()
         seriell_init()
         text(adresse_von(T_START))
         # Laeuft der Kern wirklich in der oberen Haelfte? RIP und RSP direkt lesen.
@@ -2523,7 +2529,7 @@ funktion kern_haupt(bi: u64) -> void:
                 wenn netz_echo_aktiv():
                     meldung(adresse_von(T_NETZ_ECHO), 1)
                 wenn speicher_lesen(adresse_von(NETZ_SSH_KONFIG) + 8, 8) == 1:
-                    ssh_booten(adresse_von(meldung))
+                    ssh_booten(adresse_von(meldung), adresse_von(kern_ssh_freie_bytes), kern_start_takt, tsc)
             meldung(adresse_von(T_NETZ_IPV4), netz_ipv4_adresse())
         text(adresse_von(T_OK))
         # Eingabe, Netz-FIFO und Testreset bleiben auch bei fehlenden Geraeten aktiv.

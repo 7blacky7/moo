@@ -69,7 +69,7 @@ funktion ms_be_setzen(daten: u64, wert: u64, breite: u64) -> void:
     unsicher:
         setze j: u64 auf 0
         solange j < breite:
-            speicher_schreiben(daten + breite - j - 1, u8(wert >> (j * 8)), 1)
+            speicher_schreiben(daten + breite - j - 1, u8((wert >> (j * 8)) & 0xFF), 1)
             setze j auf j + 1
 
 # BOT1.0 §5.1: nur diese Lesekommandos duerfen ueber Bulk-OUT.

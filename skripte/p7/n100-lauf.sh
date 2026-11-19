@@ -24,6 +24,8 @@ PING_IP=
 TRANSPORT=0
 KRYPTO=0
 SSH=0
+SSH_KEY_VERZ=
+SSH_KEY=
 KONFIG_QUELLE=
 KONFIG_ZIEL=
 KONFIG_LOADER_QUELLE=
@@ -44,6 +46,7 @@ while (($#)); do
     --tcp-echo) PING_IP=192.168.77.2; TRANSPORT=3; shift;;
     --krypto-selbsttest) KRYPTO=1; shift;;
     --ssh-kex) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=1; shift;;
+    --ssh-info) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=2; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -68,6 +71,7 @@ while (($#)); do
       '--udp-tcp: ARP/Ping plus UDP-Echo an Port 7 und HTTP an TCP-Port 8080 pruefen.' \
       '--tcp-echo: Zusaetzlich zwei TCP-Echo-Verbindungen an Port 2222 mit 1 MiB und 64 KiB pruefen.' \
       '--ssh-kex: OpenSSH auf TCP 2223 bis NEWKEYS und geschuetzter Service-Runde pruefen.' \
+      '--ssh-info: Ed25519-Laufkey erzeugen und moo-info auf TCP 2223 pruefen.' \
       '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
       '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
@@ -111,10 +115,11 @@ fi
 
 ((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
 
-((SSH==0)) || command -v ssh >/dev/null || { echo '--ssh-kex braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
+((SSH==0)) || command -v ssh >/dev/null || { echo 'SSH-Probe braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
+((SSH!=2)) || command -v ssh-keygen >/dev/null || { echo '--ssh-info braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" <<'PY'
+  uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
@@ -123,7 +128,7 @@ ping_ip = sys.argv[6]
 unveraendert = sys.argv[7] == "1"
 transport = int(sys.argv[8])
 krypto = sys.argv[9] == "1"
-ssh_kex = sys.argv[10] == "1"
+ssh_modus = int(sys.argv[10])
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -177,10 +182,18 @@ if krypto:
     leer = struct.pack("<2Q", 0x315059524B4F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter Krypto-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
-if ssh_kex:
+if ssh_modus:
     leer = struct.pack("<2Q", 0x31304853534F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter SSH-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
+if ssh_modus == 2:
+    sys.path.insert(0, sys.argv[11])
+    from ssh_laufprofil import auth_konfigurieren
+
+    public_key = sys.argv[12] or None
+    if dst is not None and public_key is None:
+        raise SystemExit("SSH-Info-Kopie braucht einen erzeugten Laufkey")
+    auth_konfigurieren(data, public_key)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
@@ -198,8 +211,12 @@ if transport & 2:
     print("TCP-Echo 2222 der Kern-Kopie aktiviert")
 if krypto:
     print("Krypto-Selbsttest der Kern-Kopie aktiviert")
-if ssh_kex:
+if ssh_modus:
     print("SSH-Transport 2223 der Kern-Kopie aktiviert")
+if ssh_modus == 2:
+    print("SSH-Auth-Vertrag im schreibbaren PT_LOAD geprüft")
+    if public_key is not None:
+        print("Öffentlicher Ed25519-Laufkey in der Kern-Kopie hinterlegt")
 PY
 }
 loader_kopie() {
@@ -269,7 +286,7 @@ lauf_vorbereiten() {
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH"
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
   fi
@@ -300,7 +317,9 @@ if ((TROCKEN)); then
   if ((KRYPTO)); then
     printf '%s\n' '   Krypto- und Entropie-Status im Netzlog, Nachweis in krypto.log.'
   fi
-  if ((SSH)); then
+  if ((SSH==2)); then
+    printf '%s\n' '   Neuen Ed25519-Laufkey erzeugen, OpenSSH moo-info pruefen und Laufkey loeschen.'
+  elif ((SSH)); then
     printf '%s\n' '   OpenSSH auf TCP 2223 mit gepinntem Boot-Hostkey, Protokoll ssh-kex.log.'
   fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
@@ -396,10 +415,19 @@ synapse_warten() {
   done
   return 1
 }
+ssh_laufkey_loeschen() {
+  if [[ -n "$SSH_KEY_VERZ" ]]; then
+    rm -f -- "$SSH_KEY_VERZ/id" "$SSH_KEY_VERZ/id.pub" && rmdir -- "$SSH_KEY_VERZ"
+  fi
+}
 aufraeumen() {
   local rc=$? wieder=0 bis=$((SECONDS+120))
   trap - EXIT INT TERM HUP
   set +e
+  if ! ssh_laufkey_loeschen; then
+    echo 'FEHLER: Temporaerer SSH-Laufkey konnte nicht geloescht werden' >&2
+    rc=1
+  fi
   if ((REMOTE_ANGEFASST)); then
     while ((SECONDS<bis)); do
       if remote zurueck >"$OUT/wiederherstellung.json" 2>>"$OUT/winrm.log"; then wieder=1; break; fi
@@ -487,6 +515,14 @@ PY
 }
 
 if [[ -z "$RESTORE" ]]; then
+  if ((SSH==2 && INVENTAR==0)); then
+    trap ssh_laufkey_loeschen EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+    SSH_KEY_VERZ="$(mktemp -d -- "$OUT/.ssh-laufkey.XXXXXX")"
+    SSH_KEY="$SSH_KEY_VERZ/id"
+    ssh-keygen -q -t ed25519 -N '' -f "$SSH_KEY"
+  fi
   lauf_vorbereiten "$OUT"
 fi
 if ((INVENTAR)); then
@@ -583,7 +619,11 @@ while ((SECONDS<bis)); do
     if ((SSH)) && grep -aFq 'MOO-KERNEL NETZ SSH BEREIT 0000000000000001' "$OUT/netz.log" &&
        ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
       host_adr="${MOO_NETZ_ADR:-192.168.77.1/24}"
-      if bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT" &&
+      ssh_probe=()
+      if ((SSH==2)); then
+        ssh_probe=(info "$SSH_KEY")
+      fi
+      if bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT" "${ssh_probe[@]}" &&
          ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
         ssh_belegt=1
       fi
@@ -648,7 +688,16 @@ while ((SECONDS<bis)); do
             echo 'FEHLER: SSH-Transport und geschuetzte Service-Runde im Kernfenster fehlen.' >&2
             exit 1
           fi
-          echo 'OpenSSH-Transport und Kernmarker belegt'
+          if ((SSH==2)); then
+            grep -aFq 'MOO-KERNEL NETZ SSH AUTH OK 0000000000000001' "$OUT/netz.log" &&
+              grep -aFq 'MOO-KERNEL NETZ SSH MOO-INFO 0000000000000001' "$OUT/netz.log" || {
+                echo 'FEHLER: Auth-/moo-info-Marker im Kernfenster fehlen.' >&2
+                exit 1
+              }
+            echo 'OpenSSH-Userauth und moo-info belegt'
+          else
+            echo 'OpenSSH-Transport und Kernmarker belegt'
+          fi
         fi
         exit 0
       fi
