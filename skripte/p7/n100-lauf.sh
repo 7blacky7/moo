@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # P7-T25. Echte Laeufe ausschliesslich durch den Koordinator.
-# --trocken fuehrt keine externen Befehle aus und aendert keinen Zustand.
+# --trocken aendert keinen Laufzustand. Mit --ping werden die lokalen Vertraege im Speicher geprueft.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EFI="$ROOT/build/p7-t25/stick/tftp/moo.efi"
@@ -58,6 +58,7 @@ while (($#)); do
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern mit 10s IT8613-Safety. --watchdog-test: 10s IT8613, 45s Softwarefrist.' \
       '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
+      '--trocken --ping: Dieselben lokalen ELF-/PE-Vertraege pruefen, ohne Laufdateien oder Netzwerkzugriffe.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
@@ -98,14 +99,17 @@ fi
 [[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo '--ping braucht den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project python - "$1" "$2" "${3:-$SEKUNDEN}" "${4:-$WATCHDOG_S}" "${5:-$MODUS}" "$PING_IP" <<'PY'
+  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" <<'PY'
 import ipaddress, pathlib, struct, sys
-src, dst = map(pathlib.Path, sys.argv[1:3])
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
 seconds, watchdog, mode = map(int, sys.argv[3:6])
 ping_ip = sys.argv[6]
-if src.resolve() == dst.resolve():
+unveraendert = sys.argv[7] == "1"
+if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
-data = bytearray(src.read_bytes())
+original = src.read_bytes()
+data = bytearray(original)
 if data[:7] != b"\x7fELF\x02\x01\x01" or struct.unpack_from("<HH", data, 16) != (2, 62):
     raise SystemExit("Kein ELF64 x86-64 EXEC")
 magic = struct.pack("<Q", 0x353254504F4F4D21)
@@ -128,7 +132,7 @@ def vertrag(suche, groesse, name):
                 hits.append(pos)
             pos = data.find(suche, pos + 1, ende)
     if len(hits) != 1:
-        raise SystemExit(f"{name} nicht eindeutig in schreibbarem PT_LOAD")
+        raise SystemExit(f"{src}: {name} nicht eindeutig in schreibbarem PT_LOAD (Treffer: {len(hits)})")
     return hits[0]
 
 testvertrag = vertrag(magic, 32, "Testvertrag")
@@ -141,20 +145,29 @@ if ping_ip:
     leer = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter IPv4-Vertrag")
     struct.pack_into("<Q", data, pos + 8, int(ipaddress.IPv4Address(ping_ip)))
-dst.parent.mkdir(parents=True, exist_ok=True)
-dst.write_bytes(data)
-print(f"Kern-Kopie {dst}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
+if unveraendert and data != original:
+    print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
+    sys.exit(2)
+if dst is None:
+    print(f"Kern-Vorbereitung {src}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
+else:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(data)
+    print(f"Kern-Kopie {dst}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
 if ping_ip:
     print(f"IPv4 der Kern-Kopie: {ping_ip}")
 PY
 }
 loader_kopie() {
-  uv run --no-project python - "$1" "$2" <<'PY'
+  uv run --no-project --offline python - "$1" "$2" "${3:-0}" <<'PY'
 import pathlib, struct, sys
-src, dst = map(pathlib.Path, sys.argv[1:3])
-if src.resolve() == dst.resolve():
+src = pathlib.Path(sys.argv[1])
+dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
+unveraendert = sys.argv[3] == "1"
+if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Loader darf nicht ueberschrieben werden")
-data = bytearray(src.read_bytes())
+original = src.read_bytes()
+data = bytearray(original)
 if data[:2] != b"MZ" or len(data) < 64:
     raise SystemExit("Kein PE-Loader")
 pe = struct.unpack_from("<I", data, 60)[0]
@@ -191,13 +204,38 @@ if len(hits) != 1:
 if struct.unpack_from("<Q", data, hits[0]+8)[0] not in (0, 1):
     raise SystemExit("Unbekannte Rueckkehrkonfiguration")
 struct.pack_into("<Q", data, hits[0]+8, 1)
-dst.parent.mkdir(parents=True, exist_ok=True)
-dst.write_bytes(data)
-print(f"Loader-Kopie {dst}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
+if unveraendert and data != original:
+    print("Testloader muss sichere Windows-BootNext-Rueckkehr aktiv haben (--loader-konfigurieren)", file=sys.stderr)
+    sys.exit(2)
+if dst is None:
+    print(f"Loader-Vorbereitung {src}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
+else:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(data)
+    print(f"Loader-Kopie {dst}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
 PY
 }
+
+lauf_vorbereiten() {
+  local ziel="$1"
+  [[ -f "$RUECKFALL" ]] || { echo 'Befristeter lokaler Rueckfallkern ist Pflicht (--rueckfall-kern)' >&2; exit 2; }
+  kern_kopie "$RUECKFALL" "${ziel:+$ziel/rueckfall-geprueft.elf}" 20 10 3 "" 1
+  RUECKFALL_SHA="$(sha256sum "$RUECKFALL" | cut -d ' ' -f1)"
+  ((INVENTAR==0)) || return 0
+  loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
+  [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
+  [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP"
+  if [[ -n "$ziel" ]]; then
+    sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
+  fi
+}
+
 if ((TROCKEN)); then
-  printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Dateien.'
+  printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Laufdateien.'
+  if [[ -n "$PING_IP" ]]; then
+    lauf_vorbereiten ""
+  fi
   printf '1. USB-ESP per Seriennummer+GPT-GUID+NT-Geraetepfad+SHA256 belegen: %s %s %s\n' "$USB_SERIE" "$PARTITION" "$STICK_SHA"
   printf 'Lokalen IT8613-Rueckfallkern (20s,10s,Modus3) und ESP-SHA pruefen: %s\n' "$RUECKFALL"
   if ((MODUS==6)); then
@@ -234,7 +272,7 @@ if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
-  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL"
+  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP"
   exit 0
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
@@ -393,14 +431,7 @@ PY
 }
 
 if [[ -z "$RESTORE" ]]; then
-  [[ -f "$RUECKFALL" ]] || { echo 'Befristeter lokaler Rueckfallkern ist Pflicht (--rueckfall-kern)' >&2; exit 2; }
-  kern_kopie "$RUECKFALL" "$OUT/rueckfall-geprueft.elf" 20 10 3
-  cmp -s "$RUECKFALL" "$OUT/rueckfall-geprueft.elf" || { echo 'IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben' >&2; exit 2; }
-  RUECKFALL_SHA="$(sha256sum "$RUECKFALL" | cut -d ' ' -f1)"
-  if ((INVENTAR==0)); then
-    loader_kopie "$EFI" "$OUT/loader-geprueft.efi"
-    cmp -s "$EFI" "$OUT/loader-geprueft.efi" || { echo 'Testloader muss sichere Windows-BootNext-Rueckkehr aktiv haben (--loader-konfigurieren)' >&2; exit 2; }
-  fi
+  lauf_vorbereiten "$OUT"
 fi
 if ((INVENTAR)); then
   remote pruefen >"$OUT/vorher.json" 2>>"$OUT/winrm.log"
@@ -420,8 +451,6 @@ if [[ -n "$RESTORE" ]]; then
   trap aufraeumen EXIT
   exit 0
 fi
-[[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
-[[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
 [[ -z "$(ss -H -lun 'sport = :69')" ]] || { echo 'Port69 ist schon belegt; vorhandenen Server nicht uebernehmen' >&2; exit 2; }
 sudo -n true
 remote pruefen >"$OUT/vorher.json" 2>"$OUT/winrm.log"
@@ -430,8 +459,6 @@ WAECHE_AN="$(json_wert watcher_enabled)"
 boot_alt="$(json_wert last_boot)"
 boot_muster='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{7}Z$'
 [[ "$boot_alt" =~ $boot_muster ]] || { echo 'FEHLER: Windows-Bootzeit vor dem Lauf fehlt oder ist ungueltig' >&2; exit 2; }
-kern_kopie "$KERN" "$OUT/moo.kern"
-sha256sum "$EFI" "$KERN" "$OUT/moo.kern" >"$OUT/sha256.txt"
 trap aufraeumen EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM HUP
