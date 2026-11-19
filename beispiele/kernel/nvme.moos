@@ -184,21 +184,27 @@ funktion nvme_namespace_pruefen(daten: u64) -> bool:
         nvme_setze(19, bloecke - 1)
         gib_zurück wahr
 
-# Identify-Controller SN liegt beiByte4,20ASCII-Bytes mit Leerzeichenpadding.
+# Identify Controller SN: alle 20 Bytes vergleichen. Normale Leerzeichen
+# bleiben ASCII, die SM2263-N100-SSD liefert vier abschliessende NUL-Bytes.
 @nativ
 funktion nvme_serie(daten: u64, erwartet: u64, laenge: u64) -> bool:
     unsicher:
         setze i: u64 auf 0
-        setze zeichen: u64 auf 0
         setze inhalt: bool auf falsch
+        setze nullpadding: bool auf falsch
         wenn daten == 0 oder erwartet == 0 oder laenge != 20:
             gib_zurück falsch
         solange i < 20:
-            setze zeichen auf u64(speicher_lesen(daten + 4 + i, 1))
-            wenn zeichen < 32 oder zeichen > 126 oder zeichen != u64(speicher_lesen(erwartet + i, 1)):
+            setze zeichen: u64 auf u64(speicher_lesen(daten + 4 + i, 1))
+            wenn zeichen != u64(speicher_lesen(erwartet + i, 1)):
                 gib_zurück falsch
-            wenn zeichen != 32:
-                setze inhalt auf wahr
+            wenn zeichen == 0:
+                setze nullpadding auf wahr
+            sonst:
+                wenn nullpadding oder zeichen < 32 oder zeichen > 126:
+                    gib_zurück falsch
+                wenn zeichen != 32:
+                    setze inhalt auf wahr
             setze i auf i + 1
         gib_zurück inhalt
 

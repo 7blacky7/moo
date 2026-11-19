@@ -538,7 +538,8 @@ import pathlib, re, sys
 out, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
 wire = (out / "net.pcap").read_bytes()
 sections = ("START", "PCI START", "PCI ENDE", "USB START", "USB ENDE",
-            "USB-MSC START", "USB-MSC ENDE", "NVME START", "NVME ENDE", "ENDE")
+            "USB-MSC START", "USB-MSC ENDE", "NVME START", "NVME ENDE",
+            "HID START", "HID ENDE", "ENDE")
 pos = 0
 for section in sections:
     marker = ("MOO-KERNEL SAMMEL " + section + " ").encode()
@@ -546,7 +547,7 @@ for section in sections:
     assert found >= 0, section
     pos = found + len(marker)
 for label, value in (("PCI NVME-KANDIDATEN", 1), ("NVME GPT-PROFIL", int(mode != "inventar")),
-                     ("USB ENDE", 1), ("USB-MSC ENDE", 1), ("NVME ENDE", 1)):
+                     ("USB ENDE", 1), ("USB-MSC ENDE", 1), ("NVME ENDE", 1), ("HID ENDE", 1)):
     assert ("MOO-KERNEL SAMMEL %s %016X" % (label, value)).encode() in wire, label
 port_starts = re.findall(rb"MOO-KERNEL USB INVENTAR PORT START ([0-9A-F]{16})", wire)
 port_ends = re.findall(rb"MOO-KERNEL USB INVENTAR PORT ENDE ([0-9A-F]{16})", wire)

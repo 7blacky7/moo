@@ -19,7 +19,7 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
-aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_setze, xh_event, xh_stop, xh_in_anfordern, xh_neue_taste, xh_ascii, usb_inventar
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, xh_ascii, usb_inventar
 aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
@@ -28,7 +28,8 @@ aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, n
 
 # P7-T26: Explizit freigegebener Boot-Stick aus dem N100-Inventar.
 # Diagnose beendet den MSC-Host vor dem vorhandenen HID-Start.
-# Nur die private QEMU-ELF-Kopie darf diesen markierten Datenvertrag aendern.
+# Private Laufprofile binden hier den USB-iSerial aus dem Stringdeskriptor.
+# Windows Get-Disk.SerialNumber ist der separate Runner-Vertrag.
 @nativ
 statisch USB_LESEN_ZIEL: [u64; 3] auf [0x44524253554F4F4D, 0x68, 0x1000090C]
 @nativ
@@ -1694,62 +1695,62 @@ konstante T_USB_TASTE: [u8; _] auf "MOO-KERNEL USB TASTE "
 @nativ
 konstante T_USB_HID: [u8; _] auf "MOO-KERNEL USB HID "
 @nativ
-konstante T_USB_HALT: [u8; _] auf "MOO-KERNEL USB ANGEHALTEN CODE "
-
-# Nicht blockierend: nur vorhandene Event-TRBs abarbeiten. Der LAPIC-Timer
-# weckt die Hauptschleife; der xHCI-Interrupter bleibt ausgeschaltet.
+konstante T_USB_TASTE_BDF: [u8; _] auf "MOO-KERNEL USB TASTE BDF "
 @nativ
-funktion usb_poll() -> void:
+konstante T_USB_TASTE_PORT: [u8; _] auf "MOO-KERNEL USB TASTE PORT "
+@nativ
+konstante T_USB_TASTE_SLOT: [u8; _] auf "MOO-KERNEL USB TASTE SLOT "
+@nativ
+statisch USB_TASTEN: [u64; 1] auf 0
+@nativ
+statisch USB_CAPS: [u64; 1] auf 0
+
+# Zustand gehaltener Tasten pro HID-Slot, CapsLock fuer die gemeinsame Konsole.
+@nativ
+@aufrufkonvention("sysv64")
+funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64) -> void:
     unsicher:
-        setze code: u32 auf 0
-        setze report: u64 auf 0
+        setze vorher: u64 auf speicher_lesen(zuletzt, 8)
         setze i: u64 auf 2
-        setze usage: u64 auf 0
-        setze c: u8 auf 0
-        wenn xh(16) == 0:
-            gib_zurück
-        setze code auf xh_event(32, xh(17))
-        wenn code == 0:
-            gib_zurück
-        # Short/Teilreport nicht als acht Bytes lesen; CC und Rest bleiben im Netz-Log.
-        wenn code == 13 oder (code == 1 und (xh(36) & 0xFFFFFF) != 0):
-            xh_in_anfordern()
-            gib_zurück
-        wenn code != 1:
-            xh_setze(16, 0)
-            xh_setze(19, u64(code) + 256)
-            meldung(adresse_von(T_USB_HALT), u64(code))
-            xh_stop()
-            gib_zurück
-        lesebarriere()
-        setze report auf speicher_lesen(xh(4) + 36864, 8)
-        xh_setze(20, xh(20) + 1)
+        setze gueltig: bool auf (report & 0xFF00) == 0
         solange i < 8:
-            setze usage auf xh_neue_taste(report, xh(21), i)
+            setze taste: u64 auf (report >> (i * 8)) & 255
+            wenn taste >= 1 und taste <= 3:
+                setze gueltig auf falsch
+            setze i auf i + 1
+        wenn nicht gueltig:
+            gib_zurück
+        setze i auf 2
+        solange i < 8:
+            setze usage: u64 auf xh_neue_taste(report, vorher, i)
             wenn usage != 0:
+                meldung(adresse_von(T_USB_TASTE_BDF), xh(29))
+                meldung(adresse_von(T_USB_TASTE_PORT), port)
+                meldung(adresse_von(T_USB_TASTE_SLOT), slot)
                 meldung(adresse_von(T_USB_HID), usage)
-                xh_setze(25, xh(25) + 1)
+                speicher_schreiben(adresse_von(USB_TASTEN), speicher_lesen(adresse_von(USB_TASTEN), 8) + 1, 8)
                 wenn usage == 57:
-                    xh_setze(24, xh(24) ^ 1)
-                setze c auf xh_ascii(usage, report & 255, xh(24) != 0)
+                    speicher_schreiben(adresse_von(USB_CAPS), speicher_lesen(adresse_von(USB_CAPS), 8) ^ 1, 8)
+                setze c: u8 auf xh_ascii(usage, report & 255, speicher_lesen(adresse_von(USB_CAPS), 8) != 0)
                 wenn c != 0:
                     meldung(adresse_von(T_USB_TASTE), u64(c))
                     zeichen(c)
                     zeichen(10)
                     eingabe_taste(c)
             setze i auf i + 1
-        # Fehlerreports duerfen den gehaltenen Zustand nicht loeschen.
-        wenn (report & 0xFF00) == 0:
-            setze i auf 2
-            setze code auf 1
-            solange i < 8:
-                setze usage auf (report >> (i * 8)) & 255
-                wenn usage >= 1 und usage <= 3:
-                    setze code auf 0
-                setze i auf i + 1
-            wenn code == 1:
-                xh_setze(21, report)
-        xh_in_anfordern()
+        speicher_schreiben(zuletzt, report, 8)
+
+# LAPIC-Ticks wecken den Polling-Loop. xHCI-Interrupts bleiben aus.
+@nativ
+funktion usb_poll() -> void:
+    unsicher:
+        usb_poll_berichte(adresse_von(usb_report_verarbeiten))
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion usb_dma_nehmen(seiten: u64) -> u64:
+    unsicher:
+        gib_zurück pfa_nehme(seiten)
 
 # ---------------- Netz-Log nach ExitBootServices ----------------
 # Fruehe Bootzeilen bleiben bis zur PFA/Paging/PCI-Initialisierung erhalten.
@@ -2057,6 +2058,10 @@ konstante SAM_T_NVME_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL NVME ENDE "
 konstante SAM_T_NVME_ZIEL: [u8; _] auf "MOO-KERNEL SAMMEL NVME ZIEL BDF "
 @nativ
 konstante SAM_T_NVME_PROFIL: [u8; _] auf "MOO-KERNEL SAMMEL NVME GPT-PROFIL "
+@nativ
+konstante SAM_T_HID_START: [u8; _] auf "MOO-KERNEL SAMMEL HID START "
+@nativ
+konstante SAM_T_HID_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL HID ENDE "
 
 @nativ
 @aufrufkonvention("sysv64")
@@ -2134,8 +2139,6 @@ funktion sammel_lauf(tsc: u64, bi: u64) -> void:
                 setze nv_ok auf nvme_pruefen(pfa_nehme(39), tsc, bi, map, log, inventar)
         meldung(adresse_von(SAM_T_NVME_ENDE), u64(nv_ok))
         sammel_wartung(log)
-        meldung(adresse_von(SAM_T_ENDE), 1)
-        sammel_wartung(log)
 
 # ---------------- Kern ----------------
 @nativ
@@ -2164,7 +2167,6 @@ funktion kern_haupt(bi: u64) -> void:
         setze pfa_frei: u64 auf 0
         setze idt_ok: bool auf falsch
         setze usb_ok: bool auf falsch
-        setze usb_dma: u64 auf 0
         setze heap_ok: bool auf falsch
         setze tabellen_frei: u64 auf 0
         setze acpi_ok: u64 auf 0
@@ -2263,8 +2265,6 @@ funktion kern_haupt(bi: u64) -> void:
             wenn modus != 1 und nt_cfg_lese32(0x8000FC00) == 0x54A38086:
                 testlauf_neustart(adresse_von(meldung))
             sammel_lauf(tsc, bi)
-            wenn modus == 1:
-                testlauf_neustart(adresse_von(meldung))
         sonst:
             wenn speicher_lesen(adresse_von(NVME_LESEN_ZIEL) + 8, 8) < 65536:
                 nvme_pruefen(pfa_nehme(39), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(NVME_LESEN_ZIEL))
@@ -2340,17 +2340,23 @@ funktion kern_haupt(bi: u64) -> void:
         wenn nicht sammeln:
             usb_speicher_pruefen(pfa_nehme(99), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), usb_leseziel(1), usb_leseziel(2), adresse_von(USB_LESEN_SERIE))
         # PFA besitzt die DMA-Seiten dauerhaft. Kein Firmware-Speicher wird benutzt.
-        setze usb_dma auf pfa_nehme(64)
-        setze usb_ok auf usb_starten(usb_dma, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung))
+        wenn sammeln:
+            meldung(adresse_von(SAM_T_HID_START), 1)
+            sammel_wartung(adresse_von(meldung))
+        setze usb_ok auf usb_starten(adresse_von(usb_dma_nehmen), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung), sammeln)
         meldung(adresse_von(T_USB_BAR), xh(23))
         meldung(adresse_von(T_USB_CAP), xh(0))
-        meldung(adresse_von(T_USB_DMA), usb_dma)
+        meldung(adresse_von(T_USB_DMA), xh(4))
         meldung(adresse_von(T_USB_BEREIT), u64(usb_ok))
         wenn nicht usb_ok:
             meldung(adresse_von(T_USB_FEHLER), xh(19))
+        wenn sammeln:
+            meldung(adresse_von(SAM_T_HID_ENDE), u64(usb_ok))
+            meldung(adresse_von(SAM_T_ENDE), 1)
+            sammel_wartung(adresse_von(meldung))
         wenn timer_start != 0:
             unterbrechungen_an()
-            solange (hw(10) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und xh(25) == 0)) und warte < 1000:
+            solange (hw(10) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und speicher_lesen(adresse_von(USB_TASTEN), 8) == 0)) und warte < 1000:
                 usb_poll()
                 netz_spuelen()
                 testlauf_poll(adresse_von(meldung))

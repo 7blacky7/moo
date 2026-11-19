@@ -717,6 +717,9 @@ funktion nvme_namespace_test() -> u64:
         gib_zurück 2035
 
 @nativ
+konstante NVME_TEST_NUL_SERIE: [u8; 20] auf [50,48,50,52,48,56,50,52,48,48,48,48,48,48,53,54,0,0,0,0]
+
+@nativ
 funktion nvme_serien_test() -> u64:
     unsicher:
         setze a: u64 auf nvme_test_basis()
@@ -731,6 +734,16 @@ funktion nvme_serien_test() -> u64:
         speicher_schreiben(a + 4, 0, 1)
         wenn nvme_serie(a, serie, 20):
             gib_zurück 3603
+        setze mit_nul: u64 auf adresse_von(NVME_TEST_NUL_SERIE)
+        nt_kopiere(a + 4, mit_nul, 20)
+        wenn nicht nvme_serie(a, mit_nul, 20) oder nvme_serie(a, serie, 20):
+            gib_zurück 3604
+        # Ein Nicht-NUL hinter dem Padding bleibt auch bei exakter Gleichheit ungueltig.
+        nt_kopiere(a + 64, mit_nul, 20)
+        speicher_schreiben(a + 23, 65, 1)
+        speicher_schreiben(a + 83, 65, 1)
+        wenn nvme_serie(a, a + 64, 20):
+            gib_zurück 3605
         gib_zurück 2036
 
 funktion moo_efi_haupt():

@@ -1,23 +1,49 @@
 # P7-T23: eigener xHCI-Hosttreiber, Hardware-Syntax A.
 # xHCI 1.2: Register/Contexts/TRBs; USB 2.0 Kap.9; HID 1.11 Boot Keyboard.
-# Polling, EIN direkt am Rootport angeschlossenes Boot-Keyboard.
+# Polling fuer Boot-Tastaturen direkt an xHCI-Rootports.
+# Pro Host eigener Kommando-/Eventring, pro Slot eigener Device Context,
+# Control-/Interrupt-Ring und vorheriger Report. MSC bleibt synchron.
 # Keine Hubs, Maus, Hotplug, MSI/INTx. Kein Firmwaredienst nach ExitBootServices.
-# DMA kommt als zusammenhaengender, identisch gemappter PFA-Block (64 Seiten).
-# Endliche Wartezeiten; bei Fehler Controller anhalten, DMA niemals wiedergeben.
+# Die DMA-Seiten bleiben beim PFA reserviert.
 aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt, nt_null
 
 # 0 CAP,1 OP,2 DB,3 RT,4 DMA,5 Contextgroesse,6/7 CMD Index/Cycle,
 # 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
-# 14/15 IN Index/Cycle,16 bereit,17 ausstehender IN-TRB,18 TSC/us,
-# 19 Fehlerstufe,20 Reports,21 letzter Report,22 Completion-Slot,
-# 23 physische BAR,24 CapsLock,25 neue Tastendruecke,
+# 14/15 Arbeitsindex/Cycle fuer IN,16 Anzahl HID-Slots,18 TSC/us,
+# 19 Fehlerstufe,22 Completion-Slot,23 physische BAR.
+# 17,20/21,24/25 sind frei.
 # 26 Meldungs-Callback,27 PPC,28 MaxPorts,29 BDF,
 # 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
 # 36/37/38 letztes passendes Event Status/Steuer/TRB; 39/40/41 aktive EP0-TRBs,
 # 42 angefragte Datenbytes,43 tatsaechliche Datenbytes (Short vor Status).
-# 44/45 Bulk-OUT Index/Cycle. HID und MSC werden nacheinander benutzt.
+# 44/45 Bulk-OUT Index/Cycle, 46 MaxSlotsEn, 47/48/49 Rohereignis,
+# 50 HID-Reportdiagnose, 51 HID-Arena aktiv.
 @nativ
-statisch XH: [u64; 46] auf 0
+konstante XH_WERTE: u64 auf 52
+@nativ
+konstante XH_MAX_HOSTS: u64 auf 8
+@nativ
+konstante XH_MAX_HID: u64 auf 16
+# 64 Seiten Host, je Slot drei Seiten: Output/RAM, EP0 und Interrupt-IN.
+@nativ
+konstante XH_HID_SEITEN: u64 auf 112
+@nativ
+statisch XH: [u64; 52] auf 0
+@nativ
+statisch XH_HID_HOSTS: [u64; 416] auf 0
+@nativ
+statisch XH_AKTIV: [u64; 1] auf 0
+@nativ
+statisch XH_HID_HOST_ANZAHL: [u64; 1] auf 0
+
+# Metadaten oberhalb des 32 * 64 Byte grossen Output Device Context.
+struktur XhTastatur:
+    port: u64
+    dci: u64
+    index: u64
+    zyklus: u64
+    anfrage: u64
+    vorher: u64
 
 # Diagnose ueber die gemeinsame Konsole/COM1/UDP-Senke.
 @nativ
@@ -235,14 +261,46 @@ funktion xh_ports_vorbereiten() -> void:
 
 
 @nativ
+funktion xh_kontext() -> u64:
+    unsicher:
+        setze adr: u64 auf speicher_lesen(adresse_von(XH_AKTIV), 8)
+        wenn adr != 0:
+            gib_zurück adr
+        gib_zurück adresse_von(XH)
+
+@nativ
+funktion xh_waehle(adr: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(XH_AKTIV), adr, 8)
+
+@nativ
 funktion xh(f: u64) -> u64:
     unsicher:
-        gib_zurück speicher_lesen(adresse_von(XH) + f * 8, 8)
+        gib_zurück speicher_lesen(xh_kontext() + f * 8, 8)
 
 @nativ
 funktion xh_setze(f: u64, w: u64) -> void:
     unsicher:
-        speicher_schreiben(adresse_von(XH) + f * 8, w, 8)
+        speicher_schreiben(xh_kontext() + f * 8, w, 8)
+
+@nativ
+funktion xh_hid_slot(slot: u64) -> u64:
+    unsicher:
+        gib_zurück xh(4) + 64 * 4096 + (slot - 1) * 3 * 4096
+
+@nativ
+funktion xh_ausgabe() -> u64:
+    unsicher:
+        wenn xh(51) != 0:
+            gib_zurück xh_hid_slot(xh(10))
+        gib_zurück xh(4) + 20480
+
+@nativ
+funktion xh_ring_basis(seite: u64) -> u64:
+    unsicher:
+        wenn xh(51) != 0 und (seite == 6 oder seite == 7):
+            gib_zurück xh_ausgabe() + (seite - 5) * 4096
+        gib_zurück xh(4) + seite * 4096
 
 @nativ
 funktion xh_null(p: u64, n: u64) -> void:
@@ -277,7 +335,7 @@ funktion xh_reg64(p: u64, w: u64) -> void:
 @nativ
 funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer: u32, freigeben: bool) -> u64:
     unsicher:
-        setze basis: u64 auf xh(4) + seite * 4096
+        setze basis: u64 auf xh_ring_basis(seite)
         setze index: u64 auf xh(indexfeld)
         setze cycle: u64 auf xh(indexfeld + 1)
         setze p: u64 auf basis + index * 16
@@ -303,17 +361,15 @@ funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer:
 # xHCI 1.2b 6.4.2: jede Command-/Transfer-Completion vor dem Filtern protokollieren.
 # Command PARAM24 ist keine Restlaenge (6.4.2.2); Transfer REST bleibt unveraendert.
 @nativ
-funktion xh_event(typ: u32, erwartet: u64) -> u32:
+funktion xh_event_holen() -> bool:
     unsicher:
         setze p: u64 auf xh(4) + 8192 + xh(8) * 16
         setze steuer: u32 auf nt_mmio_lese32(p + 12)
         setze status: u32 auf 0
-        setze code: u32 auf 0
         setze ereignis: u32 auf 0
         setze parameter: u64 auf 0
-        setze passend: bool auf falsch
         wenn (steuer & 1) != u32(xh(9)):
-            gib_zurück 0
+            gib_zurück falsch
         lesebarriere()
         setze parameter auf speicher_lesen(p, 8)
         setze status auf u32(speicher_lesen(p + 8, 4))
@@ -336,6 +392,22 @@ funktion xh_event(typ: u32, erwartet: u64) -> u32:
                 xh_log(adresse_von(XH_T_EVT_REST), u64(status & 0xFFFFFF))
             sonst:
                 xh_log(adresse_von(XH_T_EVT_PARAM), u64(status & 0xFFFFFF))
+        xh_setze(47, parameter)
+        xh_setze(48, u64(status))
+        xh_setze(49, u64(steuer))
+        gib_zurück wahr
+
+@nativ
+funktion xh_event(typ: u32, erwartet: u64) -> u32:
+    unsicher:
+        wenn nicht xh_event_holen():
+            gib_zurück 0
+        setze steuer: u32 auf u32(xh(49))
+        setze status: u32 auf u32(xh(48))
+        setze ereignis: u32 auf (steuer >> 10) & 63
+        setze parameter: u64 auf xh(47)
+        setze code: u32 auf 0
+        setze passend: bool auf falsch
         setze passend auf ereignis == typ und parameter == erwartet
         wenn ereignis == 32:
             # Keine Event-Data-TRBs verwendet; Slot und Endpoint gehoeren zur Anfrage.
@@ -452,7 +524,7 @@ funktion xh_control(setup: u64, daten: u64, laenge: u32) -> bool:
                 gib_zurück wahr
             xh_context_bild()
             lesebarriere()
-            wenn (xh(36) >> 24) != 4 oder versuch == 3 oder (speicher_lesen(xh(4) + 20480 + xh(5), 4) & 7) != 2:
+            wenn (xh(36) >> 24) != 4 oder versuch == 3 oder (speicher_lesen(xh_ausgabe() + xh(5), 4) & 7) != 2:
                 gib_zurück falsch
             wenn nicht xh_befehl(0, (14 << 10) | (1 << 16) | u32(xh(10) << 24)):
                 gib_zurück falsch
@@ -575,7 +647,11 @@ funktion xh_controller(bdf: u32, bi: u64, map: u64) -> bool:
         xh_reg64(xh(3) + 0x30, xh(4) + 12288)
         xh_reg64(xh(3) + 0x38, xh(4) + 8192)
         nt_mmio_schreibe32(xh(3) + 0x20, 0)
-        nt_mmio_schreibe32(xh(1) + 0x38, 1)
+        # HCSPARAMS1.MaxSlots begrenzt CONFIG.MaxSlotsEn (xHCI 1.2b 5.3.3/5.4.7).
+        setze v auf nt_mmio_lese32(cap + 4) & 255
+        wenn u64(v) < xh(46):
+            xh_setze(46, u64(v))
+        nt_mmio_schreibe32(xh(1) + 0x38, u32(xh(46)))
         nt_mmio_glocke32(xh(1), 1)
         wenn nicht xh_warte_bit(xh(1) + 4, 1, 0):
             gib_zurück falsch
@@ -626,7 +702,7 @@ funktion xh_port(port: u64) -> u64:
 @nativ
 funktion xh_context_bild() -> void:
     unsicher:
-        setze out: u64 auf xh(4) + 20480
+        setze out: u64 auf xh_ausgabe()
         setze ep: u64 auf out + xh(5)
         lesebarriere()
         setze slot: u32 auf u32(speicher_lesen(out + 12, 4))
@@ -648,7 +724,7 @@ funktion xh_ep0(mps: u64) -> void:
     unsicher:
         setze ep: u64 auf xh(4) + 16384 + 2 * xh(5)
         speicher_schreiben(ep + 4, u32((mps << 16) | 38), 4)
-        speicher_schreiben(ep + 8, (xh(4) + 24576) | 1, 8)
+        speicher_schreiben(ep + 8, xh_ring_basis(6) | 1, 8)
         speicher_schreiben(ep + 16, 8, 4)
 
 # Ergebnis 1 nur fuer Interface Class=3/Subclass=1/Protocol=1, AltSetting=0
@@ -714,15 +790,15 @@ funktion xh_adressieren(port: u64, speed: u64) -> bool:
         wenn nicht xh_befehl(0, 9 << 10):
             gib_zurück falsch
         xh_setze(10, xh(22))
-        wenn xh(10) == 0:
+        wenn xh(10) == 0 oder xh(10) > xh(46):
             gib_zurück falsch
-        xh_null(input, 8192)
-        xh_null(xh(4) + 24576, 8192)
+        xh_null(input, 4096)
+        xh_null(xh_ausgabe(), 3 * 4096)
         xh_setze(12, 0)
         xh_setze(13, 1)
         xh_setze(14, 0)
         xh_setze(15, 1)
-        speicher_schreiben(xh(4) + xh(10) * 8, xh(4) + 20480, 8)
+        speicher_schreiben(xh(4) + xh(10) * 8, xh_ausgabe(), 8)
         speicher_schreiben(input + 4, 3, 4)
         speicher_schreiben(input + xh(5), u32((speed << 20) | (1 << 27)), 4)
         speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
@@ -793,14 +869,80 @@ funktion xh_beschreiben(port: u64, speed: u64, ziel_id: u64) -> u64:
         gib_zurück xh_konfiguration_lesen(0)
 
 @nativ
+konstante XH_T_HID_BEREIT_PORT: [u8; _] auf "MOO-KERNEL USB HID BEREIT PORT "
+@nativ
+konstante XH_T_HID_BEREIT_SPEED: [u8; _] auf "MOO-KERNEL USB HID BEREIT SPEED "
+@nativ
+konstante XH_T_HID_BEREIT_SLOT: [u8; _] auf "MOO-KERNEL USB HID BEREIT SLOT "
+@nativ
+konstante XH_T_HID_INTERVALL: [u8; _] auf "MOO-KERNEL USB HID INTERVALL "
+@nativ
+konstante XH_T_REPORT_BYTES: [u8; _] auf "MOO-KERNEL USB HID REPORT BYTES "
+
+# HID 1.11 §6.2.1: Deskriptorliste beginnt bei bDescriptorType[0].
+@nativ
+funktion xh_hid_report_laenge(desc: u64, laenge: u64, interface_id: u64) -> u64:
+    unsicher:
+        setze pos: u64 auf 0
+        setze passt: bool auf falsch
+        solange pos + 2 <= laenge:
+            setze n: u64 auf u64(speicher_lesen(desc + pos, 1))
+            setze art: u64 auf u64(speicher_lesen(desc + pos + 1, 1))
+            wenn n < 2 oder n > laenge - pos:
+                gib_zurück 0
+            wenn art == 4:
+                wenn n < 9:
+                    gib_zurück 0
+                setze passt auf u64(speicher_lesen(desc + pos + 2, 1)) == interface_id und speicher_lesen(desc + pos + 3, 1) == 0
+            wenn passt und art == 0x21 und n >= 6:
+                setze i: u64 auf 0
+                setze anzahl: u64 auf u64(speicher_lesen(desc + pos + 5, 1))
+                wenn 6 + anzahl * 3 > n:
+                    gib_zurück 0
+                solange i < anzahl:
+                    setze p: u64 auf desc + pos + 6 + i * 3
+                    wenn speicher_lesen(p, 1) == 0x22:
+                        gib_zurück u64(speicher_lesen(p + 1, 2))
+                    setze i auf i + 1
+            setze pos auf pos + n
+        gib_zurück 0
+
+# Standard GET_DESCRIPTOR, Empfaenger Interface. HID 1.11 §7.1.1.
+@nativ
+funktion xh_hid_report_lesen(daten: u64, interface_id: u64, laenge: u64) -> void:
+    unsicher:
+        # Die 0x22-Rohbytes gehoeren zur Diagnose und zum HID-Emulationsgate.
+        wenn xh(50) == 0:
+            gib_zurück
+        setze empfangen: u64 auf 0
+        wenn laenge > 0 und laenge <= 4096:
+            wenn xh_control((laenge << 48) | (interface_id << 32) | 0x22000681, daten, u32(laenge)):
+                setze empfangen auf xh(43)
+        xh_log(adresse_von(XH_T_REPORT_BYTES), empfangen)
+        wenn empfangen > 0 und empfangen <= laenge:
+            xh_inventar_roh(daten, empfangen)
+
+# Linux v6.12 xhci-mem.c:1220–1249,1294–1299: FS/LS bInterval in ms
+# auf 125us-Einheiten und floor(log2), begrenzt auf 3..10.
+@nativ
+funktion xh_hid_intervall(speed: u64, intervall: u64) -> u64:
+    unsicher:
+        wenn speed >= 3:
+            gib_zurück intervall - 1
+        setze taktzahl: u64 auf 8
+        setze exponent: u64 auf 3
+        solange exponent < 10 und taktzahl * 2 <= intervall * 8:
+            setze taktzahl auf taktzahl * 2
+            setze exponent auf exponent + 1
+        gib_zurück exponent
+
+@nativ
 @aufrufkonvention("sysv64")
 funktion xh_geraet(port: u64, speed: u64) -> bool:
     unsicher:
         setze input: u64 auf xh(4) + 16384
         setze desc: u64 auf xh(4) + 32768
         setze laenge: u64 auf xh_beschreiben(port, speed, 0)
-        setze n: u64 auf 0
-        setze typ: u64 auf 0
         setze hid_nummer: u64 auf 0
         setze ep: u64 auf 0
         setze paket: u64 auf 0
@@ -816,10 +958,11 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
         setze paket auf xh(32)
         setze intervall auf xh(33)
         setze konfig auf xh(34)
+        setze report_laenge: u64 auf xh_hid_report_laenge(desc, laenge, hid_nummer)
         xh_log(adresse_von(XH_T_INTERFACE), hid_nummer)
         xh_log(adresse_von(XH_T_EP), ep)
         xh_setze(19, 6)
-        wenn nicht xh_control((konfig << 16) | 0x0900, 0, 0):
+        wenn (speed == 2 und paket != 8) oder nicht xh_control((konfig << 16) | 0x0900, 0, 0):
             gib_zurück falsch
         # SET_PROTOCOL(Boot=0), Interface-Empfaenger, danach SET_IDLE(0).
         wenn nicht xh_control((hid_nummer << 32) | 0x0B21, 0, 0):
@@ -831,27 +974,29 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
         speicher_schreiben(input + 4, u32(1 | (u64(1) << xh(11))), 4)
         speicher_schreiben(input + xh(5), u32((speed << 20) | (xh(11) << 27)), 4)
         speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
-        # Full-/Low-Speed: bInterval in ms -> aufgerundetes log2 in 125us-Einheiten.
-        wenn speed <= 2:
-            setze n auf 1
-            setze typ auf 0
-            solange n < intervall * 8:
-                setze n auf n * 2
-                setze typ auf typ + 1
-            setze intervall auf typ
-        sonst:
-            wenn intervall > 16:
-                gib_zurück falsch
-            setze intervall auf intervall - 1
+        setze intervall auf xh_hid_intervall(speed, intervall)
+        wenn intervall > 15:
+            gib_zurück falsch
         setze ep auf input + (xh(11) + 1) * xh(5)
         speicher_schreiben(ep, u32(intervall << 16), 4)
         speicher_schreiben(ep + 4, u32((paket << 16) | 62), 4)
-        speicher_schreiben(ep + 8, (xh(4) + 28672) | 1, 8)
+        speicher_schreiben(ep + 8, xh_ring_basis(7) | 1, 8)
         speicher_schreiben(ep + 16, u32((paket << 16) | 8), 4)
         wenn nicht xh_befehl(input, (12 << 10) | u32(xh(10) << 24)):
             gib_zurück falsch
-        xh_setze(16, 1)
+        # Das Konfigurieren des Interrupt-Endpoints ist vom 0x22-Diagnoseabruf
+        # getrennt. Ein abgelehnter Descriptor stoppt den Polling-Slot nicht.
+        xh_hid_report_lesen(desc, hid_nummer, report_laenge)
+        setze zustand: u64 auf xh_ausgabe() + 3072
+        speicher_schreiben(zustand + versatz_von(XhTastatur, port), port, 8)
+        speicher_schreiben(zustand + versatz_von(XhTastatur, dci), xh(11), 8)
+        speicher_schreiben(zustand + versatz_von(XhTastatur, zyklus), 1, 8)
+        xh_setze(16, xh(16) + 1)
         xh_setze(19, 0)
+        xh_log(adresse_von(XH_T_HID_BEREIT_PORT), port)
+        xh_log(adresse_von(XH_T_HID_BEREIT_SPEED), speed)
+        xh_log(adresse_von(XH_T_HID_BEREIT_SLOT), xh(10))
+        xh_log(adresse_von(XH_T_HID_INTERVALL), intervall)
         gib_zurück wahr
 
 
@@ -917,10 +1062,49 @@ funktion usb_report_pruefen() -> bool:
         gib_zurück xh_ascii(4, 0, falsch) == 97 und xh_ascii(4, 2, falsch) == 65 und xh_ascii(4, 0, wahr) == 65 und xh_ascii(4, 2, wahr) == 97 und xh_ascii(55, 0, falsch) == 46 und xh_ascii(30, 2, falsch) == 33 und xh_neue_taste(0x0000000000040000, 0, 2) == 4 und xh_neue_taste(0x0000000000040000, 0x0000000000040000, 2) == 0 und xh_neue_taste(0x0000000001040000, 0, 2) == 0 und xh_neue_taste(0x0000000004040000, 0, 3) == 0
 
 @nativ
-funktion xh_in_anfordern() -> void:
+funktion xh_hid_anfordern(slot: u64, zustand: u64) -> void:
     unsicher:
-        xh_setze(17, xh_trb(7, 14, xh(4) + 36864, 8, (1 << 10) | 32 | 4, wahr))
-        nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(xh(11)))
+        setze p_index: u64 auf zustand + versatz_von(XhTastatur, index)
+        setze p_zyklus: u64 auf zustand + versatz_von(XhTastatur, zyklus)
+        setze dci: u64 auf speicher_lesen(zustand + versatz_von(XhTastatur, dci), 8)
+        xh_setze(10, slot)
+        xh_setze(14, speicher_lesen(p_index, 8))
+        xh_setze(15, speicher_lesen(p_zyklus, 8))
+        setze trb: u64 auf xh_trb(7, 14, xh_ausgabe() + 2048, 8, (1 << 10) | 32 | 4, wahr)
+        speicher_schreiben(p_index, xh(14), 8)
+        speicher_schreiben(p_zyklus, xh(15), 8)
+        speicher_schreiben(zustand + versatz_von(XhTastatur, anfrage), trb, 8)
+        nt_mmio_glocke32(xh(2) + slot * 4, u32(dci))
+
+@nativ
+konstante XH_T_HID_HALT: [u8; _] auf "MOO-KERNEL USB ANGEHALTEN CODE "
+
+# Jede Completion gehoert genau zu Endpoint, Slot und outstanding TRB.
+# Bei einem Transferfehler bleibt der restliche Controller bedienbar.
+@nativ
+funktion xh_hid_ereignis(callback: u64) -> void:
+    unsicher:
+        setze steuer: u64 auf xh(49)
+        setze slot: u64 auf steuer >> 24
+        wenn (steuer & 4) != 0 oder ((steuer >> 10) & 63) != 32 oder slot == 0 oder slot > xh(46):
+            gib_zurück
+        setze basis: u64 auf xh_hid_slot(slot)
+        setze zustand: u64 auf basis + 3072
+        setze dci: u64 auf speicher_lesen(zustand + versatz_von(XhTastatur, dci), 8)
+        setze trb: u64 auf speicher_lesen(zustand + versatz_von(XhTastatur, anfrage), 8)
+        wenn dci == 0 oder trb == 0 oder dci != ((steuer >> 16) & 31) oder trb != xh(47):
+            gib_zurück
+        setze code: u64 auf xh(48) >> 24
+        speicher_schreiben(zustand + versatz_von(XhTastatur, anfrage), 0, 8)
+        wenn code != 1 und code != 13:
+            speicher_schreiben(zustand + versatz_von(XhTastatur, dci), 0, 8)
+            xh_log(adresse_von(XH_T_HID_HALT), code)
+            gib_zurück
+        wenn code == 1 und (xh(48) & 0xFFFFFF) == 0:
+            lesebarriere()
+            setze empfangen: ptr[fn[sysv64](u64, u64, u64, u64) -> void] auf zeiger(callback)
+            empfangen(speicher_lesen(basis + 2048, 8), zustand + versatz_von(XhTastatur, vorher), speicher_lesen(zustand + versatz_von(XhTastatur, port), 8), slot)
+        xh_hid_anfordern(slot, zustand)
 
 @nativ
 konstante XH_T_INV_PORT: [u8; _] auf "MOO-KERNEL USB INVENTAR PORT START "
@@ -1002,87 +1186,148 @@ funktion xh_inventar_geraet(port: u64, speed: u64) -> bool:
         gib_zurück anzahl > 0
 
 @nativ
-funktion xh_durchlaufen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, pruefen: u64, wartung: u64) -> bool:
+funktion xh_vorbereiten(dma: u64, tsc_us: u64, log: u64, hid: bool, report: bool) -> bool:
     unsicher:
-        setze bdf: u32 auf 0
-        setze port: u64 auf 0
-        setze ports: u64 auf 0
-        setze speed: u64 auf 0
-        setze vollstaendig: bool auf wahr
-        setze controller: u64 auf 0
-        setze warte: ptr[fn[sysv64](u64) -> void] auf zeiger(wartung)
-        setze pruefe_geraet: ptr[fn[sysv64](u64, u64) -> bool] auf zeiger(pruefen)
-        xh_null(adresse_von(XH), 46 * 8)
+        xh_null(xh_kontext(), XH_WERTE * 8)
         xh_setze(26, log)
         xh_setze(4, dma)
         xh_setze(18, tsc_us)
-        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0 oder pruefen == 0 oder ziel_bdf > 65536:
+        xh_setze(46, 1)
+        wenn hid:
+            xh_setze(46, XH_MAX_HID)
+            xh_setze(50, u64(report))
+            xh_setze(51, 1)
+        wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0:
             xh_setze(19, 1)
             gib_zurück falsch
+        wenn hid:
+            xh_null(dma + 64 * 4096, (XH_HID_SEITEN - 64) * 4096)
         xh_setze(19, 10)
+        gib_zurück wahr
+
+@nativ
+konstante XH_T_HOST_LIMIT: [u8; _] auf "MOO-KERNEL USB HID CONTROLLER LIMIT BDF "
+
+@nativ
+funktion xh_durchlaufen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, pruefen: u64, wartung: u64, allokieren: u64, report: bool) -> bool:
+    unsicher:
+        setze bdf: u32 auf 0
+        setze vollstaendig: bool auf wahr
+        setze controller: u64 auf 0
+        setze hosts: u64 auf 0
+        setze fortsetzen: bool auf wahr
+        setze hid: bool auf allokieren != 0
+        setze inventar: bool auf nicht hid und wartung != 0
+        setze allok: ptr[fn[sysv64](u64) -> u64] auf zeiger(allokieren)
+        setze warte: ptr[fn[sysv64](u64) -> void] auf zeiger(wartung)
+        setze pruefe_geraet: ptr[fn[sysv64](u64, u64) -> bool] auf zeiger(pruefen)
+        xh_waehle(0)
+        wenn nicht hid und nicht xh_vorbereiten(dma, tsc_us, log, falsch, falsch):
+            gib_zurück falsch
+        wenn tsc_us == 0 oder pruefen == 0 oder ziel_bdf > 65536:
+            gib_zurück falsch
         wenn ziel_bdf < 65536:
             setze bdf auf u32(ziel_bdf)
-        solange bdf < 65536 und (ziel_bdf == 65536 oder u64(bdf) == ziel_bdf):
+        solange fortsetzen und bdf < 65536 und (ziel_bdf == 65536 oder u64(bdf) == ziel_bdf):
             wenn (xh_pci(bdf, 0) & 0xFFFF) == 0xFFFF:
                 wenn (bdf & 7) == 0:
                     setze bdf auf bdf + 7
             sonst wenn (xh_pci(bdf, 8) >> 8) == 0x0C0330:
-                xh_setze(19, 1)
-                xh_setze(10, 0)
-                setze controller auf controller + 1
-                wenn xh_controller(bdf, bi, map):
-                    xh_setze(19, 3)
-                    setze ports auf u64(nt_mmio_lese32(xh(0) + 4) >> 24)
-                    setze port auf 1
-                    solange port <= ports:
-                        wenn wartung != 0:
-                            xh_log(adresse_von(XH_T_INV_PORT), port)
-                        setze speed auf xh_port(port)
-                        setze geraet_ok: bool auf wahr
-                        wenn wartung != 0:
-                            # Belegter Anschluss ohne unterstuetzten Port-Speed
-                            # war nicht vollstaendig enumeriert.
-                            setze geraet_ok auf (nt_mmio_lese32(xh(1) + 0x400 + (port - 1) * 16) & 1) == 0
-                        wenn speed >= 1 und speed <= 4:
-                            setze geraet_ok auf pruefe_geraet(port, speed)
-                            wenn wartung == 0 und geraet_ok:
-                                gib_zurück wahr
-                            wenn xh(10) != 0:
-                                wenn nicht xh_befehl(0, (10 << 10) | u32(xh(10) << 24)):
-                                    xh_stop()
-                                    gib_zurück falsch
+                wenn hid:
+                    wenn hosts == XH_MAX_HOSTS:
+                        xh_log(adresse_von(XH_T_HOST_LIMIT), u64(bdf))
+                        setze fortsetzen auf falsch
+                    sonst:
+                        xh_waehle(adresse_von(XH_HID_HOSTS) + hosts * XH_WERTE * 8)
+                        setze fortsetzen auf xh_vorbereiten(allok(XH_HID_SEITEN), tsc_us, log, wahr, report)
+                wenn fortsetzen:
+                    xh_setze(19, 1)
+                    xh_setze(10, 0)
+                    xh_setze(1, 0)
+                    setze controller auf controller + 1
+                    setze port_ok: bool auf wahr
+                    wenn xh_controller(bdf, bi, map):
+                        xh_setze(19, 3)
+                        setze port: u64 auf 1
+                        solange port_ok und port <= xh(28):
+                            wenn inventar:
+                                xh_log(adresse_von(XH_T_INV_PORT), port)
+                            setze speed: u64 auf xh_port(port)
+                            setze geraet_ok: bool auf wahr
+                            wenn inventar:
+                                setze geraet_ok auf (nt_mmio_lese32(xh(1) + 0x400 + (port - 1) * 16) & 1) == 0
+                            wenn speed >= 1 und speed <= 4:
+                                setze geraet_ok auf pruefe_geraet(port, speed)
+                                wenn geraet_ok und nicht inventar und nicht hid:
+                                    gib_zurück wahr
+                                wenn xh(10) != 0 und (nicht hid oder nicht geraet_ok):
+                                    setze port_ok auf xh_befehl(0, (10 << 10) | u32(xh(10) << 24))
                                 xh_setze(10, 0)
-                        wenn wartung != 0:
-                            wenn nicht geraet_ok:
-                                setze vollstaendig auf falsch
-                            xh_log(adresse_von(XH_T_INV_ENDE), u64(geraet_ok))
-                            warte(log)
-                        setze port auf port + 1
-                sonst:
-                    setze vollstaendig auf falsch
-                wenn nicht xh_stop():
-                    gib_zurück falsch
+                            wenn inventar:
+                                wenn nicht geraet_ok oder nicht port_ok:
+                                    setze vollstaendig auf falsch
+                                xh_log(adresse_von(XH_T_INV_ENDE), u64(geraet_ok und port_ok))
+                            wenn wartung != 0:
+                                warte(log)
+                            setze port auf port + 1
+                    sonst:
+                        setze vollstaendig auf falsch
+                    wenn hid und port_ok und xh(16) > 0:
+                        setze hosts auf hosts + 1
+                    sonst:
+                        setze fortsetzen auf xh_stop()
+                        wenn nicht port_ok und nicht hid:
+                            gib_zurück falsch
             setze bdf auf bdf + 1
-        gib_zurück wartung != 0 und vollstaendig und controller > 0
+        wenn hid:
+            speicher_schreiben(adresse_von(XH_HID_HOST_ANZAHL), hosts, 8)
+            gib_zurück hosts > 0
+        gib_zurück inventar und vollstaendig und fortsetzen und controller > 0
 
 @nativ
 funktion xh_suchen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, pruefen: u64) -> bool:
     unsicher:
-        gib_zurück xh_durchlaufen(dma, tsc_us, bi, map, log, ziel_bdf, pruefen, 0)
+        gib_zurück xh_durchlaufen(dma, tsc_us, bi, map, log, ziel_bdf, pruefen, 0, 0, falsch)
 
 @nativ
 funktion usb_inventar(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64) -> bool:
     unsicher:
         wenn wartung == 0:
             gib_zurück falsch
-        gib_zurück xh_durchlaufen(dma, tsc_us, bi, map, log, 65536, adresse_von(xh_inventar_geraet), wartung)
+        gib_zurück xh_durchlaufen(dma, tsc_us, bi, map, log, 65536, adresse_von(xh_inventar_geraet), wartung, 0, falsch)
 
 @nativ
-funktion usb_starten(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64) -> bool:
+funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64, report: bool) -> bool:
     unsicher:
-        wenn nicht xh_suchen(dma, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet)):
+        speicher_schreiben(adresse_von(XH_HID_HOST_ANZAHL), 0, 8)
+        wenn allokieren == 0 oder nicht xh_durchlaufen(0, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet), wartung, allokieren, report):
             gib_zurück falsch
-        xh_in_anfordern()
+        setze host: u64 auf 0
+        solange host < speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8):
+            xh_waehle(adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8)
+            setze slot: u64 auf 1
+            solange slot <= xh(46):
+                setze zustand: u64 auf xh_hid_slot(slot) + 3072
+                wenn speicher_lesen(zustand + versatz_von(XhTastatur, dci), 8) != 0:
+                    xh_hid_anfordern(slot, zustand)
+                setze slot auf slot + 1
+            setze host auf host + 1
+        xh_waehle(adresse_von(XH_HID_HOSTS))
         gib_zurück wahr
+
+@nativ
+funktion usb_poll_berichte(callback: u64) -> void:
+    unsicher:
+        setze host: u64 auf 0
+        setze anzahl: u64 auf speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8)
+        solange host < anzahl:
+            xh_waehle(adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8)
+            setze budget: u64 auf 32
+            solange budget > 0 und xh_event_holen():
+                xh_hid_ereignis(callback)
+                setze budget auf budget - 1
+            setze host auf host + 1
+        wenn anzahl > 0:
+            xh_waehle(adresse_von(XH_HID_HOSTS))
 
 
