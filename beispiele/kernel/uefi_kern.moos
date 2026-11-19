@@ -52,6 +52,10 @@ statisch NVME_LESEN_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 1, 0, 0, 0, 0
 # des expliziten NVMe-Inventarziels. Inventar startet keine I/O-Queue.
 @nativ
 statisch SAMMEL_ZIEL: [u64; 3] auf [0x4C4D4D41534F4F4D, 0, 0]
+# MOOKRYP1: Bare-Link-Opt-in, Laufwert nur in der privaten ELF-Kopie setzen.
+@nativ
+@sektion(".data.moo_krypto")
+statisch SAMMEL_KRYPTO: [u64; 2] auf [0x315059524B4F4F4D, 0]
 # Dieselbe lesende Diagnose mit QEMU-igb nur in einer privaten ELF-Kopie.
 @nativ
 statisch SAMMEL_I226_ZIEL: [u64; 2] auf [0x4F52363232494F4D, 0x125C8086]
@@ -217,6 +221,9 @@ statisch TEST_ZIEL: [u32; 4] auf [0, 0, 0, 0]
 # Vorhandener Surface-Kern (compiler/runtime/moo_surface_core.c, RGBA8888,
 # stride in Bytes). bool-Ergebnis als u8; MooSurfaceColor {r,g,b,a} wird als
 # u32 = r | g<<8 | b<<16 | a<<24 uebergeben (SysV: beide INTEGER in einem Register).
+extern "C" funktion moo_bare_krypto_selbsttest() -> u64
+extern "C" funktion moo_bare_entropie_selbsttest() -> u64
+
 extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
 extern "C" funktion moo_surface_core_clear(kern: ptr[u8], farbe: u32) -> u8
 extern "C" funktion moo_surface_core_rect(kern: ptr[u8], x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8
@@ -2140,6 +2147,60 @@ funktion sammel_wartung(log: u64) -> void:
         netz_spuelen()
         testlauf_poll(log)
 
+# Krypto-Selbsttest, nur Statuswerte. Die Entropieprobe erhaelt keinen Logger.
+@nativ
+konstante SAM_K_START: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO START "
+@nativ
+konstante SAM_K_SHA256: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO SHA256 "
+@nativ
+konstante SAM_K_SHA512: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO SHA512 "
+@nativ
+konstante SAM_K_HMAC_SHA256: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO HMAC-SHA256 "
+@nativ
+konstante SAM_K_HMAC_SHA512: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO HMAC-SHA512 "
+@nativ
+konstante SAM_K_X25519: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO X25519 "
+@nativ
+konstante SAM_K_ED25519: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO ED25519 "
+@nativ
+konstante SAM_K_CHACHA20_POLY1305: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO CHACHA20-POLY1305 "
+@nativ
+konstante SAM_K_HMAC_DRBG: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO HMAC-DRBG "
+@nativ
+konstante SAM_K_ENTROPIE_LOGIK: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO ENTROPIE-LOGIK "
+@nativ
+konstante SAM_K_RDSEED: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO RDSEED "
+@nativ
+konstante SAM_K_RDRAND: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO RDRAND "
+@nativ
+konstante SAM_K_QUELLE: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO QUELLE "
+@nativ
+konstante SAM_K_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL KRYPTO ENDE "
+
+@nativ
+funktion sammel_krypto(log: u64) -> void:
+    unsicher:
+        meldung(adresse_von(SAM_K_START), 1)
+        sammel_wartung(log)
+        setze kat: u64 auf moo_bare_krypto_selbsttest()
+        meldung(adresse_von(SAM_K_SHA256), (kat >> 0) & 1)
+        meldung(adresse_von(SAM_K_SHA512), (kat >> 1) & 1)
+        meldung(adresse_von(SAM_K_HMAC_SHA256), (kat >> 2) & 1)
+        meldung(adresse_von(SAM_K_HMAC_SHA512), (kat >> 3) & 1)
+        meldung(adresse_von(SAM_K_X25519), (kat >> 4) & 1)
+        meldung(adresse_von(SAM_K_ED25519), (kat >> 5) & 1)
+        meldung(adresse_von(SAM_K_CHACHA20_POLY1305), (kat >> 6) & 1)
+        meldung(adresse_von(SAM_K_HMAC_DRBG), (kat >> 7) & 1)
+        meldung(adresse_von(SAM_K_ENTROPIE_LOGIK), (kat >> 8) & 1)
+        sammel_wartung(log)
+        setze quellen: u64 auf moo_bare_entropie_selbsttest()
+        meldung(adresse_von(SAM_K_RDSEED), quellen & 15)
+        meldung(adresse_von(SAM_K_RDRAND), (quellen >> 4) & 15)
+        setze quelle: u64 auf (quellen >> 8) & 15
+        meldung(adresse_von(SAM_K_QUELLE), quelle)
+        meldung(adresse_von(SAM_K_ENDE), u64(kat == 0x1FF und quelle != 0))
+        sammel_wartung(log)
+
 # PCI-Konfigurationsmechanismus 1 (Segment 0), nur lesen. Treffer brauchen
 # NVMe-Klasse und die explizite Vendor-/Device-ID aus dem privaten Laufprofil.
 @nativ
@@ -2433,6 +2494,8 @@ funktion kern_haupt(bi: u64) -> void:
             meldung(adresse_von(T_USB_FEHLER), xh(19))
         wenn sammeln:
             meldung(adresse_von(SAM_T_HID_ENDE), u64(usb_ok))
+            wenn speicher_lesen(adresse_von(SAMMEL_KRYPTO) + 8, 8) == 1:
+                sammel_krypto(adresse_von(meldung))
             meldung(adresse_von(SAM_T_ENDE), 1)
             sammel_wartung(adresse_von(meldung))
         wenn timer_start != 0:

@@ -1419,6 +1419,25 @@ fn build_kernel(
         "moo_bare_mmu_arm64.c",
         "moo_bare_gic_arm64.c",
     ];
+    // Der native Laufvertrag schaltet diese freestanding Byte-APIs ein.
+    // Andere Bare-Kerne (einschliesslich Bootsektor und ARM) behalten ihre Quellen.
+    const KERNEL_KRYPTO_SOURCES: [&str; 7] = [
+        "moo_krypto.c",
+        "moo_krypto_chacha.c",
+        "moo_krypto_x25519.c",
+        "moo_bare_krypto.c",
+        "moo_bare_krypto_test.c",
+        "monocypher/monocypher.c",
+        "monocypher/monocypher-ed25519.c",
+    ];
+    let crypto_sources: &[&str] = if compiler.hat_sektion(".data.moo_krypto") {
+        if !matches!(arch, KernelArch::X86_64) {
+            return Err("Bare-Krypto mit RDSEED/RDRAND braucht x86_64-bare".to_string());
+        }
+        &KERNEL_KRYPTO_SOURCES
+    } else {
+        &[]
+    };
     const KERNEL_CFLAGS: [&str; 10] = [
         "-c", "-ffreestanding", "-fno-pic", "-fno-pie",
         "-O2", "-nostdlib",
@@ -1453,13 +1472,16 @@ fn build_kernel(
         }
     };
 
-    for src in KERNEL_SOURCES {
+    for src in KERNEL_SOURCES.iter().chain(crypto_sources) {
         let src_path = runtime_dir.join(src);
         if !src_path.exists() {
             return Err(format!("Kernel-Runtime-Quelle fehlt: {}", src_path.display()));
         }
-        let obj = tmp.join(format!("{src}.o"));
+        let obj = tmp.join(format!("{}.o", src.replace('/', "_")));
         let mut cmd = Command::new(cc_prog);
+        if crypto_sources.contains(src) {
+            cmd.arg("-mgeneral-regs-only");
+        }
         cmd.args(&cc_target_args)
             .args(KERNEL_CFLAGS)
             .args(&arch_cflags)

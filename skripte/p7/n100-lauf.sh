@@ -22,6 +22,7 @@ MODUS=1
 WATCHDOG_S=10
 PING_IP=
 TRANSPORT=0
+KRYPTO=0
 KONFIG_QUELLE=
 KONFIG_ZIEL=
 KONFIG_LOADER_QUELLE=
@@ -40,6 +41,7 @@ while (($#)); do
     --ping) PING_IP=192.168.77.2; shift;;
     --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); shift;;
     --tcp-echo) PING_IP=192.168.77.2; TRANSPORT=3; shift;;
+    --krypto-selbsttest) KRYPTO=1; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -63,7 +65,8 @@ while (($#)); do
       '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
       '--udp-tcp: ARP/Ping plus UDP-Echo an Port 7 und HTTP an TCP-Port 8080 pruefen.' \
       '--tcp-echo: Zusaetzlich zwei TCP-Echo-Verbindungen an Port 2222 mit 1 MiB und 64 KiB pruefen.' \
-      '--trocken mit Netzoption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
+      '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
+      '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
@@ -103,8 +106,10 @@ fi
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
 [[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo 'Netzoptionen brauchen den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
+((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
+
 kern_kopie() {
-  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" <<'PY'
+  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
@@ -112,6 +117,7 @@ seconds, watchdog, mode = map(int, sys.argv[3:6])
 ping_ip = sys.argv[6]
 unveraendert = sys.argv[7] == "1"
 transport = int(sys.argv[8])
+krypto = sys.argv[9] == "1"
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -159,6 +165,12 @@ if transport & 2:
     leer = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter TCP-Echo-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
+if krypto:
+    sammel = struct.pack("<2Q", 0x4C4D4D41534F4F4D, 1)
+    vertrag(sammel, 24, "Aktiver Sammelvertrag")
+    leer = struct.pack("<2Q", 0x315059524B4F4F4D, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter Krypto-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, 1)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
@@ -174,6 +186,8 @@ if transport & 1:
     print("UDP 7 und TCP 8080 der Kern-Kopie aktiviert")
 if transport & 2:
     print("TCP-Echo 2222 der Kern-Kopie aktiviert")
+if krypto:
+    print("Krypto-Selbsttest der Kern-Kopie aktiviert")
 PY
 }
 loader_kopie() {
@@ -243,7 +257,7 @@ lauf_vorbereiten() {
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT"
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
   fi
@@ -251,7 +265,7 @@ lauf_vorbereiten() {
 
 if ((TROCKEN)); then
   printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Laufdateien.'
-  if [[ -n "$PING_IP" ]]; then
+  if [[ -n "$PING_IP" ]] || ((KRYPTO)); then
     lauf_vorbereiten ""
   fi
   printf '1. USB-ESP per Seriennummer+GPT-GUID+NT-Geraetepfad+SHA256 belegen: %s %s %s\n' "$USB_SERIE" "$PARTITION" "$STICK_SHA"
@@ -270,6 +284,9 @@ if ((TROCKEN)); then
   fi
   if ((TRANSPORT & 2)); then
     printf '%s\n' '   Zwei TCP-Echo-Streams vom Linux-PC, Protokoll tcp-echo.log und Port 2222 in netz.pcap.'
+  fi
+  if ((KRYPTO)); then
+    printf '%s\n' '   Krypto- und Entropie-Status im Netzlog, Nachweis in krypto.log.'
   fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
@@ -296,7 +313,7 @@ if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
-  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT"
+  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO"
   exit 0
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
@@ -592,6 +609,13 @@ while ((SECONDS<bis)); do
         if ((TRANSPORT)); then
           ((transport_belegt)) || { echo 'FEHLER: Angeforderte Transportproben im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
           echo 'UDP-Echo und TCP/HTTP im Kernfenster belegt'
+        fi
+        if ((KRYPTO)); then
+          uv run --no-project --offline python "$ROOT/skripte/p7/krypto-nachweis.py" "$OUT/netz.log" n100 >"$OUT/krypto.log" 2>&1 || {
+            cat "$OUT/krypto.log"
+            exit 1
+          }
+          cat "$OUT/krypto.log"
         fi
         exit 0
       fi

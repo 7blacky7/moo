@@ -47,6 +47,7 @@ PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 NETZ_PING="${MOO_UEFI_PING:-0}"
 NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
 NETZ_TCP_ECHO="${MOO_UEFI_TCP_ECHO:-0}"
+KRYPTO="${MOO_UEFI_KRYPTO:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
 elif [ "$PRUEFUNG" = "lader" ]; then
@@ -88,6 +89,26 @@ skip() {
   echo "############################################################"
   exit 0
 }
+
+case "$KRYPTO" in
+  0) ;;
+  1|rdrand|ohne-quelle)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_SAMMEL:-0}" = 1 ] ||
+      fail "KRYPTO braucht PRUEFUNG=kern und SAMMEL=1"
+    if [ "$KRYPTO" != 1 ]; then
+      CPU=()
+      MODEL=max
+      if [ "${MOO_UEFI_KVM:-0}" = 1 ]; then
+        CPU=(-enable-kvm)
+        MODEL=host
+      fi
+      MODEL+=,-rdseed
+      [ "$KRYPTO" != ohne-quelle ] || MODEL+=,-rdrand
+      QEMU_ACCEL=("${CPU[@]}" -cpu "$MODEL")
+    fi
+    ;;
+  *) fail "KRYPTO: 0, 1, rdrand oder ohne-quelle" ;;
+esac
 
 case "$NETZ_TRANSPORT" in
   0) ;;
@@ -424,7 +445,7 @@ PY
     fi
   fi
   if [ "$SAMMEL" = 1 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" "$SAMMEL_IGB" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$SAMMEL_IGB" "$KRYPTO" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
@@ -436,6 +457,10 @@ if sys.argv[2] == "1":
     nic = struct.pack("<2Q", 0x4F52363232494F4D, 0x125C8086)
     assert elf.count(nic) == 1, "I226-Zielvertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(nic) + 8, 0x10C98086)
+if sys.argv[3] != "0":
+    crypto = struct.pack("<2Q", 0x315059524B4F4F4D, 0)
+    assert elf.count(crypto) == 1, "Eindeutiger deaktivierter Krypto-Vertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(crypto) + 8, 1)
 path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
@@ -917,6 +942,13 @@ PY
     grep -aqF 'MOO-KERNEL NETZ TCP ECHO BEREIT 0000000000000001' "$OUT/serial.log" || fail "TCP-Echo-Marker fehlt"
     [ ! -f "$OUT/tcp-fenster.log" ] || sed 's/^/      | /' "$OUT/tcp-fenster.log"
     [ "$TCP_FENSTER_OK" -eq 1 ] || fail "TCP-Fenster-/Wiederholungsprobe ueber $NETZ_PING fehlgeschlagen"
+  fi
+  if [ "$KRYPTO" != 0 ]; then
+    uv run --no-project --offline python "$ROOT/skripte/p7/krypto-nachweis.py" "$OUT/serial.log" "$KRYPTO" >"$OUT/krypto.log" 2>&1 || {
+      cat "$OUT/krypto.log"
+      fail "Krypto-Selbsttest oder Entropieprofil $KRYPTO"
+    }
+    sed 's/^/      | /' "$OUT/krypto.log"
   fi
   [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log, Ping- oder Transport-pcap unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
