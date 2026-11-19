@@ -602,3 +602,116 @@ funktion sys_e3_alias() -> u64:
         setze w auf p[0]
         w.code = w.code + u32(1)
         gib_zurück gesehen * 100 + u64(p[0].code)
+
+# P2-T124: direkte globale Strukturwerte und laengengepruefte RAM-Byteansichten.
+struktur T124Block:
+    innen: NativeWert
+    bytes: [u8; 10]
+
+@nativ
+statisch T124_START: NativeWert auf NativeWert(7, 9)
+@nativ
+statisch T124_NULL: T124Block auf T124Block()
+
+@nativ
+@einstieg
+funktion sys_t124_statisch() -> u64:
+    unsicher:
+        setze alt: u64 auf T124_START.wert
+        setze leer: u64 auf T124_NULL.innen.wert + u64(T124_NULL.bytes[9])
+        T124_START.wert = alt + 1
+        T124_NULL.innen = T124_START
+        T124_NULL.bytes[9] = u8(23)
+        setze sicht: puffer[u8] auf byteansicht(T124_NULL.bytes)
+        byte_schreiben_le16(sicht, 0, u16(0x1234))
+        wenn T124_NULL.bytes[0] != u8(0x34) oder T124_NULL.bytes[1] != u8(0x12):
+            gib_zurück 9999
+        setze kopie: T124Block auf T124_NULL
+        kopie.innen.wert = 99
+        gib_zurück alt * 1000 + T124_NULL.innen.wert * 10 + leer
+
+@nativ
+@liest(1)
+funktion t124_lesen(b: puffer[u8]) -> u32:
+    gib_zurück byte_lesen_be32(b, 1)
+
+@nativ
+@einstieg
+funktion sys_t124_array() -> u64:
+    setze daten: [u8; 10] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze b: puffer[u8] auf byteansicht(daten)
+    byte_schreiben_be32(b, 1, als(u32, 0x12345678))
+    byte_schreiben_le16(b, 5, als(u16, 0x9ABC))
+    gib_zurück als(u64, t124_lesen(b)) + als(u64, byte_lesen_le16(b, 5)) + als(u64, daten[1]) + länge(b)
+
+@nativ
+@einstieg
+funktion sys_t124_bytes(adr: u64, laenge: u64, versatz: u64, modus: u64, wert: u64) -> u64:
+    unsicher:
+        setze p: ptr[u8] auf zeiger(adr)
+        setze b: puffer[u8] auf byteansicht(p, laenge)
+        wenn modus == 0:
+            gib_zurück u64(byte_lesen_be16(b, versatz))
+        wenn modus == 1:
+            gib_zurück u64(byte_lesen_le16(b, versatz))
+        wenn modus == 2:
+            gib_zurück u64(byte_lesen_be32(b, versatz))
+        wenn modus == 3:
+            gib_zurück u64(byte_lesen_le32(b, versatz))
+        wenn modus == 4:
+            gib_zurück byte_lesen_be64(b, versatz)
+        wenn modus == 5:
+            gib_zurück byte_lesen_le64(b, versatz)
+        wenn modus == 6:
+            byte_schreiben_be16(b, versatz, u16(wert))
+        wenn modus == 7:
+            byte_schreiben_le16(b, versatz, u16(wert))
+        wenn modus == 8:
+            byte_schreiben_be32(b, versatz, u32(wert))
+        wenn modus == 9:
+            byte_schreiben_le32(b, versatz, u32(wert))
+        wenn modus == 10:
+            byte_schreiben_be64(b, versatz, wert)
+        wenn modus == 11:
+            byte_schreiben_le64(b, versatz, wert)
+        gib_zurück 0
+
+# Akzeptanzvorprobe: derselbe 25-Wort-Slot wie im Kernel, mit Feldnamen.
+struktur T124TcpSlot:
+    zustand: u64
+    nic: u64
+    lokal_ip: u64
+    peer_ip: u64
+    lokal_port: u64
+    peer_port: u64
+    peer_mac: u64
+    empfang: u64
+    unbestaetigt: u64
+    senden: u64
+    aktiv: u64
+    kopf_muster: u64
+    kopf_bytes: u64
+    peer_fin: u64
+    will_fin: u64
+    ring_kopf: u64
+    ring_belegt: u64
+    tx_daten: u64
+    tx_flags: u64
+    tx_zeit: u64
+    wiederholungen: u64
+    mss: u64
+    peer_fenster: u64
+    fenster_seq: u64
+    fenster_ack: u64
+
+@nativ
+statisch T124_TCP: T124TcpSlot auf T124TcpSlot(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25)
+
+@nativ
+@einstieg
+funktion sys_t124_tcp(adr: u64) -> u64:
+    unsicher:
+        setze p: ptr[T124TcpSlot] auf zeiger(adr)
+        p[0] = T124_TCP
+        T124_TCP.fenster_ack = T124_TCP.fenster_ack + 1
+        gib_zurück groesse_von(T124TcpSlot)

@@ -11,8 +11,8 @@ for target in x86_64-bare x86_64-unknown-uefi; do
     "$compiler" compile "$src/system_koerper.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
     mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
 done
-sel="--glob=TEXT --glob=PFAD --glob=TABELLE --glob=E3_TABELLE"
-for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse sys_puffer_index sys_strukturfeld sys_registerfeld sys_gepacktes_feld sys_feld_direkt sys_feld_param sys_feld_gepackt sys_feld_verschachtelt sys_innen sys_struktur_array sys_link_feld sys_packed_innen sys_array_felder sys_array_referenzen sys_matrix sys_matrix_zeiger sys_adresse_matrix sys_adresse_zeile sys_adresse_punkt sys_adresse_struktur sys_value_copy sys_value_nested sys_value_pointer_copy sys_value_local_address sys_value_field_store sys_value_field_copy sys_value_call sys_value_nested_call sys_e3_arrays sys_e3_null sys_e3_float sys_e3_struktur_array sys_e3_overlap sys_e3_alias sys_e3_ausgerichtet sys_mmio; do
+sel="--glob=TEXT --glob=PFAD --glob=TABELLE --glob=E3_TABELLE --glob=T124_START --glob=T124_NULL --glob=T124_TCP"
+for f in sys_summe sys_tabelle sys_text_summe sys_rufe sys_konv sys_zeiger sys_struktur sys_gerade sys_asm sys_klasse sys_puffer_index sys_strukturfeld sys_registerfeld sys_gepacktes_feld sys_feld_direkt sys_feld_param sys_feld_gepackt sys_feld_verschachtelt sys_innen sys_struktur_array sys_link_feld sys_packed_innen sys_array_felder sys_array_referenzen sys_matrix sys_matrix_zeiger sys_adresse_matrix sys_adresse_zeile sys_adresse_punkt sys_adresse_struktur sys_value_copy sys_value_nested sys_value_pointer_copy sys_value_local_address sys_value_field_store sys_value_field_copy sys_value_call sys_value_nested_call sys_e3_arrays sys_e3_null sys_e3_float sys_e3_struktur_array sys_e3_overlap sys_e3_alias sys_e3_ausgerichtet sys_mmio sys_t124_statisch sys_t124_array sys_t124_bytes sys_t124_tcp; do
     sel="$sel --func=$f"
 done
 sel="$sel --func=sys_cast_bytefolge"
@@ -86,6 +86,14 @@ expect_fail "$src/system_value_ctor_anzahl.moos" "Struktur 'Probe' erwartet 2 Fe
 expect_fail "$src/system_value_ctor_typ.moos" 'Probe.a erwartet u32, erhalten u64'
 expect_fail "$src/system_value_copy_typ.moos" 'zwei erwartet Andere, erhalten Probe'
 expect_fail "$src/system_value_call_typ.moos" "Argument 1 von 'wert_annahme' erwartet Erwartet, erhalten Andere"
+expect_fail "$src/system_statisch_konst.moos" 'native Konstante '\''FEST'\'' ist nicht beschreibbar'
+expect_fail "$src/system_statisch_unsicher.moos" 'M-M005'
+expect_fail "$src/system_statisch_flucht.moos" 'M-M002'
+expect_fail "$src/system_bytes_konst.moos" 'Konstante'
+expect_fail "$src/system_bytes_roh_unsicher.moos" 'M-M005'
+expect_fail "$src/system_bytes_liest.moos" 'nur-lesend'
+expect_fail "$src/system_bytes_flucht.moos" 'M-M002'
+expect_fail "$src/system_bytes_typ.moos" 'erwartet [u8; N]'
 # P2-T56: frueher gesperrte Formen laufen ueber den allgemeinen Klassifizierer;
 # erwartete declare-Zeilen sind gegen Clang (x86_64-unknown-none) belegt.
 expect_decl() {  # Datei erwartete-declare-Zeile [Ziel]

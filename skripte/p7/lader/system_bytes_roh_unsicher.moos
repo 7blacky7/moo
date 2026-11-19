@@ -1,0 +1,4 @@
+@nativ
+funktion verboten(p: ptr[u8]) -> u64:
+    setze b: puffer[u8] auf byteansicht(p, 4)
+    gib_zurück länge(b)

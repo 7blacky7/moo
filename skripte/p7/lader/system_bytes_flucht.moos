@@ -1,0 +1,6 @@
+@nativ
+funktion verboten() -> ptr[u8]:
+    setze a: [u8; 2] auf [1, 2]
+    setze b: puffer[u8] auf byteansicht(a)
+    unsicher:
+        gib_zurück puffer_zeiger(b)

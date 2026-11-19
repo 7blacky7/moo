@@ -1,0 +1,9 @@
+struktur Fest:
+    wert: u64
+@nativ
+konstante FEST: Fest auf Fest(7)
+@nativ
+funktion verboten() -> u64:
+    unsicher:
+        FEST.wert = 9
+        gib_zurück FEST.wert

@@ -88,7 +88,7 @@ expect_fail() {  # Datei Ziel Muster [Extra-Flags]
     fi
     rg -q -F "$3" "$out/fail.log" || { cat "$out/fail.log" >&2; echo "Falsche Diagnose fuer $1" >&2; exit 1; }
 }
-expect_fail "$src/volatile_ohne_unsicher.moos" x86_64-bare 'Hardwarezugriff erfordert unsicher' --no-stdlib
+expect_fail "$src/volatile_ohne_unsicher.moos" x86_64-bare 'Rohzugriff erfordert unsicher' --no-stdlib
 expect_fail "$src/volatile_typ_falsch.moos" x86_64-bare 'hat nicht den Typ U32' --no-stdlib
 expect_fail "$src/volatile_float.moos" x86_64-bare 'Integer-Registertyp' --no-stdlib
 expect_fail "$src/volatile_rueckgabe_schreiben.moos" x86_64-bare 'verlangt einen Lesezugriff' --no-stdlib
@@ -247,7 +247,7 @@ expect_fail "$src/assembler_ohne_clobber.moos" x86_64-bare 'clobber= fehlt'
 expect_fail "$src/assembler_operand.moos" x86_64-bare 'Operand $2 ist nicht deklariert'
 expect_fail "$src/assembler_constraint.moos" x86_64-bare "ungültige Eingangs-Constraint '=r'"
 expect_fail "$src/assembler_ausgang_anweisung.moos" x86_64-bare 'ausgang= ist nur mit gib_zurück erlaubt'
-expect_fail "$src/assembler_ohne_unsicher.moos" x86_64-bare 'Hardwarezugriff erfordert unsicher'
+expect_fail "$src/assembler_ohne_unsicher.moos" x86_64-bare 'Rohzugriff erfordert unsicher'
 expect_fail "$src/assembler_x86.moos" aarch64-bare 'passt nicht zum Modulziel aarch64'
 echo 'PASS assembler: IR-Constraints, Disassembly x86_64/aarch64, C++-Probe, Negativfaelle'
 '''

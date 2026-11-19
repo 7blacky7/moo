@@ -1,0 +1,6 @@
+@nativ
+konstante FEST: [u8; 2] auf [1, 2]
+@nativ
+funktion verboten() -> u64:
+    setze b: puffer[u8] auf byteansicht(FEST)
+    gib_zurück länge(b)

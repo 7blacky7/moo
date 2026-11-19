@@ -1,0 +1,11 @@
+struktur Merker:
+    zeiger: ptr[u64]
+@nativ
+statisch GLOBAL: Merker auf Merker()
+@nativ
+funktion verboten() -> u64:
+    unsicher:
+        setze x: u64 auf 7
+        setze p: ptr[u64] auf zeiger(adresse_von(x))
+        setze GLOBAL auf Merker(p)
+        gib_zurück 0

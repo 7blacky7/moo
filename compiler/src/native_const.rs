@@ -550,6 +550,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             (TypeKind::Name(name), Expr::FunctionCall { name: ctor, args, .. }) if name == ctor => {
                 let layout = self.registry.layout(name)
                     .ok_or_else(|| format!("'{name}' ist keine native Struktur"))?;
+                if args.is_empty() {
+                    return Ok(layout.llvm_type.const_zero().into());
+                }
                 if args.len() != layout.fields.len() {
                     return Err(format!("Struktur '{name}' erwartet {} Felder, bekommen {}", layout.fields.len(), args.len()));
                 }

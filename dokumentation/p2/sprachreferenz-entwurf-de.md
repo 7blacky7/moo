@@ -48,11 +48,99 @@ Verschachtelte, gepackte Strukturen mit festem Array-Feld kompilieren bereits (`
 
 `@gepackt`/`@packed` bedeutet im ersten Inkrement Alignment 1 ohne implizite Feldpolsterung. Widersprüchliche Kombinationen mit expliziter höherer Ausrichtung werden abgelehnt. Nicht ausgerichtete Felder benötigen geeignete Zugriffe; eine normal ausgerichtete Referenz darf daraus nicht vorgetäuscht werden. Padding ist weder Vergleichsinhalt noch ungeprüft zu serialisierender Nutzinhalt.
 
+
+### Statische native Strukturwerte (P2-T124)
+
+`@nativ statisch NAME: Struktur auf Struktur(...)` legt beschreibbaren Speicher
+mit statischer Lebensdauer an. Der Konstruktor initialisiert die Felder in
+Deklarationsreihenfolge; `Struktur()` initialisiert alle Felder einschließlich
+verschachtelter Strukturen und Arrays mit ihrem Nullwert. Die bestehende Form
+`auf 0` nullt ebenfalls statische Aggregate. Skalare statische Variablen sind
+weiterhin nicht freigegeben.
+
+```moos
+struktur Verbindung:
+    zustand: u64
+    empfang: u64
+
+@nativ
+statisch TCP: Verbindung auf Verbindung()
+
+@nativ
+funktion empfangen(neu: u64) -> u64:
+    unsicher:
+        TCP.empfang = neu
+        gib_zurück TCP.empfang
+```
+
+Direkte Felder, eingebettete Strukturen, Arrayfelder, Wertkopien und
+`adresse_von(TCP.empfang)` verwenden denselben zielabhängigen Layoutvertrag
+wie lokale Strukturwerte. Der Zugriff auf beschreibbaren gemeinsamen
+statischen Speicher verlangt `unsicher`; direkte Schreibzugriffe auf native
+Konstanten werden abgewiesen. Eine Strukturkopie kopiert die Feldwerte, nicht
+den Speicherort der Struktur. Beleg: `sys_t124_tcp` und
+`sys_t124_statisch` in `skripte/p7/lader/system_koerper.moos`, C-Gegenprobe
+`system_probe.c` einschließlich aller 25 TCP-Slot-Feldpositionen.
+
 ## Puffer, Zeiger und unsicher
 
 Ein Puffer wird mit `puffer_erstellen(i32, 3)` angelegt und per Index gelesen und geschrieben (`beispiele/nativ/04_puffer.moos`). Ein `puffer[T]` verwaltet zusammenhängenden Speicher, prüft Grenzen und hält seinen Owner per Referenzzählung. Views halten den Owner am Leben. Solange Views oder exportierte Pins aktiv sind, sind Längenänderungen und Reallokation gesperrt. Geteilte Handles teilen auch sichtbare Elementänderungen; eine tiefe Kopie wird ausdrücklich angefordert. Veränderliche Puffer sind im ersten sicheren Inkrement threadgebunden.
 
 Pointertypen dürfen deklariert, Pointerwerte kopiert und auf null verglichen werden. Integeradressen in Pointer umwandeln, dereferenzieren, freie Pointerarithmetik, ungeprüfte Zugriffe, rohe FFI-Aufrufe und MMIO erfolgen ausdrücklich in `unsicher`/`unsafe`. Volatile-Zugriffe ersetzen keine Atomics oder Hardwarebarrieren. Ein roher Pointer muss gültig, passend ausgerichtet und für die vertragliche Dauer lebendig sein.
+
+
+### Nicht besitzende native Byteansichten (P2-T124)
+
+`byteansicht(array)` (Alias `byte_view`) leiht ein vorhandenes
+`[u8; N]` einschließlich eines Struktur-Arrayfelds ohne Kopie. Das Ergebnis
+hat den nativen Deskriptortyp `puffer[u8]` mit Datenzeiger und Länge.
+Eine Konstante kann nicht als schreibbare Ansicht geliehen werden.
+
+`byteansicht(zeiger, länge)` mit `ptr[u8]` und `u64` verlangt
+`unsicher`. Es prüft Nullzeiger bei nichtleeren Bereichen und den Überlauf
+der beschriebenen Adressspanne. Der Aufrufer verantwortet weiterhin die
+Gültigkeit und Lebensdauer des RAM-Bereichs sowie nötige Synchronisation.
+Die Ansicht allokiert, besitzt und pinnt keinen Speicher; insbesondere hält
+sie keinen DMA-Puffer oder fremden Owner selbständig am Leben. Lokaler
+Speicher darf nicht über den Aufruf hinaus entkommen. Eine native
+Pufferrückgabe und ein C-/UEFI-Export mit Pufferparameter bleiben gesperrt;
+interne native Aufrufe unterstützen den Deskriptor hosted und im Bare-Profil.
+
+| Zugriff | Werttyp | Byteordnung |
+|---|---|---|
+| `byte_lesen_be16` / `byte_schreiben_be16` | `u16` | höchstwertiges Byte zuerst |
+| `byte_lesen_le16` / `byte_schreiben_le16` | `u16` | niedrigstwertiges Byte zuerst |
+| `byte_lesen_be32` / `byte_schreiben_be32` | `u32` | höchstwertiges Byte zuerst |
+| `byte_lesen_le32` / `byte_schreiben_le32` | `u32` | niedrigstwertiges Byte zuerst |
+| `byte_lesen_be64` / `byte_schreiben_be64` | `u64` | höchstwertiges Byte zuerst |
+| `byte_lesen_le64` / `byte_schreiben_le64` | `u64` | niedrigstwertiges Byte zuerst |
+
+Lesen erhält `(ansicht, versatz)`, Schreiben
+`(ansicht, versatz, wert)`; der Byteversatz ist `u64`. Der vollständige
+Wortbereich wird vor dem ersten Speicherzugriff geprüft:
+`versatz <= länge` und `wortbreite <= länge - versatz`.
+Ein zu kurzer Schreibbereich verändert keine Bytes. Die Zugriffe sind
+unaligned-fähige normale RAM-Bytezugriffe mit Alignment 1. Sie ersetzen weder
+`volatile_*` für MMIO noch Atomics oder Gerätebarrieren.
+
+```moos
+@nativ
+funktion paketwort() -> u32:
+    setze paket: [u8; 5] auf [0, 0, 0, 0, 0]
+    setze b: puffer[u8] auf byteansicht(paket)
+    byte_schreiben_be32(b, 1, als(u32, 0x12345678))
+    gib_zurück byte_lesen_be32(b, 1)
+```
+
+`@liest(n)` erlaubt die Lesehelfer auf dem markierten Pufferparameter,
+aber keine Schreibhelfer oder schreibbaren Ansichtsaliase. Bereichsfehler
+nutzen den vorhandenen nativen Fehlervertrag (hosted fangbar, Bare-Abbruch
+bzw. Trap am C-Export). `als(T, x)` bleibt bereichsgeprüft. `T(x)` behält
+seinen bisherigen Emitterpfad; im Systemkörper sind solche Konversionen
+ungeprüft und verlangen `unsicher`. Die Vereinheitlichung ist P2-T125.
+Belege: `sys_t124_array`/`sys_t124_bytes` und das
+C-Wireformat-Orakel unter `skripte/p7/lader/`, hosted Fehlerfortsetzung und
+unveränderte Bytes in `compiler/tests/test_native_byteansicht.moos`.
 
 ## C-Anbindung und Callbacks
 

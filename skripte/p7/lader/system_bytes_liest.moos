@@ -1,0 +1,5 @@
+@nativ
+@liest(1)
+funktion verboten(b: puffer[u8]) -> u64:
+    byte_schreiben_be16(b, 0, als(u16, 7))
+    gib_zurück 0

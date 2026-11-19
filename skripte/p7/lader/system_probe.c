@@ -1,9 +1,40 @@
 /* P7-T5: Gegenprobe der Moo-Systemkoerper (skripte/p7/lader/system_koerper.moos),
  * kompiliert fuer x86_64-bare (SysV) und hier echt ausgefuehrt. */
+#define _GNU_SOURCE
+#include <stdlib.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+
+extern uint64_t sys_t124_tcp(uint64_t);
+extern uint64_t sys_t124_statisch(void);
+extern uint64_t sys_t124_array(void);
+extern uint64_t sys_t124_bytes(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+
+/* Exportierte Bare-Funktionen muessen bei ungueltiger Sicht/Grenze vor jedem
+ * Speicherzugriff trapen. Shared RAM zeigt auch Teilstores des Kindprozesses. */
+static void t124_trap(unsigned char *ram, uint64_t adr, uint64_t len, uint64_t off, uint64_t mode) {
+    memset(ram, 0xA5, 16);
+    pid_t child = fork();
+    if (child == 0) {
+        (void)sys_t124_bytes(adr, len, off, mode, 0x1234);
+        _exit(0);
+    }
+    int status = 0;
+    if (child < 0 || waitpid(child, &status, 0) != child ||
+        !WIFSIGNALED(status) || (WTERMSIG(status) != SIGILL && WTERMSIG(status) != SIGTRAP)) {
+        fprintf(stderr, "T124: erwarteter Bounds-Trap fehlt\n");
+        exit(1);
+    }
+    for (unsigned i = 0; i < 16; ++i) {
+        if (ram[i] != 0xA5) { fprintf(stderr, "T124: Teilstore vor Bounds-Trap\n"); exit(1); }
+    }
+}
 
 typedef uint64_t (__attribute__((ms_abi)) *dienst_t)(uint64_t, uint64_t);
 extern uint64_t sys_summe(uint64_t);
@@ -348,6 +379,42 @@ int main(void) {
     pruefe("c-ausgerichtet-b0", bloecke[0].b, 9);
     pruefe("c-ausgerichtet-a1", bloecke[1].a, 1);
     pruefe("c-ausgerichtet-b1", bloecke[1].b, 2);
+    uint64_t tcp_slot[25] = {0};
+    pruefe("t124-tcpslot-groesse", (int64_t)sys_t124_tcp((uint64_t)(uintptr_t)tcp_slot), sizeof tcp_slot);
+    for (unsigned i = 0; i < 25; ++i) pruefe("t124-tcpslot-feldlayout", (int64_t)tcp_slot[i], i + 1);
+    pruefe("t124-tcpslot-kopie", (int64_t)sys_t124_tcp((uint64_t)(uintptr_t)tcp_slot), sizeof tcp_slot);
+    pruefe("t124-tcpslot-statisch", (int64_t)tcp_slot[24], 26);
+    fprintf(stderr, "T124: statische Strukturen\n");
+    pruefe("t124-statische-initialisierung", (int64_t)sys_t124_statisch(), 9100);
+    /* Zweiter Aufruf belegt globale Lebensdauer und unveraenderte Kopie. */
+    pruefe("t124-statische-lebensdauer", (int64_t)sys_t124_statisch(), 10143);
+    fprintf(stderr, "T124: sichere Arrayansicht\n");
+    pruefe("t124-bytearray", (int64_t)sys_t124_array(), 0x12345678 + 0x9ABC + 0x12 + 10);
+    fprintf(stderr, "T124: rohe RAM-Ansicht und BE/LE\n");
+    unsigned char wire[16] = {0xEE, 1, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xDD};
+    const uint64_t erwartet[] = {0x0123, 0x2301, 0x01234567, 0x67452301, UINT64_C(0x0123456789ABCDEF), UINT64_C(0xEFCDAB8967452301)};
+    for (unsigned mode = 0; mode < 6; ++mode) {
+        pruefe("t124-unaligned-endian-lesen", (int64_t)sys_t124_bytes((uint64_t)(uintptr_t)wire, 9, 1, mode, 0), (int64_t)erwartet[mode]);
+        const unsigned n = 2u << (mode / 2);
+        unsigned char geschrieben[16];
+        memset(geschrieben, 0xEE, sizeof geschrieben);
+        /* Das feste Wire-Orakel ist fuer beide Richtungen dasselbe Bytebild. */
+        (void)sys_t124_bytes((uint64_t)(uintptr_t)geschrieben, n + 1, 1, mode + 6, erwartet[mode]);
+        pruefe("t124-endian-schreiben", memcmp(geschrieben + 1, wire + 1, n), 0);
+        pruefe("t124-linke-grenze", geschrieben[0], 0xEE);
+        pruefe("t124-rechte-grenze", geschrieben[n + 1], 0xEE);
+    }
+    unsigned char *shared = mmap(NULL, 16, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (shared == MAP_FAILED) return 1;
+    for (unsigned mode = 0; mode < 12; ++mode) {
+        unsigned n = 2u << ((mode % 6) / 2);
+        t124_trap(shared, (uint64_t)(uintptr_t)shared, n, 1, mode);
+        t124_trap(shared, (uint64_t)(uintptr_t)shared, 16, UINT64_MAX, mode);
+    }
+    t124_trap(shared, 0, 0, 0, 0);
+    t124_trap(shared, 0, 1, 0, 0);
+    t124_trap(shared, (uint64_t)(uintptr_t)shared, UINT64_MAX, 0, 0);
+    munmap(shared, 16);
     if (fehler) return 1;
     printf("PASS system_probe: %u Pruefungen\n", pruefungen);
     return 0;

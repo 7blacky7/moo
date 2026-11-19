@@ -1363,11 +1363,8 @@ impl<'ctx> CodeGen<'ctx> {
                 {
                     return Err(format!("Native Funktion '{name}': Feste Arrays sind als Parameter/Rueckgabe by value nicht freigegeben (ptr[T] oder eine Struktur mit Arrayfeld verwenden)"));
                 }
-                // P2-T12 (Plan 31194239 §4): sichere Koerper duerfen puffer[T]
-                // nutzen (Index grenzgeprueft); Bare folgt spaeter.
-                if has_buffer && self.bare_mode {
-                    return Err(format!("Native Funktion '{name}': puffer[T]-Parameter sind vorerst nur hosted nutzbar"));
-                }
+                // P2-T124: interne Bare-Puffer nutzen denselben geprueften
+                // RAM-Deskriptor wie hosted. C-/UEFI-Exporte bleiben gesperrt.
                 // Ein einzelner skalarer extern-C-Aufruf bleibt im bestehenden
                 // FFI-Pfad. Mit Zeiger- oder Strukturtypen in der Signatur
                 // uebernimmt der Systemkoerper: der skalare FFI-Emitter kennt
@@ -1407,12 +1404,13 @@ impl<'ctx> CodeGen<'ctx> {
                 // Zeiger/Puffer behalten ihre Pfade (Ausschluss unten).
                 let bare_strukturwerte = self.bare_mode && (struct_param
                     || crate::native_system::has_struct_values(body, &native_nominals));
+                let lokaler_speicher = crate::native_system::has_struct_locals(body, &native_nominals);
                 let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
                     && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode)
-                        || bare_strukturwerte || zyklische_natives.contains(name))
-                    && !(self.bare_mode && (returns_struct || zeiger_puffer))
+                        || bare_strukturwerte || has_buffer || lokaler_speicher || zyklische_natives.contains(name))
+                    && !(self.bare_mode && (returns_struct || ((has_pointer || returns_pointer) && !lokaler_speicher)))
                     && (hosted_x86 || self.bare_mode);
-                if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct))
+                if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct || has_buffer))
                     || hosted_system || sicher_system
                 {
                     let sig = crate::native_system::SystemSignature::from_annotations(
@@ -1736,6 +1734,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 &native_callees, &self.extern_bindings,
                                 self.safe_native_functions.contains(name),
                                 decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry")),
+                                &program.statements,
                             ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                             continue;
                         }

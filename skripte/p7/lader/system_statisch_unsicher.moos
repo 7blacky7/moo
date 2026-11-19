@@ -1,0 +1,7 @@
+struktur Zustand:
+    wert: u64
+@nativ
+statisch GLOBAL: Zustand auf Zustand()
+@nativ
+funktion verboten() -> u64:
+    gib_zurück GLOBAL.wert

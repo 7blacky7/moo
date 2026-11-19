@@ -1,0 +1,49 @@
+# P2-T124: dieselben RAM-Sichten im hosted Native-Pfad, Fehler sind fangbar.
+@nativ
+statisch BYTE_TEST: [u8; 8] auf 0
+
+@nativ
+@liest(1)
+funktion wort_aus(b: puffer[u8]) -> u32:
+    gib_zurück byte_lesen_be32(b, 1)
+
+@nativ
+funktion byte_lokal(versatz: u64) -> u64:
+    setze daten: [u8; 5] auf [0, 1, 2, 3, 4]
+    setze b: puffer[u8] auf byteansicht(daten)
+    setze a: u32 auf wort_aus(b)
+    gib_zurück als(u64, a) + als(u64, byte_lesen_be32(b, versatz))
+
+@nativ
+funktion byte_schreibe(versatz: u64) -> u64:
+    setze ergebnis: u64 auf 7
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(BYTE_TEST)
+        byte_schreiben_be32(b, versatz, u32(0x01020304))
+    gib_zurück ergebnis
+
+@nativ
+funktion byte_stand() -> u64:
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(BYTE_TEST)
+        setze ergebnis auf byte_lesen_be64(b, 0)
+    gib_zurück ergebnis
+
+zeige byte_lokal(1)
+versuche:
+    zeige byte_lokal(2)
+fange fehler:
+    zeige "LESEN-GRENZE"
+zeige byte_schreibe(0)
+zeige byte_stand()
+versuche:
+    zeige byte_schreibe(5)
+fange fehler:
+    zeige "SCHREIBEN-GRENZE"
+zeige byte_stand()
+versuche:
+    zeige byte_schreibe(18446744073709551615)
+fange fehler:
+    zeige "VERSATZ-GRENZE"
+zeige byte_stand()
