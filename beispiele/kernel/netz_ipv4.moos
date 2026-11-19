@@ -1,17 +1,7 @@
-# P7-T11: ARP und ICMP-Echo auf einem direkt angeschlossenen IPv4-Netz.
-# RFC 826, Packet Reception; RFC 791, 3.1; RFC 792, Echo or Echo Reply.
-aus "../uefi/netz_geraet" importiere nt_r16, nt_b8, nt_b16, nt_kopiere, nt_mac, nt_senden, nt_empfangen, nt_pruefsumme
-
-@nativ
-funktion netz_ipv4_lesen(p: u64, off: u64) -> u64:
-    unsicher:
-        gib_zurück (nt_r16(p, off) << 16) | nt_r16(p, off + 2)
-
-@nativ
-funktion netz_ipv4_schreiben(p: u64, off: u64, ip: u64) -> void:
-    unsicher:
-        nt_b16(p, off, ip >> 16)
-        nt_b16(p, off + 2, ip & 0xFFFF)
+# P7-T11: ARP, ICMP-Echo, UDP-Echo und TCP auf einem direkt angeschlossenen IPv4-Netz.
+# RFC 826, Packet Reception; RFC 791 §3.1; RFC 792, Echo; RFC 768.
+aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_kopiere, nt_mac, nt_senden, nt_empfangen, nt_pruefsumme, nt_pseudo_pruefsumme, nt_ipv4_antwortkopf, nt_ether_antwort
+aus "netz_tcp" importiere netz_tcp_empfangen
 
 @nativ
 funktion netz_eigene_mac(p: u64, nic: u64) -> bool:
@@ -28,7 +18,7 @@ funktion netz_arp_antwort(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
     unsicher:
         wenn laenge < 42 oder nt_r16(p, 14) != 1 oder nt_r16(p, 16) != 0x0800 oder nt_r16(p, 18) != 0x0604:
             gib_zurück 0
-        wenn nt_r16(p, 20) != 1 oder netz_ipv4_lesen(p, 38) != ip:
+        wenn nt_r16(p, 20) != 1 oder nt_r32(p, 38) != ip:
             gib_zurück 0
         setze broadcast: bool auf speicher_lesen(p, 4) == 0xFFFFFFFF und speicher_lesen(p + 4, 2) == 0xFFFF
         wenn nicht broadcast und nicht netz_eigene_mac(p, nic):
@@ -41,41 +31,60 @@ funktion netz_arp_antwort(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
         solange i < 6:
             nt_b8(p, 22 + i, nt_mac(nic, i))
             setze i auf i + 1
-        netz_ipv4_schreiben(p, 28, ip)
+        nt_b32(p, 28, ip)
         gib_zurück 42
 
 @nativ
-funktion netz_icmp_antwort(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
+funktion netz_ip_nutzlaenge(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
     unsicher:
-        # Stufe 2 verarbeitet eine IPv4-MTU von 1500 ohne Optionen oder Fragmente.
-        wenn laenge < 42 oder speicher_lesen(p + 14, 1) != 0x45 oder speicher_lesen(p + 23, 1) != 1:
+        # Fester 20-Byte-IPv4-Kopf und unfragmentierte Ethernet-MTU 1500.
+        wenn laenge < 34 oder speicher_lesen(p + 14, 1) != 0x45:
             gib_zurück 0
         setze ip_laenge: u64 auf nt_r16(p, 16)
-        wenn ip_laenge < 28 oder ip_laenge > 1500 oder ip_laenge + 14 > laenge oder (nt_r16(p, 20) & 0xBFFF) != 0:
+        wenn ip_laenge <= 20 oder ip_laenge > 1500 oder ip_laenge + 14 > laenge oder (nt_r16(p, 20) & 0xBFFF) != 0:
             gib_zurück 0
-        wenn netz_ipv4_lesen(p, 30) != ip oder nicht netz_eigene_mac(p, nic) oder nt_pruefsumme(p, 14, 20) != 0:
+        wenn nt_r32(p, 30) != ip oder nicht netz_eigene_mac(p, nic) oder nt_pruefsumme(p, 14, 20) != 0:
             gib_zurück 0
-        setze quelle: u64 auf netz_ipv4_lesen(p, 26)
+        setze quelle: u64 auf nt_r32(p, 26)
         wenn quelle == ip oder (quelle >> 24) == 0 oder (quelle >> 24) == 127 oder (quelle >> 24) >= 224:
             gib_zurück 0
-        setze icmp_laenge: u64 auf ip_laenge - 20
-        wenn nt_r16(p, 34) != 0x0800 oder nt_pruefsumme(p, 34, icmp_laenge) != 0:
+        gib_zurück ip_laenge - 20
+
+@nativ
+funktion netz_icmp_antwort(p: u64, icmp_laenge: u64, ip: u64, quelle: u64) -> u64:
+    unsicher:
+        wenn icmp_laenge < 8 oder nt_r16(p, 34) != 0x0800 oder nt_pruefsumme(p, 34, icmp_laenge) != 0:
             gib_zurück 0
-        # Typ, Adressen und Pruefsummen erneuern, Identifier/Sequenz/Nutzlast behalten.
-        netz_ipv4_schreiben(p, 26, ip)
-        netz_ipv4_schreiben(p, 30, quelle)
-        nt_b16(p, 18, 0)
-        nt_b16(p, 20, 0x4000)
-        nt_b8(p, 22, 64)
-        nt_b16(p, 24, 0)
-        nt_b16(p, 24, nt_pruefsumme(p, 14, 20))
         nt_b16(p, 34, 0)
         nt_b16(p, 36, 0)
         nt_b16(p, 36, nt_pruefsumme(p, 34, icmp_laenge))
-        gib_zurück 14 + ip_laenge
+        nt_ipv4_antwortkopf(p, ip, quelle, 1, icmp_laenge)
+        gib_zurück 34 + icmp_laenge
 
 @nativ
-funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
+funktion netz_udp_echo(p: u64, ip_nutz: u64, ip: u64, quelle: u64) -> u64:
+    unsicher:
+        wenn ip_nutz < 8 oder nt_r16(p, 36) != 7:
+            gib_zurück 0
+        setze port: u64 auf nt_r16(p, 34)
+        setze udp_laenge: u64 auf nt_r16(p, 38)
+        wenn port == 0 oder udp_laenge < 8 oder udp_laenge > ip_nutz:
+            gib_zurück 0
+        wenn nt_r16(p, 40) != 0 und nt_pseudo_pruefsumme(p, 34, udp_laenge, quelle, ip, 17) != 0:
+            gib_zurück 0
+        nt_b16(p, 34, 7)
+        nt_b16(p, 36, port)
+        nt_b16(p, 40, 0)
+        setze summe: u64 auf nt_pseudo_pruefsumme(p, 34, udp_laenge, ip, quelle, 17)
+        # RFC 768 reserviert 0 als "keine Pruefsumme" fuer IPv4.
+        wenn summe == 0:
+            setze summe auf 0xFFFF
+        nt_b16(p, 40, summe)
+        nt_ipv4_antwortkopf(p, ip, quelle, 17, udp_laenge)
+        gib_zurück 34 + udp_laenge
+
+@nativ
+funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64, dienste: bool) -> u64:
     unsicher:
         wenn laenge < 14 oder laenge > 1514 oder (speicher_lesen(p + 6, 1) & 1) != 0:
             gib_zurück 0
@@ -84,26 +93,32 @@ funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64) -> u64:
         setze typ: u64 auf nt_r16(p, 12)
         wenn typ == 0x0806:
             gib_zurück netz_arp_antwort(p, laenge, nic, ip)
-        wenn typ == 0x0800:
-            gib_zurück netz_icmp_antwort(p, laenge, nic, ip)
+        wenn typ != 0x0800:
+            gib_zurück 0
+        setze nutz: u64 auf netz_ip_nutzlaenge(p, laenge, nic, ip)
+        wenn nutz == 0:
+            gib_zurück 0
+        setze protokoll: u64 auf u64(speicher_lesen(p + 23, 1))
+        setze quelle: u64 auf nt_r32(p, 26)
+        wenn protokoll == 1:
+            gib_zurück netz_icmp_antwort(p, nutz, ip, quelle)
+        wenn dienste und protokoll == 17:
+            gib_zurück netz_udp_echo(p, nutz, ip, quelle)
+        wenn dienste und protokoll == 6:
+            netz_tcp_empfangen(p, nutz, nic, ip, quelle)
         gib_zurück 0
 
-# Je Port hoechstens acht Rahmen, damit die anderen Poller regelmaessig laufen.
-# Der 2048-Byte-Puffer wird nach der Antwort vom TX-Ring kopiert und ist wieder frei.
+# Acht Rahmen je Port begrenzen die Zeit bis zum naechsten Poller/Watchdog.
 @nativ
-funktion netz_ipv4_poll(nic: u64, p: u64, ip: u64) -> void:
+funktion netz_ipv4_poll(nic: u64, p: u64, ip: u64, dienste: bool) -> void:
     unsicher:
         setze runde: u64 auf 0
         solange runde < 8:
             setze laenge: u64 auf nt_empfangen(nic, p)
             wenn laenge == 0:
                 gib_zurück
-            setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip)
+            setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip, dienste)
             wenn antwort != 0:
-                nt_kopiere(p, p + 6, 6)
-                setze i: u64 auf 0
-                solange i < 6:
-                    nt_b8(p, 6 + i, nt_mac(nic, i))
-                    setze i auf i + 1
+                nt_ether_antwort(p, nic)
                 nt_senden(nic, p, antwort)
             setze runde auf runde + 1

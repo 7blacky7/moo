@@ -45,6 +45,7 @@ BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 # P7-T14: MOO_UEFI_PRUEFUNG=e1000 prueft den Moo-e1000-Treiber (eigene App, eigener QEMU-Lauf).
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 NETZ_PING="${MOO_UEFI_PING:-0}"
+NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
 elif [ "$PRUEFUNG" = "lader" ]; then
@@ -87,6 +88,15 @@ skip() {
   exit 0
 }
 
+case "$NETZ_TRANSPORT" in
+  0) ;;
+  1)
+    [ "$NETZ_PING" != 0 ] || fail "TRANSPORT braucht PING=e1000 oder igb"
+    command -v curl >/dev/null || fail "TRANSPORT braucht curl"
+    ;;
+  *) fail "TRANSPORT: 0 oder 1" ;;
+esac
+
 case "$NETZ_PING" in
   0) ;;
   e1000|igb)
@@ -115,7 +125,7 @@ fi
 
 # UDP-Nutzlasten gegen jede vollstaendige COM1-Kernzeile pruefen (auch vor NIC-Init).
 kern_netz_pruefen() {
-  uv run --no-project python - "$1" "$2" "$NETZ_PING" <<'PY'
+  uv run --no-project python - "$1" "$2" "$NETZ_PING" "$NETZ_TRANSPORT" <<'PY'
 import collections, pathlib, struct, sys
 raw = pathlib.Path(sys.argv[1]).read_bytes()
 assert raw[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4")
@@ -128,6 +138,9 @@ guest_ip = bytes((192, 0, 2, 2))
 guest_mac = bytes.fromhex("525400123459")
 arp_requests, arp_replies = 0, 0
 echo_requests, echo_replies = collections.Counter(), collections.Counter()
+transport_test = sys.argv[4] == "1"
+udp_requests, udp_replies = [], []
+tcp_streams = collections.defaultdict(list)
 
 def checksum_ok(data):
     data += b"\x00" * (len(data) % 2)
@@ -154,6 +167,30 @@ while pos + 16 <= len(raw):
                 assert frame[6:12] == guest_mac and 28 <= size_ip <= len(frame) - 14
                 assert checksum_ok(frame[14:34]) and checksum_ok(icmp)
                 echo_replies[icmp[4:]] += 1
+    if transport_test and len(frame) >= 42 and frame[12:14] == b"\x08\x00" and frame[14] == 0x45:
+        addresses = frame[26:34]
+        if addresses in (host_ip + guest_ip, guest_ip + host_ip):
+            guest = addresses[:4] == guest_ip
+            proto = frame[23]
+            size_ip = struct.unpack_from("!H", frame, 16)[0]
+            segment = frame[34:14 + size_ip]
+            if proto in (6, 17) and len(segment) >= 8:
+                sport, dport = struct.unpack_from("!HH", segment)
+                service, client = (sport, dport) if guest else (dport, sport)
+                if (proto, service) in ((17, 7), (6, 8080)):
+                    assert size_ip == 20 + len(segment) and checksum_ok(frame[14:34])
+                    assert (frame[6:12] if guest else frame[:6]) == guest_mac
+                    pseudo = addresses + struct.pack("!BBH", 0, proto, len(segment))
+                    assert checksum_ok(pseudo + segment), (proto, guest)
+                    if proto == 17:
+                        assert struct.unpack_from("!H", segment, 4)[0] == len(segment)
+                        (udp_replies if guest else udp_requests).append((client, segment[8:]))
+                    else:
+                        assert len(segment) >= 20
+                        tcp_len = (segment[12] >> 4) * 4
+                        assert 20 <= tcp_len <= len(segment)
+                        seq, ack = struct.unpack_from("!II", segment, 4)
+                        tcp_streams[client].append((guest, seq, ack, segment[13] & 0x3F, segment[tcp_len:]))
     if len(frame) < 42 or frame[12:14] != b"\x08\x00" or frame[23] != 17:
         continue
     ip = frame[14:]
@@ -184,6 +221,38 @@ if echo_test:
     assert echo_requests == echo_replies, "ICMP Identifier/Sequenz/Nutzlast bzw. Anzahl weicht ab"
     assert "MOO-KERNEL NETZ IPV4 BEREIT 00000000C0000202" in serial
     print("      OK: Host-ping über %s, ARP + 21 Echo-Paare samt Prüfsummen und unveränderter Nutzlast" % sys.argv[3])
+if transport_test:
+    assert "MOO-KERNEL NETZ UDP TCP BEREIT 0000000000000001" in serial
+    anfrage = pathlib.Path(sys.argv[1]).with_name("udp-anfrage.bin").read_bytes()
+    assert len(udp_requests) == 1 and udp_requests == udp_replies
+    assert udp_requests[0][1] == anfrage
+    assert len(tcp_streams) == 2
+    mehrfach = 0
+    def fort(seq, n):
+        return (seq + n) & 0xffffffff
+    for stream in tcp_streams.values():
+        client = [row[1:] for row in stream if not row[0]]
+        server = [row[1:] for row in stream if row[0]]
+        assert client[0][2] == 0x02 and server[0][2] == 0x12
+        c_start, s_start = fort(client[0][0], 1), fort(server[0][0], 1)
+        assert server[0][1] == c_start
+        assert any(seq == c_start and ack == s_start and flags & 0x10 for seq, ack, flags, _ in client[1:])
+        request = [row for row in client if row[3]]
+        mehrfach += len(request) > 1
+        assert b"".join(row[3] for row in request).startswith(b"GET / HTTP/1.1\r\n")
+        assert b"".join(row[3] for row in request).endswith(b"\r\n\r\n")
+        for packets, start in ((request, c_start), ([row for row in server if row[3]], s_start)):
+            for seq, _, _, data in packets:
+                assert seq == start
+                start = fort(start, len(data))
+        reply = b"".join(row[3] for row in server)
+        assert reply.startswith(b"HTTP/1.1 200 OK\r\n") and reply.endswith(b"\r\n\r\nMoo TCP\n")
+        for packets, gegen in ((client, server), (server, client)):
+            seq, _, _, data = next(row for row in packets if row[2] & 1)
+            end = fort(seq, len(data) + 1)
+            assert any(ack == end and flags & 0x10 for _, ack, flags, _ in gegen)
+    assert mehrfach >= 1, "HTTP-Anfrage nicht auf mehrere TCP-Segmente verteilt"
+    print("      OK: UDP 7 bytegleich; TCP 8080 zwei Handshakes, HTTP 200 und beidseitig bestaetigtes FIN")
 PY
 }
 
@@ -365,13 +434,17 @@ PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
   fi
   if [ "$NETZ_PING" != 0 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
 vertrag = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
 assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter IPv4-Vertrag fehlt"
 struct.pack_into("<2Q", elf, elf.index(vertrag) + 8, 0xc0000202, int(sys.argv[2] == "igb"))
+if sys.argv[3] == "1":
+    vertrag = struct.pack("<2Q", 0x474643344C4F4F4D, 0)
+    assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter UDP-/TCP-Vertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
 path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "IPv4-Vertrag in privater ELF-Kopie"
@@ -405,7 +478,7 @@ PY
   if [ "$NETZ_PING" != 0 ]; then
     ip link set lo up && ip tuntap add dev moo-ping mode tap &&
       ip address add 192.0.2.1/24 dev moo-ping && ip link set moo-ping up || fail "TAP im Test-Namespace nicht bereit"
-    KERN_QEMU+=(-netdev tap,id=n0,ifname=moo-ping,script=no,downscript=no
+    KERN_QEMU+=(-netdev tap,id=n0,ifname=moo-ping,script=no,downscript=no,vnet_hdr=off
       -device "$NETZ_PING,netdev=n0,mac=52:54:00:12:34:59,romfile="
       -object filter-dump,id=klog,netdev=n0,file="$OUT/net.pcap")
   elif [ "$NETZ" = 1 ]; then
@@ -474,6 +547,26 @@ PY
       LC_ALL=C ping -4 -n -I moo-ping -c 20 -i 0.25 -W 1 -w 10 -s 57 192.0.2.2 &&
       LC_ALL=C ping -4 -n -I moo-ping -c 1 -W 1 -w 3 -M do -s 1472 192.0.2.2
     } >"$OUT/ping.log" 2>&1 && PING_OK=1
+  fi
+  TRANSPORT_OK=0
+  if [ "$NETZ_TRANSPORT" = 1 ] && [ "$PING_OK" = 1 ] &&
+     bash "$ROOT/skripte/p7/transport-probe.sh" 192.0.2.2 moo-ping 192.0.2.1 "$OUT" >"$OUT/transport.log" 2>&1; then
+    # Eine zweite Verbindung nach FIN, CRLF-CRLF ueber zwei Segmente verteilt.
+    uv run --no-project --offline python - >"$OUT/tcp-segmente.log" 2>&1 <<'PY'
+import socket, time
+with socket.create_connection(("192.0.2.2", 8080), timeout=4, source_address=("192.0.2.1", 0)) as sock:
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    sock.sendall(b"GET / HTTP/1.1\r\nHost: 192.0.2.2\r\n\r")
+    time.sleep(0.15)
+    sock.sendall(b"\n")
+    data = bytearray()
+    while part := sock.recv(256):
+        data.extend(part)
+        assert len(data) <= 256
+    assert data.startswith(b"HTTP/1.1 200 OK\r\n") and data.endswith(b"\r\n\r\nMoo TCP\n")
+    print("HTTP-200-Antwort und EOF nach segmentierter Anfrage")
+PY
+    [ "$?" -ne 0 ] || TRANSPORT_OK=1
   fi
   # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
   # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
@@ -799,7 +892,13 @@ PY
     [ ! -f "$OUT/ping.log" ] || sed 's/^/      | /' "$OUT/ping.log"
     [ "$PING_OK" -eq 1 ] || fail "Linux-Ping über $NETZ_PING fehlgeschlagen"
   fi
-  [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log oder Ping-pcap unvollstaendig"
+  if [ "$NETZ_TRANSPORT" = 1 ]; then
+    for logfile in transport.log tcp-segmente.log; do
+      [ ! -f "$OUT/$logfile" ] || sed 's/^/      | /' "$OUT/$logfile"
+    done
+    [ "$TRANSPORT_OK" -eq 1 ] || fail "UDP-/TCP-Probe ueber $NETZ_PING fehlgeschlagen"
+  fi
+  [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log, Ping- oder Transport-pcap unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
   Z_EBS="$(grep -an 'MOO-LADER EXITBOOTSERVICES OK' "$OUT/serial.log" | head -1 | cut -d: -f1)"
   Z_KERN="$(grep -an 'MOO-KERNEL START' "$OUT/serial.log" | head -1 | cut -d: -f1)"

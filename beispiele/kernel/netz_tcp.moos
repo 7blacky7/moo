@@ -1,0 +1,273 @@
+# P7-T11: ein TCP-Verbindungsslot fuer den HTTP-200-Testdienst, IPv4 Port 8080.
+# RFC 9293 §§3.1–3.6, 3.8.1 und 3.10. Daten und FIN belegen Sequenzraum.
+# Ein ausstehendes, wiederholbares Segment. Headerabschluss bis 2048 Bytes.
+aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_kopiere, nt_senden, nt_link, nt_pseudo_pruefsumme, nt_ipv4_antwortkopf, nt_ether_antwort
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+konstante TCP_PORT: u64 auf 8080
+@nativ
+konstante TCP_LISTEN: u64 auf 0
+@nativ
+konstante TCP_SYN_RCVD: u64 auf 1
+@nativ
+konstante TCP_ESTABLISHED: u64 auf 2
+@nativ
+konstante TCP_FIN: u64 auf 3
+@nativ
+konstante TCP_KOPF_MAX: u64 auf 2048
+@nativ
+konstante TCP_HTTP: [u8; _] auf "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nMoo TCP\n"
+@nativ
+konstante TCP_HTTP_LAENGE: u64 auf 65
+
+struktur TcpSlot:
+    zustand: u64
+    nic: u64
+    ip: u64
+    port: u64
+    empfang: u64
+    unbestaetigt: u64
+    senden: u64
+    aktiv: u64
+    kopf_muster: u64
+    kopf_bytes: u64
+    peer_fin: u64
+    tx_laenge: u64
+    tx_zeit: u64
+    wiederholungen: u64
+    mss: u64
+    antwort_offset: u64
+
+@nativ
+statisch TCP_SLOT: [u64; 16] auf 0
+@nativ
+statisch TCP_TX: [u8; 128] auf 0  # 14 + 20 + 20 + Antwort
+
+@nativ
+funktion tcp_wert(off: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(TCP_SLOT) + off, 8)
+
+@nativ
+funktion tcp_setze(off: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(TCP_SLOT) + off, wert, 8)
+
+@nativ
+funktion tcp_geschlossen() -> bool:
+    unsicher:
+        gib_zurück tcp_wert(versatz_von(TcpSlot, zustand)) == TCP_FIN und tcp_wert(versatz_von(TcpSlot, peer_fin)) != 0 und tcp_wert(versatz_von(TcpSlot, unbestaetigt)) == tcp_wert(versatz_von(TcpSlot, senden))
+
+@nativ
+funktion netz_tcp_wartung(tsc_us: u64) -> void:
+    unsicher:
+        wenn tsc_us == 0 oder tcp_wert(versatz_von(TcpSlot, zustand)) == TCP_LISTEN:
+            gib_zurück
+        setze jetzt: u64 auf takt()
+        setze alter: u64 auf jetzt - tcp_wert(versatz_von(TcpSlot, aktiv))
+        wenn tcp_geschlossen():
+            # FIN-Duplikate des letzten Peers bis 2*MSL beantworten.
+            wenn alter >= tsc_us * 240000000:
+                tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            gib_zurück
+        wenn alter >= tsc_us * 20000000:
+            tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            gib_zurück
+        setze laenge: u64 auf tcp_wert(versatz_von(TcpSlot, tx_laenge))
+        setze n: u64 auf tcp_wert(versatz_von(TcpSlot, wiederholungen))
+        wenn laenge == 0 oder jetzt - tcp_wert(versatz_von(TcpSlot, tx_zeit)) < tsc_us * (u64(1000000) << n):
+            gib_zurück
+        wenn n >= 3:
+            tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            gib_zurück
+        setze nic: u64 auf tcp_wert(versatz_von(TcpSlot, nic))
+        wenn nt_link(nic):
+            nt_senden(nic, adresse_von(TCP_TX), laenge)
+        tcp_setze(versatz_von(TcpSlot, tx_zeit), jetzt)
+        tcp_setze(versatz_von(TcpSlot, wiederholungen), n + 1)
+
+# MSS-Option aus SYN, ansonsten 536 (RFC 9293 §3.7.1). Andere Optionen
+# laengenbegrenzt ueberspringen. Das Antwortsegment handelt keine aus.
+@nativ
+funktion tcp_mss(p: u64, kopf: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 20
+        setze mss: u64 auf 536
+        solange i < kopf:
+            setze art: u64 auf u64(speicher_lesen(p + 34 + i, 1))
+            wenn art == 0:
+                gib_zurück mss
+            setze schritt: u64 auf 1
+            wenn art != 1:
+                wenn i + 2 > kopf:
+                    gib_zurück 0
+                setze schritt auf u64(speicher_lesen(p + 35 + i, 1))
+                wenn schritt < 2 oder i + schritt > kopf:
+                    gib_zurück 0
+                wenn art == 2:
+                    wenn schritt != 4:
+                        gib_zurück 0
+                    setze mss auf nt_r16(p, 36 + i)
+            setze i auf i + schritt
+        gib_zurück mss
+
+# Antwort im empfangenen Frame aufbauen. Sequenzverbrauchende Antworten
+# werden fuer die Wiedersendung kopiert. Reine ACKs verbrauchen nichts.
+@nativ
+funktion tcp_antwort(p: u64, ip: u64, flags: u64, daten: u64) -> void:
+    unsicher:
+        setze nic: u64 auf tcp_wert(versatz_von(TcpSlot, nic))
+        setze quelle: u64 auf tcp_wert(versatz_von(TcpSlot, ip))
+        setze seq: u64 auf tcp_wert(versatz_von(TcpSlot, senden))
+        setze nutz: u64 auf 20 + daten
+        nt_b16(p, 34, TCP_PORT)
+        nt_b16(p, 36, tcp_wert(versatz_von(TcpSlot, port)))
+        nt_b32(p, 38, seq)
+        nt_b32(p, 42, tcp_wert(versatz_von(TcpSlot, empfang)))
+        nt_b8(p, 46, 0x50)
+        nt_b8(p, 47, flags)
+        nt_b16(p, 48, TCP_KOPF_MAX)
+        nt_b16(p, 50, 0)
+        nt_b16(p, 52, 0)
+        wenn daten != 0:
+            setze offset: u64 auf tcp_wert(versatz_von(TcpSlot, antwort_offset))
+            nt_kopiere(p + 54, adresse_von(TCP_HTTP) + offset, daten)
+            tcp_setze(versatz_von(TcpSlot, antwort_offset), offset + daten)
+        nt_b16(p, 50, nt_pseudo_pruefsumme(p, 34, nutz, ip, quelle, 6))
+        nt_ipv4_antwortkopf(p, ip, quelle, 6, nutz)
+        nt_ether_antwort(p, nic)
+        setze laenge: u64 auf 34 + nutz
+        setze verbrauch: u64 auf daten + u64((flags & 3) != 0)
+        wenn verbrauch != 0:
+            tcp_setze(versatz_von(TcpSlot, senden), (seq + verbrauch) & 0xFFFFFFFF)
+            nt_kopiere(adresse_von(TCP_TX), p, laenge)
+            tcp_setze(versatz_von(TcpSlot, tx_laenge), laenge)
+            tcp_setze(versatz_von(TcpSlot, tx_zeit), takt())
+            tcp_setze(versatz_von(TcpSlot, wiederholungen), 0)
+        nt_senden(nic, p, laenge)
+
+@nativ
+funktion tcp_beginnen(p: u64, nic: u64, ip: u64, quelle: u64, kopf: u64) -> void:
+    unsicher:
+        setze mss: u64 auf tcp_mss(p, kopf)
+        wenn mss == 0:
+            gib_zurück
+        # TSC-basierter Startwert fuer das isolierte Testnetz.
+        setze iss: u64 auf ((takt() >> 10) ^ quelle ^ nt_r16(p, 34)) & 0xFFFFFFFF
+        tcp_setze(versatz_von(TcpSlot, zustand), TCP_SYN_RCVD)
+        tcp_setze(versatz_von(TcpSlot, nic), nic)
+        tcp_setze(versatz_von(TcpSlot, ip), quelle)
+        tcp_setze(versatz_von(TcpSlot, port), nt_r16(p, 34))
+        tcp_setze(versatz_von(TcpSlot, empfang), (nt_r32(p, 38) + 1) & 0xFFFFFFFF)
+        tcp_setze(versatz_von(TcpSlot, unbestaetigt), iss)
+        tcp_setze(versatz_von(TcpSlot, senden), iss)
+        tcp_setze(versatz_von(TcpSlot, aktiv), takt())
+        tcp_setze(versatz_von(TcpSlot, kopf_muster), 0)
+        tcp_setze(versatz_von(TcpSlot, kopf_bytes), 0)
+        tcp_setze(versatz_von(TcpSlot, peer_fin), 0)
+        tcp_setze(versatz_von(TcpSlot, mss), mss)
+        tcp_setze(versatz_von(TcpSlot, antwort_offset), 0)
+        tcp_antwort(p, ip, 0x12, 0)
+
+# Minimaler HTTP-Dienst: Ende des einzelnen Headers erkennen, auch ueber
+# Segmentgrenzen. Keine Anforderung wird gepuffert oder weitergeleitet.
+@nativ
+funktion tcp_http_kopf(p: u64, kopf: u64, daten: u64) -> void:
+    unsicher:
+        setze muster: u64 auf tcp_wert(versatz_von(TcpSlot, kopf_muster))
+        setze bytes: u64 auf tcp_wert(versatz_von(TcpSlot, kopf_bytes))
+        setze i: u64 auf 0
+        solange i < daten und bytes < TCP_KOPF_MAX und muster != 0x0D0A0D0A:
+            setze muster auf ((muster << 8) | u64(speicher_lesen(p + 34 + kopf + i, 1))) & 0xFFFFFFFF
+            setze bytes auf bytes + 1
+            setze i auf i + 1
+        tcp_setze(versatz_von(TcpSlot, kopf_muster), muster)
+        tcp_setze(versatz_von(TcpSlot, kopf_bytes), bytes)
+
+# Hoechstens ein unbestaetigtes Nutzsegment. Bei kleinem Peer-Fenster/MSS
+# portionieren. FIN belegt ein eigenes Byte im angebotenen Fenster.
+@nativ
+funktion tcp_http_antwort(p: u64, ip: u64, fenster: u64) -> bool:
+    unsicher:
+        wenn fenster == 0 oder tcp_wert(versatz_von(TcpSlot, unbestaetigt)) != tcp_wert(versatz_von(TcpSlot, senden)):
+            gib_zurück falsch
+        wenn tcp_wert(versatz_von(TcpSlot, kopf_muster)) != 0x0D0A0D0A:
+            wenn tcp_wert(versatz_von(TcpSlot, kopf_bytes)) < TCP_KOPF_MAX und tcp_wert(versatz_von(TcpSlot, peer_fin)) == 0:
+                gib_zurück falsch
+            tcp_setze(versatz_von(TcpSlot, zustand), TCP_FIN)
+            tcp_antwort(p, ip, 0x11, 0)
+            gib_zurück wahr
+        setze rest: u64 auf TCP_HTTP_LAENGE - tcp_wert(versatz_von(TcpSlot, antwort_offset))
+        setze daten: u64 auf rest
+        setze mss: u64 auf tcp_wert(versatz_von(TcpSlot, mss))
+        wenn daten > mss:
+            setze daten auf mss
+        wenn daten > fenster:
+            setze daten auf fenster
+        setze flags: u64 auf 0x10
+        wenn daten != 0:
+            setze flags auf flags | 8
+        wenn daten == rest und fenster > daten:
+            setze flags auf flags | 1
+            tcp_setze(versatz_von(TcpSlot, zustand), TCP_FIN)
+        tcp_antwort(p, ip, flags, daten)
+        gib_zurück wahr
+
+@nativ
+funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64) -> void:
+    unsicher:
+        wenn nutz < 20 oder nt_r16(p, 36) != TCP_PORT:
+            gib_zurück
+        setze port: u64 auf nt_r16(p, 34)
+        setze kopf: u64 auf u64(speicher_lesen(p + 46, 1) >> 4) * 4
+        wenn port == 0 oder kopf < 20 oder kopf > nutz oder nt_pseudo_pruefsumme(p, 34, nutz, quelle, ip, 6) != 0:
+            gib_zurück
+        setze flags: u64 auf u64(speicher_lesen(p + 47, 1)) & 0x3F
+        setze seq: u64 auf nt_r32(p, 38)
+        setze ack: u64 auf nt_r32(p, 42)
+        setze daten: u64 auf nutz - kopf
+        setze zustand: u64 auf tcp_wert(versatz_von(TcpSlot, zustand))
+        setze gleich: bool auf zustand != TCP_LISTEN und nic == tcp_wert(versatz_von(TcpSlot, nic)) und quelle == tcp_wert(versatz_von(TcpSlot, ip)) und port == tcp_wert(versatz_von(TcpSlot, port))
+        wenn nicht gleich:
+            wenn flags == 2 und daten == 0 und (zustand == TCP_LISTEN oder tcp_geschlossen()):
+                tcp_beginnen(p, nic, ip, quelle, kopf)
+            gib_zurück
+        setze erwartet: u64 auf tcp_wert(versatz_von(TcpSlot, empfang))
+        wenn (flags & 4) != 0:
+            wenn seq == erwartet und nicht tcp_geschlossen():
+                tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            gib_zurück
+        wenn (flags & 2) != 0:
+            wenn zustand == TCP_SYN_RCVD und flags == 2 und daten == 0 und ((seq + 1) & 0xFFFFFFFF) == erwartet:
+                nt_senden(nic, adresse_von(TCP_TX), tcp_wert(versatz_von(TcpSlot, tx_laenge)))
+            gib_zurück
+        wenn (flags & 0x10) == 0:
+            gib_zurück
+        setze fin: u64 auf flags & 1
+        setze senden: u64 auf tcp_wert(versatz_von(TcpSlot, senden))
+        setze una: u64 auf tcp_wert(versatz_von(TcpSlot, unbestaetigt))
+        wenn zustand == TCP_SYN_RCVD und (seq != erwartet oder ack != senden):
+            gib_zurück
+        wenn ((ack + 0x100000000 - una) & 0xFFFFFFFF) > ((senden + 0x100000000 - una) & 0xFFFFFFFF):
+            gib_zurück
+        wenn seq != erwartet oder (tcp_wert(versatz_von(TcpSlot, peer_fin)) != 0 und daten + fin != 0):
+            wenn daten + fin != 0:
+                tcp_antwort(p, ip, 0x10, 0)
+            gib_zurück
+        tcp_setze(versatz_von(TcpSlot, aktiv), takt())
+        tcp_setze(versatz_von(TcpSlot, unbestaetigt), ack)
+        wenn ack == senden:
+            tcp_setze(versatz_von(TcpSlot, tx_laenge), 0)
+        wenn zustand == TCP_SYN_RCVD:
+            setze zustand auf TCP_ESTABLISHED
+            tcp_setze(versatz_von(TcpSlot, zustand), zustand)
+        tcp_setze(versatz_von(TcpSlot, empfang), (erwartet + daten + fin) & 0xFFFFFFFF)
+        wenn fin != 0:
+            tcp_setze(versatz_von(TcpSlot, peer_fin), 1)
+        wenn zustand == TCP_ESTABLISHED:
+            tcp_http_kopf(p, kopf, daten)
+            wenn tcp_http_antwort(p, ip, nt_r16(p, 48)):
+                gib_zurück
+        wenn daten + fin != 0:
+            tcp_antwort(p, ip, 0x10, 0)

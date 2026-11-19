@@ -37,6 +37,14 @@
       "proof": "P7-T11: ARP und ICMP-Echo im Standard-IPv4-Profil, Standalone-IR und Linux-Host-Ping ueber QEMU-TAP"
     },
     {
+      "path": "beispiele/kernel/netz_tcp.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11: nativer TCP-Verbindungsslot mit HTTP, Standalone-IR und QEMU-TAP mit Linux-curl"
+    },
+    {
       "path": "beispiele/kernel/nvme.moos",
       "category": "profile",
       "args": [

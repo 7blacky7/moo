@@ -48,11 +48,22 @@ funktion nt_r16(p: u64, off: u64) -> u64:
     unsicher:
         gib_zurück (u64(speicher_lesen(p + off, 1)) << 8) | u64(speicher_lesen(p + off + 1, 1))
 
-# IPv4 und ICMP nutzen dieselbe Einerkomplement-Summe (RFC 1071, Abschnitt 1).
 @nativ
-funktion nt_pruefsumme(p: u64, off: u64, laenge: u64) -> u64:
+funktion nt_r32(p: u64, off: u64) -> u64:
     unsicher:
-        setze summe: u64 auf 0
+        gib_zurück (nt_r16(p, off) << 16) | nt_r16(p, off + 2)
+
+@nativ
+funktion nt_b32(p: u64, off: u64, wert: u64) -> void:
+    unsicher:
+        nt_b16(p, off, wert >> 16)
+        nt_b16(p, off + 2, wert & 0xFFFF)
+
+# Einerkomplement-Summe (RFC 1071 §1), bei UDP/TCP mit IPv4-Pseudokopf.
+@nativ
+funktion nt_pruefsumme_start(p: u64, off: u64, laenge: u64, start: u64) -> u64:
+    unsicher:
+        setze summe: u64 auf start
         setze i: u64 auf 0
         solange i + 1 < laenge:
             setze summe auf summe + nt_r16(p, off + i)
@@ -62,6 +73,40 @@ funktion nt_pruefsumme(p: u64, off: u64, laenge: u64) -> u64:
         solange summe > 0xFFFF:
             setze summe auf (summe & 0xFFFF) + (summe >> 16)
         gib_zurück 0xFFFF - summe
+
+@nativ
+funktion nt_pruefsumme(p: u64, off: u64, laenge: u64) -> u64:
+    unsicher:
+        gib_zurück nt_pruefsumme_start(p, off, laenge, 0)
+
+@nativ
+funktion nt_pseudo_pruefsumme(p: u64, off: u64, laenge: u64, quelle: u64, ziel: u64, protokoll: u64) -> u64:
+    unsicher:
+        setze summe: u64 auf (quelle >> 16) + (quelle & 0xFFFF) + (ziel >> 16) + (ziel & 0xFFFF) + protokoll + laenge
+        gib_zurück nt_pruefsumme_start(p, off, laenge, summe)
+
+# Antwortkopf ohne IP-Optionen/Fragmentierung, bisheriges DS-Feld bleibt erhalten.
+@nativ
+funktion nt_ipv4_antwortkopf(p: u64, quelle: u64, ziel: u64, protokoll: u64, nutzlaenge: u64) -> void:
+    unsicher:
+        nt_b16(p, 16, 20 + nutzlaenge)
+        nt_b16(p, 18, 0)
+        nt_b16(p, 20, 0x4000)
+        nt_b8(p, 22, 64)
+        nt_b8(p, 23, protokoll)
+        nt_b16(p, 24, 0)
+        nt_b32(p, 26, quelle)
+        nt_b32(p, 30, ziel)
+        nt_b16(p, 24, nt_pruefsumme(p, 14, 20))
+
+@nativ
+funktion nt_ether_antwort(p: u64, nic: u64) -> void:
+    unsicher:
+        nt_kopiere(p, p + 6, 6)
+        setze i: u64 auf 0
+        solange i < 6:
+            nt_b8(p, 6 + i, nt_mac(nic, i))
+            setze i auf i + 1
 
 @nativ
 funktion pci_lese32(pci: u64, bdf: u64, off: u64) -> u64:

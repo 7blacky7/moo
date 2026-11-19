@@ -21,6 +21,7 @@ INVENTAR=0
 MODUS=1
 WATCHDOG_S=10
 PING_IP=
+TRANSPORT=0
 KONFIG_QUELLE=
 KONFIG_ZIEL=
 KONFIG_LOADER_QUELLE=
@@ -37,6 +38,7 @@ while (($#)); do
     --it8613-messreihe) DIAGNOSE=0; MODUS=6; SEKUNDEN=70; shift;;
     --watchdog-test) DIAGNOSE=0; MODUS=7; SEKUNDEN=45; shift;;
     --ping) PING_IP=192.168.77.2; shift;;
+    --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=1; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -58,7 +60,8 @@ while (($#)); do
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern mit 10s IT8613-Safety. --watchdog-test: 10s IT8613, 45s Softwarefrist.' \
       '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
-      '--trocken --ping: Dieselben lokalen ELF-/PE-Vertraege pruefen, ohne Laufdateien oder Netzwerkzugriffe.' \
+      '--udp-tcp: ARP/Ping plus UDP-Echo an Port 7 und HTTP an TCP-Port 8080 pruefen.' \
+      '--trocken --ping oder --trocken --udp-tcp: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
@@ -96,16 +99,17 @@ if ((MODUS==6 && SEKUNDEN!=70)); then
   exit 2
 fi
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
-[[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo '--ping braucht den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
+[[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo '--ping und --udp-tcp brauchen den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" <<'PY'
+  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
 seconds, watchdog, mode = map(int, sys.argv[3:6])
 ping_ip = sys.argv[6]
 unveraendert = sys.argv[7] == "1"
+transport = sys.argv[8] == "1"
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -145,6 +149,10 @@ if ping_ip:
     leer = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter IPv4-Vertrag")
     struct.pack_into("<Q", data, pos + 8, int(ipaddress.IPv4Address(ping_ip)))
+if transport:
+    leer = struct.pack("<2Q", 0x474643344C4F4F4D, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter UDP-/TCP-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, 1)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
@@ -156,6 +164,8 @@ else:
     print(f"Kern-Kopie {dst}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
 if ping_ip:
     print(f"IPv4 der Kern-Kopie: {ping_ip}")
+if transport:
+    print("UDP 7 und TCP 8080 der Kern-Kopie aktiviert")
 PY
 }
 loader_kopie() {
@@ -225,7 +235,7 @@ lauf_vorbereiten() {
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP"
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
   fi
@@ -246,6 +256,9 @@ if ((TROCKEN)); then
   printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
   if [[ -n "$PING_IP" ]]; then
     printf '   Nach Kernelmarker ARP/Ping an %s auf %s; arp.log, ping.log (RTT) und ICMP in netz.pcap.\n' "$PING_IP" "$IFACE"
+  fi
+  if ((TRANSPORT)); then
+    printf '%s\n' '   UDP-Echo und HTTP vom Linux-PC, Protokolle udp.log, tcp.log, netz.pcap.'
   fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
@@ -272,7 +285,7 @@ if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
-  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP"
+  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT"
   exit 0
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
@@ -466,6 +479,7 @@ exec > >(exec 9>&-; tee -a "$OUT/lauf.log") 2>&1
 printf 'Laufordner: %s\n' "$OUT"
 capture_filter='arp or udp'
 [[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
+((TRANSPORT==0)) || capture_filter='arp or udp or icmp or (tcp port 8080)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
 MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
@@ -486,6 +500,7 @@ bis=$((SECONDS+ZEITLIMIT))
 ping_versucht=0
 arp_belegt=0
 ping_belegt=0
+transport_belegt=0
 while ((SECONDS<bis)); do
   kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
   ende=0
@@ -509,6 +524,14 @@ while ((SECONDS<bis)); do
       ping_belegt=1
     fi
     cat "$OUT/ping.log"
+    if ((TRANSPORT)) && grep -aFq 'MOO-KERNEL NETZ UDP TCP BEREIT 0000000000000001' "$OUT/netz.log" &&
+       ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+      host_adr="${MOO_NETZ_ADR:-192.168.77.1/24}"
+      if bash "$ROOT/skripte/p7/transport-probe.sh" "$PING_IP" "$IFACE" "${host_adr%/*}" "$OUT" &&
+         ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+        transport_belegt=1
+      fi
+    fi
   fi
   if ((ende)); then
     if timeout --foreground 50s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" run \
@@ -551,6 +574,10 @@ while ((SECONDS<bis)); do
         if [[ -n "$PING_IP" ]]; then
           ((arp_belegt && ping_belegt)) || { echo 'FEHLER: ARP und Ping im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
           echo 'ARP und Ping im Kernfenster belegt; RTT in ping.log'
+        fi
+        if ((TRANSPORT)); then
+          ((transport_belegt)) || { echo 'FEHLER: UDP-Echo und HTTP im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
+          echo 'UDP-Echo und TCP/HTTP im Kernfenster belegt'
         fi
         exit 0
       fi

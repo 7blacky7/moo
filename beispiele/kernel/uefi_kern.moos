@@ -24,6 +24,7 @@ aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
 aus "i226_diagnose" importiere i226_inventar
 aus "netz_ipv4" importiere netz_ipv4_poll
+aus "netz_tcp" importiere netz_tcp_wartung
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
@@ -1779,6 +1780,11 @@ statisch NETZ_EMPFANG: [u8; 2048] auf 0
 # IPv4 fuer private Laufprofile. Drittes Feld schaltet QEMU igb frei.
 @nativ
 statisch NETZ_IPV4_KONFIG: [u64; 3] auf [0x00345650494F4F4D, 0, 0]
+# "MOOL4CFG" als eigener Vertrag. Alte IPv4-Profile bleiben verwendbar.
+@nativ
+statisch NETZ_TRANSPORT_KONFIG: [u64; 2] auf [0x474643344C4F4F4D, 0]
+@nativ
+konstante T_NETZ_TRANSPORT: [u8; _] auf "MOO-KERNEL NETZ UDP TCP BEREIT "
 @nativ
 konstante T_NETZ_IPV4: [u8; _] auf "MOO-KERNEL NETZ IPV4 BEREIT "
 @nativ
@@ -1893,17 +1899,25 @@ funktion netz_ipv4_adresse() -> u64:
         gib_zurück speicher_lesen(adresse_von(NETZ_IPV4_KONFIG) + 8, 8)
 
 @nativ
-funktion netz_poll() -> void:
+funktion netz_transport_aktiv() -> bool:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(NETZ_TRANSPORT_KONFIG) + 8, 8) == 1
+
+@nativ
+funktion netz_poll(tsc_us: u64) -> void:
     unsicher:
         setze ip: u64 auf netz_ipv4_adresse()
         wenn ip == 0:
             gib_zurück
+        setze dienste: bool auf netz_transport_aktiv()
+        wenn dienste:
+            netz_tcp_wartung(tsc_us)
         setze ports: u64 auf speicher_lesen(adresse_von(NETZ), 8)
         setze i: u64 auf 0
         solange i < ports:
             setze nic: u64 auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
             wenn nt_link(nic):
-                netz_ipv4_poll(nic, adresse_von(NETZ_EMPFANG), ip)
+                netz_ipv4_poll(nic, adresse_von(NETZ_EMPFANG), ip, dienste)
             setze i auf i + 1
 
 @nativ
@@ -2425,6 +2439,8 @@ funktion kern_haupt(bi: u64) -> void:
         wenn tastatur_ok:
             meldung(adresse_von(T_TASTATUR_SCAN), hw(11))
         wenn netz_ipv4_adresse() != 0 und speicher_lesen(adresse_von(NETZ), 8) != 0:
+            wenn netz_transport_aktiv():
+                meldung(adresse_von(T_NETZ_TRANSPORT), 1)
             meldung(adresse_von(T_NETZ_IPV4), netz_ipv4_adresse())
         text(adresse_von(T_OK))
         # Eingabe, Netz-FIFO und Testreset bleiben auch bei fehlenden Geraeten aktiv.
@@ -2433,7 +2449,7 @@ funktion kern_haupt(bi: u64) -> void:
             unterbrechungen_an()
         solange wahr:
             usb_poll()
-            netz_poll()
+            netz_poll(tsc)
             netz_spuelen()
             testlauf_poll(adresse_von(meldung))
             wenn timer_start != 0:
