@@ -30,6 +30,7 @@
 //!   ein woertliches `$` als `$$`. Immer sideeffect (volatile).
 //!   Freie Strings ohne Constraints/Clobber sind ein Compilefehler.
 
+use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::targets::TargetData;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType};
@@ -38,23 +39,71 @@ use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, Int
 use crate::ast::{Expr, Stmt, TypeKind, TypeRef};
 use crate::codegen_native::{NType, NValue, NativeParameter, NativePointerSignature};
 
+/// Registerwrites lesen das Geraet nie implizit: W1C schreibt die Maske,
+/// Write0 verwendet einen ausdruecklich uebergebenen Snapshot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RegisterWrite { Value, W1c, Write0 }
+
+impl RegisterWrite {
+    pub(crate) fn operands(self, args: &[Expr]) -> Result<(&[Expr], Option<&Expr>), String> {
+        if self == Self::Write0 {
+            let (mask, args) = args.split_last().ok_or("Write0 erwartet Snapshot und Maske")?;
+            Ok((args, Some(mask)))
+        } else {
+            Ok((args, None))
+        }
+    }
+
+    pub(crate) fn value<'ctx>(
+        self, builder: &Builder<'ctx>, ty: NType,
+        value: IntValue<'ctx>, mask: Option<IntValue<'ctx>>,
+    ) -> Result<IntValue<'ctx>, String> {
+        if self == Self::Value { return Ok(value); }
+        if !matches!(ty, NType::U8 | NType::U16 | NType::U32 | NType::U64) {
+            return Err("Registerquittierung erwartet einen vorzeichenlosen Registertyp u8/u16/u32/u64".into());
+        }
+        if self == Self::W1c { return Ok(value); }
+        let mask = mask.ok_or("Write0: Maske fehlt")?;
+        if mask.get_type() != value.get_type() {
+            return Err("Write0: Snapshot und Maske brauchen denselben Registertyp".into());
+        }
+        let keep = builder.build_not(mask, "register.write0.erhalten").map_err(|e| e.to_string())?;
+        builder.build_and(value, keep, "register.write0").map_err(|e| e.to_string())
+    }
+}
+
+/// Nur benannte Varianten vorhandener Registerwrites, keine freien Suffix-Aliase.
+pub(crate) fn register_write(name: &str) -> Option<(&str, RegisterWrite)> {
+    let (base, op) = if let Some(base) = name.strip_suffix("_w1c") {
+        (base, RegisterWrite::W1c)
+    } else if let Some(base) = name.strip_suffix("_write0") {
+        (base, RegisterWrite::Write0)
+    } else { return None; };
+    matches!(base,
+        "port_schreibe" | "port_out" | "port_schreibe16" | "port_out16"
+        | "port_schreibe32" | "port_out32" | "volatile_schreiben" | "volatile_write"
+        | "registerfeld_schreiben" | "register_field_write"
+    ).then_some((base, op))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Barrier { Full, Read, Write, Compiler }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Intrinsic {
     VolatileRead,
-    VolatileWrite,
+    VolatileWrite(RegisterWrite),
     Barrier(Barrier),
     PortRead(u32),
-    PortWrite(u32),
+    PortWrite(u32, RegisterWrite),
     Asm,
 }
 
 fn classify(name: &str) -> Option<Intrinsic> {
+    let (name, write) = register_write(name).unwrap_or((name, RegisterWrite::Value));
     Some(match name {
         "volatile_lesen" | "volatile_read" => Intrinsic::VolatileRead,
-        "volatile_schreiben" | "volatile_write" => Intrinsic::VolatileWrite,
+        "volatile_schreiben" | "volatile_write" => Intrinsic::VolatileWrite(write),
         "speicherbarriere" | "memory_barrier" => Intrinsic::Barrier(Barrier::Full),
         "lesebarriere" | "read_barrier" => Intrinsic::Barrier(Barrier::Read),
         "schreibbarriere" | "write_barrier" => Intrinsic::Barrier(Barrier::Write),
@@ -62,9 +111,9 @@ fn classify(name: &str) -> Option<Intrinsic> {
         "port_lese" | "port_in" => Intrinsic::PortRead(8),
         "port_lese16" | "port_in16" => Intrinsic::PortRead(16),
         "port_lese32" | "port_in32" => Intrinsic::PortRead(32),
-        "port_schreibe" | "port_out" => Intrinsic::PortWrite(8),
-        "port_schreibe16" | "port_out16" => Intrinsic::PortWrite(16),
-        "port_schreibe32" | "port_out32" => Intrinsic::PortWrite(32),
+        "port_schreibe" | "port_out" => Intrinsic::PortWrite(8, write),
+        "port_schreibe16" | "port_out16" => Intrinsic::PortWrite(16, write),
+        "port_schreibe32" | "port_out32" => Intrinsic::PortWrite(32, write),
         "assembler" => Intrinsic::Asm,
         _ => return None,
     })
@@ -72,7 +121,7 @@ fn classify(name: &str) -> Option<Intrinsic> {
 
 /// Alle Hardware-Intrinsics verlangen unsicher:, auch in Unterausdruecken.
 pub(crate) fn ist_rohzugriff(name: &str) -> bool {
-    classify(name).is_some()
+    classify(name).is_some() || register_write(name).is_some()
 }
 
 fn is_read(kind: Intrinsic) -> bool {
@@ -301,6 +350,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let failure = if crate::native_arithmetic::cast_kann_fehlen(art, source, target) {
                     let block = self.context.append_basic_block(self.function, "hw.cast.fehler");
                     self.builder.position_at_end(block);
+                    crate::native_cleanup::before_abort(self.context, &self.builder, self.module)?;
                     let trap = self.module.get_function("llvm.trap").unwrap_or_else(||
                         self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None));
                     self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
@@ -493,13 +543,16 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let pointer = self.native_pointer(element, ty, source)?;
                 Ok(Some(pointer.load_scalar(self.context, &self.builder, self.target, true, true, "hw.volatile.lesen")?))
             }
-            Intrinsic::VolatileWrite => {
+            Intrinsic::VolatileWrite(write) => {
+                let (args, mask) = write.operands(args)?;
                 let ((element, ty, source), value) = match args {
                     [pointer, value] => (self.element(pointer, None)?, value),
                     [pointer, index, value] => (self.element(pointer, Some(index))?, value),
-                    _ => return Err("volatile_schreiben erwartet (zeiger, wert) oder (zeiger, index, wert)".into()),
+                    _ => return Err(if write == RegisterWrite::Write0 { "volatile_schreiben_write0 erwartet (zeiger[, index], Snapshot, Maske)" } else { "volatile_schreiben erwartet (zeiger, wert) oder (zeiger, index, wert)" }.into()),
                 };
                 let value = self.scalar(value, ty)?;
+                let mask = mask.map(|expr| self.scalar(expr, ty)).transpose()?;
+                let value = write.value(&self.builder, ty, value, mask)?;
                 let value = NValue::checked(self.context, ty, value.into())?;
                 let pointer = self.native_pointer(element, ty, source)?;
                 pointer.store_scalar(self.context, &self.builder, self.target, true, true, value)?;
@@ -539,15 +592,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .ok_or("Port-Lesen liefert keinen Wert")?;
                 Ok(Some(NValue::checked(self.context, ty, value)?))
             }
-            Intrinsic::PortWrite(bits) => {
+            Intrinsic::PortWrite(bits, write) => {
                 if self.arch != Arch::X86_64 {
                     return Err("Port-I/O gibt es nur auf x86_64".into());
                 }
                 let ty = port_type(bits);
+                let (args, mask) = write.operands(args)?;
                 let (port, value) = match args {
                     [port, value] => (self.scalar(port, NType::U16)?, self.scalar(value, ty)?),
-                    _ => return Err("port_schreibe* erwartet (port: u16, wert)".into()),
+                    _ => return Err(if write == RegisterWrite::Write0 { "port_schreibe*_write0 erwartet (port: u16, Snapshot, Maske)" } else { "port_schreibe* erwartet (port: u16, wert)" }.into()),
                 };
+                let mask = mask.map(|expr| self.scalar(expr, ty)).transpose()?;
+                let value = write.value(&self.builder, ty, value, mask)?;
                 let (asm, constraints) = match bits {
                     8 => ("outb $0, $1", "{al},{dx},~{memory}"),
                     16 => ("outw $0, $1", "{ax},{dx},~{memory}"),

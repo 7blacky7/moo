@@ -1135,6 +1135,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn forward_declare(&mut self, program: &Program) -> Result<(), String> {
+        crate::native_cleanup::prepare(self.context, &self.module, &program.statements, self.bare_mode)?;
         for stmt in &program.statements {
             if let Stmt::ExternC { name, .. } = stmt {
                 let user_collision = program.statements.iter().any(|item| match item {

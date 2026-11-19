@@ -1,0 +1,4 @@
+@nativ
+funktion verboten(p: ptr[u8], vorher: u8, maske: u16) -> void:
+    unsicher:
+        volatile_schreiben_write0(p, vorher, maske)

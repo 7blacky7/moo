@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "c9e29654fe539b3336deb79925afbfcb052dbbe3919451e74c5aef5e0aa25968",
+  "compiler_sha256": "20cadc9c5d03b6b2efcc03ca9437516dc34d7464a2cf61ce70c4ac97b00ff855",
   "normalization": "module-header-root-v2",
-  "batch": "34829",
+  "batch": "34845",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "1044cf5aebb4c84600a61ae3465c1ced4cbf5c90095fd12605ffa216baf790da",
-  "snapshot_ref": null,
+  "compiler_runtime_inventory_sha256": "5024e3f0e98857545f0a7ed94a0da118f9c14c1a164c6eee6309a337d06bcf70",
+  "snapshot_ref": "72ca20a59b8d4e1c0a5f18b31437901e297d89b7",
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
@@ -193,7 +193,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "be7d6ffc64e6eb19d677981eed1564418b6fd8c23c71ff9ac6fa83483c71dd4c",
+    "sha256": "025f96f4dfaa5ca8555252cc07cc65269c61606f0f021205978a66f70307b4c9",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -318,7 +318,7 @@
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
       "beispiele/kernel/i226_diagnose.moos": "f469641adb3745a31cb3e39efec7efbe8c91c51d1f3c40393515e3f0108f7cae",
-      "beispiele/kernel/it8613_wdt.moos": "4cc101605472fb77ec6a42d1e665f2ec9a9bb8df266b1efed5514d78cd1252f7",
+      "beispiele/kernel/it8613_wdt.moos": "cfc78e9822f6da609ec3c61dd0bf269ab54ce9569859a2804e47d3da09e5682a",
       "beispiele/kernel/kern_raster.moos": "e124c06c2a1672eca3476d60f50d51fcfb01d21260700191d8caaee3b0e2df65",
       "beispiele/kernel/kern_tastatur.moos": "56e5c0f15ade7c7390f93f2d42008f85f93217cc13c380198f6a4a3fed94f62d",
       "beispiele/kernel/kern_utf8.moos": "e7ecb4cbb36d9b449434285a84f4067677e66e4f96fcf3dce8bb82c785d8e267",
@@ -692,8 +692,17 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "f2945aec56cf804df91ba29aa118d6f114de41b33c48e39692f94469b4eb87b6",
+    "sha256": "a6d610fd9542bf5c4d5cb54e63dfb88759267a0ed66f2f2b53d22697a3856c05",
     "files": {
+      "compiler/tests/p2/native_cleanup.moos": "fe3cdb9aea1437822497d7fe85636ee308a90d22a73db090028e8353dfeb19df",
+      "compiler/tests/p2/native_cleanup_hardware.moos": "92f119ec251b4e1e4f930d1dbc2679306fd43e7066ec669da467aef1e0dad4dd",
+      "compiler/tests/p2/native_cleanup_hosted.moos": "caef48579497c1f07ca3c39f2ef6830f3c2966ac2fa4627cb5d3cc15051301c2",
+      "compiler/tests/p2/native_cleanup_unsicher.moos": "c541a101bcd1eccc67f84f9464ec3c5f584c2aa8f65745955319c89fcf854a3b",
+      "compiler/tests/p2/registeroperationen_ports.moos": "e7ca8e80a937da99cf2af9d18cb85875b19705ee7c80d826c24d70a6ff846a11",
+      "compiler/tests/p2/registeroperationen_speicher.moos": "2eca36d55bcc5da958898a3ed5f122305f559e39d11315723b1edf63cb264fde",
+      "compiler/tests/p2/registeroperationen_typ.moos": "6766ce480d04404ed42cd0cce3f18514cea42ce7d3f547471839238ff2994e03",
+      "compiler/tests/p2/registeroperationen_unsicher.moos": "e471959960d3e4ef7586621513e05fe1d4bcdc4250aaf3738691be8cded15e26",
+      "compiler/tests/regression/p2_native_cleanup.moos": "f2208ebbd81e563da6cf365dd07b586493b04fa2e5e0e1f878db2ecf901ab554",
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
       "beispiele/artillery.moos": "44ef8b634aa8baee81b1602af31dd70837ca8726e230092520e27aae3e5636f6",
@@ -817,7 +826,7 @@
       "beispiele/kernel/arm64_test.moos": "ac9f0f96ffd3a936f6da673bfffe89129901d26e64484b4419d2c62057a938f1",
       "beispiele/kernel/hallo_kern.moos": "552ee602f8f02bfb8c11cf26388c2ed78b43da020bf62a9e61a6491f006a5565",
       "beispiele/kernel/i226_diagnose.moos": "f469641adb3745a31cb3e39efec7efbe8c91c51d1f3c40393515e3f0108f7cae",
-      "beispiele/kernel/it8613_wdt.moos": "4cc101605472fb77ec6a42d1e665f2ec9a9bb8df266b1efed5514d78cd1252f7",
+      "beispiele/kernel/it8613_wdt.moos": "cfc78e9822f6da609ec3c61dd0bf269ab54ce9569859a2804e47d3da09e5682a",
       "beispiele/kernel/kern_raster.moos": "e124c06c2a1672eca3476d60f50d51fcfb01d21260700191d8caaee3b0e2df65",
       "beispiele/kernel/kern_tastatur.moos": "56e5c0f15ade7c7390f93f2d42008f85f93217cc13c380198f6a4a3fed94f62d",
       "beispiele/kernel/kern_utf8.moos": "e7ecb4cbb36d9b449434285a84f4067677e66e4f96fcf3dce8bb82c785d8e267",
@@ -2532,7 +2541,7 @@
     },
     "beispiele/kernel/it8613_wdt.moos": {
       "status": "ok",
-      "sha256": "ca01578fa6c6e1f523116eccfa0792d633c25137730e8212b26b097310e564c5"
+      "sha256": "2e96dd19cab498e38f64025da37db224720d6c18d335b3208ff51f053d97e894"
     },
     "beispiele/kernel/kern_raster.moos": {
       "status": "ok",
@@ -2612,11 +2621,11 @@
     },
     "beispiele/kernel/test_neustart.moos": {
       "status": "ok",
-      "sha256": "8179fd7c5a9ea7c65d67c3cff435d711ca123a9cd695f57a4d900421f6cd664e"
+      "sha256": "39df1684c9e7b3d951b4d2846f446569219613eb188a41981aeb593e720af4f1"
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "7d984bdecc384be684e65471a689fa2ad8abd4880794a28861148e108460322a"
+      "sha256": "13f82790d28717bb82abc41fa05f3d3775b45a1114f21a6c330c2b33247d2497"
     },
     "beispiele/kernel/usb_speicher.moos": {
       "status": "ok",

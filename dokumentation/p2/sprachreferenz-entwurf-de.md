@@ -142,6 +142,69 @@ Belege: `sys_t124_array`/`sys_t124_bytes` und das
 C-Wireformat-Orakel unter `skripte/p7/lader/`, hosted Fehlerfortsetzung und
 unveränderte Bytes in `compiler/tests/test_native_byteansicht.moos`.
 
+### Native Cleanup-Bloecke (P2-T126)
+
+`aufräumen: aufruf(...)` (Alias `defer:`) registriert einen nativen
+Funktionsaufruf fuer das Ende des aktuellen Blocks. Nur tatsaechlich
+erreichte Registrierungen laufen, in umgekehrter Reihenfolge. Das gilt
+auch fuer `gib_zurück`, `stopp`, `weiter` und vom Compiler gepruefte
+Laufzeitfehler. Bei einem Fehler in einem nativen Callee werden die
+aktiven Caller-Cleanups ebenfalls ausgefuehrt.
+
+Wie beim vorhandenen Hochsprachen-Cleanup werden die Argumentausdruecke
+erst beim Aufraeumen ausgewertet; lokale Namen bezeichnen ihre dann
+aktuellen Werte. Ein Rueckgabewert beziehungsweise die Kopie eines
+Strukturresultats wird vorher bestimmt. Eine `unsicher:`-Berechtigung
+gilt am Registrierungsort; Cleanup erlaubt keinen versteckten Rohzugriff.
+
+```moo
+unsicher:
+    aufräumen: config_schliessen(port)
+    config_oeffnen(port)
+    wenn chip_passt(port):
+        setze vorher: u8 auf ldn_lesen(port)
+        aufräumen: ldn_schreiben(port, vorher)
+        ldn_schreiben(port, 7)
+        # LDN-Restore vor Config-Close, auch bei vorzeitigem Austritt.
+```
+
+Hosted bleibt der erste Fehler erhalten, auch wenn eine Cleanup-Aktion
+selbst fehlschlaegt. Die uebrigen Aktionen laufen weiter. Bare/UEFI
+arbeitet die aktive native Cleanup-Kette vor dem terminalen Trap ab.
+Die Frames liegen auf dem Stack; es gibt keine Heap-Allokation fuer
+native Registrierungen. Hosted ist die Kette thread-lokal; Bare nutzt
+den bestehenden einzelnen Kernel-Ausfuehrungskontext. Fremdes
+`abort`/`noreturn`, CPU-Faults und physische Geraetefehler sind keine
+vom Compiler weitergegebenen Sprachfehler.
+
+Der IT8613-Treiber benutzt innere Bloecke, damit Config-Close weiterhin
+vor den Logaufrufen erfolgt. Portfolge und Registerwerte bleiben explizit.
+
+### Benannte Registerwrites (P2-T126)
+
+Die bestehenden Writes bleiben normale Wertwrites. Die Suffixe `_w1c`
+und `_write0` benennen Statusquittierungen auf denselben Port-/MMIO-Pfaden:
+
+| Zugriff | Schreibwert |
+|---|---|
+| `port_schreibe(port, wert)` | `wert` |
+| `port_schreibe_w1c(port, maske)` | `maske` |
+| `port_schreibe_write0(port, vorher, maske)` | `vorher & ~maske` |
+
+Die Varianten gelten ebenso fuer `port_schreibe16/32`,
+`volatile_schreiben(zeiger[, index], ...)` und
+`registerfeld_schreiben(Struktur, Feld, adresse, ...)`; EN-Basisnamen
+`port_out*`, `volatile_write` und `register_field_write` tragen dieselben Suffixe.
+Snapshot und Maske brauchen exakt denselben vorzeichenlosen Registertyp
+(`u8/u16/u32/u64`; Ports nur 8/16/32 Bit). Alle Zugriffe verlangen
+`unsicher` und das Bare-/UEFI-Profil.
+
+Jede Operation erzeugt genau einen Schreibzugriff. Sie liest das Register
+nicht selbst. Der Treiber liest einen benoetigten Snapshot ausdruecklich
+zuvor; so kann Write0 beim IT8613 das Statusbit 0 quittieren und Taktbit 3
+erhalten. W1C schreibt die uebergebene Maske direkt. Registervertrag,
+Schreibreihenfolge und Barrieren bleiben beim Treiber sichtbar.
+
 ## C-Anbindung und Callbacks
 
 ```moos

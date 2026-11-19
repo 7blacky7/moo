@@ -1,0 +1,3 @@
+@nativ
+funktion p126_defer_roh(p: ptr[u8]) -> void:
+    aufräumen: volatile_schreiben(p, 1)

@@ -1,0 +1,37 @@
+# P2-T126: Portwrites bleiben genau ein outb/outw/outl ohne implizites in.
+
+@nativ
+funktion p126_port_w1c_8(port: u16, maske: u8) -> void:
+    unsicher:
+        port_schreibe_w1c(port, maske)
+
+@nativ
+funktion p126_port_write0_8(port: u16, vorher: u8, maske: u8) -> void:
+    unsicher:
+        port_schreibe_write0(port, vorher, maske)
+
+@nativ
+funktion p126_port_w1c_16(port: u16, maske: u16) -> void:
+    unsicher:
+        port_schreibe16_w1c(port, maske)
+
+@nativ
+funktion p126_port_write0_16(port: u16, vorher: u16, maske: u16) -> void:
+    unsicher:
+        port_schreibe16_write0(port, vorher, maske)
+
+@nativ
+funktion p126_port_w1c_32(port: u16, maske: u32) -> void:
+    unsicher:
+        port_schreibe32_w1c(port, maske)
+
+@nativ
+funktion p126_port_write0_32(port: u16, vorher: u32, maske: u32) -> void:
+    unsicher:
+        port_schreibe32_write0(port, vorher, maske)
+
+@nativ
+funktion p126_port_system(port: u16, vorher: u8, maske: u8) -> void:
+    unsicher:
+        setze pfad: u8 auf 1
+        port_schreibe_write0(port, vorher, maske)

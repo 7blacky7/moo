@@ -31,3 +31,97 @@ for name in i32 float ffi verschachtelt; do
 done
 exit "$failed"
 '''
+
+
+[tasks.nativ]
+description = "P2-T126: native Cleanup-LIFO, Scope/Return/Loop, Caller-/Cleanupfehler hosted und bare"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t126-cleanup
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p2
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/native_cleanup.moos" --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --rfunc='^__moo_native[.]' --glob=P126_SPUR --glob=__moo_native.cleanup.top "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- opt -O2 -S "$out/$target.extract.ll" -o "$out/$target.o2.ll"
+    mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+    "$compiler" compile "$src/native_cleanup_hardware.moos" --no-stdlib --target "$target" --emit-ir -o "$out/$target.hardware.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.hardware.ll"
+    mise exec -- llvm-extract -S --rfunc='^__moo_native[.]' --glob=__moo_native.cleanup.top "$out/$target.hardware.ll" -o "$out/$target.hardware.extract.ll"
+    mise exec -- opt -S -passes=internalize -internalize-public-api-list=__moo_native.p126_hw_cleanup "$out/$target.hardware.extract.ll" -o "$out/$target.hardware.internal.ll"
+    mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/$target.hardware.internal.ll" -o "$out/$target.hardware.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/native_cleanup_probe.cpp" "$out/x86_64-bare.o" "$out/x86_64-bare.hardware.o" -o "$out/probe"
+"$out/probe"
+# Auch ein hosted natives Objekt ohne starke Moo-Runtime muss vor dem
+# schwachen Fehler-Trap seine aktiven Cleanup-Frames ausfuehren.
+"$compiler" compile "$src/native_cleanup.moos" --target native --emit-ir -o "$out/hosted-weak.ll"
+mise exec -- llvm-extract -S --recursive --rfunc='^(__moo_native[.]|moo_native_(cleanup_|fehler))' --rglob='^(native[.]fehler[.]text|sys[.]fehler[.]text)' --glob=P126_SPUR --glob=__moo_native.cleanup.top "$out/hosted-weak.ll" -o "$out/hosted-weak.extract.ll"
+mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/hosted-weak.extract.ll" -o "$out/hosted-weak.o"
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/native_cleanup_probe.cpp" "$out/hosted-weak.o" "$out/x86_64-bare.hardware.o" -o "$out/hosted-weak.probe"
+"$out/hosted-weak.probe"
+"$compiler" compile "$src/native_cleanup_hosted.moos" -o "$out/hosted"
+timeout 30s "$out/hosted" > "$out/hosted.out" 2> "$out/hosted.err"
+printf '42\n3241\n8\n8\n123\n0\n9\n21\n21\n21\n' > "$out/expected"
+rg -v '^(callee|cleanup|erstfehler):' "$out/hosted.out" > "$out/numbers"
+cmp "$out/expected" "$out/numbers"
+rg -q "^callee:.*p126_div" "$out/hosted.out"
+rg -q "^cleanup:.*p126_cleanup_fehlt" "$out/hosted.out"
+rg -q "^erstfehler:.*p126_div" "$out/hosted.out"
+if rg -q "^erstfehler:.*p126_cleanup_fehlt" "$out/hosted.out"; then
+    echo 'FAIL erster Fehler beim Cleanup ueberschrieben'; exit 1
+fi
+test ! -s "$out/hosted.err"
+if "$compiler" compile "$src/native_cleanup_unsicher.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/unsafe.ll" > "$out/unsafe.log" 2>&1; then
+    echo 'FAIL Defer erlaubt Rohzugriff ohne unsicher'; exit 1
+fi
+rg -q 'M-M005' "$out/unsafe.log"
+"$compiler" compile compiler/tests/regression/p2_native_cleanup.moos -o "$out/core"
+"$out/core" > "$out/core.out"
+cmp compiler/tests/regression/p2_native_cleanup.expected "$out/core.out"
+echo 'PASS native Cleanup: hosted Erstfehler, Restaktionen, Core und Unsafe-Diagnose'
+'''
+
+
+[tasks.it8613]
+description = "P2-T126: bestehendes IT8613-Portmodell plus optionaler differentieller I/O-Spurvergleich"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t126-it8613
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+"$compiler" compile beispiele/kernel/it8613_wdt.moos --no-stdlib --target x86_64-bare --emit-ir -o "$out/aktuell.ll"
+for stand in aktuell bestand; do
+    if [ "$stand" = bestand ]; then
+        [ -n "${MOO_ALT_WDT_IR:-}" ] || continue
+        cp -- "$MOO_ALT_WDT_IR" "$out/bestand.ll"
+    fi
+    mise exec -- opt -passes=verify -disable-output "$out/$stand.ll"
+    closure=""
+    if rg -q '^define.*@__moo_native[.].*cleanup[.]' "$out/$stand.ll"; then closure='--rfunc=[.]cleanup[.]'; fi
+    mise exec -- llvm-extract -S --recursive $closure --rglob='^(IT8613_|__moo_native[.]cleanup[.]top$)' --func=__moo_native.it8613_suchen --func=__moo_native.it8613_kurzlauf --func=__moo_native.it8613_starten --func=__moo_native.it8613_bedienen --func=__moo_native.it8613_abschalten "$out/$stand.ll" -o "$out/$stand.extract.ll"
+    # Nur Test-IR: privilegierte Instruktionen durch das vorhandene Portmodell
+    # ersetzen. Kein Produktquelltext wird hier geschrieben oder umgangen.
+    perl -0777 -pe 's/call (void|i8|i32|i64) asm sideeffect "(outb|inb|outl|inl|rdtsc|cli|hlt|pause)[^"]*", "[^"]*"\(/call $1 \@probe_$2(/g; s/^define internal (.*\@__moo_native\.it8613_(?:suchen|kurzlauf)\()/define $1/gm' "$out/$stand.extract.ll" > "$out/$stand.mock.ll"
+    printf '\ndeclare void @probe_outb(i8, i16)\ndeclare i8 @probe_inb(i16)\ndeclare void @probe_outl(i32, i16)\ndeclare i32 @probe_inl(i16)\ndeclare i64 @probe_rdtsc()\ndeclare void @probe_cli()\ndeclare void @probe_hlt()\ndeclare void @probe_pause()\n' >> "$out/$stand.mock.ll"
+    if rg -q ' asm ' "$out/$stand.mock.ll"; then echo 'FAIL nicht modellierte Assembleroperation'; exit 1; fi
+    mise exec -- opt -passes=verify -disable-output "$out/$stand.mock.ll"
+    mise exec -- clang -Wno-override-module -O1 -c "$out/$stand.mock.ll" -o "$out/$stand.o"
+    mise exec -- llvm-objdump -d "$out/$stand.o" > "$out/$stand.disasm"
+    if rg -q '\s(in[bwl]?|out[bwl]?|hlt|cli|rdtsc)(\s|$)' "$out/$stand.disasm"; then
+        echo 'FAIL physische I/O-Instruktion im Portmodellobjekt'; exit 1
+    fi
+    ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/it8613_portmodell.cpp "$out/$stand.o" -o "$out/$stand.probe"
+    P126_TRACE_FILE="$out/$stand.trace" timeout 30s "$out/$stand.probe" > "$out/$stand.out"
+    cat "$out/$stand.out"
+done
+if [ -n "${MOO_ALT_WDT_IR:-}" ]; then
+    cmp "$out/bestand.out" "$out/aktuell.out"
+    cmp "$out/bestand.trace" "$out/aktuell.trace"
+    echo 'PASS IT8613: Portmodell-Ausgaben und komplette I/O-Ereignisspur identisch'
+fi
+'''

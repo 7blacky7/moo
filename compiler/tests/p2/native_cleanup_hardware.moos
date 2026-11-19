@@ -1,0 +1,7 @@
+# P2-T126: Hardware-Schreibweise mit aufraeumen, gemeinsam im System-Emitter.
+@nativ
+funktion p126_hw_cleanup(p: ptr[u8]) -> void:
+    unsicher:
+        aufräumen: volatile_schreiben(p, 1)
+        aufräumen: volatile_schreiben(p, 2)
+        volatile_schreiben(p, 3)

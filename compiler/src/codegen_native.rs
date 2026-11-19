@@ -295,6 +295,9 @@ fn fehlerblock<'ctx>(
     let function = current.get_parent().ok_or("LLVM-Block ohne Funktion")?;
     let block = context.append_basic_block(function, &format!("native.fehler.{kennung}"));
     builder.position_at_end(block);
+    if fehler.trap {
+        crate::native_cleanup::before_abort(context, builder, fehler.module)?;
+    }
     if fehler.trap && fehler.abbruch {
         emit_abbruch(context, builder, fehler.module, fehler.funktion, text)?;
     } else if fehler.trap {
@@ -343,6 +346,7 @@ pub(crate) fn native_abbruch_hook<'ctx>(
     let entry = context.append_basic_block(hook, "entry");
     let builder = context.create_builder();
     builder.position_at_end(entry);
+    crate::native_cleanup::before_abort(context, &builder, module)?;
     let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
     let trap = intrinsic.get_declaration(module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
     builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
@@ -384,6 +388,7 @@ pub(crate) fn emit_abbruch<'ctx>(
     funktion: &str,
     grund: &str,
 ) -> Result<(), String> {
+    crate::native_cleanup::before_abort(context, builder, module)?;
     let hook = native_abbruch_hook(context, module)?;
     let text = format!(
         "Fehler in exportierter Funktion '{funktion}': {grund} - kann nicht ueber einen C-Aufrufer weitergegeben werden"
@@ -463,6 +468,7 @@ pub(crate) fn native_fehler_hook<'ctx>(
     let entry = context.append_basic_block(hook, "entry");
     let builder = context.create_builder();
     builder.position_at_end(entry);
+    crate::native_cleanup::before_abort(context, &builder, module)?;
     let intrinsic = inkwell::intrinsics::Intrinsic::find("llvm.trap").ok_or("llvm.trap fehlt")?;
     let trap = intrinsic.get_declaration(module, &[]).ok_or("llvm.trap-Deklaration fehlt")?;
     builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;

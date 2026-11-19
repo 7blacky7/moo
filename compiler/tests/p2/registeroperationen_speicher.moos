@@ -1,0 +1,71 @@
+# P2-T126: benannte Registerwrites, identischer Vertrag in Hardware/System.
+
+@nativ
+funktion p126_w1c_8(p: ptr[u8], maske: u8) -> void:
+    unsicher:
+        volatile_schreiben_w1c(p, maske)
+
+@nativ
+funktion p126_write0_8(p: ptr[u8], vorher: u8, maske: u8) -> void:
+    unsicher:
+        volatile_schreiben_write0(p, vorher, maske)
+
+@nativ
+funktion p126_w1c_16(p: ptr[u16], maske: u16) -> void:
+    unsicher:
+        volatile_schreiben_w1c(p, maske)
+
+@nativ
+funktion p126_write0_16(p: ptr[u16], vorher: u16, maske: u16) -> void:
+    unsicher:
+        volatile_schreiben_write0(p, vorher, maske)
+
+@nativ
+funktion p126_w1c_32(p: ptr[u32], maske: u32) -> void:
+    unsicher:
+        volatile_schreiben_w1c(p, maske)
+
+@nativ
+funktion p126_write0_32(p: ptr[u32], vorher: u32, maske: u32) -> void:
+    unsicher:
+        volatile_schreiben_write0(p, vorher, maske)
+
+@nativ
+funktion p126_w1c_64(p: ptr[u64], maske: u64) -> void:
+    unsicher:
+        volatile_schreiben_w1c(p, maske)
+
+@nativ
+funktion p126_write0_64(p: ptr[u64], vorher: u64, maske: u64) -> void:
+    unsicher:
+        volatile_schreiben_write0(p, vorher, maske)
+
+@nativ
+funktion p126_normal(p: ptr[u8], wert: u8) -> void:
+    unsicher:
+        volatile_schreiben(p, wert)
+
+@nativ
+funktion p126_sys_w1c(p: ptr[u8], maske: u8) -> void:
+    unsicher:
+        setze pfad: u8 auf 1
+        volatile_schreiben_w1c(p, maske)
+
+@nativ
+funktion p126_sys_write0(p: ptr[u8], vorher: u8, maske: u8) -> void:
+    unsicher:
+        setze pfad: u8 auf 1
+        volatile_schreiben_write0(p, vorher, maske)
+
+struktur P126Register:
+    ctrl: u8
+
+@nativ
+funktion p126_feld_w1c(adr: u64, maske: u8) -> void:
+    unsicher:
+        registerfeld_schreiben_w1c(P126Register, ctrl, adr, maske)
+
+@nativ
+funktion p126_feld_write0(adr: u64, vorher: u8, maske: u8) -> void:
+    unsicher:
+        registerfeld_schreiben_write0(P126Register, ctrl, adr, vorher, maske)

@@ -11,6 +11,7 @@ mod ffi_types;
 mod ffi_link;
 mod native_arithmetic;
 mod native_control_flow;
+mod native_cleanup;
 mod native_struct;
 mod ffi_abi;
 mod native_pointer;

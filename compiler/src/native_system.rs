@@ -427,7 +427,7 @@ impl LiestPruefung<'_> {
         match stmt {
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
             | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
-            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => self.expr(value, u),
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => self.expr(value, u),
             Stmt::PropertyAssignment { object, value, .. } =>
                 self.expr(object, u).or_else(|| self.expr(value, u)),
             Stmt::IndexAssignment { object, index, value, .. } =>
@@ -526,7 +526,7 @@ pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize, 
             Stmt::For { iterable, body, .. } => ausdruck(iterable).or_else(|| rohzugriff_ohne_unsicher(body)),
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
             | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
-            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => ausdruck(value),
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => ausdruck(value),
             Stmt::PropertyAssignment { object, value, .. } => ausdruck(object).or_else(|| ausdruck(value)),
             Stmt::IndexAssignment { object, index, value, .. } =>
                 ausdruck(object).or_else(|| ausdruck(index)).or_else(|| ausdruck(value)),
@@ -656,7 +656,7 @@ fn freigabe_nutzung(stmt: &Stmt, p: &str, frei: &dyn Fn(&str, usize) -> bool) ->
         }
         Stmt::CompoundAssignment { name, value, .. } =>
             if lesen(value) { treffer() } else if name == p { FreiNutzung::Ende } else { FreiNutzung::Keine },
-        Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Throw(value, _) =>
+        Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Throw(value, _) | Stmt::Defer(value, _) =>
             if lesen(value) { treffer() } else { FreiNutzung::Keine },
         Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) => FreiNutzung::Keine,
         Stmt::PropertyAssignment { object, value, .. } =>
@@ -1057,7 +1057,7 @@ impl FluchtPruefung<'_> {
         match stmt {
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
             | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
-            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => self.behalten(value, geliehen),
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => self.behalten(value, geliehen),
             Stmt::PropertyAssignment { object, value, .. } => self.behalten(object, geliehen).or_else(|| self.behalten(value, geliehen)),
             Stmt::IndexAssignment { object, index, value, .. } =>
                 self.behalten(object, geliehen).or_else(|| self.behalten(index, geliehen)).or_else(|| self.behalten(value, geliehen)),
@@ -1077,7 +1077,9 @@ impl FluchtPruefung<'_> {
                 if self.eigener_speicher(wurzel) || self.geliehen.contains_key(wurzel) { return None; }
                 Some(format!("geliehener Zeiger ({q}) wird in Speicher hinter '{wurzel}' geschrieben, der den Aufruf ueberlebt"))
             }
-            Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) if matches!(name.as_str(),
+            Stmt::Defer(action, line) => self.pruefe_anweisung(&Stmt::Expression(action.clone(), *line)),
+            Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) if matches!(
+                crate::native_hardware::register_write(name).map_or(name.as_str(), |(base, _)| base),
                 "speicher_schreiben" | "mem_write" | "volatile_schreiben" | "volatile_write") =>
                 args.iter().skip(1).find_map(|a| self.quelle(a)).map(|q|
                     format!("geliehener Zeiger ({q}) wird per {name} in fremden Speicher geschrieben")),
@@ -1187,7 +1189,7 @@ fn stmts_fehlbar(stmts: &[Stmt], k: &FehlbarKontext<'_, '_>) -> bool {
     let ex = |e: &Expr| expr_fehlbar(e, k);
     stmts.iter().any(|stmt| match stmt {
         Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
-        | Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => ex(value),
+        | Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => ex(value),
         Stmt::CompoundAssignment { op, value, .. } =>
             op.contains('/') || op.contains('%') || op.contains('<') || op.contains('>') || ex(value),
         Stmt::PropertyAssignment { object, value, .. } => ex(object) || ex(value),
@@ -1410,7 +1412,7 @@ fn stmt_baut_struktur(stmt: &Stmt, n: &NominalTypes) -> bool {
     match stmt {
         Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
         | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
-        | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => e(value),
+        | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => e(value),
         Stmt::PropertyAssignment { object, value, .. } => e(object) || e(value),
         Stmt::IndexAssignment { object, index, value, .. } => e(object) || e(index) || e(value),
         Stmt::If { condition, body, else_body, .. } => e(condition) || b(body) || b(else_body),
@@ -1521,6 +1523,7 @@ fn width_type(expr: &Expr) -> Result<NType, String> {
 }
 
 fn port_bits(name: &str) -> Option<(bool, u32)> {
+    let name = crate::native_hardware::register_write(name).map_or(name, |(base, _)| base);
     Some(match name {
         "port_lese" | "port_in" => (true, 8),
         "port_lese16" | "port_in16" => (true, 16),
@@ -1538,7 +1541,8 @@ fn port_bits(name: &str) -> Option<(bool, u32)> {
 /// verschatten (main.rs definitionen_registrieren), sonst waere offen, ob
 /// `zeiger(x)` die eigene Funktion oder den Rohzugriff meint.
 pub(crate) fn ist_unsicheres_builtin(name: &str) -> bool {
-    port_bits(name).is_some() || barrier(name).is_some() || atom_art(name).is_some() || matches!(name,
+    crate::native_hardware::register_write(name).is_some()
+        || port_bits(name).is_some() || barrier(name).is_some() || atom_art(name).is_some() || matches!(name,
         "zeiger" | "pointer" | "adresse_von" | "address_of" | "speicher_lesen" | "mem_read"
         | "speicher_schreiben" | "mem_write" | "puffer_zeiger" | "buffer_pointer"
         | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write"
@@ -1583,6 +1587,7 @@ fn bits_of(ty: NType) -> u32 {
     }
 }
 
+#[derive(Clone)]
 struct Slot<'ctx> {
     ty: STy,
     ptr: PointerValue<'ctx>,
@@ -1629,6 +1634,9 @@ struct Emitter<'a, 'ctx> {
     slots: HashMap<String, Slot<'ctx>>,
     globals: HashMap<String, Slot<'ctx>>,
     loops: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
+    loop_cleanups: Vec<Option<PointerValue<'ctx>>>,
+    cleanup_root: Option<PointerValue<'ctx>>,
+    cleanup_error: Option<PointerValue<'ctx>>,
     trap: Option<BasicBlock<'ctx>>,
     /// Nie erreichter Block fuer Operationen ohne Fehlerfall (siehe never_block).
     never: Option<BasicBlock<'ctx>>,
@@ -1765,7 +1773,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// (extern C, indirekt) mit anstehendem Moo-Fehler zurueckkehren -> sofort
     /// ohne weitere Seiteneffekte zurueck (weiter_block) bzw. im Export Abbruch.
     fn nach_fremdaufruf_pruefen(&mut self) -> Result<(), String> {
-        let moeglich = self.hosted && self.callees.values().any(|c| c.fehlbar && c.rueckruf.is_some());
+        let moeglich = self.hosted && (crate::native_cleanup::enabled(self.module)
+            || self.callees.values().any(|c| c.fehlbar && c.rueckruf.is_some()));
         if !moeglich || !(self.fangbar() || self.abbruch()) { return Ok(()); }
         let hook = crate::codegen_native::native_fehler_offen_hook(self.context, self.module)?;
         let flag = match self.builder.build_call(hook, &[], "sys.fremd.offen").map_err(e)?.try_as_basic_value() {
@@ -1787,6 +1796,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn emit_abbruch(&self, grund: &str) -> Result<(), String> {
+        crate::native_cleanup::before_abort(self.context, &self.builder, self.module)?;
         let name = self.function.get_name().to_str().unwrap_or("?");
         let name = name.strip_prefix("__moo_native.").unwrap_or(name);
         crate::codegen_native::emit_abbruch(self.context, &self.builder, self.module, name, grund)
@@ -1811,6 +1821,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let current = self.builder.get_insert_block();
         let block = self.context.append_basic_block(self.function, "sys.fehler.weiter");
         self.builder.position_at_end(block);
+        self.weiter = Some(block);
+        self.cleanup_finish()?;
         match self.function.get_type().get_return_type() {
             Some(ty) => { self.builder.build_return(Some(&ty.const_zero())).map_err(e)?; }
             None => { self.builder.build_return(None).map_err(e)?; }
@@ -1860,13 +1872,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// damit Module ohne fehlerfaehige Operationen ihr bisheriges IR behalten.
     /// Aufrufer: trap_block (Operationsfehler) und emit_system_function
     /// (Funktionsende ohne gib_zurück).
-    fn emit_hosted_fehler(&self, grund: &str) -> Result<(), String> {
+    fn emit_hosted_fehler(&mut self, grund: &str) -> Result<(), String> {
         let hook = crate::codegen_native::native_fehler_hook(self.context, self.module)?;
         let name = self.function.get_name().to_str().unwrap_or("?");
         let name = name.strip_prefix("__moo_native.").unwrap_or(name);
         let text = format!("{grund} in '{name}'");
         let message = self.builder.build_global_string_ptr(&text, "sys.fehler.text").map_err(e)?;
         self.builder.build_call(hook, &[message.as_pointer_value().into()], "").map_err(e)?;
+        self.cleanup_finish()?;
         match self.function.get_type().get_return_type() {
             Some(ty) => { self.builder.build_return(Some(&ty.const_zero())).map_err(e)?; }
             None => { self.builder.build_return(None).map_err(e)?; }
@@ -1891,6 +1904,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn emit_trap(&self) -> Result<(), String> {
+        crate::native_cleanup::before_abort(self.context, &self.builder, self.module)?;
         let trap = match self.module.get_function("llvm.trap") {
             Some(f) => f,
             None => self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None),
@@ -1967,11 +1981,140 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         Ok(())
     }
 
+
+    fn cleanup_alloca(&self, ty: inkwell::types::BasicTypeEnum<'ctx>, name: &str) -> Result<PointerValue<'ctx>, String> {
+        let b = self.context.create_builder();
+        match self.entry.get_terminator() {
+            Some(t) => b.position_before(&t),
+            None => b.position_at_end(self.entry),
+        }
+        b.build_alloca(ty, name).map_err(e)
+    }
+
+    fn cleanup_start(&mut self, body: &[Stmt]) -> Result<(), String> {
+        if !crate::native_cleanup::contains(body) { return Ok(()); }
+        let root = self.cleanup_alloca(self.ptrt().into(), "cleanup.function")?;
+        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let current = self.builder.build_load(self.ptrt(), top, "cleanup.top").map_err(e)?;
+        self.builder.build_store(root, current).map_err(e)?;
+        self.cleanup_root = Some(root);
+        if self.hosted {
+            let saved = self.cleanup_alloca(self.context.i64_type().array_type(2).into(), "cleanup.error")?;
+            let enter = crate::native_cleanup::error_helper(self.context, self.module, "moo_native_cleanup_enter")?;
+            self.builder.build_call(enter, &[saved.into()], "").map_err(e)?;
+            self.cleanup_error = Some(saved);
+        }
+        Ok(())
+    }
+
+    fn cleanup_mark(&self) -> Result<Option<PointerValue<'ctx>>, String> {
+        if self.cleanup_root.is_none() { return Ok(None); }
+        let marker = self.cleanup_alloca(self.ptrt().into(), "cleanup.scope")?;
+        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let current = self.builder.build_load(self.ptrt(), top, "cleanup.top").map_err(e)?;
+        self.builder.build_store(marker, current).map_err(e)?;
+        Ok(Some(marker))
+    }
+
+    fn cleanup_scope(&mut self, marker: Option<PointerValue<'ctx>>, check: bool) -> Result<(), String> {
+        let Some(marker) = marker else { return Ok(()); };
+        let stop = self.builder.build_load(self.ptrt(), marker, "cleanup.stop").map_err(e)?.into_pointer_value();
+        crate::native_cleanup::drain(&self.builder, self.module, stop)?;
+        if check && self.hosted {
+            let hook = crate::codegen_native::native_fehler_offen_hook(self.context, self.module)?;
+            let flag = match self.builder.build_call(hook, &[], "cleanup.error").map_err(e)?.try_as_basic_value() {
+                inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
+                _ => return Err("Cleanup-Fehlerflag fehlt".into()),
+            };
+            let failed = self.builder.build_int_compare(IntPredicate::NE, flag,
+                self.context.i32_type().const_zero(), "cleanup.failed").map_err(e)?;
+            let error = if self.export { self.abbruch_block("Fehler beim nativen Cleanup")? }
+                else { self.weiter_block()? };
+            let ok = self.context.append_basic_block(self.function, "cleanup.ok");
+            self.builder.build_conditional_branch(failed, error, ok).map_err(e)?;
+            self.builder.position_at_end(ok);
+        }
+        Ok(())
+    }
+
+    /// Fehlerpfad: noch aktive eigene Frames drainen und nur den eigenen
+    /// Handler verlassen; der Handler eines nativen Callers bleibt aktiv.
+    fn cleanup_finish(&mut self) -> Result<(), String> {
+        self.cleanup_scope(self.cleanup_root, false)?;
+        if let Some(saved) = self.cleanup_error {
+            let leave = crate::native_cleanup::error_helper(self.context, self.module, "moo_native_cleanup_leave")?;
+            self.builder.build_call(leave, &[saved.into()], "").map_err(e)?;
+        }
+        Ok(())
+    }
+
+    fn cleanup_return(&mut self) -> Result<(), String> {
+        self.cleanup_scope(self.cleanup_root, true)?;
+        if let Some(saved) = self.cleanup_error {
+            let leave = crate::native_cleanup::error_helper(self.context, self.module, "moo_native_cleanup_leave")?;
+            self.builder.build_call(leave, &[saved.into()], "").map_err(e)?;
+        }
+        Ok(())
+    }
+
+    fn cleanup_register(&mut self, action: &Expr, line: usize) -> Result<(), String> {
+        if self.cleanup_root.is_none() { return Err("Nativer Cleanup-Funktionsrahmen fehlt".into()); }
+        // Anders als die Hochsprachenebene besitzen native Ausdruckswerte
+        // keine owning MooValue-Heapresultate. Ein Callresultat wird verworfen.
+        if !matches!(action, Expr::FunctionCall { .. }) {
+            return Err("Nativer aufräumen-Ausdruck erwartet einen Funktionsaufruf".into());
+        }
+        let mut captures: Vec<_> = self.slots.iter().collect();
+        captures.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let capture_type = self.context.struct_type(&vec![self.ptrt().into(); captures.len()], false);
+        let capture = self.cleanup_alloca(capture_type.into(), "cleanup.captures")?;
+        let name = format!("{}.cleanup.{}.{}", self.function.get_name().to_str().map_err(e)?,
+            line, self.module.get_functions().count());
+        let thunk = self.module.add_function(&name,
+            self.context.void_type().fn_type(&[self.ptrt().into()], false),
+            Some(inkwell::module::Linkage::Internal));
+        let entry = self.context.append_basic_block(thunk, "entry");
+        let mut emitter = Emitter {
+            context: self.context, module: self.module, target: self.target,
+            layouts: self.layouts, nominals: self.nominals, triple: self.triple,
+            x86: self.x86, hosted: self.hosted, function: thunk, entry,
+            sret: None, builder: self.context.create_builder(), slots: HashMap::new(),
+            globals: self.globals.clone(), loops: Vec::new(), loop_cleanups: Vec::new(),
+            cleanup_root: None, cleanup_error: None,
+            trap: None, never: None, weiter: None, pow_fehler: None, result: None,
+            callees: self.callees, externs: self.externs, sicher: self.sicher,
+            unsicher_tiefe: self.unsicher_tiefe, export: false, zeile: line,
+        };
+        emitter.builder.position_at_end(entry);
+        let context = thunk.get_first_param().ok_or("Cleanup-Captures fehlen")?.into_pointer_value();
+        for (index, (name, slot)) in captures.iter().enumerate() {
+            let dst = self.builder.build_struct_gep(capture_type, capture, index as u32, "cleanup.capture").map_err(e)?;
+            self.builder.build_store(dst, slot.ptr).map_err(e)?;
+            let src = emitter.builder.build_struct_gep(capture_type, context, index as u32, "capture").map_err(e)?;
+            let ptr = emitter.builder.build_load(self.ptrt(), src, name).map_err(e)?.into_pointer_value();
+            emitter.slots.insert((*name).clone(), Slot { ty: slot.ty.clone(), ptr, constant: slot.constant });
+        }
+        emitter.stmt(&Stmt::Expression(action.clone(), line))?;
+        if emitter.open() { emitter.builder.build_return(None).map_err(e)?; }
+        let frame_type = crate::native_cleanup::frame_type(self.context);
+        let frame = self.cleanup_alloca(frame_type.into(), "cleanup.frame")?;
+        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let prev = self.builder.build_load(self.ptrt(), top, "cleanup.prev").map_err(e)?;
+        for (index, value) in [prev, thunk.as_global_value().as_pointer_value().into(), capture.into()].into_iter().enumerate() {
+            let dst = self.builder.build_struct_gep(frame_type, frame, index as u32, "cleanup.field").map_err(e)?;
+            self.builder.build_store(dst, value).map_err(e)?;
+        }
+        self.builder.build_store(top, frame).map_err(e)?;
+        Ok(())
+    }
+
     fn block(&mut self, body: &[Stmt]) -> Result<(), String> {
+        let marker = self.cleanup_mark()?;
         for stmt in body {
             self.ensure_open();
             self.stmt(stmt)?;
         }
+        if self.open() { self.cleanup_scope(marker, true)?; }
         Ok(())
     }
 
@@ -3046,9 +3189,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let cond = self.condition(condition)?;
                 self.builder.build_conditional_branch(cond, blocks.body, blocks.exit).map_err(e)?;
                 self.builder.position_at_end(blocks.body);
+                self.loop_cleanups.push(self.cleanup_mark()?);
                 self.loops.push((blocks.condition, blocks.exit));
                 let result = self.block(body);
                 self.loops.pop();
+                self.loop_cleanups.pop();
                 result?;
                 crate::native_control_flow::branch_if_open(&self.builder, blocks.condition)?;
                 self.builder.position_at_end(blocks.exit);
@@ -3090,9 +3235,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.builder.build_conditional_branch(test.value.into_int_value(), blocks.body, blocks.exit).map_err(e)?;
                 self.builder.position_at_end(blocks.body);
                 self.slots.insert(var_name.clone(), Slot { ty: ty.clone(), ptr: zaehler, constant: true });
+                self.loop_cleanups.push(self.cleanup_mark()?);
                 self.loops.push((schritt, blocks.exit));
                 let result = self.block(body);
                 self.loops.pop();
+                self.loop_cleanups.pop();
                 self.slots.remove(var_name);
                 result?;
                 crate::native_control_flow::branch_if_open(&self.builder, schritt)?;
@@ -3108,23 +3255,26 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let (condition, exit) = *self.loops.last()
                     .ok_or("Systemkoerper: stopp/weiter ausserhalb einer Schleife")?;
                 let target = if matches!(stmt, Stmt::Break(_)) { exit } else { condition };
+                self.cleanup_scope(self.loop_cleanups.last().copied().flatten(), true)?;
                 self.builder.build_unconditional_branch(target).map_err(e)?;
                 Ok(())
             }
             Stmt::Return(value, _) => {
                 match (self.result.clone(), value) {
-                    (None, None) => { self.builder.build_return(None).map_err(e)?; }
+                    (None, None) => { self.cleanup_return()?; self.builder.build_return(None).map_err(e)?; }
                     (Some(ty @ STy::Struct(_)), Some(expr)) => {
                         // Der sret-Puffer ist ein frischer, exklusiver Aufruferpuffer.
                         let sret = self.sret.ok_or("Systemkoerper: sret-Puffer fehlt")?;
                         let from = self.struct_place(expr, &ty, "gib_zurück")?;
                         let alignment = self.struct_size_align(&ty)?.1;
                         self.copy_struct(&ty, Place { ptr: sret, alignment, origin: Origin::Fresh }, from)?;
+                        self.cleanup_return()?;
                         self.builder.build_return(None).map_err(e)?;
                     }
                     (Some(ty), Some(expr)) => {
                         let value = self.expr(expr, Some(&ty))?;
                         self.expect(&value, &ty, "gib_zurück")?;
+                        self.cleanup_return()?;
                         self.builder.build_return(Some(&value.value)).map_err(e)?;
                     }
                     (None, Some(_)) => return Err("Systemkoerper: void-Funktion gibt einen Wert zurück".into()),
@@ -3132,6 +3282,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 Ok(())
             }
+            Stmt::Defer(action, line) => self.cleanup_register(action, *line),
             Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) => {
                 self.call(name, args, None, true)?;
                 Ok(())
@@ -4216,9 +4367,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>, statement: bool) -> Result<Option<SVal<'ctx>>, String> {
+        let (register_name, register_op) = crate::native_hardware::register_write(name)
+            .unwrap_or((name, crate::native_hardware::RegisterWrite::Value));
         // P2-T66: im hosted Usermode gibt es weder MMIO noch privilegierte
         // Hardwarezugriffe; diese Builtins bleiben Bare/UEFI vorbehalten.
-        if self.hosted && (barrier(name).is_some() || matches!(name,
+        if self.hosted && (barrier(name).is_some() || matches!(register_name,
             "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write"
             | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write" | "assembler"))
         {
@@ -4327,14 +4480,15 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             };
             return Ok(Some(SVal { ty: STy::Int(target), value: converted.into() }));
         }
-        if matches!(name, "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben"
+        if matches!(register_name, "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben"
             | "struct_field_write" | "registerfeld_lesen" | "register_field_read"
             | "registerfeld_schreiben" | "register_field_write")
         {
-            let schreiben = name.ends_with("schreiben") || name.ends_with("write");
-            let volatile = name.starts_with("register");
-            if args.len() != if schreiben { 4 } else { 3 } {
-                return Err(format!("Systemkoerper: {name} erwartet Struktur, Feld, Adresse{}", if schreiben { ", Wert" } else { "" }));
+            let schreiben = register_name.ends_with("schreiben") || register_name.ends_with("write");
+            let volatile = register_name.starts_with("register");
+            let write0 = register_op == crate::native_hardware::RegisterWrite::Write0;
+            if args.len() != if schreiben { if write0 { 5 } else { 4 } } else { 3 } {
+                return Err(format!("Systemkoerper: {name} erwartet Struktur, Feld, Adresse{}", if write0 { ", Snapshot, Maske" } else if schreiben { ", Wert" } else { "" }));
             }
             let (Expr::Identifier(struktur), Expr::Identifier(feld)) = (&args[0], &args[1]) else {
                 return Err(format!("Systemkoerper: {name} erwartet Struktur- und Feldnamen"));
@@ -4350,7 +4504,20 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             if schreiben {
                 let wert = self.expr(&args[3], Some(&ty))?;
                 self.expect(&wert, &ty, name)?;
-                let store = self.builder.build_store(adresse, wert.value).map_err(e)?;
+                let value = if register_op == crate::native_hardware::RegisterWrite::Value {
+                    wert.value
+                } else {
+                    let STy::Int(kind) = &ty else {
+                        return Err("Registerquittierung erwartet ein vorzeichenloses Ganzzahlfeld".into());
+                    };
+                    let mask = if write0 {
+                        let mask = self.expr(&args[4], Some(&ty))?;
+                        self.expect(&mask, &ty, "Write0-Maske")?;
+                        Some(mask.value.into_int_value())
+                    } else { None };
+                    register_op.value(&self.builder, *kind, wert.value.into_int_value(), mask)?.into()
+                };
+                let store = self.builder.build_store(adresse, value).map_err(e)?;
                 store.set_alignment(1).map_err(e)?;
                 if volatile { store.set_volatile(true).map_err(e)?; }
                 return Ok(None);
@@ -4363,7 +4530,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             if volatile { instruction.set_volatile(true).map_err(e)?; }
             return Ok(Some(SVal { ty, value: wert }));
         }
-        match name {
+        match register_name {
             "zeiger" | "pointer" => {
                 let ty = match expected {
                     Some(ty @ STy::Ptr(_)) => ty.clone(),
@@ -4448,7 +4615,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 return Ok(None);
             }
             "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write" => {
-                let write = name.contains("schreiben") || name.contains("write");
+                let write = register_name.contains("schreiben") || register_name.contains("write");
+                let (args, register_mask) = register_op.operands(args)?;
                 let pointer = args.first().ok_or("volatile_*: Zeiger fehlt")?;
                 let pty = self.infer(pointer).ok_or("volatile_*: erster Operand muss ein ptr[T]-Ausdruck sein")?;
                 let element = match &pty {
@@ -4478,7 +4646,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 if write {
                     let value = self.expr(&rest[0], Some(&STy::Int(element)))?;
                     self.expect(&value, &STy::Int(element), "volatile_schreiben-Wert")?;
-                    let store = self.builder.build_store(ptr, value.value).map_err(e)?;
+                    let mask = if let Some(mask) = register_mask {
+                        let mask = self.expr(mask, Some(&STy::Int(element)))?;
+                        self.expect(&mask, &STy::Int(element), "Write0-Maske")?;
+                        Some(mask.value.into_int_value())
+                    } else { None };
+                    let value = register_op.value(&self.builder, element, value.value.into_int_value(), mask)?;
+                    let store = self.builder.build_store(ptr, value).map_err(e)?;
                     store.set_volatile(true).map_err(e)?;
                     store.set_alignment(alignment).map_err(e)?;
                     return Ok(None);
@@ -4567,17 +4741,24 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .ok_or("Port-Lesen liefert keinen Wert")?;
                 return Ok(Some(SVal { ty: STy::Int(ty), value }));
             }
+            let (args, register_mask) = register_op.operands(args)?;
             let [port, value] = args else { return Err(format!("{name} erwartet (port: u16, wert)")) };
             let port = self.expr(port, Some(&STy::Int(NType::U16)))?;
             self.expect(&port, &STy::Int(NType::U16), "Port")?;
             let value = self.expr(value, Some(&STy::Int(ty)))?;
             self.expect(&value, &STy::Int(ty), "Portwert")?;
+            let mask = if let Some(mask) = register_mask {
+                let mask = self.expr(mask, Some(&STy::Int(ty)))?;
+                self.expect(&mask, &STy::Int(ty), "Write0-Maske")?;
+                Some(mask.value.into_int_value())
+            } else { None };
+            let value = register_op.value(&self.builder, ty, value.value.into_int_value(), mask)?;
             let (code, constraints) = match bits {
                 8 => ("outb $0, $1", "{al},{dx},~{memory}"),
                 16 => ("outw $0, $1", "{ax},{dx},~{memory}"),
                 _ => ("outl $0, $1", "{eax},{dx},~{memory}"),
             };
-            self.asm(code, constraints, None, &[value.value.into(), port.value.into()])?;
+            self.asm(code, constraints, None, &[value.into(), port.value.into()])?;
             return Ok(None);
         }
         if let Some(kind) = barrier(name) {
@@ -4837,6 +5018,7 @@ pub(crate) fn emit_system_function<'ctx>(
         sret: None, builder: context.create_builder(), slots: HashMap::new(), globals: HashMap::new(), loops: Vec::new(),
         trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
         sicher, unsicher_tiefe: 0, export, zeile: 0,
+        loop_cleanups: Vec::new(), cleanup_root: None, cleanup_error: None,
     };
     // Struktur-Rueckgabe: Parameter 0 ist der sret-Puffer des Aufrufers.
     let offset = u32::from(signature.returns_struct());
@@ -4883,13 +5065,14 @@ pub(crate) fn emit_system_function<'ctx>(
     let start = context.append_basic_block(function, "sys.start");
     entry_builder.build_unconditional_branch(start).map_err(e)?;
     emitter.builder.position_at_end(start);
+    emitter.cleanup_start(body)?;
     emitter.block(body)?;
     // Funktionsende ohne gib_zurück bei Rueckgabetyp: derselbe Fehlervertrag wie
     // Operationsfehler (ADR §3). Hosted Moo-intern fangbar bzw. RC 1 mit
     // Diagnose, Bare/UEFI und C-Exporte weiterhin llvm.trap.
     if emitter.open() {
         match emitter.result {
-            None => { emitter.builder.build_return(None).map_err(e)?; }
+            None => { emitter.cleanup_return()?; emitter.builder.build_return(None).map_err(e)?; }
             Some(_) if emitter.fangbar() => emitter.emit_hosted_fehler("Native Funktion endet ohne Rueckgabewert")?,
             Some(_) if emitter.abbruch() => emitter.emit_abbruch("Native Funktion endet ohne Rueckgabewert")?,
             Some(_) => emitter.emit_trap()?,

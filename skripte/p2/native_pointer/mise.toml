@@ -469,3 +469,52 @@ for case_name in signed u64; do
 done
 echo 'PASS variabler u32-Index und Negativfälle'
 '''
+
+
+[tasks.registeroperationen]
+description = "P2-T126: Write/W1C/Write0, expliziter Snapshot, keine impliziten Reads (Hardware/System)"
+run = '''
+set -eu
+cd ../../..
+out=build/p2-t126-register
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p2
+sel=""
+for bits in 8 16 32 64; do
+    sel="$sel --func=__moo_native.p126_w1c_$bits --func=__moo_native.p126_write0_$bits"
+done
+sel="$sel --func=__moo_native.p126_normal --func=__moo_native.p126_sys_w1c --func=__moo_native.p126_sys_write0 --func=__moo_native.p126_feld_w1c --func=__moo_native.p126_feld_write0"
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    "$compiler" compile "$src/registeroperationen_speicher.moos" --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S $sel "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- opt -O2 -S "$out/$target.extract.ll" -o "$out/$target.o2.ll"
+    [ "$(rg -c 'store volatile' "$out/$target.o2.ll")" = 13 ]
+    if rg -q 'load volatile' "$out/$target.o2.ll"; then
+        echo 'FAIL Registerwrite liest das Register implizit'; exit 1
+    fi
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror "$src/registeroperationen_probe.cpp" "$out/x86_64-bare.o" -o "$out/probe"
+"$out/probe"
+"$compiler" compile "$src/registeroperationen_ports.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/ports.ll"
+mise exec -- opt -passes=verify -disable-output "$out/ports.ll"
+for insn in outb outw outl; do rg -q "$insn" "$out/ports.ll"; done
+[ "$(rg -c 'asm sideeffect.*out[bwl]' "$out/ports.ll")" = 7 ]
+if rg -q 'asm sideeffect.*in[bwl]' "$out/ports.ll"; then
+    echo 'FAIL Portwrite liest den Port implizit'; exit 1
+fi
+for name in unsicher typ; do
+    if "$compiler" compile "$src/registeroperationen_$name.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/fail.ll" >"$out/$name.log" 2>&1; then
+        echo "FAIL Register-Negativfall $name akzeptiert"; exit 1
+    fi
+done
+rg -q 'M-M005' "$out/unsicher.log"
+rg -q 'U8' "$out/typ.log"
+if "$compiler" compile "$src/registeroperationen_speicher.moos" --target native --emit-ir -o "$out/hosted.ll" >"$out/hosted.log" 2>&1; then
+    echo 'FAIL Register-MMIO im hosted Usermode freigegeben'; exit 1
+fi
+rg -q 'nur im Bare-Profil' "$out/hosted.log"
+echo 'PASS Registerwrites: C++-Orakel, drei Ziele, Portfolge und Negativfaelle'
+'''

@@ -338,6 +338,30 @@ void moo_native_fehler(const char* text) {
     moo_throw(moo_string_new(text));
 }
 
+/* P2-T126: native Stack-Cleanups verwenden dieselben owning Fehlerwerte
+ * wie der dynamische Defer-Drain. Nur Zeiger passieren die native C-ABI. */
+void moo_native_cleanup_enter(MooValue *saved) {
+    *saved = moo_try_take_error();
+    moo_try_enter();
+}
+
+void moo_native_cleanup_step(MooValue *saved) {
+    MooValue next = moo_try_take_error();
+    if (saved->tag == MOO_NONE) *saved = next;
+    else moo_release(next);
+}
+
+void moo_native_cleanup_leave(MooValue *saved) {
+    moo_native_cleanup_step(saved);
+    MooValue first = *saved;
+    *saved = moo_none();
+    moo_try_leave();
+    /* Ein aktiver Caller-Handler bleibt erhalten. Ohne Caller sind nun alle
+     * eigenen Cleanups beendet, bevor moo_throw den Prozess beendet. */
+    if (first.tag != MOO_NONE) moo_throw(first);
+}
+
+
 /* P2-T58 C2: Systemkoerper fragen nach einem fehlbaren nativen Aufruf, ob ein
    Fehler ansteht (Flag), und kehren dann ohne Seiteneffekte zurueck. Starke
    Fassung zur schwachen Moduldefinition (liefert dort 0). */

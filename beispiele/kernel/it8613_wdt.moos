@@ -60,6 +60,15 @@ funktion it8613_register_schreiben(port: u16, index: u8, wert: u8) -> void:
         port_schreibe(port, index)
         port_schreibe(datenport, wert)
 
+
+@nativ
+funktion it8613_register_schreiben_write0(port: u16, index: u8, vorher: u8, maske: u8) -> void:
+    unsicher:
+        setze datenport: u16 auf port + 1
+        # Selektor und Snapshot bleiben explizit: kein zusaetzlicher Geraete-Read.
+        port_schreibe(port, index)
+        port_schreibe_write0(datenport, vorher, maske)
+
 @nativ
 funktion it8613_konfiguration_oeffnen(port: u16) -> u16:
     unsicher:
@@ -77,7 +86,7 @@ funktion it8613_konfiguration_oeffnen(port: u16) -> u16:
 funktion it8613_port_lesen(port: u16, loggen: u64, mit_takt: bool) -> bool:
     unsicher:
         setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
-        setze id: u16 auf it8613_konfiguration_oeffnen(port)
+        setze id: u16 auf 0
         setze gefunden: bool auf falsch
         setze rev: u8 auf 0
         setze ctrl: u8 auf 0
@@ -86,23 +95,25 @@ funktion it8613_port_lesen(port: u16, loggen: u64, mit_takt: bool) -> bool:
         setze msb: u8 auf 0
         setze reg23: u8 auf 0
         setze reg2d: u8 auf 0
-        wenn id == 0x8613:
-            wenn mit_takt:
-                setze reg23 auf it8613_register_lesen(port, 0x23)
-            setze vorher: u8 auf it8613_register_lesen(port, 0x07)
-            it8613_register_schreiben(port, 0x07, 7)
-            wenn it8613_register_lesen(port, 0x07) == 7:
-                setze rev auf it8613_register_lesen(port, 0x22) & 0x0F
-                setze ctrl auf it8613_register_lesen(port, 0x71)
-                setze cfg auf it8613_register_lesen(port, 0x72)
-                setze lsb auf it8613_register_lesen(port, 0x73)
-                setze msb auf it8613_register_lesen(port, 0x74)
+        unsicher:
+            aufräumen: it8613_register_schreiben(port, 0x02, 0x02)
+            setze id auf it8613_konfiguration_oeffnen(port)
+            wenn id == 0x8613:
                 wenn mit_takt:
-                    # Coreboot it8613e.h:13–20 ordnet 2Dh[2:1] LDN 7 zu.
-                    setze reg2d auf it8613_register_lesen(port, 0x2D)
-                setze gefunden auf wahr
-            it8613_register_schreiben(port, 0x07, vorher)
-        it8613_register_schreiben(port, 0x02, 0x02)
+                    setze reg23 auf it8613_register_lesen(port, 0x23)
+                setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+                aufräumen: it8613_register_schreiben(port, 0x07, vorher)
+                it8613_register_schreiben(port, 0x07, 7)
+                wenn it8613_register_lesen(port, 0x07) == 7:
+                    setze rev auf it8613_register_lesen(port, 0x22) & 0x0F
+                    setze ctrl auf it8613_register_lesen(port, 0x71)
+                    setze cfg auf it8613_register_lesen(port, 0x72)
+                    setze lsb auf it8613_register_lesen(port, 0x73)
+                    setze msb auf it8613_register_lesen(port, 0x74)
+                    wenn mit_takt:
+                        # Coreboot it8613e.h:13–20 ordnet 2Dh[2:1] LDN 7 zu.
+                        setze reg2d auf it8613_register_lesen(port, 0x2D)
+                    setze gefunden auf wahr
         log(adresse_von(IT8613_PORT), u64(port))
         log(adresse_von(IT8613_ID), u64(id))
         wenn gefunden:
@@ -145,8 +156,10 @@ funktion it8613_ausgangszustand(port: u16) -> bool:
 funktion it8613_programmieren(port: u16, zeit: u8, vor_start: bool) -> u8:
     unsicher:
         setze ergebnis: u8 auf 0
+        aufräumen: it8613_register_schreiben(port, 0x02, 0x02)
         wenn it8613_konfiguration_oeffnen(port) == 0x8613:
             setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+            aufräumen: it8613_register_schreiben(port, 0x07, vorher)
             it8613_register_schreiben(port, 0x07, 7)
             wenn it8613_register_lesen(port, 0x07) == 7 und (nicht vor_start oder (zeit == 0 und it8613_ausgangszustand(port))):
                 setze cfg: u8 auf 0
@@ -161,8 +174,6 @@ funktion it8613_programmieren(port: u16, zeit: u8, vor_start: bool) -> u8:
                     setze msb: u8 auf it8613_register_lesen(port, 0x74)
                     wenn it8613_register_lesen(port, 0x72) == cfg und msb == 0 und lsb <= zeit und (zeit == 0 oder lsb != 0):
                         setze ergebnis auf 1
-            it8613_register_schreiben(port, 0x07, vorher)
-        it8613_register_schreiben(port, 0x02, 0x02)
         gib_zurück ergebnis
 
 # FreeBSD itwd.c:108–116 quittiert den Status mit 0 in 71h[0].
@@ -173,16 +184,17 @@ funktion it8613_ctrl_quittieren(port: u16, loggen: u64) -> bool:
         setze gelesen: bool auf falsch
         setze ctrl: u8 auf 0
         setze readback: u8 auf 0
-        wenn it8613_konfiguration_oeffnen(port) == 0x8613:
-            setze vorher: u8 auf it8613_register_lesen(port, 0x07)
-            it8613_register_schreiben(port, 0x07, 7)
-            wenn it8613_register_lesen(port, 0x07) == 7:
-                setze ctrl auf it8613_register_lesen(port, 0x71)
-                it8613_register_schreiben(port, 0x71, ctrl & 0xFE)
-                setze readback auf it8613_register_lesen(port, 0x71)
-                setze gelesen auf wahr
-            it8613_register_schreiben(port, 0x07, vorher)
-        it8613_register_schreiben(port, 0x02, 0x02)
+        unsicher:
+            aufräumen: it8613_register_schreiben(port, 0x02, 0x02)
+            wenn it8613_konfiguration_oeffnen(port) == 0x8613:
+                setze vorher: u8 auf it8613_register_lesen(port, 0x07)
+                aufräumen: it8613_register_schreiben(port, 0x07, vorher)
+                it8613_register_schreiben(port, 0x07, 7)
+                wenn it8613_register_lesen(port, 0x07) == 7:
+                    setze ctrl auf it8613_register_lesen(port, 0x71)
+                    it8613_register_schreiben_write0(port, 0x71, ctrl, 1)
+                    setze readback auf it8613_register_lesen(port, 0x71)
+                    setze gelesen auf wahr
         wenn gelesen:
             setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
             log(adresse_von(IT8613_SAFETY_CTRL_READBACK), u64(readback))

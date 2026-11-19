@@ -1,0 +1,33 @@
+aus "../p2/native_cleanup" importiere p126_reset, p126_normal, p126_spur, p126_spaet, p126_schleife, p126_nie, p126_fehler, p126_cleanup_fehler, p126_erstfehler
+p126_reset()
+zeige p126_normal()
+zeige p126_spur()
+p126_reset()
+zeige p126_spaet()
+zeige p126_spur()
+p126_reset()
+p126_schleife()
+zeige p126_spur()
+p126_reset()
+p126_nie(falsch)
+zeige p126_spur()
+p126_nie(wahr)
+zeige p126_spur()
+p126_reset()
+versuche:
+    zeige p126_fehler(0)
+fange e:
+    zeige "callee-gefangen"
+zeige p126_spur()
+p126_reset()
+versuche:
+    zeige p126_cleanup_fehler(0)
+fange e:
+    zeige "cleanup-gefangen"
+zeige p126_spur()
+p126_reset()
+versuche:
+    zeige p126_erstfehler(0)
+fange e:
+    zeige "erstfehler-gefangen"
+zeige p126_spur()

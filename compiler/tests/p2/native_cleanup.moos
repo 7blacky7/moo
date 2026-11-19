@@ -1,0 +1,84 @@
+# P2-T126: echte native Cleanup-Koerper; dieselbe Quelle hosted und bare.
+@nativ
+statisch P126_SPUR: [u64; 1] auf 0
+
+@nativ
+funktion p126_reset() -> void:
+    unsicher:
+        setze P126_SPUR[0] auf 0
+    gib_zurück
+
+@nativ
+funktion p126_spur() -> u64:
+    setze x: u64 auf 0
+    unsicher:
+        setze x auf P126_SPUR[0]
+    gib_zurück x
+
+@nativ
+funktion p126_merke(ziffer: u64) -> void:
+    unsicher:
+        setze P126_SPUR[0] auf P126_SPUR[0] * 10 + ziffer
+    gib_zurück
+
+@nativ
+funktion p126_div(x: u64) -> u64:
+    gib_zurück 100 / x
+
+@nativ
+funktion p126_cleanup_fehlt(x: u64) -> u64:
+    gib_zurück 200 / x
+
+@nativ
+funktion p126_normal() -> u64:
+    aufräumen: p126_merke(1)
+    wenn wahr:
+        aufräumen: p126_merke(2)
+        p126_merke(3)
+    p126_merke(4)
+    gib_zurück 42
+
+@nativ
+funktion p126_spaet() -> u64:
+    setze x: u64 auf 1
+    aufräumen: p126_merke(x)
+    setze x auf 8
+    gib_zurück x
+
+@nativ
+funktion p126_schleife() -> void:
+    für i in 0..4:
+        aufräumen: p126_merke(als(u64, i) + 1)
+        wenn i == 1:
+            weiter
+        wenn i == 2:
+            stopp
+
+@nativ
+funktion p126_inner(x: u64) -> u64:
+    aufräumen: p126_merke(2)
+    gib_zurück p126_div(x)
+
+@nativ
+funktion p126_fehler(x: u64) -> u64:
+    aufräumen: p126_merke(1)
+    gib_zurück p126_inner(x)
+
+@nativ
+funktion p126_cleanup_fehler(x: u64) -> u64:
+    aufräumen: p126_merke(1)
+    aufräumen: p126_cleanup_fehlt(x)
+    aufräumen: p126_merke(2)
+    gib_zurück 7
+
+@nativ
+funktion p126_erstfehler(x: u64) -> u64:
+    aufräumen: p126_merke(1)
+    aufräumen: p126_cleanup_fehlt(x)
+    aufräumen: p126_merke(2)
+    gib_zurück p126_div(x)
+
+@nativ
+funktion p126_nie(registrieren: bool) -> void:
+    wenn registrieren:
+        aufräumen: p126_merke(9)
