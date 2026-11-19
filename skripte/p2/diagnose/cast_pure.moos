@@ -1,17 +1,8 @@
 @nativ
-funktion kurz(wert: u64) -> u8:
-    gib_zurück u8(wert)
-
-@nativ
 funktion lang(wert: u64) -> u8:
     gib_zurück als(u8, wert)
 
-zeige kurz(255)
 zeige lang(255)
-versuche:
-    zeige kurz(256)
-fange fehler:
-    zeige "BEREICH"
 versuche:
     zeige lang(256)
 fange fehler:

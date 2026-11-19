@@ -273,15 +273,16 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, true)?.value.into_int_value()),
                 _ => Err("Hardwarezugriff: negatives Operand muss ein Integerliteral sein".into()),
             },
-            // P2-T123: beide Schreibweisen benutzen dieselbe Bereichspruefung.
-            Expr::FunctionCall { name, args, zeile, spalten } if NType::from_name(name).is_some_and(is_integer) => {
-                let [inner] = args.as_slice() else {
-                    return Err(format!("{name}(Wert) erwartet genau ein Argument; Vorschlag: als({name}, Wert)"));
-                };
-                self.scalar(&Expr::FunctionCall {
-                    name: "als".into(), args: vec![Expr::Identifier(name.clone()), inner.clone()],
-                    zeile: *zeile, spalten: *spalten,
-                }, expected)
+            // P7-T22: Typumwandlung wie im ADR, z. B. port_lese32(u16(0xCFC)).
+            Expr::FunctionCall { name, args, .. } if NType::from_name(name).is_some_and(is_integer) => {
+                let ty = NType::from_name(name).ok_or("Typname fehlt")?;
+                if ty != expected {
+                    return Err(format!("Hardwarezugriff: {name}(...) liefert {ty:?}, erwartet ist {expected:?}"));
+                }
+                match args.as_slice() {
+                    [inner] => self.scalar(inner, expected),
+                    _ => Err(format!("Hardwarezugriff: {name}(...) erwartet genau ein Argument")),
+                }
             }
             Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
                 let [Expr::Identifier(ziel), operand] = args.as_slice() else {

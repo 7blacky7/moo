@@ -11,6 +11,7 @@ extern uint32_t sys_tabelle(uint64_t);
 extern uint64_t sys_text_summe(void);
 extern uint64_t sys_rufe(dienst_t, uint64_t, uint64_t);
 extern int64_t sys_konv(uint64_t);
+extern void sys_cast_bytefolge(uint64_t, uint64_t, uint64_t);
 extern uint32_t sys_zeiger(uint64_t);
 extern uint64_t sys_struktur(uint64_t);
 extern uint64_t sys_gerade(uint64_t);
@@ -107,7 +108,9 @@ static uint64_t __attribute__((ms_abi)) dienst(uint64_t a, uint64_t aus) {
 }
 
 static int fehler;
+static unsigned pruefungen;
 static void pruefe(const char *was, int64_t ist, int64_t soll) {
+    ++pruefungen;
     if (ist != soll) { printf("FEHLER %s: ist %lld, soll %lld\n", was, (long long)ist, (long long)soll); fehler = 1; }
 }
 
@@ -124,6 +127,17 @@ int main(void) {
     pruefe("rufe", (int64_t)sys_rufe(dienst, 5, 3), 74);
     pruefe("konv", sys_konv(0x1FFu), -1);
     pruefe("konv2", sys_konv(0x17Fu), 127);
+    pruefe("konv-u64-u8", sys_konv(0x1234u), 0x34);
+    unsigned char cdb_bytes[10];
+    memset(cdb_bytes, 0xA5, sizeof cdb_bytes);
+    sys_cast_bytefolge((uint64_t)(uintptr_t)(cdb_bytes + 1), 0x1234, 2);
+    pruefe("scsi-be16-ohne-maske", memcmp(cdb_bytes + 1, (unsigned char[]){0x12, 0x34}, 2), 0);
+    pruefe("scsi-be16-linke-grenze", cdb_bytes[0], 0xA5);
+    pruefe("scsi-be16-rechte-grenze", cdb_bytes[3], 0xA5);
+    sys_cast_bytefolge((uint64_t)(uintptr_t)(cdb_bytes + 1), 0x12345678, 4);
+    pruefe("scsi-be32-ohne-maske", memcmp(cdb_bytes + 1, (unsigned char[]){0x12, 0x34, 0x56, 0x78}, 4), 0);
+    sys_cast_bytefolge((uint64_t)(uintptr_t)(cdb_bytes + 1), UINT64_C(0xFEDCBA9876543210), 8);
+    pruefe("scsi-be64-ohne-maske", memcmp(cdb_bytes + 1, (unsigned char[]){0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}, 8), 0);
     pruefe("zeiger", sys_zeiger((uint64_t)(uintptr_t)feld), 82);
     pruefe("zeiger-feld", feld[1], 77);
     pruefe("struktur", (int64_t)sys_struktur((uint64_t)(uintptr_t)paar), 115);
@@ -335,6 +349,6 @@ int main(void) {
     pruefe("c-ausgerichtet-a1", bloecke[1].a, 1);
     pruefe("c-ausgerichtet-b1", bloecke[1].b, 2);
     if (fehler) return 1;
-    printf("PASS system_probe: 148 Pruefungen\n");
+    printf("PASS system_probe: %u Pruefungen\n", pruefungen);
     return 0;
 }

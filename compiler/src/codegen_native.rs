@@ -711,17 +711,6 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             let rhs = lower_nontrapping_expr(context, builder, right, right_ty, slots, failure, fehler, pure_functions)?;
             crate::native_arithmetic::pruefung(context, builder, op, lhs, rhs)
         }
-        // P2-T123: numerische Konstruktorform ist derselbe gepruefte Cast.
-        Expr::FunctionCall { name, args, zeile, spalten } if NType::from_name(name).is_some() => {
-            let [operand] = args.as_slice() else {
-                return Err(format!("{name}(Wert) erwartet genau ein Argument; Vorschlag: als({name}, Wert)"));
-            };
-            let cast = Expr::FunctionCall {
-                name: "als".into(), args: vec![Expr::Identifier(name.clone()), operand.clone()],
-                zeile: *zeile, spalten: *spalten,
-            };
-            lower_nontrapping_expr(context, builder, &cast, expected, slots, failure, fehler, pure_functions)
-        }
         // P2-T34 / ADR §4: als(T, x) gepruefter Standardcast, als_wrap(T, x),
         // als_saettigend(T, x). Der Operand wird mit seinem eigenen Typ gesenkt.
         Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
@@ -862,7 +851,6 @@ fn pure_infer<'ctx>(
             if crate::native_arithmetic::pruef_art(name).is_some() {
                 return Some(NType::Bool);
             }
-            if let Some(ty) = NType::from_name(name) { return Some(ty); }
             if crate::native_arithmetic::cast_art(name).is_some() {
                 return match args.first() {
                     Some(Expr::Identifier(ty)) => NType::from_name(ty),
@@ -1101,7 +1089,7 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
                 // keine Aufrufziele; ihr erstes Argument ist ein Typname.
                 if crate::native_arithmetic::cast_art(name).is_some() {
                     for arg in args.iter().skip(1) { expr_calls(arg, calls)?; }
-                } else if NType::from_name(name).is_some() || crate::native_arithmetic::pruef_art(name).is_some() {
+                } else if crate::native_arithmetic::pruef_art(name).is_some() {
                     for arg in args { expr_calls(arg, calls)?; }
                 } else {
                     calls.push(name.clone());
@@ -1129,6 +1117,9 @@ pub(crate) fn validate_pure_call_graph(bodies: &HashMap<String, &[Stmt]>) -> Res
                 done.insert(name.to_owned());
                 return Ok(());
             }
+            None if NType::from_name(name).is_some() => return Err(format!(
+                "Numerische Konstruktorform '{name}(...)' ist im reinen nativen Koerper nicht unterstuetzt; Vorschlag: als({name}, wert) fuer eine gepruefte Konversion verwenden"
+            )),
             None => return Err(format!("Nicht-reines natives Aufrufziel '{name}'")),
         };
         for callee in edges { visit(callee, graph, visiting, done)?; }

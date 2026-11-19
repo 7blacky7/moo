@@ -357,17 +357,24 @@ for c in M-C003 M-C004 M-C999 M-S004; do
 done
 
 
-# P2-T123: Konstruktor-Cast und als() in Pure/System/Hardware; Bereich bleibt geprueft.
+# T123-Kompatibilitaet: T(x) behaelt den Emitterpfad, als() bleibt geprueft.
 for name in cast_pure cast_system; do
   timeout 120s "$compiler" compile "$d/$name.moos" -o "$out/$name.bin" > "$out/$name.compile" 2>&1 || fail "$name: compile"
   "$out/$name.bin" > "$out/$name.run" 2>&1 || fail "$name: Lauf"
-  [ "$(cat "$out/$name.run")" = "$(printf '255\n255\nBEREICH\nBEREICH')" ] || fail "$name: Bereichspruefung/Ausgabe"
 done
+[ "$(cat "$out/cast_pure.run")" = "$(printf '255\nBEREICH')" ] || fail "cast_pure: geprueftes als"
+[ "$(cat "$out/cast_system.run")" = "$(printf '255\n0\n255\n255\nBEREICH')" ] || fail "cast_system: Legacy-T(x) und geprueftes als"
+pruef_json cast_pure_konstruktor
+[ "$rc" -eq 1 ] || fail "cast_pure_konstruktor: RC $rc"
+json cast_pure_konstruktor '.errors == 1 and .diagnostics[0].code == "M-C000" and (.diagnostics[0].suggestion | test("als"))'
 timeout 120s "$compiler" compile "$d/cast_hardware.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/cast_hardware.ll" > "$out/cast_hardware.compile" 2>&1 || fail "cast_hardware: compile"
 mise exec -- opt -passes=verify -disable-output "$out/cast_hardware.ll" || fail "cast_hardware: LLVM verify"
-[ "$(rg -c 'icmp ule i64 .*, 255' "$out/cast_hardware.ll")" = 2 ] || fail "cast_hardware: beide Casts pruefen 255"
-[ "$(rg -c 'trunc i64 .* to i8' "$out/cast_hardware.ll")" = 2 ] || fail "cast_hardware: beide Casts verengen"
+[ "$(rg -c 'icmp ule i64 .*, 255' "$out/cast_hardware.ll")" = 1 ] || fail "cast_hardware: nur als prueft 255"
+[ "$(rg -c 'trunc i64 .* to i8' "$out/cast_hardware.ll")" = 1 ] || fail "cast_hardware: nur als verengt"
 rg -q 'call void @llvm.trap' "$out/cast_hardware.ll" || fail "cast_hardware: Fehlerpfad fehlt"
+pruef_json cast_hardware_typ --target x86_64-bare --no-stdlib
+[ "$rc" -eq 1 ] || fail "cast_hardware_typ: RC $rc"
+json cast_hardware_typ '.errors == 1 and .diagnostics[0].code == "M-C000" and (.diagnostics[0].message | test("hat nicht den Typ U8"))'
 pruef_json cast_hardware_bereich --target x86_64-bare --no-stdlib
 [ "$rc" -eq 1 ] || fail "cast_hardware_bereich: RC $rc"
 json cast_hardware_bereich '.errors == 1 and (.diagnostics[0].message | test("Konstante 256 passt nicht in U8 \\(gepruefter Cast\\)"))'
@@ -389,7 +396,7 @@ pruef_json cast_roh_hardware --target x86_64-bare --no-stdlib
 [ "$rc" -eq 1 ] || fail "cast_roh_hardware: RC $rc"
 json cast_roh_hardware '.errors == 1 and .diagnostics[0].code == "M-M005" and .diagnostics[0].line == 3 and .diagnostics[0].column == 24 and .diagnostics[0].end_column == 44 and (.diagnostics[0].suggestion | test("port_lese.*herausziehen"))'
 if [ "$fehler" -eq 0 ]; then
-  echo "PASS P2-T123 Casts: Pure/System/Hardware, Bereichspruefung, Rohzugriff-Span und Breitenherkunft"
+  echo "PASS P2-T123 Casts: Legacy-Emitter-Semantik, geprueftes als, Rohzugriff-Span und Breitenherkunft"
 fi
 
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi

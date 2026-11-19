@@ -3100,7 +3100,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         _ => None,
                     };
                 }
-                if let Some(ty) = NType::from_name(name) { return STy::from_ntype(ty).ok(); }
+                if let Some(ty) = conversion(name) { return Some(STy::Int(ty)); }
                 if matches!(name.as_str(), "strukturfeld_lesen" | "struct_field_read"
                     | "registerfeld_lesen" | "register_field_read")
                 {
@@ -4026,17 +4026,6 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>, statement: bool) -> Result<Option<SVal<'ctx>>, String> {
-        // P2-T123: numerische T(x) sind Alias von als(T, x), auch ausserhalb
-        // von unsicher:. Die bestehende unsichere Zeiger->Adress-Konversion
-        // bleibt separat; sie ist kein numerischer Cast.
-        if NType::from_name(name).is_some()
-            && !args.first().is_some_and(|arg| matches!(self.infer(arg), Some(STy::Ptr(_))))
-        {
-            let [operand] = args else {
-                return Err(format!("{name}(Wert) erwartet genau ein Argument; Vorschlag: als({name}, Wert)"));
-            };
-            return self.call("als", &[Expr::Identifier(name.into()), operand.clone()], expected, statement);
-        }
         // P2-T66: im hosted Usermode gibt es weder MMIO noch privilegierte
         // Hardwarezugriffe; diese Builtins bleiben Bare/UEFI vorbehalten.
         if self.hosted && (barrier(name).is_some() || matches!(name,
@@ -4081,7 +4070,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // P2-T34 / ADR §4: als(T, x) gepruefter Standardcast, als_wrap(T, x),
         // als_saettigend(T, x). Fehlervertrag des Systemkoerpers wie bei
         // Division/Shift: trap_block (Bare Trap, hosted moo_native_fehler);
-        // Numerische T(x) werden oben auf denselben Pfad geleitet.
+        // u8(x) o. Ae. bleibt die bisherige ungepruefte Breitenkonversion.
         if let Some(art) = crate::native_arithmetic::cast_art(name) {
             let [ziel, operand] = args else {
                 return Err(format!("Systemkoerper: {name}(Typ, Wert) erwartet genau zwei Argumente"));

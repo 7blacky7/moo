@@ -580,6 +580,16 @@ funktion sys_mmio(adr: u64, wert: u32) -> u32:
         setze b: u32 auf volatile_lesen(reg)
         gib_zurück a + b
 
+# T123-Kompatibilitaet: SCSI-BE-Bytefolge ohne Maske vor dem alten u8-Cast.
+@nativ
+@einstieg
+funktion sys_cast_bytefolge(daten: u64, wert: u64, breite: u64) -> void:
+    unsicher:
+        setze j: u64 auf 0
+        solange j < breite:
+            speicher_schreiben(daten + breite - j - 1, u8(wert >> (j * 8)), 1)
+            setze j auf j + 1
+
 # T63: Slot und Zeiger auf denselben Slot sehen dieselben Bytes.
 @nativ
 @einstieg

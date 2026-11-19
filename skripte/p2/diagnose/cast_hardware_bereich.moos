@@ -1,4 +1,4 @@
 @nativ
 funktion bereichsfehler() -> void:
     unsicher:
-        port_schreibe(u16(0x80), u8(256))
+        port_schreibe(u16(0x80), als(u8, 256))

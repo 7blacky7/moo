@@ -1,5 +1,5 @@
 @nativ
-funktion kurz(wert: u64) -> void:
+funktion kurz(wert: u8) -> void:
     unsicher:
         port_schreibe(u16(0x80), u8(wert))
 

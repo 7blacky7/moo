@@ -1,0 +1,4 @@
+@nativ
+funktion verboten(wert: u64) -> void:
+    unsicher:
+        port_schreibe(u16(0x80), u8(wert))
