@@ -21,10 +21,7 @@
  * hier wird nur RGBA8 nach RGBX/BGRX (GOP PixelFormat 0/1) mit Zeilen-Stride
  * PixelsPerScanLine umgesetzt.
  */
-typedef unsigned long long u64;
-typedef unsigned int u32;
-typedef unsigned short u16;
-typedef unsigned char u8;
+#include "uefi_abi.h"
 
 #ifdef MOO_UEFI_COLLECTIONS
 extern int main(void);
@@ -32,23 +29,20 @@ extern int main(void);
 extern void moo_efi_haupt(void);
 #endif
 
-static void outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p)); }
-static u8 inb(u16 p) { u8 v; __asm__ volatile("inb %1,%0" : "=a"(v) : "Nd"(p)); return v; }
-
-/* COM1 mit LSR-Polling (0x3FD Bit5 = THR leer) — ohne Polling Byte-Verlust. */
-static void com1(u8 c) { while (!(inb(0x3FD) & 0x20)) {} outb(0x3F8, c); }
-
-/* Marker auf BEIDE Kanaele: debugcon 0xE9 (QEMU-stdio) + COM1 (-serial). */
+/* Boot-Marker auf COM1 und bei aktivem Debugcon auch auf 0xE9. */
 static void marker(const char *s) {
-    for (const char *p = s; *p; ++p) { outb(0xE9, (u8)*p); com1((u8)*p); }
+    for (; *s; ++s) uefi_marker_byte((u8)*s);
 }
-/* Diagnose nur auf debugcon 0xE9 (COM1 bleibt fuer die Moo-Marker sauber). */
-static void debug(const char *s) { for (const char *p = s; *p; ++p) outb(0xE9, (u8)*p); }
+
+/* Detaillierte Hardware-Diagnose nur auf Debugcon. */
+static void debug(const char *s) {
+    for (; *s; ++s) uefi_debug_byte((u8)*s);
+}
 static void debug_hex(u64 v) {
     static const char hx[] = "0123456789abcdef";
-    int i;
-    outb(0xE9, '0'); outb(0xE9, 'x');
-    for (i = 60; i >= 0; i -= 4) outb(0xE9, (u8)hx[(v >> i) & 0xf]);
+    uefi_debug_byte('0');
+    uefi_debug_byte('x');
+    for (int i = 60; i >= 0; i -= 4) uefi_debug_byte((u8)hx[(v >> i) & 0xf]);
 }
 
 #ifdef MOO_UEFI_SURFACE
@@ -59,67 +53,11 @@ typedef struct { u64 tag; u64 data; } MooValue;
 extern MooValue moo_number(double n);
 extern MooValue moo_bool(_Bool b);
 extern MooValue moo_string_new(const char *chars);   /* boot/uefi_rt.c */
-extern int moo_uefi_net_init(void *system_table);    /* boot/uefi_net.c (P7-T9) */
-extern int moo_uefi_net_sende(const u8 *text, u64 len);
 /* Layout wie struct MooString (moo_runtime.h); Tag MOO_STRING = 1. */
 typedef struct { int refcount; char *chars; int length; int capacity; } MooUefiString;
 extern const u8 *moo_surface_rgba(MooValue value, int *out_w, int *out_h);
 extern void kern_heap_init_c(u64 start, u64 ende);
 
-/* UEFI x86-64 table prefixes and GOP layout, per UEFI 2.11.
- * Boot services remain live while this application is running. */
-typedef struct { u64 signature; u32 revision, size, crc, reserved; } EfiHeader;
-typedef struct { u32 a; u16 b, c; u8 d[8]; } EfiGuid;
-typedef u64 (*EfiAllocatePages)(u32 type, u32 memory_type, u64 pages, u64 *memory);
-typedef u64 (*EfiWaitForEvent)(u64 count, void **events, u64 *index);
-typedef u64 (*EfiLocateProtocol)(EfiGuid *, void *, void **);
-typedef u64 (*EfiFreePool)(void *buffer);
-typedef u64 (*EfiHandleProtocol)(void *handle, EfiGuid *protocol, void **iface);
-typedef u64 (*EfiLocateHandleBuffer)(u32 search_type, EfiGuid *protocol, void *key, u64 *count, void ***buffer);
-typedef u64 (*EfiConnectController)(void *controller, void **drivers, void *remaining_path, u8 recursive);
-typedef u64 (*EfiSetWatchdogTimer)(u64 timeout_s, u64 code, u64 data_size, u16 *data);
-/* Boot-Services: Header, dann Funktionszeiger in Spezifikationsreihenfolge
- * (RaiseTPL 0, RestoreTPL 1, AllocatePages 2, FreePages 3, GetMemoryMap 4,
- * AllocatePool 5, FreePool 6, CreateEvent 7, SetTimer 8, WaitForEvent 9,
- * ..., LocateProtocol 37). */
-typedef struct {
-    EfiHeader hdr;
-    void *raise_tpl, *restore_tpl;                       /* 0, 1 */
-    EfiAllocatePages allocate_pages;                     /* 2 */
-    void *free_pages, *get_memory_map, *allocate_pool;   /* 3, 4, 5 */
-    EfiFreePool free_pool;                               /* 6 */
-    void *create_event, *set_timer;                      /* 7, 8 */
-    EfiWaitForEvent wait_for_event;                      /* 9 */
-    void *signal_event, *close_event, *check_event;      /* 10, 11, 12 */
-    void *install_pi, *reinstall_pi, *uninstall_pi;      /* 13, 14, 15 */
-    EfiHandleProtocol handle_protocol;                   /* 16 */
-    void *reserved, *register_notify, *locate_handle;    /* 17, 18, 19 */
-    void *locate_device_path, *install_config_table;     /* 20, 21 */
-    void *load_image, *start_image, *exit, *unload_image;/* 22..25 */
-    void *exit_boot_services, *get_next_monotonic, *stall;/* 26, 27, 28 */
-    EfiSetWatchdogTimer set_watchdog;                    /* 29 */
-    EfiConnectController connect_controller;             /* 30 */
-    void *disconnect_controller;                         /* 31 */
-    void *open_protocol, *close_protocol, *open_protocol_info; /* 32..34 */
-    void *protocols_per_handle;                          /* 35 */
-    EfiLocateHandleBuffer locate_handle_buffer;          /* 36 */
-    EfiLocateProtocol locate;                            /* 37 */
-} EfiBootServices;
-/* EFI_SIMPLE_TEXT_INPUT_PROTOCOL (ConIn): Reset, ReadKeyStroke, WaitForKey. */
-typedef struct { u16 scan; u16 chr; } EfiInputKey;
-typedef struct EfiTextIn EfiTextIn;
-struct EfiTextIn {
-    u64 (*reset)(EfiTextIn *, u8 extended);
-    u64 (*read_key)(EfiTextIn *, EfiInputKey *key);
-    void *wait_for_key;
-};
-typedef struct {
-    EfiHeader hdr; void *vendor; u32 revision; void *in_handle; EfiTextIn *in;
-    void *out_handle, *out, *err_handle, *err, *runtime;
-    EfiBootServices *boot;
-    u64 n_config;                                        /* NumberOfTableEntries */
-    struct { EfiGuid guid; void *table; } *config;       /* EFI_CONFIGURATION_TABLE[] */
-} EfiSystemTable;
 /* EFI_ABSOLUTE_POINTER_PROTOCOL (USB-Tablet/Touch) und
  * EFI_SIMPLE_POINTER_PROTOCOL (relative Maus): Reset, GetState, WaitForInput, Mode. */
 typedef struct { u64 min_x, min_y, min_z, max_x, max_y, max_z; u32 attributes; } EfiAbsPtrMode;
@@ -140,7 +78,6 @@ struct EfiSimplePtr {
     void *wait_for_input;
     EfiSimplePtrMode *mode;
 };
-#define EFI_NOT_READY 0x8000000000000006ull
 typedef struct {
     u32 version, width, height, format;
     u32 masks[4], pixels_per_scanline;
@@ -281,6 +218,7 @@ int moo_uefi_present_rgba(const u8 *pixels, u32 width, u32 height) {
 #define MOO_MAUS_MAX 4
 static EfiSystemTable *moo_st;
 static EfiTextIn *moo_kbd;
+static EfiTextInEx *moo_kbd_ex;
 static EfiAbsPtr *moo_abs[MOO_MAUS_MAX];
 static EfiSimplePtr *moo_rel[MOO_MAUS_MAX];
 static u32 moo_n_abs, moo_n_rel;
@@ -322,6 +260,14 @@ static int moo_uefi_eingabe_init(void *system_table) {
     u64 count, i;
     moo_st = st;
     moo_kbd = (st->in && st->in->read_key) ? st->in : 0;
+    if (st->in_handle && st->boot->handle_protocol) {
+        static EfiGuid text_in_ex = {0xdd9e7534, 0x7762, 0x4698,
+                                    {0x8c, 0x14, 0xf5, 0x85, 0x17, 0xa6, 0x25, 0xaa}};
+        EfiTextInEx *ex = 0;
+        if (st->boot->handle_protocol(st->in_handle, &text_in_ex, (void **)&ex) == 0 &&
+            ex && ex->read_key && ex->wait_for_key)
+            moo_kbd_ex = ex;
+    }
     moo_uefi_alles_verbinden();
     if (moo_uefi_handles(&abs_guid, &handles, &count) == 0) {
         for (i = 0; i < count && moo_n_abs < MOO_MAUS_MAX; ++i) {
@@ -391,7 +337,16 @@ static const char *moo_uefi_tastenname(EfiInputKey k, char *einzel) {
 MooValue kern_taste_lesen(void) {
     EfiInputKey k = {0, 0};
     char einzel[2];
-    if (!moo_kbd || moo_kbd->read_key(moo_kbd, &k) != 0) return moo_string_new("");
+    if (moo_kbd_ex) {
+        EfiKeyData data = {0};
+        if (moo_kbd_ex->read_key(moo_kbd_ex, &data) != 0) return moo_string_new("");
+        k = data.key;
+        if (k.chr == 0x09 && (data.state.shift & EFI_SHIFT_STATE_VALID) &&
+            (data.state.shift & (EFI_LEFT_SHIFT_PRESSED | EFI_RIGHT_SHIFT_PRESSED)))
+            return moo_string_new("Shift+Tab");
+    } else if (!moo_kbd || moo_kbd->read_key(moo_kbd, &k) != 0) {
+        return moo_string_new("");
+    }
     return moo_string_new(moo_uefi_tastenname(k, einzel));
 }
 
@@ -462,7 +417,8 @@ MooValue kern_eingabe_warten(void) {
     u64 n = 0, idx = 0, rc;
     u32 i;
     static int gemeldet;
-    if (moo_kbd && moo_kbd->wait_for_key) ev[n++] = moo_kbd->wait_for_key;
+    if (moo_kbd_ex) ev[n++] = moo_kbd_ex->wait_for_key;
+    else if (moo_kbd && moo_kbd->wait_for_key) ev[n++] = moo_kbd->wait_for_key;
     for (i = 0; i < moo_n_abs; ++i) if (moo_abs[i]->wait_for_input) ev[n++] = moo_abs[i]->wait_for_input;
     for (i = 0; i < moo_n_rel; ++i) if (moo_rel[i]->wait_for_input) ev[n++] = moo_rel[i]->wait_for_input;
     if (!n || !moo_st || !moo_st->boot->wait_for_event) return moo_bool(0);
@@ -671,13 +627,12 @@ static double moo_uefi_zahl(MooValue v) {
 
 /* kern_warte_us(us): Boot-Services Stall, begrenzt auf 10 s je Aufruf. */
 MooValue kern_warte_us(MooValue us) {
-    typedef u64 (*EfiStall)(u64 mikrosekunden);
     double d = moo_uefi_zahl(us);
     u64 n;
     if (!moo_st || !moo_st->boot->stall) return moo_bool(0);
     if (!(d > 0.0)) return moo_bool(1);
     n = d > 10000000.0 ? 10000000ull : (u64)d;
-    ((EfiStall)moo_st->boot->stall)(n);
+    moo_st->boot->stall(n);
     return moo_bool(1);
 }
 
@@ -694,12 +649,11 @@ static u64 moo_rdtsc(void) {
 }
 static u64 moo_tsc_basis, moo_tsc_pro_ms;
 MooValue kern_ticks(void) {
-    typedef u64 (*EfiStall)(u64 mikrosekunden);
     u64 t;
     if (!moo_tsc_pro_ms) {
         if (!moo_st || !moo_st->boot->stall) return moo_number(0.0);
         moo_tsc_basis = moo_rdtsc();
-        ((EfiStall)moo_st->boot->stall)(10000);
+        moo_st->boot->stall(10000);
         moo_tsc_pro_ms = (moo_rdtsc() - moo_tsc_basis) / 10u;
         if (!moo_tsc_pro_ms) moo_tsc_pro_ms = 1;
     }

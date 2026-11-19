@@ -13,6 +13,8 @@
  * den Bare-Allocator, String-Konstruktor fuer Literale, libm-Minimum,
  * kern_panic und fail-closed-Stubs fuer nicht genutzte Surface-Pfade.
  */
+#include "uefi_abi.h"
+
 #ifndef MOO_UEFI_USE_BARE_RUNTIME
 #include <stdint.h>
 typedef struct { int64_t tag; int64_t data; } MooValue;
@@ -107,15 +109,13 @@ MooValue moo_string_new(const char *chars) {
 }
 #endif
 
-/* --- Panik des Bare-Allocators (moo_bare_kern.h): Meldung auf debugcon
- *     0xE9, dann Halt. Kein Rueckweg in die Firmware. --- */
-static void uefi_rt_outb(uint16_t p, uint8_t v) { __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p)); }
+/* Panik des Bare-Allocators: Meldung auf COM1 und optional Debugcon, dann Halt. */
 __attribute__((noreturn)) void kern_panic(const char *msg) {
     static const char kopf[] = "[KERN-PANIK] ";
     const char *p;
-    for (p = kopf; *p; ++p) uefi_rt_outb(0xE9, (uint8_t)*p);
-    for (p = msg ? msg : ""; *p; ++p) uefi_rt_outb(0xE9, (uint8_t)*p);
-    uefi_rt_outb(0xE9, (uint8_t)'\n');
+    for (p = kopf; *p; ++p) uefi_marker_byte((uint8_t)*p);
+    for (p = msg ? msg : ""; *p; ++p) uefi_marker_byte((uint8_t)*p);
+    uefi_marker_byte((uint8_t)'\n');
     for (;;) { __asm__ volatile("cli; hlt"); }
 }
 
@@ -131,8 +131,8 @@ void moo_throw(MooValue value) {
 }
 
 void moo_uefi_print(const char *text) {
-    for (; *text; ++text) uefi_rt_outb(0xE9, (uint8_t)*text);
-    uefi_rt_outb(0xE9, (uint8_t)'\n');
+    for (; *text; ++text) uefi_marker_byte((uint8_t)*text);
+    uefi_marker_byte((uint8_t)'\n');
 }
 
 /* C-Stringoperationen der gemeinsamen Runtime. In der EFI-App läuft

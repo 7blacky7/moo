@@ -13,6 +13,18 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/kernel_test_builtins.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T16: nativer IRQ1 mit Vektor 33, x86_intrcc und iretq"
+    },
+    {
       "path": "beispiele/kernel/i226_diagnose.moos",
       "category": "profile",
       "args": [

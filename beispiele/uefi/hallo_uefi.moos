@@ -304,9 +304,8 @@ funktion zeit_melden(ports, puf, zpuf, zeichnen_us, zeigen_us):
             setze i auf i + 1
         sende(10)
 
-# moo-Anteil der UEFI-App: Lebensbeweis auf COM1, erstes Bild, dann
-# Ereignisschleife bis Escape. Tab/Right/Down und Left/Up wechseln den Fokus,
-# Return/Leertaste loesen den fokussierten Knopf aus, Mausklick trifft Knoepfe.
+# Moo-Anteil der UEFI-App. Tab und Shift+Tab wechseln den Fokus.
+# Enter aktiviert den fokussierten Knopf, Escape bricht die Aktion ab.
 funktion moo_efi_haupt():
     unsicher:
         marker_moo()
@@ -345,8 +344,7 @@ funktion moo_efi_haupt():
         setze status_h auf surface_text_hoehe(1) + 16
         setze knoepfe_x auf lay_knopf_x(0) - 3
         setze knoepfe_b auf lay_knopf_x(1) + lay_knopf_b(1) + 3 - knoepfe_x
-        setze laeuft auf wahr
-        solange laeuft:
+        solange wahr:
             kern_eingabe_warten()
             setze neu_bild auf falsch
             setze t auf kern_taste_lesen()
@@ -356,16 +354,21 @@ funktion moo_efi_haupt():
                 marker_taste()
                 netz_log(ports, puf, t)
                 setze vorher auf zustand["anzahl"]
-                wenn t == "Tab" oder t == "Right" oder t == "Down" oder t == "Left" oder t == "Up":
-                    uim_surface_taste(k, "Tab", wahr, 0)
-                    setze fokus auf k["fokus"]
-                    wenn fokus != nichts:
-                        marker_fokus(fokus["demo_index"])
-                sonst:
-                    uim_surface_taste(k, t, wahr, 0)
-                demo_aktion_melden(zustand, vorher, falsch, ports, puf)
                 wenn t == "Escape":
-                    setze laeuft auf falsch
+                    setze zustand["aktion"] auf "Abgebrochen"
+                    netz_log(ports, puf, zustand["aktion"])
+                sonst:
+                    wenn t == "Tab" oder t == "Shift+Tab" oder t == "Right" oder t == "Down" oder t == "Left" oder t == "Up":
+                        setze modifikator auf 0
+                        wenn t == "Shift+Tab":
+                            setze modifikator auf 1
+                        uim_surface_taste(k, "Tab", wahr, modifikator)
+                        setze fokus auf k["fokus"]
+                        wenn fokus != nichts:
+                            marker_fokus(fokus["demo_index"])
+                    sonst:
+                        uim_surface_taste(k, t, wahr, 0)
+                demo_aktion_melden(zustand, vorher, falsch, ports, puf)
                 setze t auf kern_taste_lesen()
             wenn maus_da und kern_maus_lesen():
                 setze neu_bild auf wahr

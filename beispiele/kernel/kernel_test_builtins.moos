@@ -1,0 +1,10 @@
+# Kompilierprobe fuer IRQ1 auf Vektor 33 am x86-PS/2-Controller.
+# Der Aufrufer richtet IDT und den auf 0x20 remappten Master-PIC ein.
+@nativ
+@unterbrechung(33)
+funktion tastatur_handler(rahmen: ptr[u64]) -> void:
+    unsicher:
+        port_lese(0x60)
+        speicher_schreiben(0xB8000, 0x0748074807480748, 8)
+        assembler(ziel="x86_64", code="movq 0xb8000, %rax", clobber=["rax", "memory"])
+        port_schreibe(0x20, 0x20)

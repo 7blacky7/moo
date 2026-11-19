@@ -22,7 +22,7 @@
 #      Eingabe per Monitor: sendkey tab/ret -> Marker MOO-UEFI-FOKUS 1 /
 #      MOO-UEFI-AKTION 1, usb-tablet mouse_move/mouse_button -> MOO-UEFI-KLICK /
 #      MOO-UEFI-AKTION 0 (Maus fail-closed, wenn MOO-UEFI-MAUS-FEHLT),
-#      sendkey esc -> Schleife endet -> MOO-UEFI-OK. Akzentlinie nach Aktion
+#      Shift+Tab -> FOKUS 0, Escape -> sichtbarer Abbruch, Tab bleibt bedienbar. Akzentlinie nach Aktion
 #      bernstein (Pixelprobe mit magick, falls da).
 #      Netzwerk-Konsole (P7-T9): -netdev user + e1000 + filter-dump -> net.pcap;
 #      Marker MOO-UEFI-NETZ-OK und Nutzlast 'MOO-NET MOOS STARTET' sowie der
@@ -78,6 +78,7 @@ RT_SOURCES=(moo_bare.c moo_bare_alloc.c moo_freestanding_mem.c moo_surface_core.
 CFLAGS=(--target=x86_64-w64-windows-gnu -std=c11 -O2 -ffreestanding -fno-stack-protector
         -mno-stack-arg-probe -ffunction-sections -fdata-sections -DMOO_BARE)
 WAIT_S="${MOO_UEFI_WAIT:-45}"
+DEBUGCON="${MOO_UEFI_DEBUGCON:-1}"
 QEMU_ACCEL=()
 [ "${MOO_UEFI_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
 
@@ -1185,6 +1186,8 @@ printf '#include <stdlib.h>\n#include <math.h>\n' \
   || skip "MinGW-Header fuer x86_64-w64-windows-gnu fehlen (stdlib.h/math.h)" \
        "sudo pacman -S mingw-w64-headers" "Header fehlen — UEFI-Smoke uebersprungen."
 
+case "$DEBUGCON" in 0|1) ;; *) fail "MOO_UEFI_DEBUGCON: 0 oder 1" ;; esac
+CFLAGS+=(-DMOO_UEFI_DEBUGCON="$DEBUGCON")
 FORMAT=obj
 CLANG_EMIT=()
 if [ "$PRUEFUNG" = "runtime" ] || [ "$MOO_SRC" -ef "$ROOT/beispiele/uefi/hallo_uefi.moos" ]; then
@@ -1386,13 +1389,9 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ] || [ "$PRUEFUNG" 
       >"$OUT/qemu.log" 2>&1 &
   QPID=$!
   ENDE="N 999"; [ "$PRUEFUNG" = "nativ-trap" ] && ENDE="N 111"
-  MARKER_LOG="$SERIAL_LOG"
-  if [ "$PRUEFUNG" = "runtime" ]; then
-    MARKER_LOG="$DEBUG_LOG"
-    ENDE="MOO-UEFI-OK"
-  fi
+  [ "$PRUEFUNG" != "runtime" ] || ENDE="MOO-UEFI-OK"
   for ((i = 0; i < WAIT_S + 20; i++)); do
-    tr -d '\r' <"$MARKER_LOG" 2>/dev/null | grep -qax "$ENDE" && break
+    tr -d '\r' <"$SERIAL_LOG" 2>/dev/null | grep -qax "$ENDE" && break
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
   done
@@ -1400,9 +1399,9 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ] || [ "$PRUEFUNG" 
   [ "$PRUEFUNG" = "nativ-trap" ] && sleep 5
   kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
   if [ "$PRUEFUNG" = "runtime" ]; then
-    grep -aE "MOO-UEFI|KERN-PANIK" "$DEBUG_LOG" | sed 's/^/      | /'
+    grep -aE "MOO-UEFI|KERN-PANIK" "$SERIAL_LOG" | sed 's/^/      | /'
     for m in MOO-UEFI-RUNTIME-WERTE-OK MOO-UEFI-RUNTIME-ARENA-OK MOO-UEFI-OK; do
-      grep -qax "$m" "$DEBUG_LOG" || fail "Runtime-Marker fehlt: $m"
+      grep -qax "$m" "$SERIAL_LOG" || fail "Runtime-Marker fehlt: $m"
     done
     echo "# ERGEBNIS: Runtime-Pruefung gruen (Werte, Callback und Tasten-Arena unter OVMF)."
     exit 0
@@ -1604,10 +1603,14 @@ monitor 'sendkey ret'
 warte_marker "$SERIAL_LOG" "MOO-UEFI-AKTION 1" 10 \
   || { qemu_ende; fail "Tastatur: Enter loest INFO nicht aus (MOO-UEFI-AKTION 1 fehlt)"; }
 schnappschuss "$OUT/screenshot_tastatur.png" || { qemu_ende; fail "kein Tastatur-Screenshot"; }
+monitor 'sendkey shift-tab'
+warte_marker "$OUT/net.pcap" 'Shift+Tab' 10 &&
+  warte_marker "$SERIAL_LOG" "MOO-UEFI-FOKUS 0" 10 \
+  || { qemu_ende; fail "Shift+Tab erreicht den rueckwaertigen Fokus nicht"; }
 # Maus (usb-tablet, absolut 0..32767): Klick auf die Mitte von WEITER.
 # Layout-Herleitung (Font 19 px, 1280x800): Knopf x=52..138, y=253..296 -> Mitte (95,274).
 MAUS="Zeigerprotokoll fehlt (fail-closed: MOO-UEFI-MAUS-FEHLT), nur Tastatur geprueft"
-if grep -q "MOO-UEFI-MAUS-OK" "$DEBUG_LOG"; then
+if grep -q "MOO-UEFI-MAUS-OK" "$SERIAL_LOG"; then
   # QEMU schickt Mausbefehle an das aktive Geraet (Standard: PS/2-Maus #2, die
   # OVMF nicht als Pointer-Protokoll anbietet). Das usb-tablet per 'info mice'
   # finden und mit 'mouse_set' aktivieren.
@@ -1627,29 +1630,46 @@ if grep -q "MOO-UEFI-MAUS-OK" "$DEBUG_LOG"; then
   MAUS="Klick auf WEITER erkannt (MOO-UEFI-KLICK, MOO-UEFI-AKTION 0)"
 fi
 schnappschuss "$SHOT" || { qemu_ende; fail "kein End-Screenshot ($SHOT)"; }
-# Escape beendet die Moo-Schleife -> Rueckkehr aus moo_efi_haupt -> MOO-UEFI-OK.
+# Escape bricht die Aktion sichtbar ab. Danach erreicht eine weitere Taste die App.
 monitor 'sendkey esc'
-warte_marker "$DEBUG_LOG" "MOO-UEFI-OK" 10 \
-  || { qemu_ende; fail "Escape beendet die Ereignisschleife nicht (MOO-UEFI-OK fehlt)"; }
+warte_marker "$OUT/net.pcap" "Abgebrochen" 10 \
+  || { qemu_ende; fail "Escape meldet keinen Abbruch"; }
+schnappschuss "$OUT/screenshot_abbruch.png" || { qemu_ende; fail "kein Abbruch-Screenshot"; }
+fokus_vorher="$(grep -ac 'MOO-UEFI-FOKUS 1' "$SERIAL_LOG")"
+monitor 'sendkey tab'
+for ((i = 0; i < 10; i++)); do
+  fokus_jetzt="$(grep -ac 'MOO-UEFI-FOKUS 1' "$SERIAL_LOG")"
+  [ "$fokus_jetzt" -le "$fokus_vorher" ] || break
+  sleep 1
+done
+[ "$fokus_jetzt" -gt "$fokus_vorher" ] \
+  || { qemu_ende; fail "Tab nach Escape erreicht die App nicht"; }
 qemu_ende
 
-grep -q "MOO-UEFI-ENTRY"   "$DEBUG_LOG" || fail "Marker MOO-UEFI-ENTRY fehlt"
-grep -q "MOO-UEFI-GOP-OK"  "$DEBUG_LOG" || fail "Marker MOO-UEFI-GOP-OK fehlt (GOP nicht gefunden/Format)"
-grep -q "MOO-UEFI-HEAP-OK" "$DEBUG_LOG" || fail "Marker MOO-UEFI-HEAP-OK fehlt (AllocatePages)"
-grep -q "MOO-UEFI-WATCHDOG-AUS" "$DEBUG_LOG" || fail "Marker MOO-UEFI-WATCHDOG-AUS fehlt (SetWatchdogTimer(0) - sonst Neustart nach 5 min)"
+grep -q "MOO-UEFI-ENTRY"   "$SERIAL_LOG" || fail "Marker MOO-UEFI-ENTRY fehlt"
+grep -q "MOO-UEFI-GOP-OK"  "$SERIAL_LOG" || fail "Marker MOO-UEFI-GOP-OK fehlt (GOP nicht gefunden/Format)"
+grep -q "MOO-UEFI-HEAP-OK" "$SERIAL_LOG" || fail "Marker MOO-UEFI-HEAP-OK fehlt (AllocatePages)"
+grep -q "MOO-UEFI-WATCHDOG-AUS" "$SERIAL_LOG" || fail "Marker MOO-UEFI-WATCHDOG-AUS fehlt (SetWatchdogTimer(0) - sonst Neustart nach 5 min)"
 grep -q "MOO-UEFI-MOO"     "$SERIAL_LOG" || { sed 's/^/      | /' "$SERIAL_LOG" | tail -10; fail "Marker MOO-UEFI-MOO fehlt (moo-Teil lief nicht)"; }
 grep -q "MOO-UEFI-TASTE"   "$SERIAL_LOG" || fail "Marker MOO-UEFI-TASTE fehlt"
 # P7-T15: QEMU hat keine I226 -> der Moo-Treiber findet 0 Ports (Statuszeile "I226 FEHLT").
 grep -q "MOO-UEFI-I226 0" "$SERIAL_LOG" || fail "Marker MOO-UEFI-I226 0 fehlt (I226-Erkennung ohne Geraet)"
 echo "      OK: I226-Erkennung ohne Geraet: MOO-UEFI-I226 0"
-grep -q "MOO-UEFI-TREIBER-$TREIBER_ERWARTET" "$DEBUG_LOG" \
-  || { grep -a "MOO-UEFI-TREIBER" "$DEBUG_LOG" | sed 's/^/      | /'; fail "Marker MOO-UEFI-TREIBER-$TREIBER_ERWARTET fehlt"; }
+grep -q "MOO-UEFI-TREIBER-$TREIBER_ERWARTET" "$SERIAL_LOG" \
+  || { grep -a "MOO-UEFI-TREIBER" "$SERIAL_LOG" | sed 's/^/      | /'; fail "Marker MOO-UEFI-TREIBER-$TREIBER_ERWARTET fehlt"; }
 echo "      OK: Treiber-Lader meldet MOO-UEFI-TREIBER-$TREIBER_ERWARTET"
 # Netzwerk-Konsole: SNP in OVMF (e1000) muss da sein; Nutzlast im pcap pruefen.
-grep -q "MOO-UEFI-NETZ-OK" "$DEBUG_LOG" || fail "Marker MOO-UEFI-NETZ-OK fehlt (SNP/e1000 nicht initialisiert)"
+grep -q "MOO-UEFI-NETZ-OK" "$SERIAL_LOG" || fail "Marker MOO-UEFI-NETZ-OK fehlt (SNP/e1000 nicht initialisiert)"
 # Zwei NICs (n0, n1), beide bei Init mit Link. Danach zieht das Gate das Kabel an n1
 # (Monitor set_link n1 off, siehe unten) und prueft, dass nur n0 noch sendet.
-grep -q "MOO-NET-NICS 2 LINKS 2" "$DEBUG_LOG" || fail "NIC-Zaehlung falsch: erwartet 2 NICs mit Link (MOO-NET-NICS 2 LINKS 2 fehlt, siehe $DEBUG_LOG)"
+if [ "$DEBUGCON" = 1 ]; then
+  grep -q 'MOO-UEFI-ENTRY' "$DEBUG_LOG" || fail "Debugcon-Bootmarker fehlt"
+  grep -q 'MOO-NET-NICS 2 LINKS 2' "$DEBUG_LOG" || fail "Debugcon-NIC-Zaehlung falsch"
+else
+  if grep -aqE 'MOO-(UEFI|NET)-|KERN-PANIK' "$DEBUG_LOG"; then
+    fail "Moo-Debugmarker trotz MOO_UEFI_DEBUGCON=0"
+  fi
+fi
 [ -s "$OUT/net.pcap" ] || fail "kein net.pcap (filter-dump)"
 NETZ_START=$(grep -a -c "MOO-NET MOOS STARTET" "$OUT/net.pcap")
 NETZ_TASTE=$(grep -a -c "Return" "$OUT/net.pcap")
@@ -1662,7 +1682,7 @@ NIC1_TASTE=$(grep -a -c "Return" "$OUT/net1.pcap")
 [ "$NIC1_TASTE" -eq 0 ] || fail "NIC 2 (Link aus) sendet trotzdem $NIC1_TASTE Tastenzeile(n)"
 echo "      OK: Zwei NICs: NIC0 Return=$NETZ_TASTE (Link an); NIC1 Start=$NIC1_START vor Kabelzug, Return=$NIC1_TASTE nach Kabelzug"
 echo "      OK: Netzwerk-Konsole: $NETZ_START Startzeile(n), $NETZ_TASTE Tastenzeile(n) im pcap $(stat -c %s "$OUT/net.pcap") Bytes"
-echo "      OK: Tastatur Tab -> FOKUS 1, Enter -> AKTION 1; Maus: $MAUS"
+echo "      OK: Tab, Shift+Tab, Enter, Escape und erneuter Tab; Maus: $MAUS"
 [ -s "$SHOT" ] || fail "kein Screenshot ($SHOT) — QEMU-Monitor screendump"
 grep -E "MOO-UEFI" "$DEBUG_LOG" "$SERIAL_LOG" | sed 's/^/      | /'
 echo "      OK: Screenshot $(stat -c %s "$SHOT") Bytes -> $SHOT"

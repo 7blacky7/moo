@@ -17,14 +17,8 @@
  *  - Quell-MAC je NIC = Mode->CurrentAddress; HeaderSize 0 bei Transmit.
  *  - UDP-Pruefsumme 0 (fuer IPv4 erlaubt).
  *
- * Freestanding C11, MS-x64-ABI wie uefi_entry.c. Eigene EFI-Typen mit Praefix
- * Net, damit uefi_entry.c unveraendert bleibt. MooValue/moo_string_new kommen
- * aus uefi_rt.c (Bare-Runtime).
- */
-typedef unsigned long long u64;
-typedef unsigned int u32;
-typedef unsigned short u16;
-typedef unsigned char u8;
+ * Freestanding C11, MS-x64-ABI wie uefi_entry.c. */
+#include "uefi_abi.h"
 
 typedef struct { u64 tag; u64 data; } MooValue;
 extern MooValue moo_string_new(const char *chars);
@@ -34,44 +28,11 @@ extern MooValue moo_string_new(const char *chars);
 #define NET_FRAME_MIN 60u
 #define NET_FRAME_MAX 1536u
 #define NET_NIC_MAX 8u
-#define NET_EFI_NOT_READY 0x8000000000000006ULL
 #define NET_SNP_STATE_STOPPED 0u
 #define NET_SNP_STATE_STARTED 1u
 #define NET_SNP_STATE_INITIALIZED 2u
 #define NET_SEARCH_BY_PROTOCOL 2u
 
-typedef struct { u32 a; u16 b, c; u8 d[8]; } NetGuid;
-typedef struct { u64 signature; u32 revision, size, crc, reserved; } NetHeader;
-typedef u64 (*NetStallFn)(u64 microseconds);
-typedef u64 (*NetLocateFn)(NetGuid *, void *, void **);
-typedef u64 (*NetFreePoolFn)(void *buffer);
-typedef u64 (*NetHandleProtocolFn)(void *handle, NetGuid *protocol, void **iface);
-typedef u64 (*NetLocateHandleBufferFn)(u32 search_type, NetGuid *protocol, void *key,
-                                       u64 *count, void ***buffer);
-
-/* Boot-Services-Offsets nach UEFI-Spezifikation (wie uefi_entry.c):
- * 0,1 RaiseTPL/RestoreTPL | 2..5 (4 Eintraege) | 6 FreePool | 7..15 (9) |
- * 16 HandleProtocol | 17..27 (11) | 28 Stall | 29..35 (7) |
- * 36 LocateHandleBuffer | 37 LocateProtocol. */
-typedef struct {
-    NetHeader hdr;
-    void *raise_tpl, *restore_tpl;
-    void *b2_5[4];
-    NetFreePoolFn free_pool;
-    void *b7_15[9];
-    NetHandleProtocolFn handle_protocol;
-    void *b17_27[11];
-    NetStallFn stall;
-    void *b29_35[7];
-    NetLocateHandleBufferFn locate_handle_buffer;
-    NetLocateFn locate;
-} NetBootServices;
-
-typedef struct {
-    NetHeader hdr; void *vendor; u32 revision;
-    void *in_handle, *in, *out_handle, *out, *err_handle, *err, *runtime;
-    NetBootServices *boot;
-} NetSystemTable;
 
 typedef struct NetSnp NetSnp;
 
@@ -100,16 +61,15 @@ struct NetSnp {
     NetSnpMode *mode;
 };
 
-static NetStallFn net_stall;
+static EfiStall net_stall;
 static NetSnp *net_nic[NET_NIC_MAX];
 static u8 net_link[NET_NIC_MAX];
 static u32 net_nic_count, net_link_count;
 /* Je NIC ein eigener Rahmenpuffer: die NIC haelt ihn bis GetStatus ihn zurueckgibt. */
 static u8 net_frames[NET_NIC_MAX][NET_FRAME_MAX];
 
-static void net_outb(u16 p, u8 v) { __asm__ volatile("outb %0,%1" :: "a"(v), "Nd"(p)); }
-static void net_dbg(const char *s) { for (; *s; ++s) net_outb(0xE9, (u8)*s); }
-static void net_dbg_zif(u32 v) { net_outb(0xE9, (u8)(v < 10u ? '0' + v : '+')); }
+static void net_dbg(const char *s) { for (; *s; ++s) uefi_debug_byte((u8)*s); }
+static void net_dbg_zif(u32 v) { uefi_debug_byte((u8)(v < 10u ? '0' + v : '+')); }
 
 static void net_be16(u8 *p, u32 v) { p[0] = (u8)(v >> 8); p[1] = (u8)v; }
 
@@ -173,11 +133,10 @@ static void net_link_aktualisieren(void) {
 
 /* Alle SNP-Instanzen der Firmware einsammeln, starten und initialisieren.
  * Rueckgabe 1 = mindestens eine nutzbare NIC (Link egal), 0 = keine. */
-int moo_uefi_net_init(void *system_table) {
-    static NetGuid guid = {0xA19832B9, 0xAC25, 0x11D3,
+int moo_uefi_net_init(EfiSystemTable *st) {
+    static EfiGuid guid = {0xA19832B9, 0xAC25, 0x11D3,
                            {0x9A, 0x2D, 0x00, 0x90, 0x27, 0x3F, 0xC1, 0x4D}};
-    NetSystemTable *st = (NetSystemTable *)system_table;
-    NetBootServices *bs;
+    EfiBootServices *bs;
     void **handles = 0;
     u64 count = 0, i;
     net_nic_count = 0;
@@ -252,7 +211,7 @@ static int net_sende_auf(u32 nic, const u8 *text, u32 len) {
     for (tries = 0; tries < 100000u; ++tries) {
         status = snp->transmit(snp, 0, flen, frame, 0, 0, 0);
         if (status == 0) { net_tx_abholen(snp, frame); return 1; }
-        if (status != NET_EFI_NOT_READY) return 0;
+        if (status != EFI_NOT_READY) return 0;
         {
             u32 irq = 0;
             void *done = 0;

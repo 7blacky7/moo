@@ -372,6 +372,7 @@ out=build/p7-t4-unterbrechung
 mkdir -p "$out"
 compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
 src=compiler/tests/p7/hardware
+irq33=beispiele/kernel/kernel_test_builtins.moos
 for target in x86_64-bare x86_64-unknown-uefi; do
     "$compiler" compile "$src/unterbrechung.moos" --no-stdlib --emit-ir --target "$target" -o "$out/$target.ll"
     mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
@@ -386,6 +387,17 @@ for target in x86_64-bare x86_64-unknown-uefi; do
     mise exec -- llc -O2 -filetype=obj "$out/$target-system.ll" -o "$out/$target-system.o"
     mise exec -- llvm-objdump -d --no-show-raw-insn "$out/$target-system.o" > "$out/$target-system.dis"
     awk '/<__moo_native.irq_system>:/,/iretq/' "$out/$target-system.dis" | rg -q 'iretq'
+    "$compiler" compile "$irq33" --no-stdlib --emit-ir --target "$target" -o "$out/$target-kbd.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target-kbd.ll"
+    rg -q 'define .*x86_intrcc void @__moo_native.tastatur_handler\(ptr byval\(\[5 x i64\]\)' "$out/$target-kbd.ll"
+    rg -q '"target-features"="-mmx,-sse,-sse2,-avx,-x87"' "$out/$target-kbd.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target-kbd.ll" -o "$out/$target-kbd.o"
+    mise exec -- llvm-objdump -d --no-show-raw-insn "$out/$target-kbd.o" > "$out/$target-kbd.dis"
+    awk '/<__moo_native.tastatur_handler>:/,/iretq/' "$out/$target-kbd.dis" > "$out/$target-kbd-handler.dis"
+    rg -q 'inb.*(\$0x60|\$96|%dx)' "$out/$target-kbd-handler.dis"
+    rg -q 'outb' "$out/$target-kbd-handler.dis"
+    rg -q 'movq\s+0xb8000, %' "$out/$target-kbd-handler.dis"
+    rg -q 'iretq' "$out/$target-kbd-handler.dis"
 done
 x="$out/x86_64-bare.extract.ll"
 rg -q 'define .*x86_intrcc void @__moo_native.irq_timer\(ptr byval\(\[5 x i64\]\) %0\)' "$x"
@@ -399,10 +411,13 @@ rg -q 'pushq\s+%rdx' "$out/timer.dis"
 rg -q 'outb\s+%al, %dx' "$out/timer.dis"
 rg -q 'popq\s+%rax' "$out/timer.dis"
 if rg -q 'addq\s+\$0x[0-9a-f]+, %rsp' "$out/timer.dis"; then echo 'Stackkorrektur ohne Fehlercode' >&2; exit 1; fi
-# isr_seitenfehler: Rahmen liegt hinter dem Fehlercode (RIP bei 0x18 nach 2 Sicherungen),
-# CR2 gelesen, Fehlercode (ggf. mit Ausrichtungsslot) direkt vor iretq entfernt.
+# RIP liegt hinter den Stack-Slots des Prologs und dem Fehlercode.
+# LLVM hat je nach Registerbelegung zwei oder drei push-Slots erzeugt.
 awk '/<__moo_native.isr_seitenfehler>:/,/iretq/' "$d" > "$out/pf.dis"
-rg -q 'movq\s+0x18\(%rsp\), %rax' "$out/pf.dis"
+slots="$(rg -c 'pushq' "$out/pf.dis")"
+case "$slots" in 2|3) ;; *) echo 'Unerwarteter Seitenfehler-Prolog' >&2; exit 1;; esac
+rip_offset="$(printf '0x%x' "$((8 * (slots + 1)))")"
+rg -q "movq\\s+${rip_offset}\\(%rsp\\), %rax" "$out/pf.dis"
 rg -q 'movq\s+%cr2, %rax' "$out/pf.dis"
 tail -2 "$out/pf.dis" | rg -q 'addq\s+\$0x(8|10), %rsp'
 expect_fail() {  # Datei Ziel Muster
@@ -417,11 +432,15 @@ expect_fail "$src/unterbrechung_fehlercode_zuviel.moos" x86_64-bare '@unterbrech
 expect_fail "$src/unterbrechung_rueckgabe.moos" x86_64-bare 'Rückgabetyp muss void sein'
 expect_fail "$src/unterbrechung_nackt.moos" x86_64-bare 'ohne @nackt/@aufrufkonvention'
 expect_fail "$src/unterbrechung.moos" aarch64-bare "Ziel 'aarch64-unknown-none' nicht unterstützt"
-# Bestandspfad (dynamisch) war defekt (x86: byval-Verify, ARM: CC 66): jetzt klarer Fehler.
-for target in x86_64-bare aarch64-bare; do
-    expect_fail "$src/unterbrechung_dynamisch.moos" "$target" 'verwende @nativ @unterbrechung(vektor)'
+# Auch der bisher akzeptierte parameterlose x86-Fall muss jetzt ablehnen.
+sed 's/isr_dynamisch(rahmen)/isr_dynamisch()/' "$src/unterbrechung_dynamisch.moos" > "$out/dynamisch-ohne-parameter.moos"
+sed 's/^@unterbrechung$/@interrupt/' "$out/dynamisch-ohne-parameter.moos" > "$out/dynamisch-englisch.moos"
+for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
+    for fixture in "$src/unterbrechung_dynamisch.moos" "$out/dynamisch-ohne-parameter.moos" "$out/dynamisch-englisch.moos"; do
+        expect_fail "$fixture" "$target" 'verwende @nativ @unterbrechung(vektor)'
+    done
 done
-echo 'PASS 4A/P7-T7: x86_intrcc mit byval-Rahmen, Hardware- und Systemkoerper, Fehlercode je Vektor, iretq, Registererhalt, Negativfaelle'
+echo 'PASS P7-T4/T7/T16: x86_intrcc, byval-Rahmen, IRQ 33, iretq, Registererhalt und dynamische Ablehnung'
 '''
 
 [tasks.variabel]

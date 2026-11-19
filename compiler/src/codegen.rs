@@ -3853,25 +3853,14 @@ impl<'ctx> CodeGen<'ctx> {
             return Ok(());
         }
 
-        // Interrupt Calling Convention support (dynamischer Bestandspfad).
-        // P7-T4: Nur der parameterlose x86-Fall erzeugte je ein Objekt und bleibt
-        // unveraendert (CC 83). Mit Parametern scheiterte LLVM-Verify ("Calling
-        // convention parameter requires byval"); auf ARM/AArch64 war CC 66 =
-        // ARM_APCS keine Interrupt-Konvention (aarch64-llc: "unsupported calling
-        // convention"). Diese Faelle sind jetzt ein klarer Fehler mit Hinweis.
+        // Der MooValue-Koerper darf aus einer ISR keine Runtime (SSE) betreten.
         if let Some(d) = decorators.iter().find(|d| d.name == "interrupt" || d.name == "unterbrechung") {
-            let triple = self.module.get_triple();
-            let triple_str = triple.as_str().to_str().unwrap_or("");
-            let x86 = triple_str.starts_with("x86_64") || triple_str.starts_with("i686") || triple_str.starts_with("i386");
-            if !x86 || !params.is_empty() {
-                return Err(format!(
-                    "@{} an dynamischen Funktionen geht nur parameterlos auf x86 (MooValue-ABI hat keinen Interrupt-Rahmen); \
-                     verwende @nativ @unterbrechung(vektor) mit (rahmen: ptr[u64][, fehlercode: u64]) -> void und unsicher:-Hardwarekoerper \
-                     (x86_64) bzw. ein @nativ @nackt-Trampolin (aarch64)",
-                    d.name
-                ));
-            }
-            function.set_call_conventions(83); // x86 Interrupt
+            return Err(format!(
+                "@{} an dynamischen Funktionen ist unzulässig; \
+                 verwende @nativ @unterbrechung(vektor) mit (rahmen: ptr[u64][, fehlercode: u64]) -> void und unsicher:-Hardwarekoerper \
+                 (x86_64) bzw. ein @nativ @nackt-Trampolin (aarch64)",
+                d.name
+            ));
         }
 
         // P011-A1: Layout-Decorators — @benutzt/@used (+ @einstieg/@entry: implizit benutzt),
