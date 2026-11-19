@@ -84,8 +84,17 @@ cat >"$T/bin/mise" <<'MOCK'
 echo "$$" >"$MOCK_ROOT/server.pid"
 trap 'echo server-clean >>"$MOCK_ROOT/trace"; exit 0' TERM INT HUP
 if [[ "${MOCK_FAIL:-}" == server ]]; then exit 18; fi
+zustand="${MOO_NETZ_STEUERUNG:?}"
+printf '%s\n' 'nm_managed=no' >"$zustand/vorher"
 printf '%s\n' 'dnsmasq-tftp: TFTP root is synthetic'
-while :; do sleep 1; done
+while [[ ! -e "$zustand/stopp" ]]; do sleep 0.1; done
+echo server-stop-datei >>"$MOCK_ROOT/trace"
+case "${MOCK_FAIL:-}" in
+  server-restore-fail) echo 1 >"$zustand/fertig"; exit 1 ;;
+  server-restore-fehlt) exit 0 ;;
+esac
+echo 0 >"$zustand/fertig"
+echo server-clean >>"$MOCK_ROOT/trace"
 MOCK
 cat >"$T/bin/tcpdump" <<'MOCK'
 #!/usr/bin/env bash
@@ -199,7 +208,7 @@ echo 'PASS: IT8613-Zeitvertrag wird vor WinRM geprueft'
 phasen=(ok normal normal-ohne-quittierung it8613 it8613-ohne-aus it8613-ohne-vorstopp it8613-quittierung-steht
         it8613-safety it8613-safety-rueckfall it8613-safety-ohne-proben it8613-safety-frueh it8613-safety-spaet
         it8613-safety-bootzeit-alt messreihe messreihe-unvollstaendig http502 http-timeout rueckfall loader
-        upload pruefen server capture pausieren stop booten)
+        upload pruefen server capture pausieren stop booten server-restore-fail server-restore-fehlt)
 if [[ -n "${MOO_N100_TEST_ESP_LOADER:-}" ]]; then
   runner="$ROOT/skripte/p7/n100-lauf.sh"
   bash "$runner" --kern-konfigurieren "$testkern" "$T/ESP-KERN.ELF"
@@ -230,6 +239,7 @@ for phase in "${phasen[@]}"; do
   export MOCK_MODE="$phase"
   case "$phase" in
     esp-*) export MOCK_MODE=normal; extra+=("${esp_args[@]}");;
+    server-restore-*) export MOCK_MODE=normal;;
     normal*) ;;
     it8613-safety*) extra+=(--watchdog-test);;
     it8613*) extra+=(--modus 5 --sekunden 25 --watchdog-sekunden 10);;
@@ -260,7 +270,15 @@ for phase in "${phasen[@]}"; do
       grep -Fq 'TFTP-Anfrage waehrend ESP-Lauf protokolliert' "$T/$phase-konsole.log"
       test ! -e "$T/server.pid"
       ;;
-    normal|it8613) grep -Fq 'IT8613-Start, Abschalten und neue Windows-Bootzeit belegt' "$T/$phase-konsole.log";;
+    normal|it8613)
+      grep -Fq 'IT8613-Start, Abschalten und neue Windows-Bootzeit belegt' "$T/$phase-konsole.log"
+      grep -qx server-stop-datei "$T/trace"
+      grep -qx 0 "$T/$phase/netz-steuerung/fertig"
+      ;;
+    server-restore-*)
+      grep -qx server-stop-datei "$T/trace"
+      grep -Fq 'Wiederherstellung der lokalen Netzkonfiguration unbelegt' "$T/$phase-konsole.log"
+      ;;
     normal-ohne-quittierung|it8613-ohne-*|it8613-quittierung-steht) grep -Fq 'IT8613-Quittierung, Bedienung oder Abschalten nicht belegt' "$T/$phase-konsole.log";;
     it8613-safety) grep -Fq 'IT8613-Hardware-Reset belegt. Netzlog-Abriss nach 9010 ms' "$T/$phase-konsole.log";;
     it8613-safety-rueckfall) grep -Fq 'Software-Rueckkehr protokolliert' "$T/$phase-konsole.log";;
@@ -275,7 +293,7 @@ for phase in "${phasen[@]}"; do
     messreihe-unvollstaendig) grep -Fq 'Windows zurueck, aber IT8613-Messreihe unvollstaendig' "$T/$phase-konsole.log";;
   esac
   case "$phase" in
-    ok|normal*|it8613*|messreihe*|http502|http-timeout|pausieren|stop|booten|esp-*) grep -qx zurueck "$T/trace";;
+    ok|normal*|it8613*|messreihe*|http502|http-timeout|pausieren|stop|booten|esp-*|server-restore-*) grep -qx zurueck "$T/trace";;
     *) if grep -qx zurueck "$T/trace"; then echo 'FAIL: unberuehrten Remote-Zustand restauriert' >&2; exit 1; fi;;
   esac
   if [[ -s "$T/server.pid" ]]; then

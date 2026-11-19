@@ -19,6 +19,7 @@
 #
 # Umgebung: MOO_NETZ_IF (enp60s0), MOO_NETZ_ADR (192.168.77.1/24),
 #           MOO_NETZ_NUR_KOPIEREN=1 (nur moo.efi/.pruef erneuern, kein Server).
+#           MOO_NETZ_STEUERUNG (privates Laufverzeichnis fuer Snapshot, stopp, fertig).
 set -euo pipefail
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -73,18 +74,49 @@ if ip -4 -o addr show | grep -F " inet $netz" | grep -vq "inet $IP/"; then
   exit 2
 fi
 KLIENT="${MOO_NETZ_KLIENT:-${netz}2}"
+STEUERUNG="${MOO_NETZ_STEUERUNG:-}"
+zustand="$STEUERUNG"
+if [ -z "$zustand" ]; then
+  zustand="$(mktemp -d "$(dirname "$TFTP")/.netz-zustand.XXXXXX")"
+else
+  [ -d "$zustand" ] || { echo "Netz-Steuerverzeichnis fehlt: $zustand" >&2; exit 2; }
+fi
 hinzugefuegt=0
 nm_aus=0
 fw_regel=0
-v6_zurueck=0
+dns_pid=
 v6_adresse=
 v6_sysctl="net/ipv6/conf/$IFACE/disable_ipv6"
+v6_gen_sysctl="net/ipv6/conf/$IFACE/addr_gen_mode"
+
+nm_verwaltet() { nmcli -g GENERAL.NM-MANAGED device show "$IFACE" 2>/dev/null; }
+nm_uuid() { nmcli -g GENERAL.CON-UUID device show "$IFACE" 2>/dev/null | sed '/^--$/d'; }
+link_local() { ip -6 -o addr show dev "$IFACE" scope link | awk '{print $4}' | sort; }
+ifindex() { ip -o link show dev "$IFACE" | cut -d: -f1; }
+
+nm_vorher="$(nm_verwaltet || true)"
+nm_uuid_vorher=
+if [ "$nm_vorher" = yes ]; then nm_uuid_vorher="$(nm_uuid)"; fi
+{
+  printf 'interface=%s\nnm_managed=%s\nnm_uuid=%s\n' "$IFACE" "$nm_vorher" "$nm_uuid_vorher"
+  if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
+    v6_vorher="$(sysctl -n "$v6_sysctl")"
+    v6_gen_vorher="$(sysctl -n "$v6_gen_sysctl")"
+    v6_link_vorher="$(link_local)"
+    v6_index_vorher="$(ifindex)"
+    if [ -n "$v6_link_vorher" ]; then
+      ip -6 addr save dev "$IFACE" scope link >"$zustand/link-local.ip"
+    fi
+    printf 'disable_ipv6=%s\naddr_gen_mode=%s\nifindex=%s\nlink_local:\n%s\n' \
+      "$v6_vorher" "$v6_gen_vorher" "$v6_index_vorher" "$v6_link_vorher"
+  fi
+} >"$zustand/vorher"
+
 ipv6_vorbereiten() {
-  local vorher mac
-  vorher="$(sysctl -n "$v6_sysctl")" || return 1
-  echo "MOO-NETZ IPV6 START $IFACE disable_ipv6=$vorher"
-  if [ "$vorher" = 1 ]; then
-    v6_zurueck=1
+  local aktuell mac
+  aktuell="$(sysctl -n "$v6_sysctl")" || return 1
+  echo "MOO-NETZ IPV6 START $IFACE disable_ipv6=$v6_vorher vor_temp=$aktuell"
+  if [ "$aktuell" = 1 ]; then
     sudo -n sysctl -q -w "$v6_sysctl=0" || return 1
   fi
   if ip -6 -o addr show dev "$IFACE" scope link | grep -vE ' (tentative|dadfailed)( |$)' | grep -q ' inet6 '; then
@@ -99,37 +131,90 @@ ipv6_vorbereiten() {
     return 1
   fi
 }
+ipv6_wiederherstellen() {
+  local aktuell gen adressen
+  [ "$(ifindex)" = "$v6_index_vorher" ] || return 1
+  gen="$(sysctl -n "$v6_gen_sysctl")" || return 1
+  if [ "$gen" != "$v6_gen_vorher" ]; then
+    sudo -n sysctl -q -w "$v6_gen_sysctl=$v6_gen_vorher" || return 1
+  fi
+  aktuell="$(sysctl -n "$v6_sysctl")" || return 1
+  if [ "$aktuell" != "$v6_vorher" ]; then
+    sudo -n sysctl -q -w "$v6_sysctl=$v6_vorher" || return 1
+  fi
+  adressen="$(link_local)" || return 1
+  if [ "$adressen" != "$v6_link_vorher" ] && [ -s "$zustand/link-local.ip" ]; then
+    # ip route speichert hier RTNL-Adressen mit urspruenglicher ifindex/Flags.
+    sudo -n ip -6 addr restore <"$zustand/link-local.ip" || return 1
+    adressen="$(link_local)" || return 1
+  fi
+  gen="$(sysctl -n "$v6_gen_sysctl")" || return 1
+  aktuell="$(sysctl -n "$v6_sysctl")" || return 1
+  printf 'disable_ipv6=%s\naddr_gen_mode=%s\nlink_local:\n%s\n' "$aktuell" "$gen" "$adressen" >"$zustand/ipv6-nachher" || return 1
+  [ "$aktuell" = "$v6_vorher" ] && [ "$gen" = "$v6_gen_vorher" ] && [ "$adressen" = "$v6_link_vorher" ]
+}
 aufraeumen() {
-  local v6_rc=0
-  if [ -n "$v6_adresse" ]; then
-    sudo -n ip -6 addr del "$v6_adresse" dev "$IFACE" || v6_rc=1
+  local rc=$? restore=0 aktuell uuid
+  # Nach Eintritt in den EXIT-Trap darf ein Folgesignal das Rollback
+  # zwischen zwei Netzoperationen nicht abbrechen.
+  trap '' INT TERM HUP
+  trap - EXIT
+  set +e
+  if [ -n "$dns_pid" ]; then
+    if jobs -pr | grep -Fxq "$dns_pid"; then
+      kill -TERM "$dns_pid" || restore=1
+    fi
+    wait "$dns_pid" 2>/dev/null || true
   fi
-  if [ "$v6_zurueck" = 1 ]; then
-    sudo -n sysctl -q -w "$v6_sysctl=1" || v6_rc=1
+  if [ "$fw_regel" = 1 ]; then
+    sudo -n iptables -D INPUT -i "$IFACE" -s "$KLIENT" -d "$IP" -p udp -j ACCEPT || restore=1
   fi
+  if [ "$hinzugefuegt" = 1 ]; then
+    sudo -n ip -4 addr del "$ADR" dev "$IFACE" || restore=1
+  fi
+  if [ -n "$v6_adresse" ] && ip -6 -o addr show dev "$IFACE" to "${v6_adresse%/*}/128" | grep -q ' inet6 '; then
+    sudo -n ip -6 addr del "$v6_adresse" dev "$IFACE" || restore=1
+  fi
+  if [ "$nm_aus" = 1 ]; then
+    sudo -n nmcli -w 5 device set "$IFACE" managed yes || restore=1
+    if [ -n "$nm_uuid_vorher" ] && [ "$(nm_uuid)" != "$nm_uuid_vorher" ]; then
+      sudo -n nmcli -w 15 connection up uuid "$nm_uuid_vorher" ifname "$IFACE" || restore=1
+    fi
+  fi
+  aktuell="$(nm_verwaltet || true)"
+  uuid="$(nm_uuid || true)"
+  if [[ "$nm_vorher" = yes || "$nm_vorher" = no ]]; then
+    [ "$aktuell" = "$nm_vorher" ] || restore=1
+    [ -z "$nm_uuid_vorher" ] || [ "$uuid" = "$nm_uuid_vorher" ] || restore=1
+  fi
+  printf 'nm_managed=%s\nnm_uuid=%s\n' "$aktuell" "$uuid" >"$zustand/nm-nachher" || restore=1
   if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
-    if [ "$v6_rc" = 0 ]; then
+    if ipv6_wiederherstellen; then
       echo "MOO-NETZ IPV6 ZURUECK $IFACE"
     else
       echo "MOO-NETZ IPV6 FEHLER bei Wiederherstellung auf $IFACE" >&2
+      restore=1
     fi
   fi
-  if [ "$fw_regel" = 1 ]; then
-    sudo -n iptables -D INPUT -i "$IFACE" -s "$KLIENT" -d "$IP" -p udp -j ACCEPT || true
+  if [ "$restore" = 0 ]; then
+    echo "Aufgeraeumt: Adresse $ADR entfernt=$hinzugefuegt, Firewall-Regel entfernt=$fw_regel, NM wieder verwaltet=$nm_aus"
+  else
+    echo "MOO-NETZ Wiederherstellung fehlgeschlagen: $zustand" >&2
+    rc=1
   fi
-  if [ "$hinzugefuegt" = 1 ]; then sudo -n ip addr del "$ADR" dev "$IFACE" 2>/dev/null || true; fi
-  if [ "$nm_aus" = 1 ]; then sudo -n nmcli device set "$IFACE" managed yes || true; fi
-  echo "Aufgeraeumt: Adresse $ADR entfernt=$hinzugefuegt, Firewall-Regel entfernt=$fw_regel, NM wieder verwaltet=$nm_aus"
+  printf '%s\n' "$restore" >"$zustand/fertig" || rc=1
+  if [ -z "$STEUERUNG" ] && [ "$restore" = 0 ]; then
+    rm -f "$zustand/vorher" "$zustand/link-local.ip" "$zustand/nm-nachher" "$zustand/ipv6-nachher" "$zustand/fertig"
+    rmdir "$zustand"
+  fi
+  exit "$rc"
 }
 trap aufraeumen EXIT
-# Auch bei Abbruch (Strg+C, kill, timeout) ueber EXIT aufraeumen.
 trap 'exit 130' INT TERM HUP
-# NetworkManager entfernt fremde Adressen beim DHCP-Zyklus seines Profils: nur
-# zur Laufzeit die Verwaltung von $IFACE abschalten (nicht im Profil gespeichert).
-if command -v nmcli >/dev/null 2>&1 && nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -q "^$IFACE:" \
-   && ! nmcli -t -f DEVICE,STATE device | grep -q "^$IFACE:unmanaged"; then
-  sudo -n nmcli device set "$IFACE" managed no
+# NetworkManager kann fremde Adressen beim DHCP-Zyklus seines Profils entfernen.
+if [ "$nm_vorher" = yes ]; then
   nm_aus=1
+  sudo -n nmcli device set "$IFACE" managed no
 fi
 if ! ip -4 addr show dev "$IFACE" | grep -q "inet $IP/"; then
   sudo -n ip addr add "$ADR" dev "$IFACE"
@@ -139,14 +224,23 @@ if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
   ipv6_vorbereiten || { echo "IPv6 auf $IFACE konnte nicht vorbereitet werden" >&2; exit 2; }
   ip -6 -o addr show dev "$IFACE" scope link
 fi
-# Host-Firewall (UFW) verwirft ankommendes TFTP: Laufzeit-Regel nur fuer den
-# Lader ($KLIENT -> $IP, UDP, $IFACE); die UFW-Regeldateien bleiben unveraendert.
+# Laufzeit-Firewallregel fuer den bekannten TFTP-Client.
 if command -v iptables >/dev/null 2>&1; then
   sudo -n iptables -I INPUT 1 -i "$IFACE" -s "$KLIENT" -d "$IP" -p udp -j ACCEPT
   fw_regel=1
 fi
 echo "TFTP-Server: $IP:69 auf $IFACE, Wurzel $TFTP (Strg+C beendet und entfernt die Adresse)"
-sudo -n dnsmasq --no-daemon --conf-file=/dev/null --port=0 --pid-file= \
-  --interface="$IFACE" --except-interface=lo --bind-interfaces --listen-address="$IP" \
-  --enable-tftp --tftp-root="$TFTP" --user="$(id -un)" --group="$(id -gn)" \
-  --log-facility=-
+befehl=(sudo -n dnsmasq --no-daemon --conf-file=/dev/null --port=0 --pid-file=
+  --interface="$IFACE" --except-interface=lo --bind-interfaces --listen-address="$IP"
+  --enable-tftp --tftp-root="$TFTP" --user="$(id -un)" --group="$(id -gn)"
+  --log-facility=-)
+if [ -z "$STEUERUNG" ]; then
+  "${befehl[@]}"
+else
+  "${befehl[@]}" &
+  dns_pid=$!
+  while [ ! -e "$STEUERUNG/stopp" ] && kill -0 "$dns_pid" 2>/dev/null; do sleep 0.1; done
+  if [ -e "$STEUERUNG/stopp" ]; then exit 0; fi
+  wait "$dns_pid"
+  dns_pid=
+fi

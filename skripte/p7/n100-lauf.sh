@@ -403,6 +403,21 @@ beenden_gruppe() {
   fi
   wait "$pid" 2>/dev/null || true
 }
+netzserver_beenden() {
+  [[ -n "$SERVER_PID" ]] || return 0
+  local steuerung="$OUT/netz-steuerung" bis=$((SECONDS+35))
+  if kill -0 "$SERVER_PID" 2>/dev/null; then
+    if : >"$steuerung/stopp"; then
+      # mise laesst den Server seinen EXIT-Trap ausfuehren. Die Prozessgruppe
+      # erst nach normalem Ende oder bei abgelaufener Frist anfassen.
+      while kill -0 "$SERVER_PID" 2>/dev/null && ((SECONDS<bis)); do sleep 0.1; done
+    fi
+  fi
+  beenden_gruppe "$SERVER_PID"
+  if [[ -e "$steuerung/vorher" ]]; then
+    [[ -f "$steuerung/fertig" && "$(<"$steuerung/fertig")" = 0 ]]
+  fi
+}
 synapse_warten() {
   local bis=$((SECONDS+SYNAPSE_LIMIT)) code
   while ((SECONDS<bis)); do
@@ -439,11 +454,8 @@ aufraeumen() {
     fi
   fi
   beenden_gruppe "$CAPTURE_PID"
-  beenden_gruppe "$SERVER_PID"
-  if ((IPV6_PROBE)) && [ -f "$OUT/server.log" ] &&
-     grep -aqF 'MOO-NETZ IPV6 START ' "$OUT/server.log" &&
-     ! grep -aqF "MOO-NETZ IPV6 ZURUECK $IFACE" "$OUT/server.log"; then
-    echo 'FEHLER: Wiederherstellung der lokalen IPv6-Konfiguration unbelegt' >&2
+  if ! netzserver_beenden; then
+    echo 'FEHLER: Wiederherstellung der lokalen Netzkonfiguration unbelegt (netz-steuerung, server.log)' >&2
     rc=1
   fi
   if ((SYNAPSE_STOPP && wieder)); then
@@ -572,7 +584,9 @@ CAPTURE_PID=$!
 if [[ -n "$ESP_KERN" ]]; then
   printf '%s\n' 'MOO-LAUF BOOTQUELLE ESP' >"$OUT/server.log"
 else
-  MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
+  mkdir -m 700 -- "$OUT/netz-steuerung"
+  MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" MOO_NETZ_STEUERUNG="$OUT/netz-steuerung" \
+    setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
 fi
 laufprozesse_aktiv() {
