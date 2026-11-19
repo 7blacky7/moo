@@ -27,6 +27,9 @@ anmeldung=( -o PubkeyAuthentication=no -o PasswordAuthentication=no )
 konto=moo-probe
 log="$ausgabe/ssh-kex.log"
 kommando=()
+terminal=(-n -T)
+eingabe=/dev/null
+ausgabe_datei="$ausgabe/ssh-ausgabe.tmp"
 case "$modus" in
   kex) ;;
   info|fremd)
@@ -35,6 +38,22 @@ case "$modus" in
     konto=moo
     log="$ausgabe/ssh-info.log"
     kommando=(moo-info)
+    ;;
+  shell)
+    marker+=(SIGNATUR METHODE)
+    anmeldung=( -o PreferredAuthentications=publickey -o IdentitiesOnly=yes -i "${6:?Laufkey fehlt}" )
+    konto=moo
+    terminal=(-tt)
+    log="$ausgabe/ssh-shell.log"
+    eingabe="$ausgabe/ssh-shell.stdin"
+    ausgabe_datei="$ausgabe/ssh-shell.txt"
+    # Die lange, absichtlich ungueltige Zeile ueberschreitet den SSH-Empfangskredit.
+    # Die letzten Befehle muessen nach einem Window Adjust weiter ankommen.
+    {
+      printf 'hilfx\177e\r\nmoo-info\npci\nnetz\nspeicher\nunbekannt\n'
+      printf '%0700d\n' 0
+      printf 'hilfxy\b\177e\nbeenden\n'
+    } >"$eingabe"
     ;;
   passwort)
     marker+=(SIGNATUR METHODE)
@@ -72,15 +91,15 @@ pathlib.Path(known).write_text(f"[{ziel}]:2223 ssh-ed25519 {pin}\n", encoding="a
 PY
 
 status=0
-LC_ALL=C timeout --foreground 22s ssh -vvv -F /dev/null -n -T -p 2223 -b "$quelle" -l "$konto" \
+LC_ALL=C TERM=vt100 timeout --foreground 22s ssh -vvv -F /dev/null "${terminal[@]}" -p 2223 -b "$quelle" -l "$konto" \
   -o BatchMode=yes -o ConnectTimeout=8 -o ConnectionAttempts=1 \
   -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null \
   -o "UserKnownHostsFile=$ausgabe/ssh-known-hosts" \
   -o IdentityAgent=none -o KbdInteractiveAuthentication=no -o GSSAPIAuthentication=no \
-  "${kex_optionen[@]}" "${anmeldung[@]}" "$ziel" "${kommando[@]}" >"$ausgabe/ssh-ausgabe.tmp" 2>"$log" || status=$?
+  "${kex_optionen[@]}" "${anmeldung[@]}" "$ziel" "${kommando[@]}" <"$eingabe" >"$ausgabe_datei" 2>"$log" || status=$?
 if [ "$modus" = info ]; then
-  mv -- "$ausgabe/ssh-ausgabe.tmp" "$ausgabe/moo-info.txt"
-else
+  mv -- "$ausgabe_datei" "$ausgabe/moo-info.txt"
+elif [ "$modus" != shell ]; then
   if [ -s "$ausgabe/ssh-ausgabe.tmp" ]; then
     echo 'Unerwartete Ausgabe ohne SSH-Anmeldung' >&2
     exit 1
@@ -111,11 +130,12 @@ suchzeilen=(
 case "$modus" in
   kex) suchzeilen+=("Received disconnect from $ziel port 2223:11: Moo SSH transport complete") ;;
   info) suchzeilen+=('Authenticated to ' 'Sending command: moo-info' 'Exit status 0') ;;
+  shell) suchzeilen+=('Authenticated to ' 'PTY allocation request accepted' 'shell request accepted' 'Exit status 0') ;;
   fremd) suchzeilen+=('Offering public key: ' 'Permission denied (publickey)') ;;
   passwort) suchzeilen+=('Authentications that can continue: publickey' 'Permission denied (publickey)') ;;
 esac
 erwartet=255
-[ "$modus" != info ] || erwartet=0
+case "$modus" in info|shell) erwartet=0 ;; esac
 if ((status != erwartet)); then
   tail -35 "$log"
   printf 'OpenSSH-Probe %s endete mit Status %s statt %s\n' "$modus" "$status" "$erwartet" >&2
@@ -144,6 +164,62 @@ if not uptime or int(uptime[1]) <= 0 or not frei or int(frei[1]) <= 0 or int(fre
 print("\n".join(zeilen))
 PY
   printf '%s\n' 'SSH/2223 Ed25519-Userauth, Session, moo-info und Exit 0 belegt'
+elif [ "$modus" = shell ]; then
+  uv run --no-project --offline python - "$ausgabe_datei" "$ziel" <<'PY'
+import pathlib
+import re
+import sys
+
+daten = pathlib.Path(sys.argv[1]).read_bytes()
+zeilen = daten.split(b"\r\n")
+hilfe = b"hilfe moo-info pci netz speicher beenden"
+pflicht = (
+    b"moo> hilfx\b \be",
+    b"moo> moo-info",
+    b"kernel=MoOS Bare 0.1",
+    b"moo> pci",
+    b"moo> netz",
+    b"ipv4=" + sys.argv[2].encode("ascii"),
+    b"moo> speicher",
+    b"moo> unbekannt",
+    b"Unbekannter Befehl",
+    b"moo> " + b"0" * 96,
+    b"Zeile zu lang",
+    b"moo> hilfxy\b \b\b \be",
+)
+if zeilen[:1] != [b"MoOS Bare SSH"] or zeilen[-3:] != [b"moo> beenden", b"MoOS Shell beendet", b""]:
+    sys.exit("SSH-Shell: Start oder sauberer Abschluss fehlt")
+position = 0
+for zeile in pflicht:
+    try:
+        position = zeilen.index(zeile, position) + 1
+    except ValueError:
+        sys.exit(f"SSH-Shell: erwartete Ausgabe fehlt ({zeile!r})")
+if zeilen.count(hilfe) != 2:
+    sys.exit("SSH-Shell: Hilfe nach beiden korrigierten Eingaben fehlt")
+
+def zahl(name):
+    werte = [z[len(name):] for z in zeilen if z.startswith(name)]
+    if len(werte) != 1 or not werte[0].isdigit():
+        sys.exit(f"SSH-Shell: Zahlenwert fehlt ({name!r})")
+    return int(werte[0])
+
+bdf = rb"[0-9A-F]{2}:[0-9A-F]{2}\.[0-7]"
+pci = [z for z in zeilen if re.fullmatch(rb"pci " + bdf + rb" [0-9A-F]{4}:[0-9A-F]{4}", z)]
+anzahl = zahl(b"pci_count=")
+if not anzahl or len(pci) != min(anzahl, 64) or len(pci) != zahl(b"pci_listed="):
+    sys.exit("SSH-Shell: PCI-Bestand ungueltig")
+mac = rb"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}"
+raten = [re.fullmatch(rb"netz " + bdf + rb" mac=" + mac + rb" link_mbps=(0|10|100|1000|2500)", z) for z in zeilen]
+raten = [int(m[1]) for m in raten if m]
+if len(raten) != zahl(b"netz_ports=") or not any(raten):
+    sys.exit("SSH-Shell: Netzport-Bestand oder aktiver Link fehlt")
+frei = zahl(b"free_bytes=")
+seiten = zahl(b"free_pages=")
+if not zahl(b"uptime_ms=") or not frei or frei % 4096 or not 0 < seiten * 4096 <= zahl(b"pfa_limit_bytes="):
+    sys.exit("SSH-Shell: PFA-Werte oder Uptime ungueltig")
+PY
+  printf '%s\n' 'SSH/2223 PTY, Shell, Echo/Backspace, Fensterkredit, Befehle und Exit 0 belegt'
 else
   if grep -aEq 'Authenticated to |send packet: type 90([^0-9]|$)' "$log"; then
     echo 'SSH-Probe erreichte einen unerwarteten Auth- oder Kanalzustand' >&2

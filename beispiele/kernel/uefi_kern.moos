@@ -26,6 +26,7 @@ aus "i226_diagnose" importiere i226_inventar
 aus "netz_ipv4" importiere netz_ipv4_poll
 aus "netz_tcp" importiere netz_tcp_wartung
 aus "netz_ssh" importiere ssh_booten, ssh_bereit
+aus "netz_ssh_shell" importiere ssh_shell_kern, ssh_shell_pci_eintrag, ssh_shell_pci_anzahl
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
@@ -2211,10 +2212,10 @@ funktion sammel_krypto(log: u64) -> void:
         meldung(adresse_von(SAM_K_ENDE), u64(kat == 0x1FF und quelle != 0))
         sammel_wartung(log)
 
-# PCI-Konfigurationsmechanismus 1 (Segment 0), nur lesen. Treffer brauchen
-# NVMe-Klasse und die explizite Vendor-/Device-ID aus dem privaten Laufprofil.
+# PCI-Konfigurationsmechanismus 1 (Segment 0), nur lesen. Das Sammelprofil
+# protokolliert zusaetzlich Klasse/BAR und bindet genau einen NVMe-Kandidaten.
 @nativ
-funktion sammel_pci(ziel_id: u64) -> u64:
+funktion sammel_pci(ziel_id: u64, protokoll: bool) -> u64:
     unsicher:
         setze bdf: u64 auf 0
         setze anzahl: u64 auf 0
@@ -2227,19 +2228,23 @@ funktion sammel_pci(ziel_id: u64) -> u64:
                 wenn (bdf & 7) == 0:
                     setze bdf auf bdf + 7
             sonst:
-                setze klasse_wert: u64 auf u64(nt_cfg_lese32(addr | 8))
-                meldung(adresse_von(SAM_T_BDF), bdf)
-                meldung(adresse_von(SAM_T_ID), id)
-                meldung(adresse_von(SAM_T_KLASSE), klasse_wert)
-                meldung(adresse_von(SAM_T_BAR0), u64(nt_cfg_lese32(addr | 0x10)))
+                ssh_shell_pci_eintrag(anzahl, bdf, id)
                 setze anzahl auf anzahl + 1
-                wenn id == ziel_id und (klasse_wert >> 8) == 0x010802:
-                    setze ziel auf bdf
-                    setze kandidaten auf kandidaten + 1
-                sammel_wartung(adresse_von(meldung))
+                wenn protokoll:
+                    setze klasse_wert: u64 auf u64(nt_cfg_lese32(addr | 8))
+                    meldung(adresse_von(SAM_T_BDF), bdf)
+                    meldung(adresse_von(SAM_T_ID), id)
+                    meldung(adresse_von(SAM_T_KLASSE), klasse_wert)
+                    meldung(adresse_von(SAM_T_BAR0), u64(nt_cfg_lese32(addr | 0x10)))
+                    wenn id == ziel_id und (klasse_wert >> 8) == 0x010802:
+                        setze ziel auf bdf
+                        setze kandidaten auf kandidaten + 1
+                    sammel_wartung(adresse_von(meldung))
             setze bdf auf bdf + 1
-        meldung(adresse_von(SAM_T_PCI_ZIEL), kandidaten)
-        meldung(adresse_von(SAM_T_PCI_ENDE), anzahl)
+        ssh_shell_pci_anzahl(anzahl)
+        wenn protokoll:
+            meldung(adresse_von(SAM_T_PCI_ZIEL), kandidaten)
+            meldung(adresse_von(SAM_T_PCI_ENDE), anzahl)
         wenn kandidaten != 1:
             gib_zurück 65536
         gib_zurück ziel
@@ -2251,7 +2256,7 @@ funktion sammel_lauf(tsc: u64, bi: u64) -> void:
         setze map: u64 auf adresse_von(kern_mmio_abbilden)
         meldung(adresse_von(SAM_T_START), 1)
         meldung(adresse_von(SAM_T_PCI_START), 1)
-        setze bdf: u64 auf sammel_pci(speicher_lesen(adresse_von(SAMMEL_ZIEL) + 16, 8))
+        setze bdf: u64 auf sammel_pci(speicher_lesen(adresse_von(SAMMEL_ZIEL) + 16, 8), wahr)
         sammel_wartung(log)
 
         meldung(adresse_von(SAM_T_I226_START), 1)
@@ -2529,6 +2534,9 @@ funktion kern_haupt(bi: u64) -> void:
                 wenn netz_echo_aktiv():
                     meldung(adresse_von(T_NETZ_ECHO), 1)
                 wenn speicher_lesen(adresse_von(NETZ_SSH_KONFIG) + 8, 8) == 1:
+                    wenn nicht sammeln:
+                        sammel_pci(0, falsch)
+                    ssh_shell_kern(netz_ipv4_adresse(), adresse_von(NETZ_PORTS), speicher_lesen(adresse_von(NETZ), 8), pfa_wert(0) * 4096)
                     ssh_booten(adresse_von(meldung), adresse_von(kern_ssh_freie_bytes), kern_start_takt, tsc)
             meldung(adresse_von(T_NETZ_IPV4), netz_ipv4_adresse())
         text(adresse_von(T_OK))

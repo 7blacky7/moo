@@ -45,6 +45,14 @@
       "proof": "P7-T11: nativer SSH-Transport, QEMU-TAP mit OpenSSH bis geschuetzter Service-Runde"
     },
     {
+      "path": "beispiele/kernel/netz_ssh_shell.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11 Stufe 4f, Standalone-IR im x86_64-Bare-Profil"
+    },
+    {
       "path": "beispiele/kernel/netz_tcp.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

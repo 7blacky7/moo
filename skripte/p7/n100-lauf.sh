@@ -49,6 +49,7 @@ while (($#)); do
     --ssh-kex) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=1; SSH_PQ=0; shift;;
     --ssh-info) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=2; SSH_PQ=0; shift;;
     --ssh-pq) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=2; SSH_PQ=1; shift;;
+    --ssh-shell) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=3; SSH_PQ=1; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -75,6 +76,7 @@ while (($#)); do
       '--ssh-kex: OpenSSH auf TCP 2223 bis NEWKEYS und geschuetzter Service-Runde pruefen.' \
       '--ssh-info: Ed25519-Laufkey erzeugen und moo-info auf TCP 2223 pruefen.' \
       '--ssh-pq: moo-info mit ML-KEM-768/X25519 und erzwungenem X25519 pruefen.' \
+      '--ssh-shell: dazu die PTY-Shell mit einem Skript ueber stdin pruefen.' \
       '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
       '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
@@ -119,7 +121,7 @@ fi
 ((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
 
 ((SSH==0)) || command -v ssh >/dev/null || { echo 'SSH-Probe braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
-((SSH!=2)) || command -v ssh-keygen >/dev/null || { echo '--ssh-info braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
+((SSH<2)) || command -v ssh-keygen >/dev/null || { echo 'SSH-Anmeldung braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
 
 kern_kopie() {
   uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" <<'PY'
@@ -190,14 +192,14 @@ if ssh_modus:
     leer = struct.pack("<2Q", 0x31304853534F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter SSH-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
-if ssh_modus == 2:
+if ssh_modus >= 2:
     sys.path.insert(0, sys.argv[11])
     from ssh_laufprofil import auth_konfigurieren
 
     public_key = sys.argv[12] or None
     if dst is not None and public_key is None:
         raise SystemExit("SSH-Info-Kopie braucht einen erzeugten Laufkey")
-    auth_konfigurieren(data, public_key, hybrid=ssh_pq)
+    ssh_profil = auth_konfigurieren(data, public_key, hybrid=ssh_pq, interaktiv=ssh_modus == 3)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
@@ -217,10 +219,12 @@ if krypto:
     print("Krypto-Selbsttest der Kern-Kopie aktiviert")
 if ssh_modus:
     print("SSH-Transport 2223 der Kern-Kopie aktiviert")
-if ssh_modus == 2:
+if ssh_modus >= 2:
     print("SSH-Auth-Vertrag im schreibbaren PT_LOAD geprüft")
     if ssh_pq:
-        print("SSH-Hybridprofil MOOSAU02 geprüft")
+        print(f"SSH-Hybridprofil {ssh_profil} geprüft")
+    if ssh_modus == 3:
+        print(f"SSH-Shellprofil {ssh_profil} geprüft")
     if public_key is not None:
         print("Öffentlicher Ed25519-Laufkey in der Kern-Kopie hinterlegt")
 PY
@@ -323,7 +327,7 @@ if ((TROCKEN)); then
   if ((KRYPTO)); then
     printf '%s\n' '   Krypto- und Entropie-Status im Netzlog, Nachweis in krypto.log.'
   fi
-  if ((SSH==2)); then
+  if ((SSH>=2)); then
     printf '%s\n' '   Neuen Ed25519-Laufkey erzeugen, OpenSSH moo-info pruefen und Laufkey loeschen.'
   elif ((SSH)); then
     printf '%s\n' '   OpenSSH auf TCP 2223 mit gepinntem Boot-Hostkey, Protokoll ssh-kex.log.'
@@ -521,7 +525,7 @@ PY
 }
 
 if [[ -z "$RESTORE" ]]; then
-  if ((SSH==2 && INVENTAR==0)); then
+  if ((SSH>=2 && INVENTAR==0)); then
     trap ssh_laufkey_loeschen EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
@@ -626,7 +630,7 @@ while ((SECONDS<bis)); do
        ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
       host_adr="${MOO_NETZ_ADR:-192.168.77.1/24}"
       ssh_probe=()
-      if ((SSH==2)); then
+      if ((SSH>=2)); then
         ssh_probe=(info "$SSH_KEY")
         if ((SSH_PQ)); then
           ssh_probe+=(hybrid)
@@ -634,6 +638,7 @@ while ((SECONDS<bis)); do
       fi
       if bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT" "${ssh_probe[@]}" &&
          { ((!SSH_PQ)) || bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT/ssh-x25519" info "$SSH_KEY" klassisch; } &&
+         { ((SSH<3)) || bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT/ssh-shell" shell "$SSH_KEY" hybrid; } &&
          ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
         ssh_belegt=1
       fi
@@ -698,7 +703,7 @@ while ((SECONDS<bis)); do
             echo 'FEHLER: SSH-Transport und geschuetzte Service-Runde im Kernfenster fehlen.' >&2
             exit 1
           fi
-          if ((SSH==2)); then
+          if ((SSH>=2)); then
             grep -aFq 'MOO-KERNEL NETZ SSH AUTH OK 0000000000000001' "$OUT/netz.log" &&
               grep -aFq 'MOO-KERNEL NETZ SSH MOO-INFO 0000000000000001' "$OUT/netz.log" || {
                 echo 'FEHLER: Auth-/moo-info-Marker im Kernfenster fehlen.' >&2
@@ -714,6 +719,15 @@ while ((SECONDS<bis)); do
               echo 'OpenSSH-KEX mit ML-KEM-768/X25519 und erzwungenem X25519 belegt'
             fi
             echo 'OpenSSH-Userauth und moo-info belegt'
+            if ((SSH==3)); then
+              for marker in PTY 'SHELL START' 'SHELL ENDE'; do
+                grep -aFq "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/netz.log" || {
+                  echo "FEHLER: SSH-Shell-Marker $marker fehlt im Kernfenster." >&2
+                  exit 1
+                }
+              done
+              echo 'OpenSSH-PTY und Shell-Befehle belegt; Transcript in ssh-shell/ssh-shell.txt'
+            fi
           else
             echo 'OpenSSH-Transport und Kernmarker belegt'
           fi

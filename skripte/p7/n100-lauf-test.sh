@@ -45,7 +45,7 @@ assert felder[0] == b"ssh-ed25519"
 blob = base64.b64decode(felder[1], validate=True)
 assert len(blob) == 51
 kern = (lauf / "moo.kern").read_bytes()
-magien = (b"MOOSAU01", b"MOOSAU02")
+magien = (b"MOOSAU01", b"MOOSAU02", b"MOOSAU03")
 assert sum(kern.count(magie) for magie in magien) == 1
 pos = next(kern.index(magie) for magie in magien if magie in kern)
 assert kern[pos + 8:pos + 48] == struct.pack("<Q", 2) + blob[19:]
@@ -246,7 +246,11 @@ done
 if [[ "${MOO_N100_TEST_SSH_INFO:-0}" == 1 ]]; then
   info_out="$T/ssh-info"
   info_flag=--ssh-info
-  if grep -aqF 'MOOSAU02' "$testkern"; then info_flag=--ssh-pq; fi
+  if grep -aqF 'MOOSAU03' "$testkern"; then
+    info_flag=--ssh-shell
+  elif grep -aqF 'MOOSAU02' "$testkern"; then
+    info_flag=--ssh-pq
+  fi
   : >"$T/trace"
   rc=0
   MOCK_FAIL=pruefen MOCK_SSH_KOPIE="$info_out" MOO_N100_AUSGABE="$info_out" \

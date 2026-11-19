@@ -1,0 +1,377 @@
+# Zeileneditor und lesende Befehle fuer eine authentifizierte Bare-SSH-Sitzung.
+aus "../uefi/netz_geraet" importiere nt_b8, nt_kopiere, nt_mac, nt_tempo
+aus "../uefi/hardware_pci" importiere nt_null
+
+@nativ
+konstante SSH_SHELL_FENSTER: u64 auf 512
+@nativ
+konstante SSH_SHELL_ZEILEN_MAX: u64 auf 96
+@nativ
+konstante SSH_SHELL_PCI_MAX: u64 auf 64
+
+struktur SshShell:
+    rx_kopf: u64
+    rx_belegt: u64
+    zeile_n: u64
+    zu_lang: u64
+    vorher_cr: u64
+    aus_pos: u64
+    aus_ende: u64
+    beendet: u64
+
+@nativ
+statisch SSH_SHELL_ZUSTAND: [u64; 8] auf 0
+@nativ
+statisch SSH_SHELL_RX: [u8; 512] auf 0
+@nativ
+statisch SSH_SHELL_ZEILE: [u8; 96] auf 0
+@nativ
+statisch SSH_SHELL_AUS: [u8; 2048] auf 0
+# IPv4, NIC-Zeigerliste, Anzahl Ports, PFA-Obergrenze in Bytes, PCI-Anzahl.
+@nativ
+statisch SSH_SHELL_KERN: [u64; 5] auf 0
+@nativ
+statisch SSH_SHELL_PCI: [u64; 64] auf 0
+
+@nativ
+konstante SH_PROMPT: [u8; _] auf "moo> "
+@nativ
+konstante SH_BANNER: [u8; _] auf "MoOS Bare SSH\r\nmoo> "
+@nativ
+konstante SH_CMD_HILFE: [u8; _] auf "hilfe"
+@nativ
+konstante SH_CMD_INFO: [u8; _] auf "moo-info"
+@nativ
+konstante SH_CMD_PCI: [u8; _] auf "pci"
+@nativ
+konstante SH_CMD_NETZ: [u8; _] auf "netz"
+@nativ
+konstante SH_CMD_SPEICHER: [u8; _] auf "speicher"
+@nativ
+konstante SH_CMD_ENDE: [u8; _] auf "beenden"
+@nativ
+konstante SH_HILFE: [u8; _] auf "hilfe moo-info pci netz speicher beenden\r\n"
+@nativ
+konstante SH_ENDE: [u8; _] auf "MoOS Shell beendet\r\n"
+@nativ
+konstante SH_UNBEKANNT: [u8; _] auf "Unbekannter Befehl\r\n"
+@nativ
+konstante SH_ZU_LANG: [u8; _] auf "Zeile zu lang\r\n"
+@nativ
+konstante SH_INFO_KERN: [u8; _] auf "kernel=MoOS Bare 0.1"
+@nativ
+konstante SH_INFO_ZEIT: [u8; _] auf "uptime_ms="
+@nativ
+konstante SH_INFO_FREI: [u8; _] auf "free_bytes="
+@nativ
+konstante SH_PCI_COUNT: [u8; _] auf "pci_count="
+@nativ
+konstante SH_PCI_LISTED: [u8; _] auf "pci_listed="
+@nativ
+konstante SH_PCI_PREFIX: [u8; _] auf "pci "
+@nativ
+konstante SH_NETZ_IP: [u8; _] auf "ipv4="
+@nativ
+konstante SH_NETZ_PORTS: [u8; _] auf "netz_ports="
+@nativ
+konstante SH_NETZ_PREFIX: [u8; _] auf "netz "
+@nativ
+konstante SH_NETZ_MAC: [u8; _] auf " mac="
+@nativ
+konstante SH_NETZ_TEMPO: [u8; _] auf " link_mbps="
+@nativ
+konstante SH_PFA_PAGES: [u8; _] auf "free_pages="
+@nativ
+konstante SH_PFA_LIMIT: [u8; _] auf "pfa_limit_bytes="
+
+@nativ
+funktion sh_wert(off: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(SSH_SHELL_ZUSTAND) + off, 8)
+
+@nativ
+funktion sh_setze(off: u64, wert: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(SSH_SHELL_ZUSTAND) + off, wert, 8)
+
+@nativ
+funktion ssh_shell_kern(ip: u64, ports: u64, n: u64, pfa_limit: u64) -> void:
+    unsicher:
+        setze p: u64 auf adresse_von(SSH_SHELL_KERN)
+        speicher_schreiben(p, ip, 8)
+        speicher_schreiben(p + 8, ports, 8)
+        wenn n > 8:
+            setze n auf 8
+        speicher_schreiben(p + 16, n, 8)
+        speicher_schreiben(p + 24, pfa_limit, 8)
+
+@nativ
+funktion ssh_shell_pci_eintrag(index: u64, bdf: u64, id: u64) -> void:
+    unsicher:
+        wenn index < SSH_SHELL_PCI_MAX:
+            speicher_schreiben(adresse_von(SSH_SHELL_PCI) + index * 8, (bdf << 32) | id, 8)
+
+@nativ
+funktion ssh_shell_pci_anzahl(anzahl: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(SSH_SHELL_KERN) + 32, anzahl, 8)
+
+@nativ
+funktion sh_text(ziel: u64, quelle: u64, n: u64) -> u64:
+    unsicher:
+        nt_kopiere(ziel, quelle, n)
+        gib_zurück ziel + n
+
+@nativ
+funktion sh_lf(ziel: u64, terminal: bool) -> u64:
+    unsicher:
+        wenn terminal:
+            nt_b8(ziel, 0, 13)
+            setze ziel auf ziel + 1
+        nt_b8(ziel, 0, 10)
+        gib_zurück ziel + 1
+
+@nativ
+funktion sh_zahl(ziel: u64, wert: u64) -> u64:
+    unsicher:
+        setze teiler: u64 auf 1
+        solange wert / teiler >= 10:
+            setze teiler auf teiler * 10
+        solange teiler != 0:
+            nt_b8(ziel, 0, 48 + (wert / teiler) % 10)
+            setze ziel auf ziel + 1
+            setze teiler auf teiler / 10
+        gib_zurück ziel
+
+@nativ
+funktion ssh_info_schreiben(ziel: u64, ms: u64, frei: u64, terminal: bool) -> u64:
+    unsicher:
+        setze ziel auf sh_lf(sh_text(ziel, adresse_von(SH_INFO_KERN), 20), terminal)
+        setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_INFO_ZEIT), 10), ms), terminal)
+        gib_zurück sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_INFO_FREI), 11), frei), terminal)
+
+@nativ
+funktion sh_hex(ziel: u64, wert: u64, stellen: u64) -> u64:
+    unsicher:
+        solange stellen != 0:
+            setze stellen auf stellen - 1
+            setze z: u64 auf (wert >> (stellen * 4)) & 15
+            wenn z < 10:
+                nt_b8(ziel, 0, 48 + z)
+            sonst:
+                nt_b8(ziel, 0, 55 + z)
+            setze ziel auf ziel + 1
+        gib_zurück ziel
+
+@nativ
+funktion sh_bdf(ziel: u64, bdf: u64) -> u64:
+    unsicher:
+        setze ziel auf sh_hex(ziel, bdf >> 8, 2)
+        nt_b8(ziel, 0, 58)
+        setze ziel auf sh_hex(ziel + 1, (bdf >> 3) & 31, 2)
+        nt_b8(ziel, 0, 46)
+        nt_b8(ziel, 1, 48 + (bdf & 7))
+        gib_zurück ziel + 2
+
+@nativ
+funktion sh_pci(ziel: u64) -> u64:
+    unsicher:
+        setze gesamt: u64 auf speicher_lesen(adresse_von(SSH_SHELL_KERN) + 32, 8)
+        setze n: u64 auf gesamt
+        wenn n > SSH_SHELL_PCI_MAX:
+            setze n auf SSH_SHELL_PCI_MAX
+        setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_PCI_COUNT), 10), gesamt), wahr)
+        setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_PCI_LISTED), 11), n), wahr)
+        setze i: u64 auf 0
+        solange i < n:
+            setze e: u64 auf speicher_lesen(adresse_von(SSH_SHELL_PCI) + i * 8, 8)
+            setze ziel auf sh_bdf(sh_text(ziel, adresse_von(SH_PCI_PREFIX), 4), e >> 32)
+            nt_b8(ziel, 0, 32)
+            setze ziel auf sh_hex(ziel + 1, e, 4)
+            nt_b8(ziel, 0, 58)
+            setze ziel auf sh_lf(sh_hex(ziel + 1, e >> 16, 4), wahr)
+            setze i auf i + 1
+        gib_zurück ziel
+
+@nativ
+funktion sh_netz(ziel: u64) -> u64:
+    unsicher:
+        setze p: u64 auf adresse_von(SSH_SHELL_KERN)
+        setze ip: u64 auf speicher_lesen(p, 8)
+        setze ports: u64 auf speicher_lesen(p + 8, 8)
+        setze n: u64 auf speicher_lesen(p + 16, 8)
+        setze ziel auf sh_text(ziel, adresse_von(SH_NETZ_IP), 5)
+        setze i: u64 auf 0
+        solange i < 4:
+            wenn i != 0:
+                nt_b8(ziel, 0, 46)
+                setze ziel auf ziel + 1
+            setze ziel auf sh_zahl(ziel, (ip >> ((3 - i) * 8)) & 255)
+            setze i auf i + 1
+        setze ziel auf sh_lf(ziel, wahr)
+        setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_NETZ_PORTS), 11), n), wahr)
+        setze i auf 0
+        solange i < n:
+            setze nic: u64 auf speicher_lesen(ports + i * 8, 8)
+            setze bdf: u64 auf speicher_lesen(nic + 16, 8)
+            setze ziel auf sh_bdf(sh_text(ziel, adresse_von(SH_NETZ_PREFIX), 5), bdf)
+            setze ziel auf sh_text(ziel, adresse_von(SH_NETZ_MAC), 5)
+            setze j: u64 auf 0
+            solange j < 6:
+                wenn j != 0:
+                    nt_b8(ziel, 0, 58)
+                    setze ziel auf ziel + 1
+                setze ziel auf sh_hex(ziel, nt_mac(nic, j), 2)
+                setze j auf j + 1
+            setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_NETZ_TEMPO), 11), nt_tempo(nic)), wahr)
+            setze i auf i + 1
+        gib_zurück ziel
+
+@nativ
+funktion sh_speicher(ziel: u64, frei: u64) -> u64:
+    unsicher:
+        setze grenze: u64 auf speicher_lesen(adresse_von(SSH_SHELL_KERN) + 24, 8)
+        setze ziel auf sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_PFA_PAGES), 11), frei / 4096), wahr)
+        gib_zurück sh_lf(sh_zahl(sh_text(ziel, adresse_von(SH_PFA_LIMIT), 16), grenze), wahr)
+
+@nativ
+funktion sh_befehl_gleich(n: u64, muster: u64, muster_n: u64) -> bool:
+    unsicher:
+        wenn n != muster_n:
+            gib_zurück falsch
+        setze p: u64 auf adresse_von(SSH_SHELL_ZEILE)
+        setze i: u64 auf 0
+        solange i < muster_n:
+            wenn speicher_lesen(p + i, 1) != speicher_lesen(muster + i, 1):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion sh_befehl(ziel: u64, ms: u64, frei: u64) -> u64:
+    unsicher:
+        setze n: u64 auf sh_wert(versatz_von(SshShell, zeile_n))
+        setze lang: bool auf sh_wert(versatz_von(SshShell, zu_lang)) != 0
+        sh_setze(versatz_von(SshShell, zeile_n), 0)
+        sh_setze(versatz_von(SshShell, zu_lang), 0)
+        wenn lang:
+            gib_zurück sh_text(ziel, adresse_von(SH_ZU_LANG), 15)
+        wenn n == 0:
+            gib_zurück ziel
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_HILFE), 5):
+            gib_zurück sh_text(ziel, adresse_von(SH_HILFE), 42)
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_INFO), 8):
+            gib_zurück ssh_info_schreiben(ziel, ms, frei, wahr)
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_PCI), 3):
+            gib_zurück sh_pci(ziel)
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_NETZ), 4):
+            gib_zurück sh_netz(ziel)
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_SPEICHER), 8):
+            gib_zurück sh_speicher(ziel, frei)
+        wenn sh_befehl_gleich(n, adresse_von(SH_CMD_ENDE), 7):
+            sh_setze(versatz_von(SshShell, beendet), 1)
+            gib_zurück sh_text(ziel, adresse_von(SH_ENDE), 20)
+        gib_zurück sh_text(ziel, adresse_von(SH_UNBEKANNT), 20)
+
+@nativ
+funktion ssh_shell_beendet() -> bool:
+    unsicher:
+        gib_zurück sh_wert(versatz_von(SshShell, beendet)) != 0
+
+@nativ
+funktion sh_zeichen(ziel: u64, c: u64, ms: u64, frei: u64) -> u64:
+    unsicher:
+        setze cr: bool auf sh_wert(versatz_von(SshShell, vorher_cr)) != 0
+        sh_setze(versatz_von(SshShell, vorher_cr), u64(c == 13))
+        wenn c == 10 und cr:
+            gib_zurück ziel
+        wenn c == 10 oder c == 13:
+            setze ziel auf sh_befehl(sh_lf(ziel, wahr), ms, frei)
+            wenn ssh_shell_beendet():
+                gib_zurück ziel
+            gib_zurück sh_text(ziel, adresse_von(SH_PROMPT), 5)
+        setze n: u64 auf sh_wert(versatz_von(SshShell, zeile_n))
+        wenn c == 8 oder c == 127:
+            wenn n == 0 oder sh_wert(versatz_von(SshShell, zu_lang)) != 0:
+                gib_zurück ziel
+            sh_setze(versatz_von(SshShell, zeile_n), n - 1)
+            nt_b8(ziel, 0, 8)
+            nt_b8(ziel, 1, 32)
+            nt_b8(ziel, 2, 8)
+            gib_zurück ziel + 3
+        wenn c < 32 oder c > 126:
+            gib_zurück ziel
+        wenn n == SSH_SHELL_ZEILEN_MAX:
+            sh_setze(versatz_von(SshShell, zu_lang), 1)
+            gib_zurück ziel
+        nt_b8(adresse_von(SSH_SHELL_ZEILE), n, c)
+        sh_setze(versatz_von(SshShell, zeile_n), n + 1)
+        nt_b8(ziel, 0, c)
+        gib_zurück ziel + 1
+
+@nativ
+funktion ssh_shell_starten() -> void:
+    unsicher:
+        nt_null(adresse_von(SSH_SHELL_ZUSTAND), groesse_von(SshShell))
+        nt_kopiere(adresse_von(SSH_SHELL_AUS), adresse_von(SH_BANNER), 20)
+        sh_setze(versatz_von(SshShell, aus_ende), 20)
+
+@nativ
+funktion ssh_shell_eingang_belegt() -> u64:
+    unsicher:
+        gib_zurück sh_wert(versatz_von(SshShell, rx_belegt))
+
+@nativ
+funktion ssh_shell_eingang(quelle: u64, n: u64) -> bool:
+    unsicher:
+        setze belegt: u64 auf ssh_shell_eingang_belegt()
+        wenn n > SSH_SHELL_FENSTER - belegt:
+            gib_zurück falsch
+        wenn ssh_shell_beendet():
+            gib_zurück wahr
+        setze ende: u64 auf (sh_wert(versatz_von(SshShell, rx_kopf)) + belegt) % SSH_SHELL_FENSTER
+        setze i: u64 auf 0
+        solange i < n:
+            nt_b8(adresse_von(SSH_SHELL_RX), (ende + i) % SSH_SHELL_FENSTER, u64(speicher_lesen(quelle + i, 1)))
+            setze i auf i + 1
+        sh_setze(versatz_von(SshShell, rx_belegt), belegt + n)
+        gib_zurück wahr
+
+@nativ
+funktion ssh_shell_aus_adresse() -> u64:
+    unsicher:
+        gib_zurück adresse_von(SSH_SHELL_AUS) + sh_wert(versatz_von(SshShell, aus_pos))
+
+@nativ
+funktion ssh_shell_aus_laenge() -> u64:
+    unsicher:
+        gib_zurück sh_wert(versatz_von(SshShell, aus_ende)) - sh_wert(versatz_von(SshShell, aus_pos))
+
+@nativ
+funktion ssh_shell_aus_quittieren(n: u64) -> void:
+    unsicher:
+        sh_setze(versatz_von(SshShell, aus_pos), sh_wert(versatz_von(SshShell, aus_pos)) + n)
+
+@nativ
+funktion ssh_shell_fortsetzen(eof: bool, ms: u64, frei: u64) -> void:
+    unsicher:
+        wenn ssh_shell_beendet() oder ssh_shell_aus_laenge() != 0:
+            gib_zurück
+        setze basis: u64 auf adresse_von(SSH_SHELL_AUS)
+        setze ziel: u64 auf basis
+        setze kopf: u64 auf sh_wert(versatz_von(SshShell, rx_kopf))
+        setze rest: u64 auf ssh_shell_eingang_belegt()
+        # Unter 256 Echo-Bytes bleibt Platz fuer einen PCI-Auszug mit 64 Eintraegen.
+        solange rest != 0 und ziel - basis < 256 und nicht ssh_shell_beendet():
+            setze c: u64 auf u64(speicher_lesen(adresse_von(SSH_SHELL_RX) + kopf, 1))
+            setze kopf auf (kopf + 1) % SSH_SHELL_FENSTER
+            setze rest auf rest - 1
+            setze ziel auf sh_zeichen(ziel, c, ms, frei)
+        wenn eof und rest == 0 und ziel - basis < 256 und nicht ssh_shell_beendet():
+            wenn sh_wert(versatz_von(SshShell, zeile_n)) != 0:
+                setze ziel auf sh_befehl(sh_lf(ziel, wahr), ms, frei)
+            sh_setze(versatz_von(SshShell, beendet), 1)
+        sh_setze(versatz_von(SshShell, rx_kopf), kopf)
+        sh_setze(versatz_von(SshShell, rx_belegt), rest)
+        sh_setze(versatz_von(SshShell, aus_pos), 0)
+        sh_setze(versatz_von(SshShell, aus_ende), ziel - basis)

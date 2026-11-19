@@ -128,12 +128,12 @@ esac
 
 case "$NETZ_SSH" in
   0) ;;
-  1|2)
+  1|2|3)
     [ "$NETZ_TRANSPORT" = 1 ] || fail "SSH braucht TRANSPORT=1"
     command -v ssh >/dev/null || fail "SSH-Gate braucht OpenSSH"
-    [ "$NETZ_SSH" != 2 ] || command -v ssh-keygen >/dev/null || fail "SSH-Info-Gate braucht ssh-keygen"
+    [ "$NETZ_SSH" = 1 ] || command -v ssh-keygen >/dev/null || fail "SSH-Userauth-Gate braucht ssh-keygen"
     ;;
-  *) fail "SSH: 0, 1 (KEX) oder 2 (moo-info)" ;;
+  *) fail "SSH: 0, 1 (KEX), 2 (moo-info) oder 3 (PTY-Shell)" ;;
 esac
 
 case "$NETZ_PING" in
@@ -501,7 +501,7 @@ if sys.argv[4] == "1":
     vertrag = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter TCP-Echo-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
-if sys.argv[5] in ("1", "2"):
+if sys.argv[5] in ("1", "2", "3"):
     vertrag = struct.pack("<2Q", 0x31304853534F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter SSH-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
@@ -509,7 +509,7 @@ path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "IPv4-Vertrag in privater ELF-Kopie"
   fi
-  if [ "$NETZ_SSH" = 2 ]; then
+  if [ "$NETZ_SSH" -ge 2 ]; then
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
     SSH_TEST_KEY_VERZ="$(mktemp -d -- "$OUT/.ssh-qemu.XXXXXX")" || fail "SSH-Testkey-Verzeichnis"
@@ -647,12 +647,13 @@ PY
     ssh_test() {
       bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$@"
     }
-    if [ "$NETZ_SSH" = 2 ]; then
+    if [ "$NETZ_SSH" -ge 2 ]; then
       {
         ssh_test "$OUT/ssh-fremd" fremd "$SSH_TEST_KEY_VERZ/fremd" &&
         ssh_test "$OUT/ssh-passwort" passwort &&
         ssh_test "$OUT" info "$SSH_TEST_KEY_VERZ/id" hybrid &&
         ssh_test "$OUT/ssh-zweite-verbindung" info "$SSH_TEST_KEY_VERZ/id" klassisch &&
+        { [ "$NETZ_SSH" != 3 ] || ssh_test "$OUT/ssh-shell" shell "$SSH_TEST_KEY_VERZ/id" hybrid; } &&
         uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
       } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
     else
@@ -1001,15 +1002,18 @@ PY
   if [ "$NETZ_SSH" != 0 ]; then
     [ ! -f "$OUT/ssh-probe.log" ] || sed 's/^/      | /' "$OUT/ssh-probe.log"
     [ "$SSH_OK" -eq 1 ] || fail "OpenSSH-Probe ueber $NETZ_PING fehlgeschlagen"
-    ssh_verbindungen=2
-    [ "$NETZ_SSH" != 2 ] || ssh_verbindungen=4
+    case "$NETZ_SSH" in
+      1) ssh_verbindungen=2 ;;
+      2) ssh_verbindungen=4 ;;
+      3) ssh_verbindungen=5 ;;
+    esac
     for marker in KEXINIT NEWKEYS SERVICE; do
       [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq "$ssh_verbindungen" ] ||
         fail "Vollstaendige SSH-Transporte fehlen ($marker)"
     done
     [ "$(grep -acF 'MOO-KERNEL NETZ SSH FEHLER 0000000000000002' "$OUT/serial.log")" -eq 4 ] ||
       fail "Vier Abweisungen vor NEWKEYS fehlen"
-    if [ "$NETZ_SSH" = 2 ]; then
+    if [ "$NETZ_SSH" -ge 2 ]; then
       grep -aqF 'MOO-KERNEL NETZ SSH TEST MLKEM 0000000000000001' "$OUT/serial.log" ||
         fail "ML-KEM-Selbsttest fehlt"
       for alg in 1 2; do
@@ -1018,10 +1022,18 @@ PY
       done
       grep -aqF 'MOO-KERNEL NETZ SSH AUTH ABGELEHNT 0000000000000002' "$OUT/serial.log" ||
         fail "Fremder Testkey wurde nicht vom Kern abgewiesen"
-      for marker in 'AUTH OK' 'MOO-INFO'; do
-        [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq 2 ] ||
-          fail "Zwei erfolgreich abgeschlossene Moo-Info-Sessions fehlen ($marker)"
-      done
+      ssh_anmeldungen=2
+      [ "$NETZ_SSH" != 3 ] || ssh_anmeldungen=3
+      [ "$(grep -acF 'MOO-KERNEL NETZ SSH AUTH OK 0000000000000001' "$OUT/serial.log")" -eq "$ssh_anmeldungen" ] ||
+        fail "Erfolgreiche Ed25519-Anmeldungen fehlen"
+      [ "$(grep -acF 'MOO-KERNEL NETZ SSH MOO-INFO 0000000000000001' "$OUT/serial.log")" -eq 2 ] ||
+        fail "Zwei erfolgreich abgeschlossene Moo-Info-Sessions fehlen"
+      if [ "$NETZ_SSH" = 3 ]; then
+        for marker in PTY 'SHELL START' 'SHELL ENDE'; do
+          [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq 1 ] ||
+            fail "SSH-Shell-Marker fehlt ($marker)"
+        done
+      fi
     fi
   fi
   if [ "$KRYPTO" != 0 ]; then
