@@ -4788,6 +4788,9 @@ pub(crate) fn emit_system_function<'ctx>(
         // P2-T66 (c): hosted aarch64 Linux (AAPCS64, keine Ext-Attribute an
         // extern C, FfiType::extension); Port-I/O/assembler/volatile bleiben gesperrt.
         "aarch64-unknown-linux-gnu" => (false, true),
+        // P2-T124: dieselben internen RAM-Deskriptoren auf Apple Silicon.
+        // Extern-C-/Export-ABI bleibt bei den vorhandenen FFI-Klassifizierern.
+        darwin if crate::ffi_types::darwin_aarch64(darwin) => (false, true),
         "aarch64-unknown-none" => (false, false),
         other => return Err(format!("Systemkoerper: Ziel '{other}' noch nicht freigegeben")),
     };

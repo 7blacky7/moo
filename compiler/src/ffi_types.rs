@@ -180,7 +180,7 @@ fn value_type_in(ty: &TypeRef, ist_struktur: &dyn Fn(&str) -> bool) -> Result<Ff
 }
 
 
-fn darwin_aarch64(target: &str) -> bool {
+pub(crate) fn darwin_aarch64(target: &str) -> bool {
     target.starts_with("arm64-apple-darwin") || target.starts_with("aarch64-apple-darwin")
 }
 

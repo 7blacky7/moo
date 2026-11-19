@@ -1338,10 +1338,11 @@ impl<'ctx> CodeGen<'ctx> {
                     let triple = self.module.get_triple();
                     let name = triple.as_str().to_str().map_err(|e| e.to_string())?;
                     // P2-T66 (c): hosted Usermode-Triples (x86_64 Linux/Windows,
-                    // aarch64 Linux); Name beibehalten, Bedeutung = hosted Usermode.
+                    // aarch64 Linux/Darwin); Name beibehalten, Bedeutung = hosted Usermode.
                     matches!(name, "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
                         | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
                         | "aarch64-unknown-linux-gnu")
+                        || crate::ffi_types::darwin_aarch64(name)
                 };
                 let has_pointer = param_types.iter().flatten().any(|ty| matches!(
                     &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
@@ -2021,9 +2022,10 @@ impl<'ctx> CodeGen<'ctx> {
         // dyn->native-Aufruf bleibt ein Call auf die unveraenderte Signatur.
         let hosted_x86_system = !self.bare_mode
             && !self.hosted_system_functions.is_empty()
-            && matches!(triple_str.as_str(), "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
+            && (matches!(triple_str.as_str(), "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
                 | "x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"
-                | "aarch64-unknown-linux-gnu");
+                | "aarch64-unknown-linux-gnu")
+                || crate::ffi_types::darwin_aarch64(&triple_str));
         // P7-T21: Bare-Objekte bekommen auch ohne @nativ volle Optimierung.
         // Hosted behält die bisherige Abschirmung; WASM bleibt unveraendert.
         let bare_o2 = self.bare_mode && !triple_str.starts_with("wasm");

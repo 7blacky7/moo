@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "6a2b4660e72b936c9106ad827c9bbab161c5ec111b2b0105a6d4b77088fa4b22",
+  "compiler_sha256": "978f3c80a8721fe766924232c92c6ffbb711161755ff85384de2ea1a23e54589",
   "normalization": "module-header-root-v2",
-  "batch": "34825",
+  "batch": "34827",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "a89b6cc34ec102ff2523c329657139f65a0b86f7b99fb388c448f0a0aa01e9a0",
-  "snapshot_ref": "a24494dc2367380051121b3b5d72e074edca496c",
+  "compiler_runtime_inventory_sha256": "19fd08047249a678f62536f769b829c596512b47edf162f6a7485b19413b971d",
+  "snapshot_ref": "92161428c1a708a540d3812bf0954860d86765d7",
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
