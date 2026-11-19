@@ -70,6 +70,11 @@ fn classify(name: &str) -> Option<Intrinsic> {
     })
 }
 
+/// Alle Hardware-Intrinsics verlangen unsicher:, auch in Unterausdruecken.
+pub(crate) fn ist_rohzugriff(name: &str) -> bool {
+    classify(name).is_some()
+}
+
 fn is_read(kind: Intrinsic) -> bool {
     matches!(kind, Intrinsic::VolatileRead | Intrinsic::PortRead(_) | Intrinsic::Asm)
 }
@@ -230,6 +235,7 @@ impl<'e> AsmSpec<'e> {
 
 struct Emitter<'a, 'ctx> {
     context: &'ctx Context,
+    module: &'a inkwell::module::Module<'ctx>,
     target: &'a TargetData,
     arch: Arch,
     function: FunctionValue<'ctx>,
@@ -263,18 +269,65 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             }
             Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, false)?.value.into_int_value()),
-            // P7-T22: Typumwandlung wie im ADR, z. B. port_lese32(u16(0xCFC)).
-            Expr::FunctionCall { name, args, .. } if NType::from_name(name).is_some_and(is_integer) => {
-                let ty = NType::from_name(name).ok_or("Typname fehlt")?;
-                if ty != expected {
-                    return Err(format!("Hardwarezugriff: {name}(...) liefert {ty:?}, erwartet ist {expected:?}"));
+            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } => match operand.as_ref() {
+                Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, true)?.value.into_int_value()),
+                _ => Err("Hardwarezugriff: negatives Operand muss ein Integerliteral sein".into()),
+            },
+            // P2-T123: beide Schreibweisen benutzen dieselbe Bereichspruefung.
+            Expr::FunctionCall { name, args, zeile, spalten } if NType::from_name(name).is_some_and(is_integer) => {
+                let [inner] = args.as_slice() else {
+                    return Err(format!("{name}(Wert) erwartet genau ein Argument; Vorschlag: als({name}, Wert)"));
+                };
+                self.scalar(&Expr::FunctionCall {
+                    name: "als".into(), args: vec![Expr::Identifier(name.clone()), inner.clone()],
+                    zeile: *zeile, spalten: *spalten,
+                }, expected)
+            }
+            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
+                let [Expr::Identifier(ziel), operand] = args.as_slice() else {
+                    return Err(format!("{name}(Typ, Wert) erwartet Typname und Wert"));
+                };
+                let target = NType::from_name(ziel).filter(|ty| is_integer(*ty))
+                    .ok_or_else(|| format!("Hardwarezugriff: '{ziel}' ist kein Ganzzahltyp"))?;
+                if target != expected {
+                    return Err(format!("Hardwarezugriff: {name}({ziel}, ...) liefert {target:?}, erwartet ist {expected:?}"));
                 }
-                match args.as_slice() {
-                    [inner] => self.scalar(inner, expected),
-                    _ => Err(format!("Hardwarezugriff: {name}(...) erwartet genau ein Argument")),
-                }
+                let source = self.scalar_type(operand)?;
+                let value = NValue { ty: source, value: self.scalar(operand, source)?.into() };
+                let art = crate::native_arithmetic::cast_art(name).ok_or("Cast-Art fehlt")?;
+                crate::native_arithmetic::pruefe_konstanten_cast(art, &value, target)?;
+                let current = self.builder.get_insert_block().ok_or("Hardwareblock fehlt")?;
+                let failure = if crate::native_arithmetic::cast_kann_fehlen(art, source, target) {
+                    let block = self.context.append_basic_block(self.function, "hw.cast.fehler");
+                    self.builder.position_at_end(block);
+                    let trap = self.module.get_function("llvm.trap").unwrap_or_else(||
+                        self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None));
+                    self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
+                    self.builder.build_unreachable().map_err(|e| e.to_string())?;
+                    self.builder.position_at_end(current);
+                    block
+                } else { current };
+                Ok(crate::native_arithmetic::cast(self.context, &self.builder, self.module, art, value, target, failure)?
+                    .value.into_int_value())
             }
             _ => Err(format!("Hardwarezugriff: Operand muss ein Parameter vom Typ {expected:?}, ein Integerliteral oder eine Umwandlung wie {}(0x10) sein", format!("{expected:?}").to_lowercase())),
+        }
+    }
+
+    fn scalar_type(&self, expr: &Expr) -> Result<NType, String> {
+        match expr {
+            Expr::Identifier(name) => match self.param(name)?.1 {
+                NativeParameter::Scalar(ty) if is_integer(*ty) => Ok(*ty),
+                _ => Err("Hardwarecast verlangt einen Ganzzahloperanden".into()),
+            },
+            Expr::NativeNumber { text, .. } => Ok(crate::codegen_native::literal_default_type(text)),
+            Expr::UnaryOp { operand, .. } => self.scalar_type(operand),
+            Expr::FunctionCall { name, args, .. } => NType::from_name(name)
+                .or_else(|| if crate::native_arithmetic::cast_art(name).is_some() {
+                    match args.first() { Some(Expr::Identifier(ty)) => NType::from_name(ty), _ => None }
+                } else { None })
+                .ok_or_else(|| "Hardwarecast: Quelltyp nicht bestimmbar".into()),
+            _ => Err("Hardwarecast: Quelltyp nicht bestimmbar".into()),
         }
     }
 
@@ -594,6 +647,7 @@ pub(crate) fn configure_interrupt_system<'ctx>(
 /// Koerper einer Hardwarefunktion ausgeben (Erkennung: classify_body).
 pub(crate) fn emit_hardware_function<'ctx>(
     context: &'ctx Context,
+    module: &inkwell::module::Module<'ctx>,
     target: &TargetData,
     triple: &str,
     function: FunctionValue<'ctx>,
@@ -623,7 +677,7 @@ pub(crate) fn emit_hardware_function<'ctx>(
     let entry = context.append_basic_block(function, "entry");
     let builder = context.create_builder();
     builder.position_at_end(entry);
-    let emitter = Emitter { context, target, arch, function, signature, param_names, builder };
+    let emitter = Emitter { context, module, target, arch, function, signature, param_names, builder };
     // P7-T4 (3A): @nackt -> nur assembler ohne Ein-/Ausgang, kein Prolog/Epilog,
     // kein ret: Ruecksprung bzw. Nichtrueckkehr liegt beim Assemblercode.
     let naked_kind = inkwell::attributes::Attribute::get_named_enum_kind_id("naked");

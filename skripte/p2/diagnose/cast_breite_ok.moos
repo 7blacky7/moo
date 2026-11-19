@@ -1,0 +1,6 @@
+@nativ
+funktion lies(adresse: u64) -> u8:
+    setze wert: u8 auf 0
+    unsicher:
+        setze wert auf speicher_lesen(adresse, 1)
+    gib_zurück wert

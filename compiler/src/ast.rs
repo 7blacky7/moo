@@ -41,6 +41,8 @@ pub enum Expr {
     FunctionCall {
         /// P2-T95: Quellzeile des Aufrufs (1-basiert, 0 = synthetisch).
         zeile: usize,
+        /// P2-T123: 1-basierte Spalten des Aufrufs; exklusives Ende, 0 = synthetisch/mehrzeilig.
+        spalten: (usize, usize),
         name: std::string::String,
         args: Vec<Expr>,
     },

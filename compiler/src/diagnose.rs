@@ -352,20 +352,25 @@ pub fn hat_fehler() -> bool {
 // Err-Text die vorgemerkte Meldung enthaelt (Rueckfallpfade, die einen
 // Fehler verwerfen, beeinflussen spaetere Meldungen dadurch nicht).
 thread_local! {
-    static VORGEMERKT: RefCell<Vec<(String, &'static str, usize)>> = RefCell::new(Vec::new());
+    static VORGEMERKT: RefCell<Vec<(String, &'static str, usize, (usize, usize))>> = RefCell::new(Vec::new());
 }
 
 /// Merkt Code und Zeile fuer `meldung` vor und liefert die Meldung zurueck.
 pub fn vormerken(code: &'static str, zeile: usize, meldung: String) -> String {
-    VORGEMERKT.with(|v| v.borrow_mut().push((meldung.clone(), code, zeile)));
+    vormerken_span(code, zeile, (0, 0), meldung)
+}
+
+/// P2-T123: Aufrufspanne durch String-basierte native Fehlerpfade erhalten.
+pub fn vormerken_span(code: &'static str, zeile: usize, spalten: (usize, usize), meldung: String) -> String {
+    VORGEMERKT.with(|v| v.borrow_mut().push((meldung.clone(), code, zeile, spalten)));
     meldung
 }
 
 /// Code und Zeile der zuletzt vorgemerkten Meldung, die in `fehler` steckt.
-pub fn vorgemerkt(fehler: &str) -> Option<(&'static str, usize)> {
+pub fn vorgemerkt(fehler: &str) -> Option<(&'static str, usize, (usize, usize))> {
     VORGEMERKT.with(|v| v.borrow().iter().rev()
-        .find(|(m, _, _)| fehler.contains(m.as_str()))
-        .map(|(_, code, zeile)| (*code, *zeile)))
+        .find(|(m, _, _, _)| fehler.contains(m.as_str()))
+        .map(|(_, code, zeile, spalten)| (*code, *zeile, *spalten)))
 }
 
 /// Setzt die Datei an allen bisher gemeldeten Diagnosen ohne Datei (z. B.

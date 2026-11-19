@@ -378,7 +378,7 @@ impl<'a> Pass<'a> {
 
     fn expr(&mut self, expr: &Expr, ort: &Ort<'_>, geschuetzt: bool, zeile: usize) {
         match expr {
-            Expr::FunctionCall { zeile: z, name, args } => {
+            Expr::FunctionCall { zeile: z, name, args, .. } => {
                 let z = if *z > 0 { *z } else { zeile };
                 if !geschuetzt && !ort.lokal.contains(name) {
                     if let Some(wurf) = self.funktionen.get(name).cloned() {

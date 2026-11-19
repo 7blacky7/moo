@@ -896,10 +896,13 @@ impl<'ctx> CodeGen<'ctx> {
             if !crate::diagnose::hat_fehler() {
                 let standard = if self.diag_in_nativ() { "M-N000" } else { "M-C000" };
                 // P2-T98: vorgemerkter Speicherfehler-Code (M-M...) samt Zeile.
-                let (code, zeile) = crate::diagnose::vorgemerkt(e).unwrap_or((standard, 0));
+                let (code, zeile, (spalte, ende)) = crate::diagnose::vorgemerkt(e).unwrap_or((standard, 0, (0, 0)));
                 let mut d = crate::diagnose::Diagnose::fehler(code, e.clone());
                 if zeile > 0 {
-                    d = d.ort(zeile, 0);
+                    d = d.ort(zeile, spalte).end_spalte(ende);
+                }
+                if let Some((_, vorschlag)) = e.split_once("; Vorschlag: ") {
+                    d = d.vorschlag(vorschlag);
                 }
                 crate::diagnose::melden(self.diag_ort(d));
             }
@@ -1257,9 +1260,9 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 // P2-T98 S3: Rohzugriff ausserhalb unsicher: ist M-M005 mit Zeile,
                 // fuer reine wie fuer Systemkoerper (vorher M-C000 ohne Zeile).
-                if let Some((roh, zeile)) = crate::native_system::rohzugriff_ohne_unsicher(body) {
-                    return Err(crate::diagnose::vormerken("M-M005", zeile, format!(
-                        "Native Funktion '{name}': Aufruf '{roh}' ist nur innerhalb von unsicher: erlaubt (Rohzugriff erfordert unsicher); Vorschlag: die Zeile in einen unsicher:-Block einschliessen")));
+                if let Some((roh, zeile, spalten)) = crate::native_system::rohzugriff_ohne_unsicher(body) {
+                    return Err(crate::diagnose::vormerken_span("M-M005", zeile, spalten, format!(
+                        "Native Funktion '{name}': Aufruf '{roh}' ist nur innerhalb von unsicher: erlaubt (Rohzugriff erfordert unsicher); Vorschlag: den Rohzugriff '{roh}(...)' in eine eigene, passend typisierte Variable innerhalb eines engen unsicher:-Blocks herausziehen und diese Variable im umgebenden Ausdruck verwenden")));
                 }
                 match crate::native_hardware::classify_body(body) {
                     crate::native_hardware::BodyKind::MissingUnsafe(zeile) => {
@@ -1742,7 +1745,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let triple = self.module.get_triple();
                             let triple = triple.as_str().to_str().map_err(|e| e.to_string())?;
                             crate::native_hardware::emit_hardware_function(
-                                self.context, target, triple, *fun, sig, params, body,
+                                self.context, &self.module, target, triple, *fun, sig, params, body,
                             )?;
                             continue;
                         }
@@ -5444,6 +5447,7 @@ impl<'ctx> CodeGen<'ctx> {
                     param_types: vec![None; anzahl],
                     body: Box::new(Expr::FunctionCall {
                         zeile,
+                        spalten: (0, 0),
                         name: name.to_string(),
                         args: params.iter().map(|p| Expr::Identifier(p.clone())).collect(),
                     }),
@@ -7726,7 +7730,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_un")?;
                 Ok(res)
             }
-            Expr::FunctionCall { name, args, zeile: aufruf_zeile } => {
+            Expr::FunctionCall { name, args, zeile: aufruf_zeile, .. } => {
                 let aufruf_zeile = *aufruf_zeile;
                 if aufruf_zeile > 0 {
                     self.diag_zeile = aufruf_zeile;

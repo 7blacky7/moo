@@ -1101,7 +1101,7 @@ impl QualiLaeufer<'_> {
                 let q = if let E::Identifier(q) = object.as_ref() { Some(q.clone()) } else { None };
                 if let Some(q) = q {
                     if self.ziel(&q, method)? {
-                        let neu = E::FunctionCall { name: method.clone(), args: std::mem::take(args), zeile: 0 };
+                        let neu = E::FunctionCall { name: method.clone(), args: std::mem::take(args), zeile: 0, spalten: (0, 0) };
                         *e = neu;
                         return Ok(());
                     }

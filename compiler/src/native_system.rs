@@ -471,23 +471,24 @@ impl LiestPruefung<'_> {
 }
 
 /// P2-T98 S3 (M-M005): erster Rohzugriff ausserhalb eines unsicher:-Blocks
-/// eines @nativ-Koerpers als (Builtin, Zeile). Erfasst nur Builtins, die in
-/// keinem nativen Pfad ohne unsicher: erlaubt sind (zeiger, adresse_von,
-/// speicher_*); puffer_zeiger/länge bleiben erlaubt, volatile_* und andere
-/// Hardware-Intrinsics meldet classify_body (MissingUnsafe). Spaetere Pfade
+/// eines @nativ-Koerpers als (Builtin, Zeile, Spalten). Erfasst Builtins, die
+/// in keinem nativen Pfad ohne unsicher: erlaubt sind (zeiger, adresse_von,
+/// speicher_* und die vorhandene Hardware-Klassifikation). puffer_zeiger/länge
+/// bleiben erlaubt. Spaetere Pfade
 /// (reiner Kern, Systemkoerper) melden sonst nur M-C000/M-N000.
-pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize)> {
-    // Alle Aliase DE/EN (Review 8d6be1e5); volatile_*, port_*, Barrieren und
-    // assembler meldet classify_body, puffer_zeiger/länge sind erlaubt.
+pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize, (usize, usize))> {
     fn roh(name: &str) -> bool {
         matches!(name, "zeiger" | "pointer" | "adresse_von" | "address_of"
             | "speicher_lesen" | "mem_read" | "speicher_schreiben" | "mem_write"
             | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
             | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write")
+            || crate::native_hardware::ist_rohzugriff(name)
     }
-    fn ausdruck(expr: &Expr) -> Option<String> {
+    fn ausdruck(expr: &Expr) -> Option<(String, usize, (usize, usize))> {
         match expr {
-            Expr::FunctionCall { name, args, .. } => if roh(name) { Some(name.clone()) } else { args.iter().find_map(ausdruck) },
+            Expr::FunctionCall { name, args, zeile, spalten } => if roh(name) {
+                Some((name.clone(), *zeile, *spalten))
+            } else { args.iter().find_map(ausdruck) },
             Expr::BinaryOp { left, right, .. } => ausdruck(left).or_else(|| ausdruck(right)),
             Expr::UnaryOp { operand, .. } => ausdruck(operand),
             Expr::PropertyAccess { object, .. } => ausdruck(object),
@@ -502,12 +503,10 @@ pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize)>
     body.iter().find_map(|stmt| {
         let treffer = match stmt {
             Stmt::UnsafeBlock { .. } => return None,
-            Stmt::If { condition, body, else_body, .. } => return ausdruck(condition).map(|n| (n, stmt.zeile()))
+            Stmt::If { condition, body, else_body, .. } => ausdruck(condition)
                 .or_else(|| rohzugriff_ohne_unsicher(body)).or_else(|| rohzugriff_ohne_unsicher(else_body)),
-            Stmt::While { condition, body, .. } => return ausdruck(condition).map(|n| (n, stmt.zeile()))
-                .or_else(|| rohzugriff_ohne_unsicher(body)),
-            Stmt::For { iterable, body, .. } => return ausdruck(iterable).map(|n| (n, stmt.zeile()))
-                .or_else(|| rohzugriff_ohne_unsicher(body)),
+            Stmt::While { condition, body, .. } => ausdruck(condition).or_else(|| rohzugriff_ohne_unsicher(body)),
+            Stmt::For { iterable, body, .. } => ausdruck(iterable).or_else(|| rohzugriff_ohne_unsicher(body)),
             Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
             | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
             | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) => ausdruck(value),
@@ -516,7 +515,7 @@ pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize)>
                 ausdruck(object).or_else(|| ausdruck(index)).or_else(|| ausdruck(value)),
             _ => None,
         };
-        treffer.map(|n| (n, stmt.zeile()))
+        treffer.map(|(name, zeile, spalten)| (name, if zeile == 0 { stmt.zeile() } else { zeile }, spalten))
     })
 }
 
@@ -3002,6 +3001,26 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         STy::from_ntype(ty).ok()
     }
 
+    /// P2-T123: Cast-Operanden ohne typisierten Nachbarn verwenden die
+    /// vorhandenen Literal-Standardtypen, auch in zusammengesetzten Ausdruecken.
+    /// Ein Zieltyp darf die Quellbreite vor der Bereichspruefung nicht verengen.
+    fn cast_quelltyp(&self, expr: &Expr) -> Option<STy> {
+        self.infer(expr).or_else(|| match expr {
+            Expr::BinaryOp { op, left, right } => {
+                let l = self.cast_quelltyp(left);
+                if matches!(op, BinOp::LShift | BinOp::RShift) { return l; }
+                let r = self.cast_quelltyp(right);
+                match (&l, &r) {
+                    (Some(STy::Float(_)), _) => l,
+                    (_, Some(STy::Float(_))) => r,
+                    _ => l.or(r),
+                }
+            },
+            Expr::UnaryOp { operand, .. } => self.cast_quelltyp(operand),
+            _ => Self::literal_standard(expr),
+        })
+    }
+
     /// Statischer Typ eines Ausdrucks ohne Kontext (Literale: None).
     fn infer(&self, expr: &Expr) -> Option<STy> {
         match expr {
@@ -3081,7 +3100,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         _ => None,
                     };
                 }
-                if let Some(ty) = conversion(name) { return Some(STy::Int(ty)); }
+                if let Some(ty) = NType::from_name(name) { return STy::from_ntype(ty).ok(); }
                 if matches!(name.as_str(), "strukturfeld_lesen" | "struct_field_read"
                     | "registerfeld_lesen" | "register_field_read")
                 {
@@ -3240,8 +3259,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             Expr::FunctionCall { name, args, .. } if self.trig_funktion(name, args).is_some() =>
                 self.trig_aufruf(name, args, expected),
-            Expr::FunctionCall { name, args, .. } => self.call(name, args, expected, false)?
-                .ok_or_else(|| format!("Systemkoerper: '{name}' liefert keinen Wert")),
+            Expr::FunctionCall { name, args, zeile, spalten } => {
+                let value = self.call(name, args, expected, false)?
+                    .ok_or_else(|| format!("Systemkoerper: '{name}' liefert keinen Wert"))?;
+                if matches!(name.as_str(), "speicher_lesen" | "mem_read") {
+                    if let Some(want) = expected.filter(|want| **want != value.ty) {
+                        let breite = args.get(1).and_then(|w| match w {
+                            Expr::NativeNumber { text, .. } => Some(text.as_str()), _ => None,
+                        }).unwrap_or("?");
+                        return Err(crate::diagnose::vormerken_span("M-C000", *zeile, *spalten, format!(
+                            "Systemkoerper: erwartet {}, erhalten {} aus {name}(..., {breite}); das Breitenargument {breite} Byte bestimmt den Rueckgabetyp {}; Vorschlag: passend typisierte Variable oder als({}, {name}(..., {breite})) verwenden",
+                            want.name(), value.ty.name(), value.ty.name(), want.name())));
+                    }
+                }
+                Ok(value)
+            },
             _ => Err("Systemkoerper: Ausdruck wird nicht unterstützt".into()),
         }
     }
@@ -3994,6 +4026,17 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>, statement: bool) -> Result<Option<SVal<'ctx>>, String> {
+        // P2-T123: numerische T(x) sind Alias von als(T, x), auch ausserhalb
+        // von unsicher:. Die bestehende unsichere Zeiger->Adress-Konversion
+        // bleibt separat; sie ist kein numerischer Cast.
+        if NType::from_name(name).is_some()
+            && !args.first().is_some_and(|arg| matches!(self.infer(arg), Some(STy::Ptr(_))))
+        {
+            let [operand] = args else {
+                return Err(format!("{name}(Wert) erwartet genau ein Argument; Vorschlag: als({name}, Wert)"));
+            };
+            return self.call("als", &[Expr::Identifier(name.into()), operand.clone()], expected, statement);
+        }
         // P2-T66: im hosted Usermode gibt es weder MMIO noch privilegierte
         // Hardwarezugriffe; diese Builtins bleiben Bare/UEFI vorbehalten.
         if self.hosted && (barrier(name).is_some() || matches!(name,
@@ -4038,7 +4081,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // P2-T34 / ADR §4: als(T, x) gepruefter Standardcast, als_wrap(T, x),
         // als_saettigend(T, x). Fehlervertrag des Systemkoerpers wie bei
         // Division/Shift: trap_block (Bare Trap, hosted moo_native_fehler);
-        // u8(x) o. Ae. bleibt die bisherige ungepruefte Breitenkonversion.
+        // Numerische T(x) werden oben auf denselben Pfad geleitet.
         if let Some(art) = crate::native_arithmetic::cast_art(name) {
             let [ziel, operand] = args else {
                 return Err(format!("Systemkoerper: {name}(Typ, Wert) erwartet genau zwei Argumente"));
@@ -4048,15 +4091,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .ok_or_else(|| format!("Systemkoerper: {name}: unbekannter Zieltyp '{ty}'"))?,
                 _ => return Err(format!("Systemkoerper: {name}: erstes Argument muss ein Typname sein, z. B. {name}(u8, x)")),
             };
-            let literal_ty = |text: &str| STy::from_ntype(crate::codegen_native::literal_default_type(text)).ok();
-            let source = self.infer(operand).or_else(|| match operand {
-                Expr::NativeNumber { text, .. } => literal_ty(text),
-                Expr::UnaryOp { operand: inner, .. } => match inner.as_ref() {
-                    Expr::NativeNumber { text, .. } => literal_ty(text),
-                    _ => None,
-                },
-                _ => None,
-            }).ok_or_else(|| format!("Systemkoerper: {name}: Typ des Operanden ist nicht bestimmbar"))?;
+            let source = self.cast_quelltyp(operand)
+                .ok_or_else(|| format!("Systemkoerper: {name}: Typ des Operanden ist nicht bestimmbar"))?;
             let value = self.expr(operand, Some(&source))?;
             let quelle = match &value.ty {
                 STy::Int(ty) | STy::Float(ty) => *ty,

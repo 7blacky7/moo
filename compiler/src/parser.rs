@@ -895,10 +895,10 @@ impl Parser {
         let setze = |n: &str, value: Expr| Stmt::Assignment { zeile, name: n.to_string(), ty: None, value };
         let verlassen = |pruefen: bool| Stmt::Expression(Expr::FunctionCall {
             name: "__moo_sperre_verlassen".to_string(),
-            args: vec![id(&s), Expr::Boolean(pruefen)], zeile }, zeile);
+            args: vec![id(&s), Expr::Boolean(pruefen)], zeile, spalten: (0, 0) }, zeile);
         let stmts = vec![
             setze(&s, sperre),
-            setze(&name, Expr::FunctionCall { name: "__moo_sperre_betreten".to_string(), args: vec![id(&s)], zeile }),
+            setze(&name, Expr::FunctionCall { name: "__moo_sperre_betreten".to_string(), args: vec![id(&s)], zeile, spalten: (0, 0) }),
             Stmt::TryCatch {
                 zeile,
                 try_body: body,
@@ -2001,6 +2001,7 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr, ParseError> {
+        let start = self.current().clone();
         match self.current_type().clone() {
             TokenType::Number(n) => {
                 let token = self.current().clone();
@@ -2051,7 +2052,7 @@ impl Parser {
                     if let TokenType::Identifier(var) = self.current_type().clone() {
                         let zeile = self.current().line;
                         self.pos += 1;
-                        return Ok(Expr::FunctionCall { name: "übergib".to_string(), args: vec![Expr::Identifier(var)], zeile });
+                        return Ok(Expr::FunctionCall { name: "übergib".to_string(), args: vec![Expr::Identifier(var)], zeile, spalten: (0, 0) });
                     }
                 }
                 if matches!(self.current_type(), TokenType::LParen) {
@@ -2074,7 +2075,7 @@ impl Parser {
                         self.parse_args_list()?
                     };
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2093,7 +2094,7 @@ impl Parser {
                 self.pos += 2;
                 let args = self.parse_args_list()?;
                 self.eat(&TokenType::RParen)?;
-                Ok(Expr::FunctionCall { name: "als".to_string(), args, zeile: self.tokens[self.pos - 1].line })
+                Ok(Expr::FunctionCall { name: "als".to_string(), args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
             }
             TokenType::Data => {
                 // Soft-Keyword: "daten" als Variable/Funktion erlaubt, ausser
@@ -2112,7 +2113,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2134,7 +2135,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2156,7 +2157,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2184,7 +2185,7 @@ impl Parser {
                         self.pos += 1;
                         let args = self.parse_args_list()?;
                         self.eat(&TokenType::RParen)?;
-                        Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                        Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                     } else {
                         Ok(Expr::Identifier(name))
                     }
@@ -2198,7 +2199,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: self.tokens[self.pos - 1].line })
+                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }

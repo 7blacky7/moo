@@ -1,0 +1,3 @@
+@nativ
+funktion lies(adresse: u64) -> u8:
+    gib_zurück als(u8, speicher_lesen(adresse, 1))

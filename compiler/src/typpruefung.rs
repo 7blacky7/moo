@@ -860,7 +860,7 @@ impl<'d> Pruefer<'d> {
     /// S2: Aufrufe in einem Ausdruck gegen die Signaturen pruefen.
     fn ausdruck_pruefen(&mut self, e: &Expr, s: &Sicht, zeile: usize, k: &Kontext) {
         match e {
-            Expr::FunctionCall { zeile: aufruf_zeile, name, args } => {
+            Expr::FunctionCall { zeile: aufruf_zeile, name, args, .. } => {
                 for arg in args {
                     self.ausdruck_pruefen(arg, s, zeile, k);
                 }
@@ -1762,7 +1762,7 @@ impl EffektScan<'_> {
                     }
                 }
             }
-            Expr::FunctionCall { name, args, zeile } => {
+            Expr::FunctionCall { name, args, zeile, .. } => {
                 let z = if *zeile > 0 { *zeile } else { z };
                 let mut rest: &[Expr] = args;
                 if name == "starte" || name == "spawn" {

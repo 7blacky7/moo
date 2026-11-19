@@ -356,5 +356,41 @@ for c in M-C003 M-C004 M-C999 M-S004; do
   timeout 30s "$compiler" erklaere $c > "$out/erklaere_$c.out" 2>&1 || fail "erklaere $c: RC $?"
 done
 
+
+# P2-T123: Konstruktor-Cast und als() in Pure/System/Hardware; Bereich bleibt geprueft.
+for name in cast_pure cast_system; do
+  timeout 120s "$compiler" compile "$d/$name.moos" -o "$out/$name.bin" > "$out/$name.compile" 2>&1 || fail "$name: compile"
+  "$out/$name.bin" > "$out/$name.run" 2>&1 || fail "$name: Lauf"
+  [ "$(cat "$out/$name.run")" = "$(printf '255\n255\nBEREICH\nBEREICH')" ] || fail "$name: Bereichspruefung/Ausgabe"
+done
+timeout 120s "$compiler" compile "$d/cast_hardware.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/cast_hardware.ll" > "$out/cast_hardware.compile" 2>&1 || fail "cast_hardware: compile"
+mise exec -- opt -passes=verify -disable-output "$out/cast_hardware.ll" || fail "cast_hardware: LLVM verify"
+[ "$(rg -c 'icmp ule i64 .*, 255' "$out/cast_hardware.ll")" = 2 ] || fail "cast_hardware: beide Casts pruefen 255"
+[ "$(rg -c 'trunc i64 .* to i8' "$out/cast_hardware.ll")" = 2 ] || fail "cast_hardware: beide Casts verengen"
+rg -q 'call void @llvm.trap' "$out/cast_hardware.ll" || fail "cast_hardware: Fehlerpfad fehlt"
+pruef_json cast_hardware_bereich --target x86_64-bare --no-stdlib
+[ "$rc" -eq 1 ] || fail "cast_hardware_bereich: RC $rc"
+json cast_hardware_bereich '.errors == 1 and (.diagnostics[0].message | test("Konstante 256 passt nicht in U8 \\(gepruefter Cast\\)"))'
+pruef_json cast_roh
+[ "$rc" -eq 1 ] || fail "cast_roh: RC $rc"
+json cast_roh '.errors == 1 and .diagnostics[0].code == "M-M005" and .diagnostics[0].line == 3 and .diagnostics[0].column == 24 and .diagnostics[0].end_column == 50 and (.diagnostics[0].suggestion | test("herausziehen"))'
+pruef cast_roh
+hat cast_roh "^^^^^^^^^^^^^^^^^^^^^^^^^^"
+pruef_json cast_roh_mehrzeilig
+[ "$rc" -eq 1 ] || fail "cast_roh_mehrzeilig: RC $rc"
+json cast_roh_mehrzeilig '.errors == 1 and .diagnostics[0].code == "M-M005" and .diagnostics[0].line == 5 and .diagnostics[0].column == 9 and .diagnostics[0].end_column == 29'
+pruef_json cast_breite
+[ "$rc" -eq 1 ] || fail "cast_breite: RC $rc"
+json cast_breite '.errors == 1 and .diagnostics[0].code == "M-C000" and .diagnostics[0].line == 5 and (.diagnostics[0].message | test("erwartet u64, erhalten u8.*Breitenargument 1 Byte.*u8"))'
+pruef_json cast_breite_ok
+[ "$rc" -eq 0 ] || fail "cast_breite_ok: RC $rc"
+json cast_breite_ok '.errors == 0'
+pruef_json cast_roh_hardware --target x86_64-bare --no-stdlib
+[ "$rc" -eq 1 ] || fail "cast_roh_hardware: RC $rc"
+json cast_roh_hardware '.errors == 1 and .diagnostics[0].code == "M-M005" and .diagnostics[0].line == 3 and .diagnostics[0].column == 24 and .diagnostics[0].end_column == 44 and (.diagnostics[0].suggestion | test("port_lese.*herausziehen"))'
+if [ "$fehler" -eq 0 ]; then
+  echo "PASS P2-T123 Casts: Pure/System/Hardware, Bereichspruefung, Rohzugriff-Span und Breitenherkunft"
+fi
+
 if [ "$fehler" -ne 0 ]; then echo "FAIL P2-T97 diagnose"; exit 1; fi
 echo "PASS P2-T97 diagnose: mehrere Syntax-/Lexerfehler mit Zeile:Spalte, Import M-I002 (inkl. Altfall), M-C001 mit Zeile+Vorschlag, Hinweis RC0, Stmt-Zeilen (B5b/B5c), JSON-Schema, pruefe/check, erklaere/explain; P2-T99 M-I004 (Benutzer/selektiv/Modul-Modul, compile ohne Binary), M-I005 Variable, Raute still, stdlib mathe+primzahl; Variable verdeckt nichts (beide Reihenfolgen), Struktur/Funktion, primzahl-Weitergabe; Weitergabe-Zyklus ohne Definition M-I002, gueltiger Zyklus RC 0; P2-T98 M-M001/M-M002/M-M005 mit Zeile, nicht konstanter Index RC 0; P2-T96 M-F001/M-F002 inkl. stdlib-Weitergabe; P2-T100 M-C003/M-C004 Aritaet, Vorrang, builtins-Tabelle, M-S004 Tiefe statt Stack Overflow"
