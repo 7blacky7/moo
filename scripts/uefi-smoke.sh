@@ -47,6 +47,7 @@ PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 NETZ_PING="${MOO_UEFI_PING:-0}"
 NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
 NETZ_TCP_ECHO="${MOO_UEFI_TCP_ECHO:-0}"
+NETZ_SSH="${MOO_UEFI_SSH:-0}"
 KRYPTO="${MOO_UEFI_KRYPTO:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
@@ -123,6 +124,15 @@ case "$NETZ_TCP_ECHO" in
   0) ;;
   1) [ "$NETZ_TRANSPORT" = 1 ] || fail "TCP_ECHO braucht TRANSPORT=1" ;;
   *) fail "TCP_ECHO: 0 oder 1" ;;
+esac
+
+case "$NETZ_SSH" in
+  0) ;;
+  1)
+    [ "$NETZ_TRANSPORT" = 1 ] || fail "SSH braucht TRANSPORT=1"
+    command -v ssh >/dev/null || fail "SSH-Gate braucht OpenSSH"
+    ;;
+  *) fail "SSH: 0 oder 1" ;;
 esac
 
 case "$NETZ_PING" in
@@ -466,7 +476,7 @@ PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
   fi
   if [ "$NETZ_PING" != 0 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" "$NETZ_TCP_ECHO" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" "$NETZ_TCP_ECHO" "$NETZ_SSH" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
@@ -480,6 +490,10 @@ if sys.argv[3] == "1":
 if sys.argv[4] == "1":
     vertrag = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter TCP-Echo-Vertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
+if sys.argv[5] == "1":
+    vertrag = struct.pack("<2Q", 0x31304853534F4F4D, 0)
+    assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter SSH-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
 path.write_bytes(elf)
 PY
@@ -607,6 +621,15 @@ PY
   TCP_FENSTER_OK=0
   if [ "$NETZ_TCP_ECHO" = 1 ] && [ "$TRANSPORT_OK" = 1 ]; then
     uv run --no-project --offline python "$ROOT/skripte/p7/tcp-fenster-qemu.py" >"$OUT/tcp-fenster.log" 2>&1 && TCP_FENSTER_OK=1
+  fi
+  SSH_OK=0
+  if [ "$NETZ_SSH" = 1 ] && [ "$TRANSPORT_OK" = 1 ] &&
+     grep -aqF 'MOO-KERNEL NETZ SSH BEREIT 0000000000000001' "$OUT/serial.log"; then
+    {
+      bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$OUT" &&
+      bash "$ROOT/skripte/p7/ssh-kex-probe.sh" 192.0.2.2 192.0.2.1 "$OUT/serial.log" "$OUT/ssh-zweite-verbindung" &&
+      uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
+    } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
   fi
   # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
   # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
@@ -942,6 +965,16 @@ PY
     grep -aqF 'MOO-KERNEL NETZ TCP ECHO BEREIT 0000000000000001' "$OUT/serial.log" || fail "TCP-Echo-Marker fehlt"
     [ ! -f "$OUT/tcp-fenster.log" ] || sed 's/^/      | /' "$OUT/tcp-fenster.log"
     [ "$TCP_FENSTER_OK" -eq 1 ] || fail "TCP-Fenster-/Wiederholungsprobe ueber $NETZ_PING fehlgeschlagen"
+  fi
+  if [ "$NETZ_SSH" = 1 ]; then
+    [ ! -f "$OUT/ssh-probe.log" ] || sed 's/^/      | /' "$OUT/ssh-probe.log"
+    [ "$SSH_OK" -eq 1 ] || fail "OpenSSH-Transportprobe ueber $NETZ_PING fehlgeschlagen"
+    for marker in KEXINIT NEWKEYS SERVICE; do
+      [ "$(grep -acF "MOO-KERNEL NETZ SSH $marker 0000000000000001" "$OUT/serial.log")" -eq 2 ] ||
+        fail "Zwei vollstaendige SSH-Verbindungen fehlen ($marker)"
+    done
+    [ "$(grep -acF 'MOO-KERNEL NETZ SSH FEHLER 0000000000000002' "$OUT/serial.log")" -eq 4 ] ||
+      fail "Vier Abweisungen vor NEWKEYS fehlen"
   fi
   if [ "$KRYPTO" != 0 ]; then
     uv run --no-project --offline python "$ROOT/skripte/p7/krypto-nachweis.py" "$OUT/serial.log" "$KRYPTO" >"$OUT/krypto.log" 2>&1 || {

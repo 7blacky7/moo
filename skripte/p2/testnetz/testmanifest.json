@@ -37,6 +37,14 @@
       "proof": "P7-T11: ARP und ICMP-Echo im Standard-IPv4-Profil, Standalone-IR und Linux-Host-Ping ueber QEMU-TAP"
     },
     {
+      "path": "beispiele/kernel/netz_ssh.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11: nativer SSH-Transport, QEMU-TAP mit OpenSSH bis geschuetzter Service-Runde"
+    },
+    {
       "path": "beispiele/kernel/netz_tcp.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

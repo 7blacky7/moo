@@ -4,11 +4,14 @@
 # und noch ungesendete Bytes. ACKs geben Platz im Empfangsfenster frei.
 aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_kopiere, nt_mac, nt_senden, nt_link, nt_pseudo_pruefsumme, nt_ipv4_antwortkopf
 aus "../uefi/hardware_pci" importiere takt
+aus "netz_ssh" importiere ssh_verbinden, ssh_empfangsfrei, ssh_empfangen, ssh_ausgabe_adresse, ssh_ausgabe_laenge, ssh_ausgabe_quittieren, ssh_fertig, ssh_schliessen
 
 @nativ
 konstante TCP_HTTP_PORT: u64 auf 8080
 @nativ
 konstante TCP_ECHO_PORT: u64 auf 2222
+@nativ
+konstante TCP_SSH_PORT: u64 auf 2223
 @nativ
 konstante TCP_LISTEN: u64 auf 0
 @nativ
@@ -83,6 +86,8 @@ funktion tcp_fenster() -> u64:
             gib_zurück 0
         wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_ECHO_PORT:
             gib_zurück TCP_RING_GROESSE - tcp_wert(versatz_von(TcpSlot, ring_belegt))
+        wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_SSH_PORT:
+            gib_zurück ssh_empfangsfrei()
         gib_zurück TCP_KOPF_MAX
 
 @nativ
@@ -194,6 +199,25 @@ funktion tcp_ausgabe() -> bool:
         gib_zurück wahr
 
 @nativ
+funktion tcp_verwerfen() -> void:
+    unsicher:
+        wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_SSH_PORT:
+            ssh_schliessen()
+        tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+
+@nativ
+funktion tcp_ssh_ausgeben() -> void:
+    unsicher:
+        setze n: u64 auf ssh_ausgabe_laenge()
+        wenn n > TCP_RING_GROESSE - tcp_wert(versatz_von(TcpSlot, ring_belegt)):
+            gib_zurück
+        wenn n != 0:
+            tcp_ring_anfuegen(ssh_ausgabe_adresse(), n)
+            ssh_ausgabe_quittieren()
+        wenn ssh_fertig():
+            tcp_setze(versatz_von(TcpSlot, will_fin), 1)
+
+@nativ
 funktion netz_tcp_wartung(tsc_us: u64) -> void:
     unsicher:
         setze zustand: u64 auf tcp_wert(versatz_von(TcpSlot, zustand))
@@ -203,10 +227,10 @@ funktion netz_tcp_wartung(tsc_us: u64) -> void:
         setze alter: u64 auf jetzt - tcp_wert(versatz_von(TcpSlot, aktiv))
         wenn tcp_geschlossen():
             wenn alter >= tsc_us * 240000000:
-                tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+                tcp_verwerfen()
             gib_zurück
         wenn alter >= tsc_us * 120000000:
-            tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            tcp_verwerfen()
             gib_zurück
         wenn nicht nt_link(tcp_wert(versatz_von(TcpSlot, nic))):
             gib_zurück
@@ -231,7 +255,7 @@ funktion netz_tcp_wartung(tsc_us: u64) -> void:
         wenn vergangen < tsc_us * (u64(1000000) << stufe):
             gib_zurück
         wenn n >= 5:
-            tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+            tcp_verwerfen()
             gib_zurück
         setze flags: u64 auf tcp_wert(versatz_von(TcpSlot, tx_flags))
         setze daten: u64 auf tcp_wert(versatz_von(TcpSlot, tx_daten))
@@ -368,21 +392,25 @@ funktion tcp_daten_annehmen(quelle: u64, seq: u64, daten: u64, fin: u64) -> void
         wenn anzahl != 0 und tcp_wert(versatz_von(TcpSlot, zustand)) == TCP_ESTABLISHED:
             wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_ECHO_PORT:
                 tcp_ring_anfuegen(quelle + alt, anzahl)
+            sonst wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_SSH_PORT:
+                ssh_empfangen(quelle + alt, anzahl)
             sonst:
                 tcp_http_kopf(quelle + alt, anzahl)
         wenn fin != 0 und anzahl == rest und anzahl < fenster:
+            wenn tcp_wert(versatz_von(TcpSlot, lokal_port)) == TCP_SSH_PORT und nicht ssh_fertig():
+                ssh_schliessen()
             setze anzahl auf anzahl + 1
             tcp_setze(versatz_von(TcpSlot, peer_fin), 1)
             tcp_setze(versatz_von(TcpSlot, will_fin), 1)
         tcp_setze(versatz_von(TcpSlot, empfang), (erwartet + anzahl) & 0xFFFFFFFF)
 
 @nativ
-funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, echo_aktiv: bool) -> void:
+funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, echo_aktiv: bool, ssh_aktiv: bool) -> void:
     unsicher:
         wenn nutz < 20:
             gib_zurück
         setze ziel: u64 auf nt_r16(p, 36)
-        wenn ziel != TCP_HTTP_PORT und (ziel != TCP_ECHO_PORT oder nicht echo_aktiv):
+        wenn ziel != TCP_HTTP_PORT und nicht (ziel == TCP_ECHO_PORT und echo_aktiv) und nicht (ziel == TCP_SSH_PORT und ssh_aktiv):
             gib_zurück
         setze port: u64 auf nt_r16(p, 34)
         setze kopf: u64 auf u64(speicher_lesen(p + 46, 1) >> 4) * 4
@@ -408,7 +436,7 @@ funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, e
             gib_zurück
         wenn (flags & 4) != 0:
             wenn seq == erwartet:
-                tcp_setze(versatz_von(TcpSlot, zustand), TCP_LISTEN)
+                tcp_verwerfen()
             gib_zurück
         wenn (flags & 2) != 0:
             wenn zustand == TCP_SYN_RCVD und flags == 2 und daten == 0 und ((seq + 1) & 0xFFFFFFFF) == erwartet:
@@ -437,7 +465,11 @@ funktion netz_tcp_empfangen(p: u64, nutz: u64, nic: u64, ip: u64, quelle: u64, e
         tcp_setze(versatz_von(TcpSlot, aktiv), takt())
         wenn zustand == TCP_SYN_RCVD:
             tcp_setze(versatz_von(TcpSlot, zustand), TCP_ESTABLISHED)
+            wenn ziel == TCP_SSH_PORT:
+                ssh_verbinden()
         wenn segment != 0:
             tcp_daten_annehmen(p + 34 + kopf, seq, daten, fin)
+        wenn ziel == TCP_SSH_PORT:
+            tcp_ssh_ausgeben()
         wenn nicht tcp_ausgabe() und (segment != 0 oder (fenster == 0 und tcp_fenster() != 0)):
             tcp_ack_senden()

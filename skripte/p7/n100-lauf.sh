@@ -23,6 +23,7 @@ WATCHDOG_S=10
 PING_IP=
 TRANSPORT=0
 KRYPTO=0
+SSH=0
 KONFIG_QUELLE=
 KONFIG_ZIEL=
 KONFIG_LOADER_QUELLE=
@@ -42,6 +43,7 @@ while (($#)); do
     --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); shift;;
     --tcp-echo) PING_IP=192.168.77.2; TRANSPORT=3; shift;;
     --krypto-selbsttest) KRYPTO=1; shift;;
+    --ssh-kex) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=1; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -65,6 +67,7 @@ while (($#)); do
       '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
       '--udp-tcp: ARP/Ping plus UDP-Echo an Port 7 und HTTP an TCP-Port 8080 pruefen.' \
       '--tcp-echo: Zusaetzlich zwei TCP-Echo-Verbindungen an Port 2222 mit 1 MiB und 64 KiB pruefen.' \
+      '--ssh-kex: OpenSSH auf TCP 2223 bis NEWKEYS und geschuetzter Service-Runde pruefen.' \
       '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
       '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
@@ -108,8 +111,10 @@ fi
 
 ((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
 
+((SSH==0)) || command -v ssh >/dev/null || { echo '--ssh-kex braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
+
 kern_kopie() {
-  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" <<'PY'
+  uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
@@ -118,6 +123,7 @@ ping_ip = sys.argv[6]
 unveraendert = sys.argv[7] == "1"
 transport = int(sys.argv[8])
 krypto = sys.argv[9] == "1"
+ssh_kex = sys.argv[10] == "1"
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -171,6 +177,10 @@ if krypto:
     leer = struct.pack("<2Q", 0x315059524B4F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter Krypto-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
+if ssh_kex:
+    leer = struct.pack("<2Q", 0x31304853534F4F4D, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter SSH-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, 1)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
@@ -188,6 +198,8 @@ if transport & 2:
     print("TCP-Echo 2222 der Kern-Kopie aktiviert")
 if krypto:
     print("Krypto-Selbsttest der Kern-Kopie aktiviert")
+if ssh_kex:
+    print("SSH-Transport 2223 der Kern-Kopie aktiviert")
 PY
 }
 loader_kopie() {
@@ -257,7 +269,7 @@ lauf_vorbereiten() {
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO"
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
   fi
@@ -288,6 +300,9 @@ if ((TROCKEN)); then
   if ((KRYPTO)); then
     printf '%s\n' '   Krypto- und Entropie-Status im Netzlog, Nachweis in krypto.log.'
   fi
+  if ((SSH)); then
+    printf '%s\n' '   OpenSSH auf TCP 2223 mit gepinntem Boot-Hostkey, Protokoll ssh-kex.log.'
+  fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
   if ((MODUS==1 || MODUS==5)); then
@@ -313,7 +328,7 @@ if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
-  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO"
+  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH"
   exit 0
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
@@ -509,6 +524,7 @@ capture_filter='arp or udp'
 [[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
 ((TRANSPORT==0)) || capture_filter='arp or udp or icmp or (tcp port 8080)'
 (( (TRANSPORT & 2) == 0 )) || capture_filter+=' or (tcp port 2222)'
+((SSH==0)) || capture_filter+=' or (tcp port 2223)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
 MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
@@ -530,6 +546,7 @@ ping_versucht=0
 arp_belegt=0
 ping_belegt=0
 transport_belegt=0
+ssh_belegt=0
 while ((SECONDS<bis)); do
   kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
   ende=0
@@ -561,6 +578,14 @@ while ((SECONDS<bis)); do
       if bash "$ROOT/skripte/p7/transport-probe.sh" "$PING_IP" "$IFACE" "${host_adr%/*}" "$OUT" "$tcp_echo" &&
          ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
         transport_belegt=1
+      fi
+    fi
+    if ((SSH)) && grep -aFq 'MOO-KERNEL NETZ SSH BEREIT 0000000000000001' "$OUT/netz.log" &&
+       ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+      host_adr="${MOO_NETZ_ADR:-192.168.77.1/24}"
+      if bash "$ROOT/skripte/p7/ssh-kex-probe.sh" "$PING_IP" "${host_adr%/*}" "$OUT/netz.log" "$OUT" &&
+         ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+        ssh_belegt=1
       fi
     fi
   fi
@@ -616,6 +641,14 @@ while ((SECONDS<bis)); do
             exit 1
           }
           cat "$OUT/krypto.log"
+        fi
+        if ((SSH)); then
+          if ! ((ssh_belegt)) || ! grep -aFq 'MOO-KERNEL NETZ SSH NEWKEYS 0000000000000001' "$OUT/netz.log" ||
+             ! grep -aFq 'MOO-KERNEL NETZ SSH SERVICE 0000000000000001' "$OUT/netz.log"; then
+            echo 'FEHLER: SSH-Transport und geschuetzte Service-Runde im Kernfenster fehlen.' >&2
+            exit 1
+          fi
+          echo 'OpenSSH-Transport und Kernmarker belegt'
         fi
         exit 0
       fi

@@ -1421,12 +1421,13 @@ fn build_kernel(
     ];
     // Der native Laufvertrag schaltet diese freestanding Byte-APIs ein.
     // Andere Bare-Kerne (einschliesslich Bootsektor und ARM) behalten ihre Quellen.
-    const KERNEL_KRYPTO_SOURCES: [&str; 7] = [
+    const KERNEL_KRYPTO_SOURCES: [&str; 8] = [
         "moo_krypto.c",
         "moo_krypto_chacha.c",
         "moo_krypto_x25519.c",
         "moo_bare_krypto.c",
         "moo_bare_krypto_test.c",
+        "moo_bare_ssh_krypto.c",
         "monocypher/monocypher.c",
         "monocypher/monocypher-ed25519.c",
     ];
