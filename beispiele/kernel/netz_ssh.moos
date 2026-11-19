@@ -1,5 +1,6 @@
 # P7-T11: SSH-2-Transport, Ed25519-Userauth und ein Session-Kanal.
-# RFC 4251–4254, 8709 und 8731. Paketkrypto folgt OpenSSH PROTOCOL.chacha20poly1305.
+# RFC 4251–4254, 8709 und 8731. Hybrid: draft-ietf-sshm-mlkem-hybrid-kex-10.
+# Paketkrypto folgt OpenSSH PROTOCOL.chacha20poly1305.
 aus "../uefi/netz_geraet" importiere nt_kopiere, nt_b8, nt_b32, nt_r32
 aus "../uefi/hardware_pci" importiere nt_null, takt
 
@@ -10,7 +11,7 @@ extern "C" funktion moo_bare_ssh_random(ziel: u64, laenge: u64) -> u64
 extern "C" funktion moo_bare_ssh_clear() -> void
 extern "C" funktion moo_bare_ssh_versions(client: u64, client_n: u64, server: u64, server_n: u64) -> void
 extern "C" funktion moo_bare_ssh_inits(client: u64, client_n: u64, server: u64, server_n: u64) -> void
-extern "C" funktion moo_bare_ssh_exchange(client: u64, host_blob: u64, host_n: u64, antwort: u64) -> u64
+extern "C" funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_n: u64, antwort: u64) -> u64
 extern "C" funktion moo_bare_ssh_length(paket: u64, seq: u64) -> u64
 extern "C" funktion moo_bare_ssh_seal(paket: u64, laenge: u64, seq: u64) -> u64
 extern "C" funktion moo_bare_ssh_open(paket: u64, laenge: u64, seq: u64) -> u64
@@ -20,7 +21,7 @@ extern "C" funktion moo_bare_ssh_userauth(zustand: u64, erwartet: u64, angeboten
 @nativ
 konstante SSH_EINGANG_MAX: u64 auf 35000
 @nativ
-konstante SSH_AUSGANG_MAX: u64 auf 1024
+konstante SSH_AUSGANG_MAX: u64 auf 2048
 @nativ
 konstante SSH_PHASE_VERSION: u64 auf 1
 @nativ
@@ -148,9 +149,21 @@ konstante SSH_KEX_CORE: [u8; _] auf "curve25519-sha256"
 @nativ
 konstante SSH_KEX_CORE_N: u64 auf 17
 @nativ
-konstante SSH_KEX_ANGEBOT: [u8; _] auf "curve25519-sha256,kex-strict-s-v00@openssh.com"
+konstante SSH_KEX_HYBRID_NAME: [u8; _] auf "mlkem768x25519-sha256"
 @nativ
-konstante SSH_KEX_ANGEBOT_N: u64 auf 46
+konstante SSH_KEX_HYBRID_NAME_N: u64 auf 21
+@nativ
+konstante SSH_KEX_ANGEBOT: [u8; _] auf "mlkem768x25519-sha256,curve25519-sha256,kex-strict-s-v00@openssh.com"
+@nativ
+konstante SSH_KEX_ANGEBOT_N: u64 auf 68
+@nativ
+konstante SSH_KEX_X25519: u64 auf 1
+@nativ
+konstante SSH_KEX_HYBRID: u64 auf 2
+@nativ
+konstante SSH_HYBRID_CLIENT_BYTES: u64 auf 1216
+@nativ
+konstante SSH_HYBRID_REPLY_BYTES: u64 auf 1120
 @nativ
 konstante SSH_STRIKT_CLIENT: [u8; _] auf "kex-strict-c-v00@openssh.com"
 @nativ
@@ -193,6 +206,10 @@ konstante SSH_LOG_VIER: [u8; _] auf "MOO-KERNEL NETZ SSH HOSTKEY-3 "
 @nativ
 konstante SSH_LOG_INIT: [u8; _] auf "MOO-KERNEL NETZ SSH KEXINIT "
 @nativ
+konstante SSH_LOG_KEX_VERFAHREN: [u8; _] auf "MOO-KERNEL NETZ SSH KEX-VERFAHREN "
+@nativ
+konstante SSH_LOG_MLKEMTEST: [u8; _] auf "MOO-KERNEL NETZ SSH TEST MLKEM "
+@nativ
 konstante SSH_LOG_NEU: [u8; _] auf "MOO-KERNEL NETZ SSH NEWKEYS "
 @nativ
 konstante SSH_LOG_DIENST: [u8; _] auf "MOO-KERNEL NETZ SSH SERVICE "
@@ -215,10 +232,10 @@ konstante SSH_LOG_AUTH_ABGELEHNT: [u8; _] auf "MOO-KERNEL NETZ SSH AUTH ABGELEHN
 @nativ
 konstante SSH_LOG_INFO: [u8; _] auf "MOO-KERNEL NETZ SSH MOO-INFO "
 
-# ELF-Vertrag MOOSAU01. 0=Transport-Probe, 1=gesperrt, 2=aktiver Public Key.
+# ELF-Vertrag MOOSAU02 mit Hybrid-KEX. 0=Transport-Probe, 1=gesperrt, 2=aktiver Public Key.
 @nativ
 @sektion(".data.moo_ssh_auth")
-statisch SSH_AUTH_PROFIL: [u64; 6] auf [0x31305541534F4F4D, 0, 0, 0, 0, 0]
+statisch SSH_AUTH_PROFIL: [u64; 6] auf [0x32305541534F4F4D, 0, 0, 0, 0, 0]
 
 struktur SshVerbindung:
     phase: u64
@@ -234,9 +251,10 @@ struktur SshVerbindung:
     kanal_max: u64
     info_pos: u64
     info_n: u64
+    kex_verfahren: u64
 
 @nativ
-statisch SSH_VERBINDUNG: [u64; 13] auf 0
+statisch SSH_VERBINDUNG: [u64; 14] auf 0
 # Bootdaten: Logger, Bereit, PFA-Abfrage, erster TSC-Wert und Takte pro ms.
 @nativ
 statisch SSH_BOOT: [u64; 5] auf 0
@@ -245,16 +263,16 @@ statisch SSH_INFO: [u8; 128] auf 0
 @nativ
 statisch SSH_EINGANG: [u8; 35000] auf 0
 @nativ
-statisch SSH_AUSGANG: [u8; 1024] auf 0
+statisch SSH_AUSGANG: [u8; 2048] auf 0
 @nativ
 statisch SSH_SERVER_INIT: [u8; 256] auf 0
 @nativ
-statisch SSH_NUTZ: [u8; 256] auf 0
+statisch SSH_NUTZ: [u8; 1536] auf 0
 # RFC 8709: string(ssh-ed25519) + string(32 Byte Public Key).
 @nativ
 statisch SSH_HOST_BLOB: [u8; 51] auf 0
 @nativ
-statisch SSH_DH_ANTWORT: [u8; 96] auf 0
+statisch SSH_DH_ANTWORT: [u8; 1184] auf 0
 
 @nativ
 funktion ssh_wert(off: u64) -> u64:
@@ -313,8 +331,9 @@ funktion ssh_booten(loggen: u64, pfa_frei: u64, start_takt: u64, takte_pro_us: u
         ssh_log(adresse_von(SSH_LOG_TAGTEST), (pruefungen >> 1) & 1)
         ssh_log(adresse_von(SSH_LOG_SIGNATURTEST), (pruefungen >> 2) & 1)
         ssh_log(adresse_von(SSH_LOG_METHODENTEST), u64(methode))
+        ssh_log(adresse_von(SSH_LOG_MLKEMTEST), (pruefungen >> 3) & 1)
         setze ok: u64 auf 0
-        wenn rolle und methode und pruefungen == 7 und ssh_profil_gueltig():
+        wenn rolle und methode und pruefungen == 15 und ssh_profil_gueltig():
             setze ok auf moo_bare_ssh_boot()
         wenn ok == 1:
             setze pubkey: u64 auf moo_bare_ssh_public()
@@ -443,7 +462,7 @@ funktion ssh_gleiche_bytes(a: u64, b: u64, n: u64) -> bool:
             setze i auf i + 1
         gib_zurück wahr
 
-# RFC 4251 5. Bit 0 steht fuer gueltige Namen, Bit 1 fuer den Treffer.
+# RFC 4251 5. 0: ungueltig. 1: ohne Treffer. Sonst: Byteposition + 2.
 @nativ
 funktion ssh_namensliste(p: u64, n: u64, gesucht: u64, gesucht_n: u64) -> u64:
     unsicher:
@@ -459,13 +478,25 @@ funktion ssh_namensliste(p: u64, n: u64, gesucht: u64, gesucht_n: u64) -> u64:
             wenn v == 44:
                 wenn i == anfang:
                     gib_zurück 0
-                wenn i - anfang == gesucht_n und ssh_gleiche_bytes(p + anfang, gesucht, gesucht_n):
-                    setze ergebnis auf ergebnis | 2
+                wenn ergebnis == 1 und i - anfang == gesucht_n und ssh_gleiche_bytes(p + anfang, gesucht, gesucht_n):
+                    setze ergebnis auf anfang + 2
                 setze anfang auf i + 1
             sonst wenn v < 33 oder v > 126:
                 gib_zurück 0
             setze i auf i + 1
         gib_zurück ergebnis
+
+# RFC 4253 7.1. Der Client bestimmt die Reihenfolge der gemeinsamen Verfahren.
+@nativ
+funktion ssh_kex_wahl(p: u64, n: u64) -> u64:
+    unsicher:
+        setze klassisch: u64 auf ssh_namensliste(p, n, adresse_von(SSH_KEX_CORE), SSH_KEX_CORE_N)
+        setze hybrid: u64 auf ssh_namensliste(p, n, adresse_von(SSH_KEX_HYBRID_NAME), SSH_KEX_HYBRID_NAME_N)
+        wenn hybrid > 1 und (klassisch <= 1 oder hybrid < klassisch):
+            gib_zurück SSH_KEX_HYBRID
+        wenn klassisch > 1:
+            gib_zurück SSH_KEX_X25519
+        gib_zurück 0
 
 @nativ
 funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
@@ -475,6 +506,7 @@ funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
         setze pos: u64 auf 17
         setze feld: u64 auf 0
         setze strikt: bool auf falsch
+        setze verfahren: u64 auf 0
         solange feld < 10:
             wenn n - pos < 4:
                 gib_zurück falsch
@@ -485,9 +517,8 @@ funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
             setze gesucht: u64 auf 0
             setze gesucht_n: u64 auf 0
             wenn feld == 0:
-                setze gesucht auf adresse_von(SSH_KEX_CORE)
-                setze gesucht_n auf SSH_KEX_CORE_N
-                setze strikt auf (ssh_namensliste(p + pos, l, adresse_von(SSH_STRIKT_CLIENT), SSH_STRIKT_CLIENT_N) & 2) != 0
+                setze verfahren auf ssh_kex_wahl(p + pos, l)
+                setze strikt auf ssh_namensliste(p + pos, l, adresse_von(SSH_STRIKT_CLIENT), SSH_STRIKT_CLIENT_N) > 1
             sonst wenn feld == 1:
                 setze gesucht auf adresse_von(SSH_ED)
                 setze gesucht_n auf SSH_ED_N
@@ -497,9 +528,10 @@ funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
             sonst wenn feld == 6 oder feld == 7:
                 setze gesucht auf adresse_von(SSH_KEINE_KOMPRESSION)
                 setze gesucht_n auf SSH_KEINE_KOMPRESSION_N
-            setze muster: u64 auf ssh_namensliste(p + pos, l, gesucht, gesucht_n)
-            wenn muster == 0 oder (gesucht_n != 0 und (muster & 2) == 0):
-                gib_zurück falsch
+            wenn feld != 0:
+                setze muster: u64 auf ssh_namensliste(p + pos, l, gesucht, gesucht_n)
+                wenn muster == 0 oder (gesucht_n != 0 und muster == 1):
+                    gib_zurück falsch
             setze pos auf pos + l
             setze feld auf feld + 1
         wenn n - pos != 5:
@@ -507,9 +539,10 @@ funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
         setze vermutet: u64 auf u64(speicher_lesen(p + pos, 1))
         # Strict KEX ist Pflicht. Die Probe nutzt die geordnete KEX-Folge
         # mit first_kex_packet_follows=0.
-        wenn nicht strikt oder seq != 0 oder vermutet != 0 oder nt_r32(p, pos + 1) != 0:
+        wenn verfahren == 0 oder nicht strikt oder seq != 0 oder vermutet != 0 oder nt_r32(p, pos + 1) != 0:
             gib_zurück falsch
         moo_bare_ssh_inits(p, n, adresse_von(SSH_SERVER_INIT), ssh_wert(versatz_von(SshVerbindung, server_init)))
+        ssh_setze(versatz_von(SshVerbindung, kex_verfahren), verfahren)
         ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_DH)
         ssh_log(adresse_von(SSH_LOG_INIT), 1)
         gib_zurück wahr
@@ -517,18 +550,26 @@ funktion ssh_client_init(p: u64, n: u64, seq: u64) -> bool:
 @nativ
 funktion ssh_ecdh(p: u64, n: u64) -> bool:
     unsicher:
-        wenn n != 37 oder nt_r32(p, 1) != 32:
+        setze verfahren: u64 auf ssh_wert(versatz_von(SshVerbindung, kex_verfahren))
+        setze client_n: u64 auf 32
+        setze server_n: u64 auf 32
+        wenn verfahren == SSH_KEX_HYBRID:
+            setze client_n auf SSH_HYBRID_CLIENT_BYTES
+            setze server_n auf SSH_HYBRID_REPLY_BYTES
+        wenn n != 5 + client_n:
+            gib_zurück falsch
+        wenn nt_r32(p, 1) != client_n:
             gib_zurück falsch
         setze antwort: u64 auf adresse_von(SSH_DH_ANTWORT)
-        wenn moo_bare_ssh_exchange(p + 5, adresse_von(SSH_HOST_BLOB), 51, antwort) != 1:
+        wenn moo_bare_ssh_exchange(p + 5, client_n, adresse_von(SSH_HOST_BLOB), 51, antwort) != 1:
             gib_zurück falsch
         setze nutz: u64 auf adresse_von(SSH_NUTZ)
         nt_b8(nutz, 0, SSH_MSG_ECDH_REPLY)
         setze ziel: u64 auf ssh_string_schreiben(nutz + 1, adresse_von(SSH_HOST_BLOB), 51)
-        setze ziel auf ssh_string_schreiben(ziel, antwort, 32)
+        setze ziel auf ssh_string_schreiben(ziel, antwort, server_n)
         nt_b32(ziel, 0, 4 + SSH_ED_N + 4 + 64)
         setze ziel auf ssh_string_schreiben(ziel + 4, adresse_von(SSH_ED), SSH_ED_N)
-        setze ziel auf ssh_string_schreiben(ziel, antwort + 32, 64)
+        setze ziel auf ssh_string_schreiben(ziel, antwort + server_n, 64)
         wenn nicht ssh_paket_senden(nutz, ziel - nutz):
             gib_zurück falsch
         nt_b8(nutz, 0, SSH_MSG_NEWKEYS)
@@ -537,6 +578,7 @@ funktion ssh_ecdh(p: u64, n: u64) -> bool:
         ssh_setze(versatz_von(SshVerbindung, tx_verschluesselt), 1)
         ssh_setze(versatz_von(SshVerbindung, tx_seq), 0)
         ssh_setze(versatz_von(SshVerbindung, phase), SSH_PHASE_NEU)
+        ssh_log(adresse_von(SSH_LOG_KEX_VERFAHREN), verfahren)
         gib_zurück wahr
 
 # RFC 4252 4. Service-Runde und Einstieg in die konfigurierte Userauth.

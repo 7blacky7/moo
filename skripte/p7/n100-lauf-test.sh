@@ -45,9 +45,9 @@ assert felder[0] == b"ssh-ed25519"
 blob = base64.b64decode(felder[1], validate=True)
 assert len(blob) == 51
 kern = (lauf / "moo.kern").read_bytes()
-magie = b"MOOSAU01"
-assert kern.count(magie) == 1
-pos = kern.index(magie)
+magien = (b"MOOSAU01", b"MOOSAU02")
+assert sum(kern.count(magie) for magie in magien) == 1
+pos = next(kern.index(magie) for magie in magien if magie in kern)
 assert kern[pos + 8:pos + 48] == struct.pack("<Q", 2) + blob[19:]
 PY
   echo 'ssh-laufkey-belegt' >>"$MOCK_ROOT/trace"
@@ -245,10 +245,12 @@ for phase in ok normal normal-ohne-quittierung it8613 it8613-ohne-aus it8613-ohn
 done
 if [[ "${MOO_N100_TEST_SSH_INFO:-0}" == 1 ]]; then
   info_out="$T/ssh-info"
+  info_flag=--ssh-info
+  if grep -aqF 'MOOSAU02' "$testkern"; then info_flag=--ssh-pq; fi
   : >"$T/trace"
   rc=0
   MOCK_FAIL=pruefen MOCK_SSH_KOPIE="$info_out" MOO_N100_AUSGABE="$info_out" \
-    bash "$ROOT/skripte/p7/n100-lauf.sh" "${args[@]}" --ssh-info --modus 1 --sekunden 20 --watchdog-sekunden 10 \
+    bash "$ROOT/skripte/p7/n100-lauf.sh" "${args[@]}" "$info_flag" --modus 1 --sekunden 20 --watchdog-sekunden 10 \
     >"$T/ssh-info-lauf.log" 2>&1 || rc=$?
   test "$rc" -eq 17 || { cat "$T/ssh-info-lauf.log"; exit 1; }
   grep -qx 'ssh-laufkey-belegt' "$T/trace"

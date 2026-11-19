@@ -1421,13 +1421,14 @@ fn build_kernel(
     ];
     // Der native Laufvertrag schaltet diese freestanding Byte-APIs ein.
     // Andere Bare-Kerne (einschliesslich Bootsektor und ARM) behalten ihre Quellen.
-    const KERNEL_KRYPTO_SOURCES: [&str; 8] = [
+    const KERNEL_KRYPTO_SOURCES: [&str; 9] = [
         "moo_krypto.c",
         "moo_krypto_chacha.c",
         "moo_krypto_x25519.c",
         "moo_bare_krypto.c",
         "moo_bare_krypto_test.c",
         "moo_bare_ssh_krypto.c",
+        "mlkem-native/mlkem_native.c",
         "monocypher/monocypher.c",
         "monocypher/monocypher-ed25519.c",
     ];
@@ -1481,7 +1482,9 @@ fn build_kernel(
         let obj = tmp.join(format!("{}.o", src.replace('/', "_")));
         let mut cmd = Command::new(cc_prog);
         if crypto_sources.contains(src) {
-            cmd.arg("-mgeneral-regs-only");
+            cmd.arg("-mgeneral-regs-only")
+                .arg("-I")
+                .arg(runtime_dir.join("mlkem-native"));
         }
         cmd.args(&cc_target_args)
             .args(KERNEL_CFLAGS)

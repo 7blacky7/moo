@@ -1,10 +1,10 @@
 {
   "format": 2,
-  "compiler_sha256": "a7bb2ea5bae2e1de8560456f42d54b93485e3df13b088a74edaa9b15f419d4eb",
+  "compiler_sha256": "677decbf83fc82484665deb4eaebfe416e06bb13029c2f504dfd5fb1028659c5",
   "normalization": "module-header-root-v2",
-  "batch": "34793",
+  "batch": "34810",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "fe9d8a399d518cbb99e272283cdd9b6e73598c82686f69ccdc65014bd5ee08a0",
+  "compiler_runtime_inventory_sha256": "e382fdfb51245f7594abaef2fb3eb66541c6ae93db8905e310b617ced01dbe75",
   "snapshot_ref": null,
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
@@ -148,7 +148,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "1a8ae100caaa8c728f0cf8890d9e6a6d5e0d6a031dcc926d440470da65567a0c",
+    "sha256": "98cec4cab14132fb2efcbf281da95212fd493ab97c2ced0dad5af3f3669f05ed",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -278,7 +278,7 @@
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/netz_ipv4.moos": "eb86315bfb2c7e7632ac7dc7266a28b48b74dabd96b9e787f03c48cf0b35a533",
-      "beispiele/kernel/netz_ssh.moos": "22adca6f71870d645feca5e617cf57e39fbafe21993f262e542b49565dbe3cde",
+      "beispiele/kernel/netz_ssh.moos": "2cee78eece4e988816978cd289eedf7ad3d5beb9d356f5153780b631fcbd55c2",
       "beispiele/kernel/netz_tcp.moos": "647da0434fd1b47d0dd3f5b20fac3b64a6e3d2ef161c81cf53ee2ded22778cc3",
       "beispiele/kernel/nvme.moos": "a39585959e90bc860e67dda302cd5683088c06f9f79eda852c5f74a396e063cb",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
@@ -637,7 +637,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "ce132e69a4187c70df1b4c029d6e105f0e552b4c4f8176c86e92532f71435e7c",
+    "sha256": "a9e856b8a4cc49204023aa15bbd4e4eea274261703184a0ebbb115113c431980",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -767,7 +767,7 @@
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
       "beispiele/kernel/netz_ipv4.moos": "eb86315bfb2c7e7632ac7dc7266a28b48b74dabd96b9e787f03c48cf0b35a533",
-      "beispiele/kernel/netz_ssh.moos": "22adca6f71870d645feca5e617cf57e39fbafe21993f262e542b49565dbe3cde",
+      "beispiele/kernel/netz_ssh.moos": "2cee78eece4e988816978cd289eedf7ad3d5beb9d356f5153780b631fcbd55c2",
       "beispiele/kernel/netz_tcp.moos": "647da0434fd1b47d0dd3f5b20fac3b64a6e3d2ef161c81cf53ee2ded22778cc3",
       "beispiele/kernel/nvme.moos": "a39585959e90bc860e67dda302cd5683088c06f9f79eda852c5f74a396e063cb",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
@@ -2482,15 +2482,15 @@
     },
     "beispiele/kernel/netz_ipv4.moos": {
       "status": "ok",
-      "sha256": "6bf07887f9a9002eeac8cae9a18b5ddd48ceb7c353ecaa49e861d562834b56df"
+      "sha256": "a9e13f358d156b3dc411e49634d7b55180e877ddb317529ad512c726b70a9a17"
     },
     "beispiele/kernel/netz_ssh.moos": {
       "status": "ok",
-      "sha256": "d70a2774895fc3b5361a8226e539baace0718cba9c7c87740188b37504118974"
+      "sha256": "5eb5cd54cd68c4f5d27b7c806bd11e1ec9d9498610ee76192b0ca43313fa9f34"
     },
     "beispiele/kernel/netz_tcp.moos": {
       "status": "ok",
-      "sha256": "846fb17fedb2e8931cf6da640498b2b9d74e3a1991fab34c813ae5e60342f072"
+      "sha256": "eeb8d5033796a24b56020c14ef9b10a59dd76e028311e62f73c80c2eb24bf65a"
     },
     "beispiele/kernel/nvme.moos": {
       "status": "ok",
@@ -2514,7 +2514,7 @@
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "7dc7efa99d4cc94a417ef02a01590d2047823790d75518e873c0c0224a3a5aa8"
+      "sha256": "877a8481f2fd0b50076c1ccf5c553b5b03f0a64f312356873acaa0b5d33b0ea2"
     },
     "beispiele/kernel/usb_speicher.moos": {
       "status": "ok",

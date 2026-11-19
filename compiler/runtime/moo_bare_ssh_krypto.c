@@ -1,13 +1,19 @@
 #include "moo_bare_krypto.h"
+#include "mlkem-native/mlkem_native.h"
 
 #include <stdbool.h>
 #include <string.h>
+
+#include "moo_bare_ssh_mlkem_kat.inc"
 
 enum {
     SSH_PACKET_MAX = 35000,
     SSH_TAG_BYTES = 16,
     SSH_KEY_BYTES = 64,
     SSH_AUTH_PREFIX_MAX = 128,
+    SSH_X25519_BYTES = 32,
+    SSH_HYBRID_CLIENT_BYTES = MLKEM768_PUBLICKEYBYTES + SSH_X25519_BYTES,
+    SSH_HYBRID_REPLY_BYTES = MLKEM768_CIPHERTEXTBYTES + SSH_X25519_BYTES,
 };
 
 /* Ein TCP-Slot. Hostkey und DRBG leben bis zum Ende des Laufprofils.
@@ -135,30 +141,52 @@ static void derive_key(uint8_t out[SSH_KEY_BYTES], const uint8_t *k, size_t k_le
     crypto_wipe(&ctx, sizeof(ctx));
 }
 
-/* reply enthaelt Q_S (32 Bytes) und die rohe Ed25519-Signatur (64 Bytes). */
-uint64_t moo_bare_ssh_exchange(uint64_t q_client, uint64_t host_blob,
-                               uint64_t blob_len, uint64_t reply)
+/* reply: server blob followed by a raw 64-byte Ed25519 signature.
+ * Hybrid layout and transcript: draft-ietf-sshm-mlkem-hybrid-kex-10, 2.2–2.5. */
+uint64_t moo_bare_ssh_exchange(uint64_t q_client, uint64_t client_n,
+                               uint64_t host_blob, uint64_t blob_len, uint64_t reply)
 {
-    uint8_t scalar[32], shared[32], k[37], h[32];
+    if (client_n != SSH_X25519_BYTES && client_n != SSH_HYBRID_CLIENT_BYTES)
+        return 0;
+
+    const bool hybrid = client_n == SSH_HYBRID_CLIENT_BYTES;
+    const size_t server_n = hybrid ? SSH_HYBRID_REPLY_BYTES : SSH_X25519_BYTES;
+    uint8_t scalar[SSH_X25519_BYTES], coins[MLKEM_SYMBYTES];
+    uint8_t shared[MLKEM768_BYTES + SSH_X25519_BYTES], k[37], h[32];
     uint8_t *q_server = bytes_at(reply);
     const uint8_t *q_peer = bytes_at(q_client);
+    const uint8_t *peer_x = q_peer + (client_n - SSH_X25519_BYTES);
+    uint8_t *server_x = q_server + (server_n - SSH_X25519_BYTES);
+    uint8_t *shared_x = shared + MLKEM768_BYTES;
+
     bool ok = boot_ready && random_bytes(scalar, sizeof(scalar)) &&
-              moo_krypto_x25519_basis(q_server, scalar) == 0 &&
-              moo_krypto_x25519(shared, scalar, q_peer) == 0;
+              moo_krypto_x25519_basis(server_x, scalar) == 0 &&
+              moo_krypto_x25519(shared_x, scalar, peer_x) == 0;
+    if (ok && hybrid) {
+        /* The provider checks the public key modulus before encapsulating. */
+        ok = random_bytes(coins, sizeof(coins)) &&
+             moo_mlkem768_enc_derand(q_server, shared, q_peer, coins) == 0;
+        if (ok) {
+            /* SSH string containing SHA-256(K_PQ || K_CL). */
+            put_u32be(k, 32);
+            moo_krypto_sha256(shared, sizeof(shared), k + 4);
+        }
+    }
     if (ok) {
-        const size_t k_len = encode_k(k, shared);
+        const size_t k_len = hybrid ? 36 : encode_k(k, shared_x);
         hash_string(&exchange_hash, bytes_at(host_blob), blob_len);
-        hash_string(&exchange_hash, q_peer, 32);
-        hash_string(&exchange_hash, q_server, 32);
+        hash_string(&exchange_hash, q_peer, client_n);
+        hash_string(&exchange_hash, q_server, server_n);
         moo_krypto_sha256_update(&exchange_hash, k, k_len);
         moo_krypto_sha256_final(&exchange_hash, h);
         memcpy(session_id, h, sizeof(session_id));
-        crypto_ed25519_sign(q_server + 32, host_secret, h, sizeof(h));
+        crypto_ed25519_sign(q_server + server_n, host_secret, h, sizeof(h));
         derive_key(recv_key, k, k_len, h, 'C');
         derive_key(send_key, k, k_len, h, 'D');
         keys_ready = true;
     }
     crypto_wipe(scalar, sizeof(scalar));
+    crypto_wipe(coins, sizeof(coins));
     crypto_wipe(shared, sizeof(shared));
     crypto_wipe(k, sizeof(k));
     crypto_wipe(h, sizeof(h));
@@ -370,8 +398,30 @@ static bool tag_kat(void)
     return true;
 }
 
+static bool mlkem_kat(void)
+{
+    uint8_t ciphertext[MLKEM768_CIPHERTEXTBYTES], secret[MLKEM768_BYTES];
+
+    bool ok = moo_mlkem768_enc_derand(ciphertext, secret, nist_tg2_tc26_ek,
+                                     nist_tg2_tc26_m) == 0 &&
+              crypto_verify32(secret, nist_tg2_tc26_k) == 0;
+    if (ok) {
+        unsigned difference = 0;
+        for (size_t i = 0; i < sizeof(ciphertext); i++)
+            difference |= ciphertext[i] ^ nist_tg2_tc26_c[i];
+
+        ok = difference == 0 &&
+             moo_mlkem768_check_pk(nist_tg10_tc137_ek) == MLK_ERR_INVALID_PK &&
+             moo_mlkem768_enc_derand(ciphertext, secret, nist_tg10_tc137_ek,
+                                    nist_tg2_tc26_m) == MLK_ERR_INVALID_PK;
+    }
+    crypto_wipe(secret, sizeof(secret));
+    crypto_wipe(ciphertext, sizeof(ciphertext));
+    return ok;
+}
+
 uint64_t moo_bare_ssh_sicherheit_pruefen(void)
 {
     return (uint64_t)credential_kat() | ((uint64_t)tag_kat() << 1) |
-           ((uint64_t)userauth_kat() << 2);
+           ((uint64_t)userauth_kat() << 2) | ((uint64_t)mlkem_kat() << 3);
 }

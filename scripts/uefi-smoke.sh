@@ -651,8 +651,8 @@ PY
       {
         ssh_test "$OUT/ssh-fremd" fremd "$SSH_TEST_KEY_VERZ/fremd" &&
         ssh_test "$OUT/ssh-passwort" passwort &&
-        ssh_test "$OUT" info "$SSH_TEST_KEY_VERZ/id" &&
-        ssh_test "$OUT/ssh-zweite-verbindung" info "$SSH_TEST_KEY_VERZ/id" &&
+        ssh_test "$OUT" info "$SSH_TEST_KEY_VERZ/id" hybrid &&
+        ssh_test "$OUT/ssh-zweite-verbindung" info "$SSH_TEST_KEY_VERZ/id" klassisch &&
         uv run --no-project --offline python "$ROOT/skripte/p7/ssh-negativ-qemu.py"
       } >"$OUT/ssh-probe.log" 2>&1 && SSH_OK=1
     else
@@ -1010,6 +1010,12 @@ PY
     [ "$(grep -acF 'MOO-KERNEL NETZ SSH FEHLER 0000000000000002' "$OUT/serial.log")" -eq 4 ] ||
       fail "Vier Abweisungen vor NEWKEYS fehlen"
     if [ "$NETZ_SSH" = 2 ]; then
+      grep -aqF 'MOO-KERNEL NETZ SSH TEST MLKEM 0000000000000001' "$OUT/serial.log" ||
+        fail "ML-KEM-Selbsttest fehlt"
+      for alg in 1 2; do
+        grep -aqF "MOO-KERNEL NETZ SSH KEX-VERFAHREN 000000000000000$alg" "$OUT/serial.log" ||
+          fail "KEX-Verfahren $alg fehlt"
+      done
       grep -aqF 'MOO-KERNEL NETZ SSH AUTH ABGELEHNT 0000000000000002' "$OUT/serial.log" ||
         fail "Fremder Testkey wurde nicht vom Kern abgewiesen"
       for marker in 'AUTH OK' 'MOO-INFO'; do

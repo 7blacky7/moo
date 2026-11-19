@@ -9,6 +9,20 @@ modus="${5:-kex}"
 mkdir -p -- "$ausgabe"
 
 marker=(ROLLE CREDENTIAL TAG)
+kex_optionen=()
+kex_erwartet=
+case "${7:-auto}" in
+  auto) ;;
+  hybrid)
+    kex_erwartet=mlkem768x25519-sha256
+    marker+=(MLKEM)
+    ;;
+  klassisch)
+    kex_erwartet=curve25519-sha256
+    kex_optionen=( -o "KexAlgorithms=$kex_erwartet" )
+    ;;
+  *) echo 'Unbekannte KEX-Probe' >&2; exit 2 ;;
+esac
 anmeldung=( -o PubkeyAuthentication=no -o PasswordAuthentication=no )
 konto=moo-probe
 log="$ausgabe/ssh-kex.log"
@@ -63,7 +77,7 @@ LC_ALL=C timeout --foreground 22s ssh -vvv -F /dev/null -n -T -p 2223 -b "$quell
   -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null \
   -o "UserKnownHostsFile=$ausgabe/ssh-known-hosts" \
   -o IdentityAgent=none -o KbdInteractiveAuthentication=no -o GSSAPIAuthentication=no \
-  "${anmeldung[@]}" "$ziel" "${kommando[@]}" >"$ausgabe/ssh-ausgabe.tmp" 2>"$log" || status=$?
+  "${kex_optionen[@]}" "${anmeldung[@]}" "$ziel" "${kommando[@]}" >"$ausgabe/ssh-ausgabe.tmp" 2>"$log" || status=$?
 if [ "$modus" = info ]; then
   mv -- "$ausgabe/ssh-ausgabe.tmp" "$ausgabe/moo-info.txt"
 else
@@ -74,8 +88,18 @@ else
   rm -- "$ausgabe/ssh-ausgabe.tmp"
 fi
 
+kex="$(tr -d '\r' <"$log" | sed -n 's/^debug1: kex: algorithm: //p')"
+case "$kex" in
+  mlkem768x25519-sha256|curve25519-sha256) ;;
+  *) echo 'Erwartetes SSH-KEX-Verfahren fehlt' >&2; exit 1 ;;
+esac
+if [ -n "$kex_erwartet" ] && [ "$kex" != "$kex_erwartet" ]; then
+  printf 'SSH-KEX %s statt %s\n' "$kex" "$kex_erwartet" >&2
+  exit 1
+fi
+printf 'SSH/2223 KEX %s\n' "$kex"
+
 suchzeilen=(
-  'kex: algorithm: curve25519-sha256'
   'kex: host key algorithm: ssh-ed25519'
   'kex: server->client cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: none'
   'kex: client->server cipher: chacha20-poly1305@openssh.com MAC: <implicit> compression: none'
