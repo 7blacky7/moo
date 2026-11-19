@@ -1,0 +1,136 @@
+# ACPI MCFG und PCIe ECAM nach ExitBootServices. Segment 0 ist der
+# gemeinsame Adressraum mit dem Vergleichspfad ueber CF8/CFC.
+aus "../uefi/netz_geraet" importiere pci_ecam_adresse, pci_cf8_lese32
+aus "../uefi/hardware_pci" importiere nt_mmio_lese32
+
+@nativ
+konstante EC_START: [u8; _] auf "MOO-KERNEL SAMMEL ECAM START "
+@nativ
+konstante EC_MCFG: [u8; _] auf "MOO-KERNEL SAMMEL ECAM MCFG "
+@nativ
+konstante EC_BASIS: [u8; _] auf "MOO-KERNEL SAMMEL ECAM BASIS "
+@nativ
+konstante EC_FENSTER: [u8; _] auf "MOO-KERNEL SAMMEL ECAM MMIO "
+@nativ
+konstante EC_ERSTER: [u8; _] auf "MOO-KERNEL SAMMEL ECAM BUS ERSTER "
+@nativ
+konstante EC_LETZTER: [u8; _] auf "MOO-KERNEL SAMMEL ECAM BUS LETZTER "
+@nativ
+konstante EC_BDF: [u8; _] auf "MOO-KERNEL SAMMEL ECAM BDF "
+@nativ
+konstante EC_CF8_ID: [u8; _] auf "MOO-KERNEL SAMMEL ECAM CF8 ID "
+@nativ
+konstante EC_MMIO_ID: [u8; _] auf "MOO-KERNEL SAMMEL ECAM MMIO ID "
+@nativ
+konstante EC_CF8_KLASSE: [u8; _] auf "MOO-KERNEL SAMMEL ECAM CF8 KLASSE "
+@nativ
+konstante EC_MMIO_KLASSE: [u8; _] auf "MOO-KERNEL SAMMEL ECAM MMIO KLASSE "
+@nativ
+konstante EC_ANZAHL: [u8; _] auf "MOO-KERNEL SAMMEL ECAM GEPROEFT "
+@nativ
+konstante EC_DIFF: [u8; _] auf "MOO-KERNEL SAMMEL ECAM ABWEICHUNGEN "
+@nativ
+konstante EC_AKTIV: [u8; _] auf "MOO-KERNEL SAMMEL ECAM AKTIV "
+@nativ
+konstante EC_CF8: [u8; _] auf "MOO-KERNEL SAMMEL ECAM CF8 RUECKFALL "
+@nativ
+konstante EC_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL ECAM ENDE "
+
+# ACPI-SDT-Pruefsumme ist bereits durch acpi_tabelle geprueft.
+# MCFG: Header 36, reserviert 8, danach Allocations zu je 16 Bytes.
+@nativ
+funktion pci_mcfg_allocation(mcfg: u64) -> u64:
+    unsicher:
+        wenn mcfg == 0:
+            gib_zurück 0
+        setze n: u64 auf u64(speicher_lesen(mcfg + 4, 4))
+        wenn n < 60 oder n > 0x100000 oder (n - 44) % 16 != 0 oder speicher_lesen(mcfg + 36, 8) != 0:
+            gib_zurück 0
+        setze erstes: u64 auf 0
+        setze off: u64 auf 44
+        solange off < n:
+            setze p: u64 auf mcfg + off
+            setze basis: u64 auf speicher_lesen(p, 8)
+            setze start: u64 auf u64(speicher_lesen(p + 10, 1))
+            setze ende: u64 auf u64(speicher_lesen(p + 11, 1))
+            wenn speicher_lesen(p + 8, 2) == 0 und speicher_lesen(p + 12, 4) == 0 und basis != 0 und (basis & 0xFFFFF) == 0 und start <= ende und basis <= 0x1000000000000 - ((ende + 1) << 20):
+                wenn start == 0:
+                    gib_zurück p
+                wenn erstes == 0:
+                    setze erstes auf p
+            setze off auf off + 16
+        gib_zurück erstes
+
+@nativ
+funktion pci_ecam_vergleichen(pci: u64, erster: u64, letzter: u64, loggen: u64, warten: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze warte: ptr[fn[sysv64](u64) -> void] auf zeiger(warten)
+        setze bdf: u64 auf erster << 8
+        setze grenze: u64 auf (letzter + 1) << 8
+        setze anzahl: u64 auf 0
+        setze diff: u64 auf 0
+        solange bdf < grenze:
+            setze cf8: u64 auf pci_cf8_lese32(bdf, 0)
+            wenn (cf8 & 0xFFFF) == 0xFFFF:
+                wenn (bdf & 7) == 0:
+                    setze bdf auf bdf + 7
+            sonst:
+                setze adr: u64 auf pci_ecam_adresse(pci, bdf, 0)
+                setze mmio: u64 auf u64(nt_mmio_lese32(adr))
+                setze k_cf8: u64 auf pci_cf8_lese32(bdf, 8)
+                setze k_mmio: u64 auf u64(nt_mmio_lese32(adr + 8))
+                log(adresse_von(EC_BDF), bdf)
+                log(adresse_von(EC_CF8_ID), cf8)
+                log(adresse_von(EC_MMIO_ID), mmio)
+                log(adresse_von(EC_CF8_KLASSE), k_cf8)
+                log(adresse_von(EC_MMIO_KLASSE), k_mmio)
+                setze anzahl auf anzahl + 1
+                wenn cf8 != mmio oder k_cf8 != k_mmio:
+                    setze diff auf diff + 1
+                warte(loggen)
+            setze bdf auf bdf + 1
+            wenn (bdf & 255) == 0:
+                warte(loggen)
+        log(adresse_von(EC_ANZAHL), anzahl)
+        log(adresse_von(EC_DIFF), diff)
+        gib_zurück anzahl != 0 und diff == 0
+
+@nativ
+funktion pci_ecam_abbilden(mcfg: u64, bi: u64, pci: u64, abbilden: u64, loggen: u64, warten: u64) -> bool:
+    unsicher:
+        setze p: u64 auf pci_mcfg_allocation(mcfg)
+        wenn p == 0:
+            gib_zurück falsch
+        setze basis: u64 auf speicher_lesen(p, 8)
+        setze erster: u64 auf u64(speicher_lesen(p + 10, 1))
+        setze letzter: u64 auf u64(speicher_lesen(p + 11, 1))
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        setze map: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(abbilden)
+        log(adresse_von(EC_BASIS), basis)
+        log(adresse_von(EC_ERSTER), erster)
+        log(adresse_von(EC_LETZTER), letzter)
+        # Die Firmwarebasis entspricht Bus 0. Das Fenster beginnt beim ersten Bus.
+        setze virt: u64 auf map(bi, basis + (erster << 20), (letzter - erster + 1) << 20)
+        log(adresse_von(EC_FENSTER), virt)
+        wenn virt == 0:
+            gib_zurück falsch
+        speicher_schreiben(pci, virt - (erster << 20), 8)
+        speicher_schreiben(pci + 8, erster, 8)
+        speicher_schreiben(pci + 16, letzter, 8)
+        gib_zurück pci_ecam_vergleichen(pci, erster, letzter, loggen, warten)
+
+@nativ
+funktion pci_ecam_starten(mcfg: u64, bi: u64, pci: u64, abbilden: u64, loggen: u64, warten: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(loggen)
+        log(adresse_von(EC_START), 1)
+        log(adresse_von(EC_MCFG), mcfg)
+        setze ok: bool auf pci_ecam_abbilden(mcfg, bi, pci, abbilden, loggen, warten)
+        wenn nicht ok:
+            speicher_schreiben(pci, 0, 8)
+            speicher_schreiben(pci + 8, 0, 8)
+            speicher_schreiben(pci + 16, 255, 8)
+            log(adresse_von(EC_CF8), 1)
+        log(adresse_von(EC_AKTIV), u64(ok))
+        log(adresse_von(EC_ENDE), 1)

@@ -108,22 +108,42 @@ funktion nt_ether_antwort(p: u64, nic: u64) -> void:
             nt_b8(p, 6 + i, nt_mac(nic, i))
             setze i auf i + 1
 
+# Kontext: Bus-0-Basis des Fensters, erster Bus, letzter Bus,
+# optional 1 fuer Segment-0-Suche mit CF8 ausserhalb des Fensters.
+@nativ
+funktion pci_ecam_adresse(pci: u64, bdf: u64, off: u64) -> u64:
+    unsicher:
+        wenn bdf > 0xFFFF oder off > 0xFFC oder (off & 3) != 0:
+            gib_zurück 0
+        setze basis: u64 auf speicher_lesen(pci, 8)
+        setze bus: u64 auf bdf >> 8
+        wenn basis == 0 oder bus < speicher_lesen(pci + 8, 8) oder bus > speicher_lesen(pci + 16, 8):
+            gib_zurück 0
+        gib_zurück basis + (bdf << 12) + off
+
+@nativ
+funktion pci_cf8_lese32(bdf: u64, off: u64) -> u64:
+    unsicher:
+        wenn bdf > 0xFFFF oder off > 0xFC oder (off & 3) != 0:
+            gib_zurück 0xFFFFFFFF
+        gib_zurück u64(nt_cfg_lese32(u32(0x80000000 | (bdf << 8) | off)))
+
 @nativ
 funktion pci_lese32(pci: u64, bdf: u64, off: u64) -> u64:
     unsicher:
-        setze basis: u64 auf speicher_lesen(pci, 8)
-        wenn basis != 0:
-            gib_zurück u64(nt_mmio_lese32(basis + (bdf << 12) + off))
-        gib_zurück u64(nt_cfg_lese32(u32(0x80000000 | (bdf << 8) | (off & 0xFC))))
+        setze adr: u64 auf pci_ecam_adresse(pci, bdf, off)
+        wenn adr != 0:
+            gib_zurück u64(nt_mmio_lese32(adr))
+        gib_zurück pci_cf8_lese32(bdf, off)
 
 @nativ
 funktion pci_schreibe32(pci: u64, bdf: u64, off: u64, wert: u64) -> void:
     unsicher:
-        setze basis: u64 auf speicher_lesen(pci, 8)
-        wenn basis != 0:
-            nt_mmio_schreibe32(basis + (bdf << 12) + off, u32(wert))
-        sonst:
-            nt_cfg_schreibe32(u32(0x80000000 | (bdf << 8) | (off & 0xFC)), u32(wert))
+        setze adr: u64 auf pci_ecam_adresse(pci, bdf, off)
+        wenn adr != 0:
+            nt_mmio_schreibe32(adr, u32(wert))
+        sonst wenn bdf <= 0xFFFF und off <= 0xFC und (off & 3) == 0:
+            nt_cfg_schreibe32(u32(0x80000000 | (bdf << 8) | off), u32(wert))
 
 @nativ
 funktion nt_typ(id: u64) -> u64:
@@ -148,6 +168,9 @@ funktion nt_finde(pci: u64, typ: u64, nummer: u64) -> i64:
         setze treffer: u64 auf 0
         setze bus: u64 auf speicher_lesen(pci + 8, 8)
         setze letzter: u64 auf speicher_lesen(pci + 16, 8)
+        wenn speicher_lesen(pci + 24, 8) == 1:
+            setze bus auf 0
+            setze letzter auf 255
         solange bus <= letzter:
             setze dev: u64 auf 0
             solange dev < 32:

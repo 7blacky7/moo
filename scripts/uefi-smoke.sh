@@ -45,6 +45,8 @@ BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 # P7-T14: MOO_UEFI_PRUEFUNG=e1000 prueft den Moo-e1000-Treiber (eigene App, eigener QEMU-Lauf).
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 NETZ_PING="${MOO_UEFI_PING:-0}"
+NETZ_IPV6="${MOO_UEFI_IPV6:-0}"
+KERN_ECAM="${MOO_UEFI_ECAM:-0}"
 NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
 NETZ_TCP_ECHO="${MOO_UEFI_TCP_ECHO:-0}"
 NETZ_SSH="${MOO_UEFI_SSH:-0}"
@@ -135,6 +137,13 @@ case "$NETZ_SSH" in
     ;;
   *) fail "SSH: 0, 1 (KEX), 2 (moo-info) oder 3 (PTY-Shell)" ;;
 esac
+
+case "$NETZ_IPV6" in
+  0) ;;
+  1) [ "$NETZ_PING" != 0 ] || fail "IPv6-Probe braucht privates TAP" ;;
+  *) fail "IPV6: 0 oder 1" ;;
+esac
+case "$KERN_ECAM" in 0|1|cf8) ;; *) fail "ECAM: 0, 1 oder cf8" ;; esac
 
 case "$NETZ_PING" in
   0) ;;
@@ -486,7 +495,7 @@ PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
   fi
   if [ "$NETZ_PING" != 0 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" "$NETZ_TCP_ECHO" "$NETZ_SSH" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" "$NETZ_TCP_ECHO" "$NETZ_SSH" "$NETZ_IPV6" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
@@ -500,6 +509,10 @@ if sys.argv[3] == "1":
 if sys.argv[4] == "1":
     vertrag = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter TCP-Echo-Vertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
+if sys.argv[6] == "1":
+    vertrag = struct.pack("<2Q", 0x47464336564F4F4D, 0)
+    assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter IPv6-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
 if sys.argv[5] in ("1", "2", "3"):
     vertrag = struct.pack("<2Q", 0x31304853534F4F4D, 0)
@@ -542,11 +555,18 @@ PY
   mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
   exec 3<>"$OUT/monitor.in"
   KERN_QEMU=()
+  case "$KERN_ECAM" in
+    1) KERN_QEMU+=(-M q35) ;;
+    cf8) KERN_QEMU+=(-M pc) ;;
+  esac
   [ "${MOO_UEFI_DIAG:-0}" != 1 ] || KERN_QEMU+=(-d int,guest_errors,cpu_reset -D "$OUT/cpu.log")
   NETZ="${MOO_UEFI_NETZ:-1}"
   if [ "$NETZ_PING" != 0 ]; then
     ip link set lo up && ip tuntap add dev moo-ping mode tap &&
       ip address add 192.0.2.1/24 dev moo-ping && ip link set moo-ping up || fail "TAP im Test-Namespace nicht bereit"
+    if [ "$NETZ_IPV6" = 1 ]; then
+      ip -6 addr add fe80::1/64 dev moo-ping nodad || fail "IPv6-Link-Local am TAP fehlt"
+    fi
     KERN_QEMU+=(-netdev tap,id=n0,ifname=moo-ping,script=no,downscript=no,vnet_hdr=off
       -device "$NETZ_PING,netdev=n0,mac=52:54:00:12:34:59,romfile="
       -object filter-dump,id=klog,netdev=n0,file="$OUT/net.pcap")
@@ -616,6 +636,14 @@ PY
       LC_ALL=C ping -4 -n -I moo-ping -c 20 -i 0.25 -W 1 -w 10 -s 57 192.0.2.2 &&
       LC_ALL=C ping -4 -n -I moo-ping -c 1 -W 1 -w 3 -M do -s 1472 192.0.2.2
     } >"$OUT/ping.log" 2>&1 && PING_OK=1
+  fi
+  IPV6_OK=0
+  if [ "$NETZ_IPV6" = 1 ]; then
+    for ((i = 0; i < 60; i++)); do
+      grep -aqF 'MOO-KERNEL NETZ IPV6 BEREIT ' "$OUT/serial.log" && break
+      sleep 0.1
+    done
+    bash "$ROOT/skripte/p7/ipv6-probe.sh" moo-ping "$OUT/serial.log" "$OUT" >"$OUT/ipv6-probe.log" 2>&1 && IPV6_OK=1
   fi
   TRANSPORT_OK=0
   if [ "$NETZ_TRANSPORT" = 1 ] && [ "$PING_OK" = 1 ] &&
@@ -987,6 +1015,27 @@ PY
   if [ "$NETZ_PING" != 0 ]; then
     [ ! -f "$OUT/ping.log" ] || sed 's/^/      | /' "$OUT/ping.log"
     [ "$PING_OK" -eq 1 ] || fail "Linux-Ping über $NETZ_PING fehlgeschlagen"
+  fi
+  case "$KERN_ECAM" in
+    1)
+      grep -aqF 'MOO-KERNEL SAMMEL ECAM AKTIV 0000000000000001' "$OUT/serial.log" &&
+        grep -aqF 'MOO-KERNEL SAMMEL ECAM ABWEICHUNGEN 0000000000000000' "$OUT/serial.log" || fail "ECAM/CF8-Vergleich fehlt"
+      echo "      OK: ECAM und CF8/CFC auf q35 verglichen"
+      ;;
+    cf8)
+      grep -aqF 'MOO-KERNEL SAMMEL ECAM MCFG 0000000000000000' "$OUT/serial.log" &&
+        grep -aqF 'MOO-KERNEL SAMMEL ECAM CF8 RUECKFALL 0000000000000001' "$OUT/serial.log" || fail "PCI-Rueckfall ohne MCFG fehlt"
+      echo "      OK: PCI ueber CF8/CFC auf pc ohne MCFG"
+      ;;
+  esac
+  if [ "$NETZ_IPV6" = 1 ]; then
+    [ ! -f "$OUT/ipv6-probe.log" ] || sed 's/^/      | /' "$OUT/ipv6-probe.log"
+    [ "$IPV6_OK" -eq 1 ] || fail "IPv6-Echo ueber $NETZ_PING fehlgeschlagen"
+    iid="$(<"$OUT/ipv6-iid.txt")"
+    for marker in 'DAD NS' NA ECHO; do
+      grep -aqF "MOO-KERNEL NETZ IPV6 $marker $iid" "$OUT/serial.log" || fail "IPv6-Marker fehlt ($marker)"
+    done
+    echo "      OK: IPv6-Link-Local, NDP und ICMPv6-Echo"
   fi
   if [ "$NETZ_TRANSPORT" = 1 ]; then
     for logfile in transport.log tcp-segmente.log; do

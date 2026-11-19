@@ -24,6 +24,8 @@ aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
 aus "i226_diagnose" importiere i226_inventar
 aus "netz_ipv4" importiere netz_ipv4_poll
+aus "netz_ipv6" importiere netz_ipv6_port_an, netz_ipv6_wartung, netz_ipv6_link_aus
+aus "pci_ecam" importiere pci_ecam_starten
 aus "netz_tcp" importiere netz_tcp_wartung
 aus "netz_ssh" importiere ssh_booten, ssh_bereit
 aus "netz_ssh_shell" importiere ssh_shell_kern, ssh_shell_pci_eintrag, ssh_shell_pci_anzahl
@@ -1794,6 +1796,9 @@ statisch NETZ_EMPFANG: [u8; 2048] auf 0
 # IPv4 fuer private Laufprofile. Drittes Feld schaltet QEMU igb frei.
 @nativ
 statisch NETZ_IPV4_KONFIG: [u64; 3] auf [0x00345650494F4F4D, 0, 0]
+# "MOOV6CFG": Link-Local und Multicast fuer das ausdrueckliche IPv6-Profil.
+@nativ
+statisch NETZ_IPV6_KONFIG: [u64; 2] auf [0x47464336564F4F4D, 0]
 # "MOOL4CFG" als eigener Vertrag. Alte IPv4-Profile bleiben verwendbar.
 @nativ
 statisch NETZ_TRANSPORT_KONFIG: [u64; 2] auf [0x474643344C4F4F4D, 0]
@@ -1921,6 +1926,11 @@ funktion netz_ipv4_adresse() -> u64:
         gib_zurück speicher_lesen(adresse_von(NETZ_IPV4_KONFIG) + 8, 8)
 
 @nativ
+funktion netz_ipv6_aktiv() -> bool:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(NETZ_IPV6_KONFIG) + 8, 8) == 1
+
+@nativ
 funktion netz_transport_aktiv() -> bool:
     unsicher:
         gib_zurück speicher_lesen(adresse_von(NETZ_TRANSPORT_KONFIG) + 8, 8) == 1
@@ -1934,9 +1944,10 @@ funktion netz_echo_aktiv() -> bool:
 funktion netz_poll(tsc_us: u64) -> void:
     unsicher:
         setze ip: u64 auf netz_ipv4_adresse()
-        wenn ip == 0:
+        setze ipv6: bool auf netz_ipv6_aktiv()
+        wenn ip == 0 und nicht ipv6:
             gib_zurück
-        setze dienste: bool auf netz_transport_aktiv()
+        setze dienste: bool auf ip != 0 und netz_transport_aktiv()
         setze echo_aktiv: bool auf dienste und netz_echo_aktiv()
         setze ssh_aktiv: bool auf dienste und ssh_bereit()
         wenn dienste:
@@ -1947,6 +1958,10 @@ funktion netz_poll(tsc_us: u64) -> void:
             setze nic: u64 auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
             wenn nt_link(nic):
                 netz_ipv4_poll(nic, adresse_von(NETZ_EMPFANG), ip, dienste, echo_aktiv, ssh_aktiv)
+                wenn ipv6:
+                    netz_ipv6_wartung(i, adresse_von(NETZ_EMPFANG), tsc_us)
+            sonst wenn ipv6:
+                netz_ipv6_link_aus(i)
             setze i auf i + 1
 
 @nativ
@@ -1967,8 +1982,9 @@ funktion netz_starten(bi: u64, tsc_us: u64) -> u64:
         setze start: u64 auf 0
         wenn speicher_lesen(adresse_von(NETZ_IPV4_KONFIG) + 16, 8) == 1:
             setze typ auf 3
-        # Konfigurationsmechanismus 1: kein Firmware-ECAM-Zeiger nach EBS.
+        # Fruehe NIC-Ringe ueber CF8/CFC. ECAM folgt nach dem Rueckfall-Guard.
         speicher_schreiben(pci + 16, 255, 8)
+        speicher_schreiben(pci + 24, 1, 8)
         solange typ > 0:
             setze nummer auf 0
             setze bdf auf nt_finde(pci, typ, nummer)
@@ -1994,6 +2010,8 @@ funktion netz_starten(bi: u64, tsc_us: u64) -> u64:
                         setze j auf j + 8
                     wenn nt_oeffnen_in(pci, u64(bdf), dma, mmio, tsc_us):
                         speicher_schreiben(adresse_von(NETZ_PORTS) + n * 8, dma, 8)
+                        wenn netz_ipv6_aktiv():
+                            netz_ipv6_port_an(dma, n, adresse_von(meldung))
                         setze n auf n + 1
                 setze nummer auf nummer + 1
                 setze bdf auf nt_finde(pci, typ, nummer)
@@ -2212,8 +2230,8 @@ funktion sammel_krypto(log: u64) -> void:
         meldung(adresse_von(SAM_K_ENDE), u64(kat == 0x1FF und quelle != 0))
         sammel_wartung(log)
 
-# PCI-Konfigurationsmechanismus 1 (Segment 0), nur lesen. Das Sammelprofil
-# protokolliert zusaetzlich Klasse/BAR und bindet genau einen NVMe-Kandidaten.
+# PCI-Segment 0 lesend inventarisieren. Das Sammelprofil protokolliert
+# Klasse/BAR und bindet genau einen NVMe-Kandidaten.
 @nativ
 funktion sammel_pci(ziel_id: u64, protokoll: bool) -> u64:
     unsicher:
@@ -2221,9 +2239,9 @@ funktion sammel_pci(ziel_id: u64, protokoll: bool) -> u64:
         setze anzahl: u64 auf 0
         setze kandidaten: u64 auf 0
         setze ziel: u64 auf 65536
+        setze pci: u64 auf adresse_von(NETZ_PCI)
         solange bdf < 65536:
-            setze addr: u32 auf u32(0x80000000 | (bdf << 8))
-            setze id: u64 auf u64(nt_cfg_lese32(addr))
+            setze id: u64 auf pci_lese32(pci, bdf, 0)
             wenn (id & 0xFFFF) == 0xFFFF:
                 wenn (bdf & 7) == 0:
                     setze bdf auf bdf + 7
@@ -2231,11 +2249,11 @@ funktion sammel_pci(ziel_id: u64, protokoll: bool) -> u64:
                 ssh_shell_pci_eintrag(anzahl, bdf, id)
                 setze anzahl auf anzahl + 1
                 wenn protokoll:
-                    setze klasse_wert: u64 auf u64(nt_cfg_lese32(addr | 8))
+                    setze klasse_wert: u64 auf pci_lese32(pci, bdf, 8)
                     meldung(adresse_von(SAM_T_BDF), bdf)
                     meldung(adresse_von(SAM_T_ID), id)
                     meldung(adresse_von(SAM_T_KLASSE), klasse_wert)
-                    meldung(adresse_von(SAM_T_BAR0), u64(nt_cfg_lese32(addr | 0x10)))
+                    meldung(adresse_von(SAM_T_BAR0), pci_lese32(pci, bdf, 16))
                     wenn id == ziel_id und (klasse_wert >> 8) == 0x010802:
                         setze ziel auf bdf
                         setze kandidaten auf kandidaten + 1
@@ -2422,6 +2440,8 @@ funktion kern_haupt(bi: u64) -> void:
             # hat den IT8613 gestartet, testlauf_poll faellt bei Fehler sofort zurueck.
             wenn modus != 1 und nt_cfg_lese32(0x8000FC00) == 0x54A38086:
                 testlauf_neustart(adresse_von(meldung))
+        pci_ecam_starten(acpi_tabelle(rsdp, 0x4746434D), bi, adresse_von(NETZ_PCI), adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung))
+        wenn sammeln:
             sammel_lauf(tsc, bi)
         sonst:
             wenn speicher_lesen(adresse_von(NVME_LESEN_ZIEL) + 8, 8) < 65536:

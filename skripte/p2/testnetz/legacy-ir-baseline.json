@@ -1,8 +1,8 @@
 {
   "format": 2,
-  "compiler_sha256": "a090f49fb94f1653e8dfe39eb67abb374b95c20dfe97117b9337c7ea221c64c8",
+  "compiler_sha256": "67f0139b6269a86aee8e4a8563a258e57d8daf3cfedc20cb30c5a4e3a8ff034f",
   "normalization": "module-header-root-v2",
-  "batch": "34814",
+  "batch": "34815",
   "provenance_attestation": "caller-provided-unverified",
   "compiler_runtime_inventory_sha256": "6c79080b695b7fa1410b905639206f01e60289232606d3e40c0b177c63e20b1e",
   "snapshot_ref": null,
@@ -48,6 +48,11 @@
       "--target",
       "x86_64-bare"
     ],
+    "beispiele/kernel/netz_ipv6.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-bare"
+    ],
     "beispiele/kernel/netz_ssh.moos": [
       "--no-stdlib",
       "--target",
@@ -64,6 +69,11 @@
       "x86_64-bare"
     ],
     "beispiele/kernel/nvme.moos": [
+      "--no-stdlib",
+      "--target",
+      "x86_64-bare"
+    ],
+    "beispiele/kernel/pci_ecam.moos": [
       "--no-stdlib",
       "--target",
       "x86_64-bare"
@@ -153,7 +163,7 @@
   "failure_count": 0,
   "source_snapshot": {
     "contract": "legacy-ir-sources-v1",
-    "sha256": "9bfccc1ae8eed93bfc3e5a7daefd6120f22cd4fde3b28f8e73ff471624162cfe",
+    "sha256": "a949c3d4674aba05fd969dcfe64bc1cd11211060f65b701d783b0f579226ef38",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -282,16 +292,18 @@
       "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
-      "beispiele/kernel/netz_ipv4.moos": "eb86315bfb2c7e7632ac7dc7266a28b48b74dabd96b9e787f03c48cf0b35a533",
+      "beispiele/kernel/netz_ipv4.moos": "bdd8d770d804340b2b6dbc6fc402f683428ffd4af745e0a9151c8388f60f7197",
+      "beispiele/kernel/netz_ipv6.moos": "27adc9f67009a149134bf742312ce37b572189ddaebf503576a12f691745475e",
       "beispiele/kernel/netz_ssh.moos": "b87af16854f42a4251b271e805b4835b86016cc671fe7e93a9d566b1b8c739e3",
       "beispiele/kernel/netz_ssh_shell.moos": "734bcffda5e525dafb2cac7fd3931018294d903aceafdefc050028f212c8c328",
       "beispiele/kernel/netz_tcp.moos": "647da0434fd1b47d0dd3f5b20fac3b64a6e3d2ef161c81cf53ee2ded22778cc3",
       "beispiele/kernel/nvme.moos": "a39585959e90bc860e67dda302cd5683088c06f9f79eda852c5f74a396e063cb",
+      "beispiele/kernel/pci_ecam.moos": "3b6654a9464d2efdd4d5c069c1362b3d3dc843c2c1d657132331eb94e3e0458c",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/speicher_gpt.moos": "06ddbe2a51581e88129641e9edd83b53ec6a8f3286cbe1ed0cf9e4f60d5f20fb",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
       "beispiele/kernel/test_neustart.moos": "6958c7b3969ba3f353c83f1594c23dbcbdf6b2830d1df995e42ff74f05c35c02",
-      "beispiele/kernel/uefi_kern.moos": "4369aeb140f0447c01bb18918cd305894e4d15ff848c70c1a0e2d98b22ac4023",
+      "beispiele/kernel/uefi_kern.moos": "d3c16c3ddebef51a4a3d7e71a24c5d63d49848807d72b34584f3ce3ccde40271",
       "beispiele/kernel/usb_speicher.moos": "ac3125f424f19e629bcf1662388db99cee46713d130d22792f438b89b6facced",
       "beispiele/kernel/usb_xhci.moos": "bde93efc4bed2ecd7241521ab7640d48ca5c6d0bd8f217ecb7a62ecc3cdac236",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
@@ -518,10 +530,10 @@
       "beispiele/uefi/hardware_pci.moos": "34ed21f9f09b6cca63ed3d47d36c0366367527ae114a7ec9e00f908b49ec331d",
       "beispiele/uefi/moo_lader.moos": "a82905f510f3de2931557825937db4c8ff4e1b78113638d89a6cf665905a1e34",
       "beispiele/uefi/netz_e1000.moos": "ca41ca8653cd25eb2bdb9bbe72b1f90a4202c102006c7ddc8e1494d1f2bc473e",
-      "beispiele/uefi/netz_geraet.moos": "df4cd24c2d906129c2b660c6afc1cf18054fab8ed2095a5b00277d9b96649e17",
+      "beispiele/uefi/netz_geraet.moos": "1f09a007948ff62947bb803d7831aeb6dc573bef1de7fbbc34416fc0f777073f",
       "beispiele/uefi/netz_lader.moos": "67f2d6bf4818ff1afb96e066daaa25bbdf3bc77d5dc2fc428a406f0128c562cc",
       "beispiele/uefi/netz_tftp.moos": "780dac686c25be96ea0fdf17c32381c1420a330a005be87af2681f336ac8df8a",
-      "beispiele/uefi/netz_treiber.moos": "2d7b1f6dff290829f36cfcdc80b3e67269593e2380b83d6fdf563655d5c195af",
+      "beispiele/uefi/netz_treiber.moos": "0706cc5f760b11d10014a3aa51c01747018d6097b0572afa1e4e78f128987c10",
       "beispiele/ui_automation_demo.moos": "fd9566a31db88dbfe1bcf3813c1929dfa4ac9371d3cea7c47bf2c5f378d45036",
       "beispiele/ui_binding_demo.moos": "e80f6c205a9239a00b3da57bab8880468cbb0ee8cb94171939131e6668d25cee",
       "beispiele/ui_canvas_mouse_demo.moos": "6aee2528dfe62667206339d2b10632d2d7a6ee1e688083fd194f73a135375fd7",
@@ -643,7 +655,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "cf86b76bd7e681c597610dc7af5c317bf6a74acbf34b3db29054c6f10187e6c8",
+    "sha256": "8e0885acc4743248f162652a9c04cac6d952fc4d00be238c39edb9e59570f1ca",
     "files": {
       "beispiele/adressbuch.moos": "d99668f6c675bd22f2bb65d0406cefa4af8931ea6207ccbe872017c3beac3e4f",
       "beispiele/adventure.moos": "831952c72ca00ab783b41ce690d986c20349d277b4da0f68e2c93cac1e19d695",
@@ -772,16 +784,18 @@
       "beispiele/kernel/moo_bootvertrag.moos": "37cbd909f5d0136efe4449ca3842cd8401e603807dbf22d4508d6d9378fdaf7c",
       "beispiele/kernel/nativ_kern.moos": "9f8864258988f066847b03ff6d726320278194ff56b739631392cdc4b6fee03a",
       "beispiele/kernel/nativ_seriell.moos": "422ddc53c1e11f27b0fe7d140e13f84740062fabbe63a90ca07521803f280739",
-      "beispiele/kernel/netz_ipv4.moos": "eb86315bfb2c7e7632ac7dc7266a28b48b74dabd96b9e787f03c48cf0b35a533",
+      "beispiele/kernel/netz_ipv4.moos": "bdd8d770d804340b2b6dbc6fc402f683428ffd4af745e0a9151c8388f60f7197",
+      "beispiele/kernel/netz_ipv6.moos": "27adc9f67009a149134bf742312ce37b572189ddaebf503576a12f691745475e",
       "beispiele/kernel/netz_ssh.moos": "b87af16854f42a4251b271e805b4835b86016cc671fe7e93a9d566b1b8c739e3",
       "beispiele/kernel/netz_ssh_shell.moos": "734bcffda5e525dafb2cac7fd3931018294d903aceafdefc050028f212c8c328",
       "beispiele/kernel/netz_tcp.moos": "647da0434fd1b47d0dd3f5b20fac3b64a6e3d2ef161c81cf53ee2ded22778cc3",
       "beispiele/kernel/nvme.moos": "a39585959e90bc860e67dda302cd5683088c06f9f79eda852c5f74a396e063cb",
+      "beispiele/kernel/pci_ecam.moos": "3b6654a9464d2efdd4d5c069c1362b3d3dc843c2c1d657132331eb94e3e0458c",
       "beispiele/kernel/pf_test.moos": "046e309dd3e5eb2819719d1184dd2b845bc9e70fb2b25f9ce16ffed3b2653fc5",
       "beispiele/kernel/speicher_gpt.moos": "06ddbe2a51581e88129641e9edd83b53ec6a8f3286cbe1ed0cf9e4f60d5f20fb",
       "beispiele/kernel/stackprot_test.moos": "6485c43be186b58c5e5faf173a3811ebbe82a54efc4dd7366216889c176ea485",
       "beispiele/kernel/test_neustart.moos": "6958c7b3969ba3f353c83f1594c23dbcbdf6b2830d1df995e42ff74f05c35c02",
-      "beispiele/kernel/uefi_kern.moos": "4369aeb140f0447c01bb18918cd305894e4d15ff848c70c1a0e2d98b22ac4023",
+      "beispiele/kernel/uefi_kern.moos": "d3c16c3ddebef51a4a3d7e71a24c5d63d49848807d72b34584f3ce3ccde40271",
       "beispiele/kernel/usb_speicher.moos": "ac3125f424f19e629bcf1662388db99cee46713d130d22792f438b89b6facced",
       "beispiele/kernel/usb_xhci.moos": "bde93efc4bed2ecd7241521ab7640d48ca5c6d0bd8f217ecb7a62ecc3cdac236",
       "beispiele/ki_audio.moos": "8452da4d523562e87d2f2a07ab5892fe1d948989ac4f843cbc22210b68c414fe",
@@ -1008,10 +1022,10 @@
       "beispiele/uefi/hardware_pci.moos": "34ed21f9f09b6cca63ed3d47d36c0366367527ae114a7ec9e00f908b49ec331d",
       "beispiele/uefi/moo_lader.moos": "a82905f510f3de2931557825937db4c8ff4e1b78113638d89a6cf665905a1e34",
       "beispiele/uefi/netz_e1000.moos": "ca41ca8653cd25eb2bdb9bbe72b1f90a4202c102006c7ddc8e1494d1f2bc473e",
-      "beispiele/uefi/netz_geraet.moos": "df4cd24c2d906129c2b660c6afc1cf18054fab8ed2095a5b00277d9b96649e17",
+      "beispiele/uefi/netz_geraet.moos": "1f09a007948ff62947bb803d7831aeb6dc573bef1de7fbbc34416fc0f777073f",
       "beispiele/uefi/netz_lader.moos": "67f2d6bf4818ff1afb96e066daaa25bbdf3bc77d5dc2fc428a406f0128c562cc",
       "beispiele/uefi/netz_tftp.moos": "780dac686c25be96ea0fdf17c32381c1420a330a005be87af2681f336ac8df8a",
-      "beispiele/uefi/netz_treiber.moos": "2d7b1f6dff290829f36cfcdc80b3e67269593e2380b83d6fdf563655d5c195af",
+      "beispiele/uefi/netz_treiber.moos": "0706cc5f760b11d10014a3aa51c01747018d6097b0572afa1e4e78f128987c10",
       "beispiele/ui_automation_demo.moos": "fd9566a31db88dbfe1bcf3813c1929dfa4ac9371d3cea7c47bf2c5f378d45036",
       "beispiele/ui_binding_demo.moos": "e80f6c205a9239a00b3da57bab8880468cbb0ee8cb94171939131e6668d25cee",
       "beispiele/ui_canvas_mouse_demo.moos": "6aee2528dfe62667206339d2b10632d2d7a6ee1e688083fd194f73a135375fd7",
@@ -2469,7 +2483,7 @@
     },
     "beispiele/kernel/i226_diagnose.moos": {
       "status": "ok",
-      "sha256": "731260c012cec94261a1265df04299ba128e895c8b5e54120390acbe2dd03576"
+      "sha256": "a2073a1e82bd937caa3bc8dedac173c128bd69a08d441f0a5cc58c15d04cbae6"
     },
     "beispiele/kernel/it8613_wdt.moos": {
       "status": "ok",
@@ -2489,23 +2503,31 @@
     },
     "beispiele/kernel/netz_ipv4.moos": {
       "status": "ok",
-      "sha256": "ede5ed4420c0ddc57e36d02519aeed6ad086decc4c3fcba18e7b7e7a69e9e1d4"
+      "sha256": "806c30fb37a278d40ce80d8e314d14a9ee761ac440cc3eaaa4caa86f2bc690d6"
+    },
+    "beispiele/kernel/netz_ipv6.moos": {
+      "status": "ok",
+      "sha256": "78612cbea3bbe42ecb4554b312345ce225915eb0d73e79fde37f4312007c7367"
     },
     "beispiele/kernel/netz_ssh.moos": {
       "status": "ok",
-      "sha256": "52c56bc598c8339ab9e6d0a0e1c3b03abcb9b03d14b50c765a3ff707fea512bc"
+      "sha256": "74f317780ef1a07e6f2df61a18227e20541512c63cbb9b6f0d28559e70810250"
     },
     "beispiele/kernel/netz_ssh_shell.moos": {
       "status": "ok",
-      "sha256": "0f3c3b5c19700cbf999177de268165c1950ac4ee998e5c9cc552e0ea45462a2e"
+      "sha256": "952c3498d90cd6567c7bc1860dcaec62690cf12dd0c581a1c6135e20b966ff85"
     },
     "beispiele/kernel/netz_tcp.moos": {
       "status": "ok",
-      "sha256": "19e8814442383099b70be750fec8bed4636952cd9571e1da1f19391e29cfd6e6"
+      "sha256": "523fb63616601c113ad0708a6dbb5b6792c55d6a42c6ba419f86197b4650cbe0"
     },
     "beispiele/kernel/nvme.moos": {
       "status": "ok",
-      "sha256": "6b4963e112f690ff7439964f820c10707e4e2a9726906760aab8de8a8c19d6fa"
+      "sha256": "f44e920ea5fed4528a9c34e9897294418e0101def9fecd7cc6e7ed3032ccdc85"
+    },
+    "beispiele/kernel/pci_ecam.moos": {
+      "status": "ok",
+      "sha256": "8e0a5025b7567371e7b46e4b1bef23d0fd76d3d6626a36e06d785eabbb71b942"
     },
     "beispiele/kernel/pf_test.moos": {
       "status": "ok",
@@ -2513,7 +2535,7 @@
     },
     "beispiele/kernel/speicher_gpt.moos": {
       "status": "ok",
-      "sha256": "ea1e39315972eb416f6ef644923714ca2a4f1b17c2bab3c890899715c7c57956"
+      "sha256": "70cbe51d657d8641f79c5a6df53e94e9bf52b8b63f17c04201afc17500ade738"
     },
     "beispiele/kernel/stackprot_test.moos": {
       "status": "ok",
@@ -2525,11 +2547,11 @@
     },
     "beispiele/kernel/uefi_kern.moos": {
       "status": "ok",
-      "sha256": "3e96862269f59f540961c92482a40163c88c88fa67c9e692512154d480c1d301"
+      "sha256": "7540e9eb21118dca14ee6011b5fe89da319fc09d892077c8872b27f11da5bed6"
     },
     "beispiele/kernel/usb_speicher.moos": {
       "status": "ok",
-      "sha256": "d84f5004d6e377e88e405da9cf18ffca082907787fb33fbbed49460ed9513944"
+      "sha256": "a335ac2577297805bc6d77e6723e2818930474dc4cc2e66f803e3eea547f6f1d"
     },
     "beispiele/kernel/usb_xhci.moos": {
       "status": "ok",
@@ -3413,7 +3435,7 @@
     },
     "beispiele/uefi/hallo_uefi.moos": {
       "status": "ok",
-      "sha256": "9e1990ae9d656c87ccacc6bce72b6b4edce47779eff6ca832aabba3bc963589a"
+      "sha256": "84a7e68d2f23750a02b06078d9c4dd812f971728a62166a489331a284525d1c3"
     },
     "beispiele/uefi/hardware_crc.moos": {
       "status": "ok",
@@ -3429,23 +3451,23 @@
     },
     "beispiele/uefi/netz_e1000.moos": {
       "status": "ok",
-      "sha256": "d0fc54b956dc97c43df0232f930409856b991533f3a7d284d8e80f46ef6043c6"
+      "sha256": "14b2215beda49289a57f88363651bcefe397f1778dfe0634ca604ca4228d59d5"
     },
     "beispiele/uefi/netz_geraet.moos": {
       "status": "ok",
-      "sha256": "270bf7b7fb656b21300d16edcf0331fcc15093136ae957f08702a4436b80d9e9"
+      "sha256": "374c4001bd620b1df77a49d36bca7b74d760498856832c63cf606c00985a9ffd"
     },
     "beispiele/uefi/netz_lader.moos": {
       "status": "ok",
-      "sha256": "b8a06e31df244a2a4193bb71161f636d1f1b7f7304fafa65ec21fcc87e6ce0b1"
+      "sha256": "79e0cfd63fdd74a8cdfab222a28fdcb454c947507ee81a4ee0e2b8632f608d30"
     },
     "beispiele/uefi/netz_tftp.moos": {
       "status": "ok",
-      "sha256": "461456dbbf009871ab4383682e530eb47535de34e637c43f3eec39af64a7074d"
+      "sha256": "0a2f6c1038a2f995a96ce5d6d93fb0bd0cdced1c92df798a97239262e9b5d661"
     },
     "beispiele/uefi/netz_treiber.moos": {
       "status": "ok",
-      "sha256": "e5384865cf836c1cc69f2d53d78c0193f43e6de70f2d66dfb767a0f1d901abcf"
+      "sha256": "d7715e579d5fe9538810c9fd562673fa4623a30b1dda4f97c7ceceafea65e9d2"
     },
     "beispiele/ui_automation_demo.moos": {
       "status": "ok",

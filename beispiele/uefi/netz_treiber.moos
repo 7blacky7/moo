@@ -124,6 +124,7 @@ funktion nt_pci_init():
         speicher_schreiben(pci, 0, 8)
         speicher_schreiben(pci + 8, 0, 8)
         speicher_schreiben(pci + 16, 255, 8)
+        speicher_schreiben(pci + 24, 0, 8)
         setze mcfg auf nt_acpi_mcfg()
         # Erster Eintrag (Segment 0): Basis @44, erster Bus @54, letzter Bus @55.
         wenn mcfg != 0 und speicher_lesen(mcfg + 4, 4) >= 60:

@@ -49,6 +49,10 @@ magien = (b"MOOSAU01", b"MOOSAU02", b"MOOSAU03")
 assert sum(kern.count(magie) for magie in magien) == 1
 pos = next(kern.index(magie) for magie in magien if magie in kern)
 assert kern[pos + 8:pos + 48] == struct.pack("<Q", 2) + blob[19:]
+if b"MOOV6CFG" in kern:
+    assert kern.count(b"MOOV6CFG") == 1
+    pos = kern.index(b"MOOV6CFG")
+    assert kern[pos + 8:pos + 16] == struct.pack("<Q", 1)
 PY
   echo 'ssh-laufkey-belegt' >>"$MOCK_ROOT/trace"
 fi
@@ -251,10 +255,14 @@ if [[ "${MOO_N100_TEST_SSH_INFO:-0}" == 1 ]]; then
   elif grep -aqF 'MOOSAU02' "$testkern"; then
     info_flag=--ssh-pq
   fi
+  ipv6_args=()
+  if grep -aqF 'MOOV6CFG' "$testkern"; then
+    ipv6_args+=(--ecam-ipv6)
+  fi
   : >"$T/trace"
   rc=0
   MOCK_FAIL=pruefen MOCK_SSH_KOPIE="$info_out" MOO_N100_AUSGABE="$info_out" \
-    bash "$ROOT/skripte/p7/n100-lauf.sh" "${args[@]}" "$info_flag" --modus 1 --sekunden 20 --watchdog-sekunden 10 \
+    bash "$ROOT/skripte/p7/n100-lauf.sh" "${args[@]}" "$info_flag" "${ipv6_args[@]}" --modus 1 --sekunden 20 --watchdog-sekunden 10 \
     >"$T/ssh-info-lauf.log" 2>&1 || rc=$?
   test "$rc" -eq 17 || { cat "$T/ssh-info-lauf.log"; exit 1; }
   grep -qx 'ssh-laufkey-belegt' "$T/trace"

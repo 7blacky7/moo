@@ -21,6 +21,7 @@ INVENTAR=0
 MODUS=1
 WATCHDOG_S=10
 PING_IP=
+IPV6_PROBE=0
 TRANSPORT=0
 KRYPTO=0
 SSH=0
@@ -43,6 +44,7 @@ while (($#)); do
     --it8613-messreihe) DIAGNOSE=0; MODUS=6; SEKUNDEN=70; shift;;
     --watchdog-test) DIAGNOSE=0; MODUS=7; SEKUNDEN=45; shift;;
     --ping) PING_IP=192.168.77.2; shift;;
+    --ecam-ipv6) PING_IP=192.168.77.2; IPV6_PROBE=1; shift;;
     --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); shift;;
     --tcp-echo) PING_IP=192.168.77.2; TRANSPORT=3; shift;;
     --krypto-selbsttest) KRYPTO=1; shift;;
@@ -77,6 +79,7 @@ while (($#)); do
       '--ssh-info: Ed25519-Laufkey erzeugen und moo-info auf TCP 2223 pruefen.' \
       '--ssh-pq: moo-info mit ML-KEM-768/X25519 und erzwungenem X25519 pruefen.' \
       '--ssh-shell: dazu die PTY-Shell mit einem Skript ueber stdin pruefen.' \
+      '--ecam-ipv6: ECAM-Abgleich und IPv6-Link-Local/NDP/Ping pruefen.' \
       '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
       '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
@@ -124,7 +127,7 @@ fi
 ((SSH<2)) || command -v ssh-keygen >/dev/null || { echo 'SSH-Anmeldung braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" <<'PY'
+  uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" "${13:-0}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
@@ -135,6 +138,7 @@ transport = int(sys.argv[8])
 krypto = sys.argv[9] == "1"
 ssh_modus = int(sys.argv[10])
 ssh_pq = sys.argv[13] == "1"
+ipv6 = sys.argv[14] == "1"
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -174,6 +178,11 @@ if ping_ip:
     leer = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter IPv4-Vertrag")
     struct.pack_into("<Q", data, pos + 8, int(ipaddress.IPv4Address(ping_ip)))
+if ipv6:
+    leer = struct.pack("<2Q", 0x47464336564F4F4D, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter IPv6-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, 1)
+    print("IPv6-Vertrag MOOV6CFG im schreibbaren PT_LOAD aktiviert")
 if transport & 1:
     leer = struct.pack("<2Q", 0x474643344C4F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter UDP-/TCP-Vertrag")
@@ -296,7 +305,7 @@ lauf_vorbereiten() {
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}" "$SSH_PQ"
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}" "$SSH_PQ" "$IPV6_PROBE"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
   fi
@@ -451,6 +460,12 @@ aufraeumen() {
   fi
   beenden_gruppe "$CAPTURE_PID"
   beenden_gruppe "$SERVER_PID"
+  if ((IPV6_PROBE)) && [ -f "$OUT/server.log" ] &&
+     grep -aqF 'MOO-NETZ IPV6 START ' "$OUT/server.log" &&
+     ! grep -aqF "MOO-NETZ IPV6 ZURUECK $IFACE" "$OUT/server.log"; then
+    echo 'FEHLER: Wiederherstellung der lokalen IPv6-Konfiguration unbelegt' >&2
+    rc=1
+  fi
   if ((SYNAPSE_STOPP && wieder)); then
     if ! synapse_warten; then
       echo 'FEHLER: Windows zurueck, aber Synapse HTTP 200 nach eigenem Startlimit nicht belegt' >&2
@@ -568,12 +583,13 @@ exec > >(exec 9>&-; tee -a "$OUT/lauf.log") 2>&1
 printf 'Laufordner: %s\n' "$OUT"
 capture_filter='arp or udp'
 [[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
+((!IPV6_PROBE)) || capture_filter+=' or icmp6'
 ((TRANSPORT==0)) || capture_filter='arp or udp or icmp or (tcp port 8080)'
 (( (TRANSPORT & 2) == 0 )) || capture_filter+=' or (tcp port 2222)'
 ((SSH==0)) || capture_filter+=' or (tcp port 2223)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
-MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
+MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
 SERVER_PID=$!
 for ((i=0;i<30;i++)); do
   kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt vorzeitig beendet' >&2; exit 1; }
@@ -589,6 +605,8 @@ timeout --foreground 90s uv run --with pywinrm python -I "$ROOT/skripte/p2/minip
 remote booten
 bis=$((SECONDS+ZEITLIMIT))
 ping_versucht=0
+ping6_versucht=0
+ping6_belegt=0
 arp_belegt=0
 ping_belegt=0
 transport_belegt=0
@@ -603,6 +621,15 @@ while ((SECONDS<bis)); do
   fi
   # Windows hat dieselbe IP. Nur die Probe zwischen Kernmarker und Neustart
   # zaehlt, und der regulaere Kernel-/Windows-Abschluss muss erhalten bleiben.
+  if ((IPV6_PROBE && ping6_versucht==0 && ende==0)) &&
+     grep -aqF 'MOO-KERNEL NETZ IPV6 BEREIT ' "$OUT/netz.log" &&
+     ! grep -aqF 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+    ping6_versucht=1
+    if bash "$ROOT/skripte/p7/ipv6-probe.sh" "$IFACE" "$OUT/netz.log" "$OUT" &&
+       ! grep -aqF 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+      ping6_belegt=1
+    fi
+  fi
   if [[ -n "$PING_IP" ]] && ((ping_versucht==0 && ende==0)) &&
      grep -aFq 'MOO-KERNEL NETZ IPV4 BEREIT ' "$OUT/netz.log"; then
     ping_versucht=1
@@ -685,6 +712,26 @@ while ((SECONDS<bis)); do
         if [[ -n "$PING_IP" ]]; then
           ((arp_belegt && ping_belegt)) || { echo 'FEHLER: ARP und Ping im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
           echo 'ARP und Ping im Kernfenster belegt; RTT in ping.log'
+        fi
+        if ((IPV6_PROBE)); then
+          if ! ((ping6_belegt)); then
+            echo 'FEHLER: IPv6-Echo im Kernfenster fehlt' >&2
+            exit 1
+          fi
+          iid="$(<"$OUT/ipv6-iid.txt")"
+          grep -aqF "MOO-KERNEL NETZ IPV6 NA $iid" "$OUT/netz.log" &&
+            grep -aqF "MOO-KERNEL NETZ IPV6 ECHO $iid" "$OUT/netz.log" || {
+              echo 'FEHLER: IPv6-NDP oder Kern-Echo im Netzlog fehlt' >&2
+              exit 1
+            }
+          echo 'IPv6-Link-Local, NDP und ICMPv6-Echo belegt. RTT in ping6.log.'
+          grep -aqF 'MOO-KERNEL SAMMEL ECAM AKTIV 0000000000000001' "$OUT/netz.log" &&
+            grep -aqF 'MOO-KERNEL SAMMEL ECAM ABWEICHUNGEN 0000000000000000' "$OUT/netz.log" &&
+            grep -aqF 'MOO-KERNEL SAMMEL ECAM ENDE 0000000000000001' "$OUT/netz.log" || {
+              echo 'FEHLER: ECAM-Vergleich nicht erfolgreich. PCI-Rueckfall siehe Netzlog.' >&2
+              exit 1
+            }
+          echo 'ECAM und CF8/CFC stimmen im Kerninventar ueberein.'
         fi
         if ((TRANSPORT)); then
           ((transport_belegt)) || { echo 'FEHLER: Angeforderte Transportproben im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }

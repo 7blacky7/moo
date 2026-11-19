@@ -1,0 +1,263 @@
+# Link-Local IPv6 auf den eigenen DMA-Ringen. NDP und ICMPv6 ohne Routing.
+aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_mac, nt_reg, nt_reg_setze, nt_senden, nt_ether_antwort, nt_pruefsumme_start
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+konstante IP6_LL: u64 auf 0xFE80000000000000
+@nativ
+konstante IP6_MC_LINK: u64 auf 0xFF02000000000000
+@nativ
+konstante IP6_SOLICITED: u64 auf 0x00000001FF000000
+@nativ
+konstante IP6_WARTET: u64 auf 1
+@nativ
+konstante IP6_AKTIV: u64 auf 2
+@nativ
+konstante IP6_DOPPELT: u64 auf 3
+@nativ
+konstante IP6_BEREIT: [u8; _] auf "MOO-KERNEL NETZ IPV6 BEREIT "
+@nativ
+konstante IP6_DAD: [u8; _] auf "MOO-KERNEL NETZ IPV6 DAD NS "
+@nativ
+konstante IP6_DAD_FEHLER: [u8; _] auf "MOO-KERNEL NETZ IPV6 DOPPELT "
+@nativ
+konstante IP6_NA: [u8; _] auf "MOO-KERNEL NETZ IPV6 NA "
+@nativ
+konstante IP6_ECHO: [u8; _] auf "MOO-KERNEL NETZ IPV6 ECHO "
+
+# Acht feste Ports: NIC-Zeiger, Interface-ID, DAD-Zustand und Sende-TSC.
+@nativ
+statisch IP6_PORTS: [u64; 32] auf 0
+@nativ
+statisch IP6_LOGGER: [u64; 1] auf 0
+
+@nativ
+funktion ip6_log(text: u64, wert: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(speicher_lesen(adresse_von(IP6_LOGGER), 8))
+        log(text, wert)
+
+@nativ
+funktion ip6_iid(nic: u64) -> u64:
+    unsicher:
+        gib_zurück ((nt_mac(nic, 0) ^ 2) << 56) | (nt_mac(nic, 1) << 48) | (nt_mac(nic, 2) << 40) | 0x000000FFFE000000 | (nt_mac(nic, 3) << 16) | (nt_mac(nic, 4) << 8) | nt_mac(nic, 5)
+
+@nativ
+funktion netz_ipv6_port_an(nic: u64, index: u64, loggen: u64) -> void:
+    unsicher:
+        setze adr: u64 auf adresse_von(IP6_PORTS) + index * 32
+        speicher_schreiben(adr, nic, 8)
+        speicher_schreiben(adr + 8, ip6_iid(nic), 8)
+        speicher_schreiben(adresse_von(IP6_LOGGER), loggen, 8)
+        # RCTL.MPE fuer die NDP-Multicast-Gruppen im expliziten IPv6-Profil.
+        # Linux v6.12 e1000_hw.h:1811 und igc_defines.h:352.
+        nt_reg_setze(nic, 0x0100, nt_reg(nic, 0x0100) | 0x10)
+
+@nativ
+funktion netz_ipv6_link_aus(index: u64) -> void:
+    unsicher:
+        speicher_schreiben(adresse_von(IP6_PORTS) + index * 32 + 16, 0, 8)
+
+@nativ
+funktion ip6_port(nic: u64) -> u64:
+    unsicher:
+        setze p: u64 auf adresse_von(IP6_PORTS)
+        setze i: u64 auf 0
+        solange i < 8:
+            wenn speicher_lesen(p + i * 32, 8) == nic:
+                gib_zurück p + i * 32
+            setze i auf i + 1
+        gib_zurück 0
+
+@nativ
+funktion ip6_r64(p: u64, off: u64) -> u64:
+    unsicher:
+        gib_zurück (nt_r32(p, off) << 32) | nt_r32(p, off + 4)
+
+@nativ
+funktion ip6_b64(p: u64, off: u64, wert: u64) -> void:
+    unsicher:
+        nt_b32(p, off, wert >> 32)
+        nt_b32(p, off + 4, wert & 0xFFFFFFFF)
+
+@nativ
+funktion ip6_mac_eigen(p: u64, off: u64, nic: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 6:
+            wenn u64(speicher_lesen(p + off + i, 1)) != nt_mac(nic, i):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion ip6_multicast_mac(p: u64, wert: u64) -> void:
+    unsicher:
+        nt_b16(p, 0, 0x3333)
+        nt_b32(p, 2, wert & 0xFFFFFFFF)
+
+# RFC 4443 2.3: beide IPv6-Adressen, 32-Bit-Laenge und Next Header 58.
+@nativ
+funktion ip6_pruefsumme(p: u64, n: u64) -> u64:
+    unsicher:
+        setze summe: u64 auf 0xFFFF - nt_pruefsumme_start(p, 22, 32, n + 58)
+        gib_zurück nt_pruefsumme_start(p, 54, n, summe)
+
+@nativ
+funktion ip6_kopf(p: u64, quelle_hi: u64, quelle_lo: u64, ziel_hi: u64, ziel_lo: u64, n: u64, hop: u64) -> void:
+    unsicher:
+        nt_b16(p, 12, 0x86DD)
+        nt_b32(p, 14, 0x60000000)
+        nt_b16(p, 18, n)
+        nt_b8(p, 20, 58)
+        nt_b8(p, 21, hop)
+        ip6_b64(p, 22, quelle_hi)
+        ip6_b64(p, 30, quelle_lo)
+        ip6_b64(p, 38, ziel_hi)
+        ip6_b64(p, 46, ziel_lo)
+
+@nativ
+funktion ip6_nd_kopf(p: u64, typ: u64, ziel: u64, flags: u64) -> void:
+    unsicher:
+        nt_b32(p, 54, typ << 24)
+        nt_b32(p, 58, flags)
+        ip6_b64(p, 62, IP6_LL)
+        ip6_b64(p, 70, ziel)
+
+# RFC 4862 5.4: ein DAD-NS mit :: als Quelle und ohne SLLA. Danach
+# ein RetransTimer (hier 1 s) auf eine kollidierende NS/NA warten.
+@nativ
+funktion netz_ipv6_wartung(index: u64, p: u64, tsc_us: u64) -> void:
+    unsicher:
+        setze adr: u64 auf adresse_von(IP6_PORTS) + index * 32
+        setze status: u64 auf speicher_lesen(adr + 16, 8)
+        wenn tsc_us == 0 oder status >= IP6_AKTIV:
+            gib_zurück
+        setze nic: u64 auf speicher_lesen(adr, 8)
+        setze iid: u64 auf speicher_lesen(adr + 8, 8)
+        wenn status == IP6_WARTET:
+            wenn takt() - speicher_lesen(adr + 24, 8) >= tsc_us * 1000000:
+                speicher_schreiben(adr + 16, IP6_AKTIV, 8)
+                ip6_log(adresse_von(IP6_BEREIT), iid)
+            gib_zurück
+        setze ziel: u64 auf IP6_SOLICITED | (iid & 0xFFFFFF)
+        ip6_multicast_mac(p, ziel)
+        setze i: u64 auf 0
+        solange i < 6:
+            nt_b8(p, 6 + i, nt_mac(nic, i))
+            setze i auf i + 1
+        ip6_kopf(p, 0, 0, IP6_MC_LINK, ziel, 24, 255)
+        ip6_nd_kopf(p, 135, iid, 0)
+        nt_b16(p, 56, ip6_pruefsumme(p, 24))
+        wenn nt_senden(nic, p, 78):
+            speicher_schreiben(adr + 24, takt(), 8)
+            speicher_schreiben(adr + 16, IP6_WARTET, 8)
+            ip6_log(adresse_von(IP6_DAD), iid)
+
+@nativ
+funktion ip6_doppel_erkannt(adr: u64, iid: u64) -> void:
+    unsicher:
+        speicher_schreiben(adr + 16, IP6_DOPPELT, 8)
+        ip6_log(adresse_von(IP6_DAD_FEHLER), iid)
+
+@nativ
+funktion ip6_nd_optionen(p: u64, n: u64, nullquelle: bool) -> bool:
+    unsicher:
+        setze i: u64 auf 24
+        solange i < n:
+            wenn n - i < 2:
+                gib_zurück falsch
+            setze typ: u64 auf u64(speicher_lesen(p + 54 + i, 1))
+            setze l: u64 auf u64(speicher_lesen(p + 55 + i, 1)) * 8
+            wenn l == 0 oder l > n - i:
+                gib_zurück falsch
+            wenn (typ == 1 oder typ == 2) und (l != 8 oder (typ == 1 und nullquelle)):
+                gib_zurück falsch
+            setze i auf i + l
+        gib_zurück wahr
+
+@nativ
+funktion ip6_echo_antwort(p: u64, nic: u64, iid: u64, n: u64) -> void:
+    unsicher:
+        setze hi: u64 auf ip6_r64(p, 22)
+        setze lo: u64 auf ip6_r64(p, 30)
+        nt_ether_antwort(p, nic)
+        ip6_kopf(p, IP6_LL, iid, hi, lo, n, 64)
+        nt_b8(p, 54, 129)
+        nt_b16(p, 56, 0)
+        nt_b16(p, 56, ip6_pruefsumme(p, n))
+        wenn nt_senden(nic, p, 54 + n):
+            ip6_log(adresse_von(IP6_ECHO), iid)
+
+@nativ
+funktion ip6_na_antwort(p: u64, nic: u64, iid: u64, nullquelle: bool) -> void:
+    unsicher:
+        setze hi: u64 auf ip6_r64(p, 22)
+        setze lo: u64 auf ip6_r64(p, 30)
+        setze flags: u64 auf 0x60000000
+        nt_ether_antwort(p, nic)
+        wenn nullquelle:
+            setze hi auf IP6_MC_LINK
+            setze lo auf 1
+            setze flags auf 0x20000000
+            ip6_multicast_mac(p, 1)
+        ip6_kopf(p, IP6_LL, iid, hi, lo, 32, 255)
+        ip6_nd_kopf(p, 136, iid, flags)
+        nt_b16(p, 78, 0x0201)
+        setze i: u64 auf 0
+        solange i < 6:
+            nt_b8(p, 80 + i, nt_mac(nic, i))
+            setze i auf i + 1
+        nt_b16(p, 56, ip6_pruefsumme(p, 32))
+        wenn nt_senden(nic, p, 86):
+            ip6_log(adresse_von(IP6_NA), iid)
+
+# RFC 4861 7.1: Hop Limit, Code, Ziel und Optionen vor jeder ND-Aktion.
+@nativ
+funktion ip6_nd_empfangen(p: u64, nic: u64, adr: u64, n: u64, typ: u64, nullquelle: bool) -> void:
+    unsicher:
+        setze iid: u64 auf speicher_lesen(adr + 8, 8)
+        wenn n < 24 oder speicher_lesen(p + 21, 1) != 255 oder ip6_r64(p, 62) != IP6_LL oder ip6_r64(p, 70) != iid oder nicht ip6_nd_optionen(p, n, nullquelle):
+            gib_zurück
+        setze hi: u64 auf ip6_r64(p, 38)
+        setze lo: u64 auf ip6_r64(p, 46)
+        setze status: u64 auf speicher_lesen(adr + 16, 8)
+        setze eigen: bool auf hi == IP6_LL und lo == iid und ip6_mac_eigen(p, 0, nic)
+        wenn typ == 135:
+            setze ziel: u64 auf IP6_SOLICITED | (iid & 0xFFFFFF)
+            setze gruppe: bool auf hi == IP6_MC_LINK und lo == ziel und nt_r16(p, 0) == 0x3333 und nt_r32(p, 2) == (ziel & 0xFFFFFFFF)
+            wenn (nicht eigen und nicht gruppe) oder (nullquelle und nicht gruppe):
+                gib_zurück
+            wenn status == IP6_AKTIV:
+                ip6_na_antwort(p, nic, iid, nullquelle)
+            sonst wenn nullquelle:
+                ip6_doppel_erkannt(adr, iid)
+        sonst wenn status != IP6_AKTIV und nicht nullquelle:
+            setze alle: bool auf hi == IP6_MC_LINK und lo == 1 und nt_r16(p, 0) == 0x3333 und nt_r32(p, 2) == 1 und (nt_r32(p, 58) & 0x40000000) == 0
+            wenn eigen oder alle:
+                ip6_doppel_erkannt(adr, iid)
+
+@nativ
+funktion netz_ipv6_empfangen(p: u64, laenge: u64, nic: u64) -> void:
+    unsicher:
+        setze adr: u64 auf ip6_port(nic)
+        wenn adr == 0 oder laenge < 62 oder speicher_lesen(adr + 16, 8) == IP6_DOPPELT:
+            gib_zurück
+        wenn (u64(speicher_lesen(p + 14, 1)) >> 4) != 6 oder speicher_lesen(p + 20, 1) != 58 oder speicher_lesen(p + 21, 1) == 0:
+            gib_zurück
+        setze n: u64 auf nt_r16(p, 18)
+        wenn n < 8 oder n > 1460 oder n > laenge - 54:
+            gib_zurück
+        setze typ: u64 auf u64(speicher_lesen(p + 54, 1))
+        wenn (typ != 128 und typ != 135 und typ != 136) oder speicher_lesen(p + 55, 1) != 0:
+            gib_zurück
+        setze hi: u64 auf ip6_r64(p, 22)
+        setze nullquelle: bool auf hi == 0 und ip6_r64(p, 30) == 0
+        wenn (hi >> 56) == 255 oder (u64(speicher_lesen(p + 6, 1)) & 1) != 0 oder ip6_mac_eigen(p, 6, nic) oder ip6_pruefsumme(p, n) != 0:
+            gib_zurück
+        wenn typ != 128:
+            ip6_nd_empfangen(p, nic, adr, n, typ, nullquelle)
+            gib_zurück
+        setze iid: u64 auf speicher_lesen(adr + 8, 8)
+        wenn speicher_lesen(adr + 16, 8) == IP6_AKTIV und nicht nullquelle und ip6_r64(p, 38) == IP6_LL und ip6_r64(p, 46) == iid und ip6_mac_eigen(p, 0, nic):
+            ip6_echo_antwort(p, nic, iid, n)

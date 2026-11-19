@@ -37,6 +37,14 @@
       "proof": "P7-T11: ARP und ICMP-Echo im Standard-IPv4-Profil, Standalone-IR und Linux-Host-Ping ueber QEMU-TAP"
     },
     {
+      "path": "beispiele/kernel/netz_ipv6.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11 IPv6, Standalone-IR im x86_64-Bare-Profil"
+    },
+    {
       "path": "beispiele/kernel/netz_ssh.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],
@@ -71,6 +79,14 @@
       "context": "source-relative",
       "status": "ir_only_observed_success",
       "proof": "P7-T27: nativer NVMe-Pollingtreiber, getrennte Admin-/Read-Whitelist, PFA/MMIO und gemeinsamer GPT-Leser; Standalone-IR und readonly QEMU-NVMe-Trace-Gates"
+    },
+    {
+      "path": "beispiele/kernel/pci_ecam.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11 PCI ECAM nach EBS, Standalone-IR im x86_64-Bare-Profil"
     },
     {
       "path": "beispiele/kernel/speicher_gpt.moos",

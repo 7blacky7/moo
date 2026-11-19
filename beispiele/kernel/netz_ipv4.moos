@@ -2,6 +2,7 @@
 # RFC 826, Packet Reception; RFC 791 §3.1; RFC 792, Echo; RFC 768.
 aus "../uefi/netz_geraet" importiere nt_r16, nt_r32, nt_b8, nt_b16, nt_b32, nt_kopiere, nt_mac, nt_senden, nt_empfangen, nt_pruefsumme, nt_pseudo_pruefsumme, nt_ipv4_antwortkopf, nt_ether_antwort
 aus "netz_tcp" importiere netz_tcp_empfangen
+aus "netz_ipv6" importiere netz_ipv6_empfangen
 
 @nativ
 funktion netz_eigene_mac(p: u64, nic: u64) -> bool:
@@ -117,8 +118,11 @@ funktion netz_ipv4_poll(nic: u64, p: u64, ip: u64, dienste: bool, echo_aktiv: bo
             setze laenge: u64 auf nt_empfangen(nic, p)
             wenn laenge == 0:
                 gib_zurück
-            setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip, dienste, echo_aktiv, ssh_aktiv)
-            wenn antwort != 0:
-                nt_ether_antwort(p, nic)
-                nt_senden(nic, p, antwort)
+            wenn laenge >= 14 und nt_r16(p, 12) == 0x86DD:
+                netz_ipv6_empfangen(p, laenge, nic)
+            sonst wenn ip != 0:
+                setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip, dienste, echo_aktiv, ssh_aktiv)
+                wenn antwort != 0:
+                    nt_ether_antwort(p, nic)
+                    nt_senden(nic, p, antwort)
             setze runde auf runde + 1

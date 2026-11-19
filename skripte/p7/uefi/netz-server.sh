@@ -76,7 +76,44 @@ KLIENT="${MOO_NETZ_KLIENT:-${netz}2}"
 hinzugefuegt=0
 nm_aus=0
 fw_regel=0
+v6_zurueck=0
+v6_adresse=
+v6_sysctl="net/ipv6/conf/$IFACE/disable_ipv6"
+ipv6_vorbereiten() {
+  local vorher mac
+  vorher="$(sysctl -n "$v6_sysctl")" || return 1
+  echo "MOO-NETZ IPV6 START $IFACE disable_ipv6=$vorher"
+  if [ "$vorher" = 1 ]; then
+    v6_zurueck=1
+    sudo -n sysctl -q -w "$v6_sysctl=0" || return 1
+  fi
+  if ip -6 -o addr show dev "$IFACE" scope link | grep -vE ' (tentative|dadfailed)( |$)' | grep -q ' inet6 '; then
+    return 0
+  fi
+  mac="$(ip -o link show dev "$IFACE" | awk '{ for (i=1; i<NF; i++) if ($i=="link/ether") { print $(i+1); exit } }')" || return 1
+  [[ "$mac" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]] || return 1
+  printf -v v6_adresse 'fe80::%02x%s:%sff:fe%s:%s%s/64' "$((16#${mac:0:2} ^ 2))" \
+    "${mac:3:2}" "${mac:6:2}" "${mac:9:2}" "${mac:12:2}" "${mac:15:2}"
+  if ! sudo -n ip -6 addr add "$v6_adresse" dev "$IFACE" nodad; then
+    v6_adresse=
+    return 1
+  fi
+}
 aufraeumen() {
+  local v6_rc=0
+  if [ -n "$v6_adresse" ]; then
+    sudo -n ip -6 addr del "$v6_adresse" dev "$IFACE" || v6_rc=1
+  fi
+  if [ "$v6_zurueck" = 1 ]; then
+    sudo -n sysctl -q -w "$v6_sysctl=1" || v6_rc=1
+  fi
+  if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
+    if [ "$v6_rc" = 0 ]; then
+      echo "MOO-NETZ IPV6 ZURUECK $IFACE"
+    else
+      echo "MOO-NETZ IPV6 FEHLER bei Wiederherstellung auf $IFACE" >&2
+    fi
+  fi
   if [ "$fw_regel" = 1 ]; then
     sudo -n iptables -D INPUT -i "$IFACE" -s "$KLIENT" -d "$IP" -p udp -j ACCEPT || true
   fi
@@ -97,6 +134,10 @@ fi
 if ! ip -4 addr show dev "$IFACE" | grep -q "inet $IP/"; then
   sudo -n ip addr add "$ADR" dev "$IFACE"
   hinzugefuegt=1
+fi
+if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
+  ipv6_vorbereiten || { echo "IPv6 auf $IFACE konnte nicht vorbereitet werden" >&2; exit 2; }
+  ip -6 -o addr show dev "$IFACE" scope link
 fi
 # Host-Firewall (UFW) verwirft ankommendes TFTP: Laufzeit-Regel nur fuer den
 # Lader ($KLIENT -> $IP, UDP, $IFACE); die UFW-Regeldateien bleiben unveraendert.
