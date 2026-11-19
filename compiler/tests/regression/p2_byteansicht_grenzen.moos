@@ -1,0 +1,189 @@
+# P2-T67: unabhaengige Grenz-/Endianproben; vom Core-Runner auf allen Hosts ausgefuehrt.
+@nativ
+statisch QA_BYTES: [u8; 9] auf 0
+
+@nativ
+funktion qa_runde16(versatz: u64) -> u64:
+    setze daten: [u8; 9] auf [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(daten)
+        byte_schreiben_le16(b, versatz, u16(0x0102))
+        wenn byte_lesen_le16(b, versatz) == u16(0x0102):
+            wenn byte_lesen_be16(b, versatz) == u16(0x0201):
+                setze ergebnis auf ergebnis + 1
+        byte_schreiben_be16(b, versatz, u16(0x0102))
+        wenn byte_lesen_be16(b, versatz) == u16(0x0102):
+            wenn byte_lesen_le16(b, versatz) == u16(0x0201):
+                setze ergebnis auf ergebnis + 1
+    gib_zurück ergebnis
+
+@nativ
+funktion qa_runde32(versatz: u64) -> u64:
+    setze daten: [u8; 9] auf [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(daten)
+        byte_schreiben_le32(b, versatz, u32(0x01020304))
+        wenn byte_lesen_le32(b, versatz) == u32(0x01020304):
+            wenn byte_lesen_be32(b, versatz) == u32(0x04030201):
+                setze ergebnis auf ergebnis + 1
+        byte_schreiben_be32(b, versatz, u32(0x01020304))
+        wenn byte_lesen_be32(b, versatz) == u32(0x01020304):
+            wenn byte_lesen_le32(b, versatz) == u32(0x04030201):
+                setze ergebnis auf ergebnis + 1
+    gib_zurück ergebnis
+
+@nativ
+funktion qa_runde64(versatz: u64) -> u64:
+    setze daten: [u8; 9] auf [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(daten)
+        byte_schreiben_le64(b, versatz, u64(0x0001020304050607))
+        wenn byte_lesen_le64(b, versatz) == u64(0x0001020304050607):
+            wenn byte_lesen_be64(b, versatz) == u64(0x0706050403020100):
+                setze ergebnis auf ergebnis + 1
+        byte_schreiben_be64(b, versatz, u64(0x0001020304050607))
+        wenn byte_lesen_be64(b, versatz) == u64(0x0001020304050607):
+            wenn byte_lesen_le64(b, versatz) == u64(0x0706050403020100):
+                setze ergebnis auf ergebnis + 1
+    gib_zurück ergebnis
+
+@nativ
+funktion qa_start() -> u64:
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(QA_BYTES)
+        byte_schreiben_be64(b, 1, u64(0x0001020304050607))
+    gib_zurück 0
+
+@nativ
+funktion qa_stand() -> u64:
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(QA_BYTES)
+        wenn byte_lesen_be64(b, 1) == u64(0x0001020304050607):
+            wenn b[0] == u8(0):
+                setze ergebnis auf 1
+    gib_zurück ergebnis
+
+@nativ
+funktion qa_grenze(breite: u64, versatz: u64, schreiben: u64) -> u64:
+    setze ergebnis: u64 auf 0
+    unsicher:
+        setze b: puffer[u8] auf byteansicht(QA_BYTES)
+        wenn breite == 2:
+            wenn schreiben == 1:
+                byte_schreiben_le16(b, versatz, u16(0))
+            sonst:
+                setze ergebnis auf als(u64, byte_lesen_be16(b, versatz))
+        wenn breite == 4:
+            wenn schreiben == 1:
+                byte_schreiben_le32(b, versatz, u32(0))
+            sonst:
+                setze ergebnis auf als(u64, byte_lesen_be32(b, versatz))
+        wenn breite == 8:
+            wenn schreiben == 1:
+                byte_schreiben_le64(b, versatz, u64(0))
+            sonst:
+                setze ergebnis auf als(u64, byte_lesen_be64(b, versatz))
+    gib_zurück ergebnis
+
+zeige qa_runde16(1)
+zeige qa_runde16(7)
+zeige qa_runde32(1)
+zeige qa_runde32(5)
+zeige qa_runde64(0)
+zeige qa_runde64(1)
+zeige qa_start()
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 8, 0)
+fange fehler:
+    zeige "GRENZE-2-8-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 8, 1)
+fange fehler:
+    zeige "GRENZE-2-8-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 9, 0)
+fange fehler:
+    zeige "GRENZE-2-9-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 9, 1)
+fange fehler:
+    zeige "GRENZE-2-9-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 18446744073709551615, 0)
+fange fehler:
+    zeige "GRENZE-2-18446744073709551615-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(2, 18446744073709551615, 1)
+fange fehler:
+    zeige "GRENZE-2-18446744073709551615-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 6, 0)
+fange fehler:
+    zeige "GRENZE-4-6-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 6, 1)
+fange fehler:
+    zeige "GRENZE-4-6-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 9, 0)
+fange fehler:
+    zeige "GRENZE-4-9-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 9, 1)
+fange fehler:
+    zeige "GRENZE-4-9-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 18446744073709551615, 0)
+fange fehler:
+    zeige "GRENZE-4-18446744073709551615-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(4, 18446744073709551615, 1)
+fange fehler:
+    zeige "GRENZE-4-18446744073709551615-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 2, 0)
+fange fehler:
+    zeige "GRENZE-8-2-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 2, 1)
+fange fehler:
+    zeige "GRENZE-8-2-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 9, 0)
+fange fehler:
+    zeige "GRENZE-8-9-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 9, 1)
+fange fehler:
+    zeige "GRENZE-8-9-1"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 18446744073709551615, 0)
+fange fehler:
+    zeige "GRENZE-8-18446744073709551615-0"
+zeige qa_stand()
+versuche:
+    zeige qa_grenze(8, 18446744073709551615, 1)
+fange fehler:
+    zeige "GRENZE-8-18446744073709551615-1"
+zeige qa_stand()

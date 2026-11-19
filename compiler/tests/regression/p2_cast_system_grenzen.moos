@@ -1,0 +1,55 @@
+# P2-T67: gleicher u8-Zieltyp; Systemkonstruktor schneidet ab, als prueft.
+@nativ
+funktion qa_kurz(wert: i64) -> u8:
+    setze ergebnis: u8 auf 0
+    unsicher:
+        setze ergebnis auf u8(wert)
+    gib_zurück ergebnis
+
+@nativ
+funktion qa_geprueft(wert: i64) -> u8:
+    setze ergebnis: u8 auf 0
+    unsicher:
+        setze ergebnis auf als(u8, wert)
+    gib_zurück ergebnis
+
+zeige qa_kurz(-257)
+versuche:
+    zeige qa_geprueft(-257)
+fange fehler:
+    zeige "BEREICH--257"
+zeige qa_kurz(-256)
+versuche:
+    zeige qa_geprueft(-256)
+fange fehler:
+    zeige "BEREICH--256"
+zeige qa_kurz(-1)
+versuche:
+    zeige qa_geprueft(-1)
+fange fehler:
+    zeige "BEREICH--1"
+zeige qa_kurz(0)
+versuche:
+    zeige qa_geprueft(0)
+fange fehler:
+    zeige "BEREICH-0"
+zeige qa_kurz(255)
+versuche:
+    zeige qa_geprueft(255)
+fange fehler:
+    zeige "BEREICH-255"
+zeige qa_kurz(256)
+versuche:
+    zeige qa_geprueft(256)
+fange fehler:
+    zeige "BEREICH-256"
+zeige qa_kurz(511)
+versuche:
+    zeige qa_geprueft(511)
+fange fehler:
+    zeige "BEREICH-511"
+zeige qa_kurz(65536)
+versuche:
+    zeige qa_geprueft(65536)
+fange fehler:
+    zeige "BEREICH-65536"
