@@ -38,7 +38,8 @@ while (($#)); do
     --it8613-messreihe) DIAGNOSE=0; MODUS=6; SEKUNDEN=70; shift;;
     --watchdog-test) DIAGNOSE=0; MODUS=7; SEKUNDEN=45; shift;;
     --ping) PING_IP=192.168.77.2; shift;;
-    --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=1; shift;;
+    --udp-tcp) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); shift;;
+    --tcp-echo) PING_IP=192.168.77.2; TRANSPORT=3; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -61,7 +62,8 @@ while (($#)); do
       'Normaler Lauf: 90s Kern mit 10s IT8613-Safety. --watchdog-test: 10s IT8613, 45s Softwarefrist.' \
       '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
       '--udp-tcp: ARP/Ping plus UDP-Echo an Port 7 und HTTP an TCP-Port 8080 pruefen.' \
-      '--trocken --ping oder --trocken --udp-tcp: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
+      '--tcp-echo: Zusaetzlich zwei TCP-Echo-Verbindungen an Port 2222 mit 1 MiB und 64 KiB pruefen.' \
+      '--trocken mit Netzoption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
@@ -99,7 +101,7 @@ if ((MODUS==6 && SEKUNDEN!=70)); then
   exit 2
 fi
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
-[[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo '--ping und --udp-tcp brauchen den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
+[[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo 'Netzoptionen brauchen den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
 kern_kopie() {
   uv run --no-project --offline python - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" <<'PY'
@@ -109,7 +111,7 @@ dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
 seconds, watchdog, mode = map(int, sys.argv[3:6])
 ping_ip = sys.argv[6]
 unveraendert = sys.argv[7] == "1"
-transport = sys.argv[8] == "1"
+transport = int(sys.argv[8])
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -149,9 +151,13 @@ if ping_ip:
     leer = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter IPv4-Vertrag")
     struct.pack_into("<Q", data, pos + 8, int(ipaddress.IPv4Address(ping_ip)))
-if transport:
+if transport & 1:
     leer = struct.pack("<2Q", 0x474643344C4F4F4D, 0)
     pos = vertrag(leer, len(leer), "Deaktivierter UDP-/TCP-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, 1)
+if transport & 2:
+    leer = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter TCP-Echo-Vertrag")
     struct.pack_into("<Q", data, pos + 8, 1)
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
@@ -164,8 +170,10 @@ else:
     print(f"Kern-Kopie {dst}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
 if ping_ip:
     print(f"IPv4 der Kern-Kopie: {ping_ip}")
-if transport:
+if transport & 1:
     print("UDP 7 und TCP 8080 der Kern-Kopie aktiviert")
+if transport & 2:
+    print("TCP-Echo 2222 der Kern-Kopie aktiviert")
 PY
 }
 loader_kopie() {
@@ -259,6 +267,9 @@ if ((TROCKEN)); then
   fi
   if ((TRANSPORT)); then
     printf '%s\n' '   UDP-Echo und HTTP vom Linux-PC, Protokolle udp.log, tcp.log, netz.pcap.'
+  fi
+  if ((TRANSPORT & 2)); then
+    printf '%s\n' '   Zwei TCP-Echo-Streams vom Linux-PC, Protokoll tcp-echo.log und Port 2222 in netz.pcap.'
   fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
@@ -480,6 +491,7 @@ printf 'Laufordner: %s\n' "$OUT"
 capture_filter='arp or udp'
 [[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
 ((TRANSPORT==0)) || capture_filter='arp or udp or icmp or (tcp port 8080)'
+(( (TRANSPORT & 2) == 0 )) || capture_filter+=' or (tcp port 2222)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
 MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
@@ -524,10 +536,12 @@ while ((SECONDS<bis)); do
       ping_belegt=1
     fi
     cat "$OUT/ping.log"
+    tcp_echo=$(( (TRANSPORT >> 1) & 1 ))
     if ((TRANSPORT)) && grep -aFq 'MOO-KERNEL NETZ UDP TCP BEREIT 0000000000000001' "$OUT/netz.log" &&
+       { ((tcp_echo==0)) || grep -aFq 'MOO-KERNEL NETZ TCP ECHO BEREIT 0000000000000001' "$OUT/netz.log"; } &&
        ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
       host_adr="${MOO_NETZ_ADR:-192.168.77.1/24}"
-      if bash "$ROOT/skripte/p7/transport-probe.sh" "$PING_IP" "$IFACE" "${host_adr%/*}" "$OUT" &&
+      if bash "$ROOT/skripte/p7/transport-probe.sh" "$PING_IP" "$IFACE" "${host_adr%/*}" "$OUT" "$tcp_echo" &&
          ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
         transport_belegt=1
       fi
@@ -576,7 +590,7 @@ while ((SECONDS<bis)); do
           echo 'ARP und Ping im Kernfenster belegt; RTT in ping.log'
         fi
         if ((TRANSPORT)); then
-          ((transport_belegt)) || { echo 'FEHLER: UDP-Echo und HTTP im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
+          ((transport_belegt)) || { echo 'FEHLER: Angeforderte Transportproben im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
           echo 'UDP-Echo und TCP/HTTP im Kernfenster belegt'
         fi
         exit 0

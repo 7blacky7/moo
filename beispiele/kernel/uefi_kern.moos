@@ -1783,6 +1783,11 @@ statisch NETZ_IPV4_KONFIG: [u64; 3] auf [0x00345650494F4F4D, 0, 0]
 # "MOOL4CFG" als eigener Vertrag. Alte IPv4-Profile bleiben verwendbar.
 @nativ
 statisch NETZ_TRANSPORT_KONFIG: [u64; 2] auf [0x474643344C4F4F4D, 0]
+# "MOOECHO": kleiner TCP-Testdienst nur in ausdruecklichen Laufprofilen.
+@nativ
+statisch NETZ_ECHO_KONFIG: [u64; 2] auf [0x004F4843454F4F4D, 0]
+@nativ
+konstante T_NETZ_ECHO: [u8; _] auf "MOO-KERNEL NETZ TCP ECHO BEREIT "
 @nativ
 konstante T_NETZ_TRANSPORT: [u8; _] auf "MOO-KERNEL NETZ UDP TCP BEREIT "
 @nativ
@@ -1904,12 +1909,18 @@ funktion netz_transport_aktiv() -> bool:
         gib_zurück speicher_lesen(adresse_von(NETZ_TRANSPORT_KONFIG) + 8, 8) == 1
 
 @nativ
+funktion netz_echo_aktiv() -> bool:
+    unsicher:
+        gib_zurück speicher_lesen(adresse_von(NETZ_ECHO_KONFIG) + 8, 8) == 1
+
+@nativ
 funktion netz_poll(tsc_us: u64) -> void:
     unsicher:
         setze ip: u64 auf netz_ipv4_adresse()
         wenn ip == 0:
             gib_zurück
         setze dienste: bool auf netz_transport_aktiv()
+        setze echo_aktiv: bool auf dienste und netz_echo_aktiv()
         wenn dienste:
             netz_tcp_wartung(tsc_us)
         setze ports: u64 auf speicher_lesen(adresse_von(NETZ), 8)
@@ -1917,7 +1928,7 @@ funktion netz_poll(tsc_us: u64) -> void:
         solange i < ports:
             setze nic: u64 auf speicher_lesen(adresse_von(NETZ_PORTS) + i * 8, 8)
             wenn nt_link(nic):
-                netz_ipv4_poll(nic, adresse_von(NETZ_EMPFANG), ip, dienste)
+                netz_ipv4_poll(nic, adresse_von(NETZ_EMPFANG), ip, dienste, echo_aktiv)
             setze i auf i + 1
 
 @nativ
@@ -2441,6 +2452,8 @@ funktion kern_haupt(bi: u64) -> void:
         wenn netz_ipv4_adresse() != 0 und speicher_lesen(adresse_von(NETZ), 8) != 0:
             wenn netz_transport_aktiv():
                 meldung(adresse_von(T_NETZ_TRANSPORT), 1)
+                wenn netz_echo_aktiv():
+                    meldung(adresse_von(T_NETZ_ECHO), 1)
             meldung(adresse_von(T_NETZ_IPV4), netz_ipv4_adresse())
         text(adresse_von(T_OK))
         # Eingabe, Netz-FIFO und Testreset bleiben auch bei fehlenden Geraeten aktiv.

@@ -46,6 +46,7 @@ BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
 NETZ_PING="${MOO_UEFI_PING:-0}"
 NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
+NETZ_TCP_ECHO="${MOO_UEFI_TCP_ECHO:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
 elif [ "$PRUEFUNG" = "lader" ]; then
@@ -95,6 +96,12 @@ case "$NETZ_TRANSPORT" in
     command -v curl >/dev/null || fail "TRANSPORT braucht curl"
     ;;
   *) fail "TRANSPORT: 0 oder 1" ;;
+esac
+
+case "$NETZ_TCP_ECHO" in
+  0) ;;
+  1) [ "$NETZ_TRANSPORT" = 1 ] || fail "TCP_ECHO braucht TRANSPORT=1" ;;
+  *) fail "TCP_ECHO: 0 oder 1" ;;
 esac
 
 case "$NETZ_PING" in
@@ -434,7 +441,7 @@ PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
   fi
   if [ "$NETZ_PING" != 0 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" "$NETZ_TRANSPORT" "$NETZ_TCP_ECHO" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
@@ -444,6 +451,10 @@ struct.pack_into("<2Q", elf, elf.index(vertrag) + 8, 0xc0000202, int(sys.argv[2]
 if sys.argv[3] == "1":
     vertrag = struct.pack("<2Q", 0x474643344C4F4F4D, 0)
     assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter UDP-/TCP-Vertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
+if sys.argv[4] == "1":
+    vertrag = struct.pack("<2Q", 0x004F4843454F4F4D, 0)
+    assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter TCP-Echo-Vertrag fehlt"
     struct.pack_into("<Q", elf, elf.index(vertrag) + 8, 1)
 path.write_bytes(elf)
 PY
@@ -550,7 +561,7 @@ PY
   fi
   TRANSPORT_OK=0
   if [ "$NETZ_TRANSPORT" = 1 ] && [ "$PING_OK" = 1 ] &&
-     bash "$ROOT/skripte/p7/transport-probe.sh" 192.0.2.2 moo-ping 192.0.2.1 "$OUT" >"$OUT/transport.log" 2>&1; then
+     bash "$ROOT/skripte/p7/transport-probe.sh" 192.0.2.2 moo-ping 192.0.2.1 "$OUT" "$NETZ_TCP_ECHO" >"$OUT/transport.log" 2>&1; then
     # Eine zweite Verbindung nach FIN, CRLF-CRLF ueber zwei Segmente verteilt.
     uv run --no-project --offline python - >"$OUT/tcp-segmente.log" 2>&1 <<'PY'
 import socket, time
@@ -567,6 +578,10 @@ with socket.create_connection(("192.0.2.2", 8080), timeout=4, source_address=("1
     print("HTTP-200-Antwort und EOF nach segmentierter Anfrage")
 PY
     [ "$?" -ne 0 ] || TRANSPORT_OK=1
+  fi
+  TCP_FENSTER_OK=0
+  if [ "$NETZ_TCP_ECHO" = 1 ] && [ "$TRANSPORT_OK" = 1 ]; then
+    uv run --no-project --offline python "$ROOT/skripte/p7/tcp-fenster-qemu.py" >"$OUT/tcp-fenster.log" 2>&1 && TCP_FENSTER_OK=1
   fi
   # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
   # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
@@ -897,6 +912,11 @@ PY
       [ ! -f "$OUT/$logfile" ] || sed 's/^/      | /' "$OUT/$logfile"
     done
     [ "$TRANSPORT_OK" -eq 1 ] || fail "UDP-/TCP-Probe ueber $NETZ_PING fehlgeschlagen"
+  fi
+  if [ "$NETZ_TCP_ECHO" = 1 ]; then
+    grep -aqF 'MOO-KERNEL NETZ TCP ECHO BEREIT 0000000000000001' "$OUT/serial.log" || fail "TCP-Echo-Marker fehlt"
+    [ ! -f "$OUT/tcp-fenster.log" ] || sed 's/^/      | /' "$OUT/tcp-fenster.log"
+    [ "$TCP_FENSTER_OK" -eq 1 ] || fail "TCP-Fenster-/Wiederholungsprobe ueber $NETZ_PING fehlgeschlagen"
   fi
   [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log, Ping- oder Transport-pcap unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.

@@ -84,7 +84,7 @@ funktion netz_udp_echo(p: u64, ip_nutz: u64, ip: u64, quelle: u64) -> u64:
         gib_zurück 34 + udp_laenge
 
 @nativ
-funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64, dienste: bool) -> u64:
+funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64, dienste: bool, echo_aktiv: bool) -> u64:
     unsicher:
         wenn laenge < 14 oder laenge > 1514 oder (speicher_lesen(p + 6, 1) & 1) != 0:
             gib_zurück 0
@@ -105,19 +105,19 @@ funktion netz_ipv4_rahmen(p: u64, laenge: u64, nic: u64, ip: u64, dienste: bool)
         wenn dienste und protokoll == 17:
             gib_zurück netz_udp_echo(p, nutz, ip, quelle)
         wenn dienste und protokoll == 6:
-            netz_tcp_empfangen(p, nutz, nic, ip, quelle)
+            netz_tcp_empfangen(p, nutz, nic, ip, quelle, echo_aktiv)
         gib_zurück 0
 
 # Acht Rahmen je Port begrenzen die Zeit bis zum naechsten Poller/Watchdog.
 @nativ
-funktion netz_ipv4_poll(nic: u64, p: u64, ip: u64, dienste: bool) -> void:
+funktion netz_ipv4_poll(nic: u64, p: u64, ip: u64, dienste: bool, echo_aktiv: bool) -> void:
     unsicher:
         setze runde: u64 auf 0
         solange runde < 8:
             setze laenge: u64 auf nt_empfangen(nic, p)
             wenn laenge == 0:
                 gib_zurück
-            setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip, dienste)
+            setze antwort: u64 auf netz_ipv4_rahmen(p, laenge, nic, ip, dienste, echo_aktiv)
             wenn antwort != 0:
                 nt_ether_antwort(p, nic)
                 nt_senden(nic, p, antwort)

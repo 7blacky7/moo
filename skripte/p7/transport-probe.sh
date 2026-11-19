@@ -5,6 +5,7 @@ ziel="$1"
 interface="$2"
 quelle="$3"
 ausgabe="$4"
+echo_probe="${5:-0}"
 mkdir -p -- "$ausgabe"
 fehler=0
 if ! uv run --no-project --offline python - "$ziel" "$quelle" "$ausgabe" >"$ausgabe/udp.log" 2>&1 <<'PY'
@@ -44,4 +45,10 @@ else
   printf '%s\n' 'TCP/8080 HTTP-Antwort fehlt oder weicht ab' >&2
 fi
 cat "$ausgabe/tcp.log"
+if [[ "$echo_probe" == 1 ]]; then
+  if ! uv run --no-project --offline python "$(dirname -- "$0")/tcp-echo-probe.py" "$ziel" "$quelle" >"$ausgabe/tcp-echo.log" 2>&1; then
+    fehler=1
+  fi
+  cat "$ausgabe/tcp-echo.log"
+fi
 exit "$fehler"
