@@ -1,0 +1,384 @@
+# P7-T11 Stufe 1: Momentaufnahme bekannter BAR0-Register.
+# Referenz Linux v6.12 igc: igc_hw.h:30, igc_regs.h:8-12,114-115,
+# igc_defines.h:114,187,223-230 und igc_nvm.c:133-152.
+# Der passive Abschnitt laesst leseloeschende Register und Sperren aus.
+# PHY-Abschnitt: Freigabe p011-bootloader #38877, nur ID1/2 mit MDIC OP_READ.
+aus "../uefi/hardware_pci" importiere takt, nt_mmio_lese32, nt_mmio_schreibe32
+aus "../uefi/netz_geraet" importiere pci_lese32, nt_bar
+
+@nativ
+konstante I226_PCI_ID: u64 auf 0x125C8086
+# QEMU igb (82576) prueft die gemeinsamen Register in einem privaten Profil.
+@nativ
+konstante IGB_PCI_ID: u64 auf 0x10C98086
+
+@nativ
+konstante IG_T_START: [u8; _] auf "MOO-KERNEL I226 PORT START "
+@nativ
+konstante IG_T_ENDE: [u8; _] auf "MOO-KERNEL I226 PORT ENDE "
+@nativ
+konstante IG_T_PORTS: [u8; _] auf "MOO-KERNEL I226 PORTS "
+@nativ
+konstante IG_T_ID: [u8; _] auf "MOO-KERNEL I226 PCI ID "
+@nativ
+konstante IG_T_COMMAND: [u8; _] auf "MOO-KERNEL I226 PCI COMMAND "
+@nativ
+konstante IG_T_BAR: [u8; _] auf "MOO-KERNEL I226 BAR0 "
+@nativ
+konstante IG_T_FEHLER: [u8; _] auf "MOO-KERNEL I226 MMIO FEHLER "
+@nativ
+konstante IG_T_CTRL: [u8; _] auf "MOO-KERNEL I226 CTRL "
+@nativ
+konstante IG_T_STATUS: [u8; _] auf "MOO-KERNEL I226 STATUS "
+@nativ
+konstante IG_T_EECD: [u8; _] auf "MOO-KERNEL I226 EECD "
+@nativ
+konstante IG_T_CTRL_EXT: [u8; _] auf "MOO-KERNEL I226 CTRL EXT "
+@nativ
+konstante IG_T_MDIC: [u8; _] auf "MOO-KERNEL I226 MDIC SNAPSHOT "
+@nativ
+konstante IG_T_RAL: [u8; _] auf "MOO-KERNEL I226 RAL0 "
+@nativ
+konstante IG_T_RAH: [u8; _] auf "MOO-KERNEL I226 RAH0 "
+@nativ
+konstante IG_T_AUTOREAD: [u8; _] auf "MOO-KERNEL I226 NVM AUTO READ "
+@nativ
+konstante IG_T_MAC_VALID: [u8; _] auf "MOO-KERNEL I226 RAR0 MAC GUELTIG "
+@nativ
+konstante IG_T_MAC: [u8; _] auf "MOO-KERNEL I226 RAR0 MAC "
+@nativ
+konstante IG_T_LINK: [u8; _] auf "MOO-KERNEL I226 LINK "
+@nativ
+konstante IG_T_SPEED: [u8; _] auf "MOO-KERNEL I226 SPEED MBIT "
+@nativ
+konstante IG_T_DUPLEX: [u8; _] auf "MOO-KERNEL I226 VOLLDUPLEX "
+@nativ
+konstante IG_T_PHY_START: [u8; _] auf "MOO-KERNEL I226 PHY PORT START "
+@nativ
+konstante IG_T_PHY_ENDE: [u8; _] auf "MOO-KERNEL I226 PHY PORT ENDE "
+@nativ
+konstante IG_T_PHY_PORTS: [u8; _] auf "MOO-KERNEL I226 PHY PORTS "
+@nativ
+konstante IG_T_PHY_ADRESSE: [u8; _] auf "MOO-KERNEL I226 PHY ADRESSE "
+@nativ
+konstante IG_T_PHY_REG: [u8; _] auf "MOO-KERNEL I226 PHY REG "
+@nativ
+konstante IG_T_PHY_FEHLER: [u8; _] auf "MOO-KERNEL I226 PHY FEHLER "
+@nativ
+konstante IG_T_MDIC_CMD: [u8; _] auf "MOO-KERNEL I226 MDIC READ CMD "
+@nativ
+konstante IG_T_MDIC_RESULT: [u8; _] auf "MOO-KERNEL I226 MDIC ANTWORT "
+@nativ
+konstante IG_T_MDIC_READY: [u8; _] auf "MOO-KERNEL I226 MDIC READY "
+@nativ
+konstante IG_T_MDIC_ERROR: [u8; _] auf "MOO-KERNEL I226 MDIC ERROR "
+@nativ
+konstante IG_T_PHY_SWFW: [u8; _] auf "MOO-KERNEL I226 PHY SWFW NACH FREIGABE "
+@nativ
+konstante IG_T_PHY_ID1: [u8; _] auf "MOO-KERNEL I226 PHY ID1 "
+@nativ
+konstante IG_T_PHY_ID2: [u8; _] auf "MOO-KERNEL I226 PHY ID2 "
+@nativ
+konstante IG_T_PHY_ID: [u8; _] auf "MOO-KERNEL I226 PHY ID ROH "
+@nativ
+konstante IG_T_PHY_REV: [u8; _] auf "MOO-KERNEL I226 PHY REV "
+@nativ
+konstante IG_T_PHY_ID_EMPFANGEN: [u8; _] auf "MOO-KERNEL I226 PHY ID EMPFANGEN "
+
+@nativ
+konstante IG_REG_SWSM: u64 auf 0x05B50
+@nativ
+konstante IG_REG_SWFW: u64 auf 0x05B5C
+@nativ
+konstante IG_REG_MDIC: u64 auf 0x0020
+@nativ
+konstante IG_PHY0_SW: u64 auf 2
+@nativ
+konstante IG_PHY0_BELEGT: u64 auf 0x00020002
+@nativ
+konstante IG_KEINE_HW_SPERRE: u64 auf 0x100000000
+@nativ
+konstante IG_PHY_SPERRE_FEHLER: u64 auf 0xFFFFFFFFFFFFFFFF
+@nativ
+konstante IG_PHY_SPERRE_BESETZT: u64 auf 0xFFFFFFFFFFFFFFFE
+@nativ
+konstante IG_PHY_SPERRE_FREIGABE: u64 auf 0xFFFFFFFFFFFFFFFD
+@nativ
+konstante IG_KEIN_PHY_WORT: u64 auf 0x10000
+
+# Linux igc_mac.c:683-706. Bit 22 unterscheidet 1G/2.5G bei Bit 7.
+@nativ
+funktion i226_status_tempo(status: u64, id: u64) -> u64:
+    wenn (status & 2) == 0:
+        gib_zurück 0
+    wenn (status & 0x80) != 0:
+        wenn id == I226_PCI_ID und (status & 0x400000) != 0:
+            gib_zurück 2500
+        gib_zurück 1000
+    wenn (status & 0x40) != 0:
+        gib_zurück 100
+    gib_zurück 10
+
+# Fehler 1 BAR0 unbrauchbar, 2 Memory Space deaktiviert, 3 Abbildung fehlt,
+# 4 STATUS antwortet mit FFFFFFFF. PCI-Command bleibt unveraendert.
+@nativ
+funktion i226_port_mmio(pci: u64, bdf: u64, id: u64, bi: u64, map: u64, log: u64) -> u64:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log)
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze command: u64 auf pci_lese32(pci, bdf, 4) & 0xFFFF
+        setze barart: u64 auf pci_lese32(pci, bdf, 0x10) & 7
+        setze bar: u64 auf nt_bar(pci, bdf)
+        ausgabe(adresse_von(IG_T_ID), id)
+        ausgabe(adresse_von(IG_T_COMMAND), command)
+        ausgabe(adresse_von(IG_T_BAR), bar)
+        wenn (barart != 0 und barart != 4) oder bar == 0 oder (bar & 0xFFF) != 0:
+            ausgabe(adresse_von(IG_T_FEHLER), 1)
+            gib_zurück 0
+        wenn (command & 2) == 0:
+            ausgabe(adresse_von(IG_T_FEHLER), 2)
+            gib_zurück 0
+        setze mmio: u64 auf abbilden(bi, bar, 0x6000)
+        wenn mmio == 0:
+            ausgabe(adresse_von(IG_T_FEHLER), 3)
+            gib_zurück 0
+        gib_zurück mmio
+
+@nativ
+funktion i226_register_lesen(mmio: u64, id: u64, log: u64) -> bool:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log)
+        setze status: u64 auf u64(nt_mmio_lese32(mmio + 0x0008))
+        ausgabe(adresse_von(IG_T_STATUS), status)
+        wenn status == 0xFFFFFFFF:
+            ausgabe(adresse_von(IG_T_FEHLER), 4)
+            gib_zurück falsch
+        setze ctrl: u64 auf u64(nt_mmio_lese32(mmio))
+        setze eecd: u64 auf u64(nt_mmio_lese32(mmio + 0x0010))
+        setze ctrl_ext: u64 auf u64(nt_mmio_lese32(mmio + 0x0018))
+        setze mdic: u64 auf u64(nt_mmio_lese32(mmio + 0x0020))
+        setze ral: u64 auf u64(nt_mmio_lese32(mmio + 0x5400))
+        setze rah: u64 auf u64(nt_mmio_lese32(mmio + 0x5404))
+        ausgabe(adresse_von(IG_T_CTRL), ctrl)
+        ausgabe(adresse_von(IG_T_EECD), eecd)
+        ausgabe(adresse_von(IG_T_CTRL_EXT), ctrl_ext)
+        ausgabe(adresse_von(IG_T_MDIC), mdic)
+        ausgabe(adresse_von(IG_T_RAL), ral)
+        ausgabe(adresse_von(IG_T_RAH), rah)
+        ausgabe(adresse_von(IG_T_AUTOREAD), u64((eecd & 0x200) != 0))
+        setze mac_le: u64 auf ral | ((rah & 0xFFFF) << 32)
+        setze gueltig: bool auf (rah & 0x80000000) != 0 und mac_le != 0 und (ral & 1) == 0
+        ausgabe(adresse_von(IG_T_MAC_VALID), u64(gueltig))
+        wenn gueltig:
+            setze i: u64 auf 0
+            setze mac: u64 auf 0
+            solange i < 6:
+                setze mac auf (mac << 8) | ((mac_le >> (i * 8)) & 255)
+                setze i auf i + 1
+            ausgabe(adresse_von(IG_T_MAC), mac)
+        ausgabe(adresse_von(IG_T_LINK), u64((status & 2) != 0))
+        ausgabe(adresse_von(IG_T_SPEED), i226_status_tempo(status, id))
+        ausgabe(adresse_von(IG_T_DUPLEX), u64((status & 3) == 3))
+        gib_zurück wahr
+
+# TSC pro us kommt aus der vorhandenen Kalibrierung des Kerns.
+@nativ
+funktion i226_warte_us(tsc_us: u64, us: u64) -> void:
+    unsicher:
+        setze start: u64 auf takt()
+        solange takt() - start < tsc_us * us:
+            assembler(ziel="x86_64", code="pause", clobber=["memory"])
+
+# SWSM-Lesen kann SMBI setzen. Hier besitzt der Aufrufer SMBI bereits.
+# STATUS synchronisiert den Abschluss ohne erneuten SWSM-Lesezugriff.
+@nativ
+funktion i226_hw_freigeben(mmio: u64, alt: u64, maske: u64) -> void:
+    unsicher:
+        setze roh: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWSM))
+        wenn roh == 0xFFFFFFFF:
+            setze roh auf alt
+        nt_mmio_schreibe32(mmio + IG_REG_SWSM, u32(roh & (0xFFFFFFFF ^ maske)))
+        nt_mmio_lese32(mmio + 0x0008)
+
+# Linux v6.12 igc_i225.c:41-99, igc_mac.c:725-734.
+# Auf beide SWSM-Bits warten, eine fremde Sperre niemals aufbrechen.
+@nativ
+funktion i226_hw_sperren(mmio: u64, tsc_us: u64) -> u64:
+    unsicher:
+        setze i: u64 auf 0
+        setze roh: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWSM))
+        solange (roh & 1) != 0 und i < 40:
+            i226_warte_us(tsc_us, 500)
+            setze roh auf u64(nt_mmio_lese32(mmio + IG_REG_SWSM))
+            setze i auf i + 1
+        wenn (roh & 1) != 0:
+            gib_zurück IG_KEINE_HW_SPERRE
+        # Das Lesen eines freien SMBI hat es fuer uns gesetzt.
+        wenn (roh & 2) != 0:
+            i226_hw_freigeben(mmio, roh, 1)
+            gib_zurück IG_KEINE_HW_SPERRE
+        setze i auf 0
+        solange i < 40:
+            nt_mmio_schreibe32(mmio + IG_REG_SWSM, u32(roh | 3))
+            setze antwort: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWSM))
+            wenn antwort != 0xFFFFFFFF und (antwort & 3) == 3:
+                gib_zurück roh
+            i226_warte_us(tsc_us, 500)
+            setze i auf i + 1
+        i226_hw_freigeben(mmio, roh, 3)
+        gib_zurück IG_KEINE_HW_SPERRE
+
+@nativ
+funktion i226_phy_freigeben(mmio: u64, vorher: u64) -> u64:
+    unsicher:
+        setze roh: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWFW))
+        wenn roh == 0xFFFFFFFF:
+            setze roh auf vorher & 0xFFFFFFFF
+        nt_mmio_schreibe32(mmio + IG_REG_SWFW, u32(roh & 0xFFFFFFFD))
+        setze frei: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWFW))
+        i226_hw_freigeben(mmio, vorher >> 32, 3)
+        gib_zurück frei
+
+# Linux v6.12 igc_i225.c:110-174 und igc_base.c:248-272.
+# Nur PHY0 belegen. Die HW-Sperre bleibt fuer den einzelnen begrenzten
+# Clause-22-Read gehalten, damit die Freigabe sie nicht erneut erwerben muss.
+@nativ
+funktion i226_phy_sperren(mmio: u64, tsc_us: u64) -> u64:
+    unsicher:
+        setze versuche: u64 auf 0
+        solange versuche < 20:
+            setze hw: u64 auf i226_hw_sperren(mmio, tsc_us)
+            wenn hw == IG_KEINE_HW_SPERRE:
+                gib_zurück IG_PHY_SPERRE_FEHLER
+            setze swfw: u64 auf u64(nt_mmio_lese32(mmio + IG_REG_SWFW))
+            wenn (swfw & IG_PHY0_BELEGT) == 0:
+                setze vorher: u64 auf (hw << 32) | swfw
+                nt_mmio_schreibe32(mmio + IG_REG_SWFW, u32(swfw | IG_PHY0_SW))
+                wenn (u64(nt_mmio_lese32(mmio + IG_REG_SWFW)) & IG_PHY0_BELEGT) == IG_PHY0_SW:
+                    gib_zurück vorher
+                wenn (i226_phy_freigeben(mmio, vorher) & IG_PHY0_SW) != 0:
+                    gib_zurück IG_PHY_SPERRE_FREIGABE
+                gib_zurück IG_PHY_SPERRE_FEHLER
+            i226_hw_freigeben(mmio, hw, 3)
+            i226_warte_us(tsc_us, 5000)
+            setze versuche auf versuche + 1
+        gib_zurück IG_PHY_SPERRE_BESETZT
+
+# Linux igc_phy.c:544-586, igc_defines.h:618-620,636-652.
+# Fehler 1 SWSM/Acquire, 2 SW/FW belegt, 3 READY-Timeout,
+# 4 MDIC.ERROR bzw. keine MMIO-Antwort, 5 Release-Readback, 6 leeres ID-Paar.
+@nativ
+funktion i226_phy_wort(mmio: u64, phy: u64, reg: u64, tsc_us: u64, log: u64) -> u64:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log)
+        ausgabe(adresse_von(IG_T_PHY_REG), reg)
+        wenn tsc_us == 0 oder phy > 1 oder (reg != 2 und reg != 3):
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 1)
+            gib_zurück IG_KEIN_PHY_WORT
+        setze vorher: u64 auf i226_phy_sperren(mmio, tsc_us)
+        wenn vorher == IG_PHY_SPERRE_FEHLER:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 1)
+            gib_zurück IG_KEIN_PHY_WORT
+        wenn vorher == IG_PHY_SPERRE_BESETZT:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 2)
+            gib_zurück IG_KEIN_PHY_WORT
+        wenn vorher == IG_PHY_SPERRE_FREIGABE:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 5)
+            gib_zurück IG_KEIN_PHY_WORT
+        setze befehl: u64 auf 0x08000000 | (phy << 21) | (reg << 16)
+        nt_mmio_schreibe32(mmio + IG_REG_MDIC, u32(befehl))
+        setze roh: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 1920 und (roh & 0x10000000) == 0:
+            i226_warte_us(tsc_us, 50)
+            setze roh auf u64(nt_mmio_lese32(mmio + IG_REG_MDIC))
+            setze i auf i + 1
+        # Gemeinsamer Abschluss fuer Erfolg, MDIC.ERROR und READY-Timeout.
+        setze frei: u64 auf i226_phy_freigeben(mmio, vorher)
+        ausgabe(adresse_von(IG_T_MDIC_CMD), befehl)
+        ausgabe(adresse_von(IG_T_MDIC_RESULT), roh)
+        ausgabe(adresse_von(IG_T_MDIC_READY), u64((roh & 0x10000000) != 0))
+        ausgabe(adresse_von(IG_T_MDIC_ERROR), u64((roh & 0x40000000) != 0))
+        ausgabe(adresse_von(IG_T_PHY_SWFW), frei)
+        wenn (frei & IG_PHY0_SW) != 0:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 5)
+            gib_zurück IG_KEIN_PHY_WORT
+        wenn (roh & 0x10000000) == 0:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 3)
+            gib_zurück IG_KEIN_PHY_WORT
+        wenn (roh & 0x40000000) != 0:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 4)
+            gib_zurück IG_KEIN_PHY_WORT
+        gib_zurück roh & 0xFFFF
+
+@nativ
+funktion i226_phy_id_lesen(mmio: u64, id: u64, tsc_us: u64, log: u64) -> bool:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log)
+        # Linux-igc verwendet am nullinitialisierten I226 hw die PHY-Adresse 0.
+        # QEMU 82576 verlangt 1 (v11.0.1 hw/net/igb_core.c:2682-2706).
+        setze phy: u64 auf 0
+        wenn id == IGB_PCI_ID:
+            setze phy auf 1
+        ausgabe(adresse_von(IG_T_PHY_ADRESSE), phy)
+        setze id1: u64 auf i226_phy_wort(mmio, phy, 2, tsc_us, log)
+        wenn id1 == IG_KEIN_PHY_WORT:
+            gib_zurück falsch
+        ausgabe(adresse_von(IG_T_PHY_ID1), id1)
+        i226_warte_us(tsc_us, 200)
+        setze id2: u64 auf i226_phy_wort(mmio, phy, 3, tsc_us, log)
+        wenn id2 == IG_KEIN_PHY_WORT:
+            gib_zurück falsch
+        ausgabe(adresse_von(IG_T_PHY_ID2), id2)
+        setze roh: u64 auf (id1 << 16) | id2
+        ausgabe(adresse_von(IG_T_PHY_ID), roh)
+        ausgabe(adresse_von(IG_T_PHY_REV), id2 & 15)
+        wenn roh == 0 oder roh == 0xFFFFFFFF:
+            ausgabe(adresse_von(IG_T_PHY_FEHLER), 6)
+            gib_zurück falsch
+        gib_zurück wahr
+
+@nativ
+funktion i226_inventar(pci: u64, ziel_id: u64, bi: u64, map: u64, log: u64, wartung: u64, tsc_us: u64, phy: bool) -> u64:
+    unsicher:
+        wenn ziel_id != I226_PCI_ID und ziel_id != IGB_PCI_ID:
+            gib_zurück 0
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log)
+        setze warte: ptr[fn[sysv64](u64) -> void] auf zeiger(wartung)
+        setze start: u64 auf adresse_von(IG_T_START)
+        setze ende: u64 auf adresse_von(IG_T_ENDE)
+        setze ports: u64 auf adresse_von(IG_T_PORTS)
+        wenn phy:
+            setze start auf adresse_von(IG_T_PHY_START)
+            setze ende auf adresse_von(IG_T_PHY_ENDE)
+            setze ports auf adresse_von(IG_T_PHY_PORTS)
+        setze bdf: u64 auf 0
+        setze gefunden: u64 auf 0
+        setze bereit: u64 auf 0
+        solange bdf < 65536:
+            setze id: u64 auf pci_lese32(pci, bdf, 0)
+            wenn (id & 0xFFFF) == 0xFFFF:
+                wenn (bdf & 7) == 0:
+                    setze bdf auf bdf + 7
+            sonst wenn id == ziel_id und (pci_lese32(pci, bdf, 8) >> 8) == 0x020000:
+                setze gefunden auf gefunden + 1
+                ausgabe(start, bdf)
+                warte(log)
+                setze mmio: u64 auf i226_port_mmio(pci, bdf, id, bi, map, log)
+                setze ok: bool auf falsch
+                wenn phy:
+                    wenn mmio != 0:
+                        wenn nt_mmio_lese32(mmio + 0x0008) == 0xFFFFFFFF:
+                            ausgabe(adresse_von(IG_T_FEHLER), 4)
+                        sonst:
+                            setze ok auf i226_phy_id_lesen(mmio, id, tsc_us, log)
+                    ausgabe(adresse_von(IG_T_PHY_ID_EMPFANGEN), u64(ok))
+                sonst wenn mmio != 0:
+                    setze ok auf i226_register_lesen(mmio, id, log)
+                wenn ok:
+                    setze bereit auf bereit + 1
+                ausgabe(ende, bdf)
+                warte(log)
+            setze bdf auf bdf + 1
+        ausgabe(ports, gefunden)
+        gib_zurück bereit

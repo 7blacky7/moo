@@ -254,6 +254,9 @@ PY
   fi
   SAMMEL="${MOO_UEFI_SAMMEL:-0}"
   case "$SAMMEL" in 0|1) ;; *) fail "SAMMEL: 0 oder 1";; esac
+  SAMMEL_IGB="${MOO_UEFI_SAMMEL_IGB:-0}"
+  case "$SAMMEL_IGB" in 0|1) ;; *) fail "SAMMEL_IGB: 0 oder 1";; esac
+  [ "$SAMMEL_IGB" != 1 ] || [ "$SAMMEL" = 1 ] || fail "SAMMEL_IGB braucht SAMMEL=1"
   # P7-T27: NVMe nur auf eigenem Image; Produktziel bleibt deaktiviert.
   NVME="${MOO_UEFI_NVME:-0}"
   case "$NVME" in 0|1|gross|4k|inventar|falsche-serie|falscher-namespace) ;; *) fail "NVME: 0, 1, gross, 4k, inventar, falsche-serie oder falscher-namespace";; esac
@@ -289,9 +292,13 @@ PY
     [ "$NVME" != falsche-serie ] || NVME_SERIE=MOONVME-READONLY-002
     printf '%s\n' pci_nvme_mmio_start_success pci_nvme_admin_cmd pci_nvme_io_cmd \
       pci_nvme_enqueue_req_completion pci_nvme_read >"$OUT/nvme-trace-events"
+    if [ "$SAMMEL_IGB" = 1 ]; then
+      printf '%s\n' igb_core_mdic_read igb_core_mdic_read_unhandled \
+        igb_core_mdic_write igb_core_mdic_write_unhandled >>"$OUT/nvme-trace-events"
+    fi
   fi
   if [ "$SAMMEL" = 1 ]; then
-    uv run --no-project python - "$OUT/KERN.ELF" <<'PY'
+    uv run --no-project python - "$OUT/KERN.ELF" "$SAMMEL_IGB" <<'PY'
 import pathlib, struct, sys
 path = pathlib.Path(sys.argv[1])
 elf = bytearray(path.read_bytes())
@@ -299,6 +306,10 @@ contract = struct.pack("<3Q", 0x4C4D4D41534F4F4D, 0, 0)
 assert elf.count(contract) == 1, "Eindeutiger Sammelvertrag fehlt"
 # Standard-ID des QEMU-NVMe-Controllers (hw/nvme/ctrl.c, nvme_realize).
 struct.pack_into("<2Q", elf, elf.index(contract) + 8, 1, 0x00101B36)
+if sys.argv[2] == "1":
+    nic = struct.pack("<2Q", 0x4F52363232494F4D, 0x125C8086)
+    assert elf.count(nic) == 1, "I226-Zielvertrag fehlt"
+    struct.pack_into("<Q", elf, elf.index(nic) + 8, 0x10C98086)
 path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
@@ -354,6 +365,11 @@ PY
       -device "nvme,id=nvme0,serial=$NVME_SERIE,addr=0xe"
       -device "nvme-ns,bus=nvme0,drive=nvmedisk,nsid=1,logical_block_size=$NVME_BLOCK,physical_block_size=$NVME_BLOCK"
       -trace "events=$OUT/nvme-trace-events,file=$OUT/nvme.trace")
+  fi
+  if [ "$SAMMEL_IGB" = 1 ]; then
+    KERN_QEMU+=(
+      -netdev user,id=igb0,restrict=on -device igb,id=igb_a,addr=0x5,netdev=igb0,mac=52:54:00:22:57:01,romfile=
+      -netdev user,id=igb1,restrict=on -device igb,id=igb_b,addr=0xa,netdev=igb1,mac=52:54:00:22:57:02,romfile=)
   fi
   timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
@@ -533,13 +549,13 @@ PY
     [ "$?" -eq 0 ] || fail "USB-MSC BOT/GPT/Serien-/Nur-Lese-Gate"
   fi
   if [ "$SAMMEL" = 1 ]; then
-    uv run --no-project python - "$OUT" "$NVME" <<'PY'
-import pathlib, re, sys
+    uv run --no-project python - "$OUT" "$NVME" "$SAMMEL_IGB" <<'PY'
+import pathlib, re, struct, sys
 out, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
 wire = (out / "net.pcap").read_bytes()
-sections = ("START", "PCI START", "PCI ENDE", "USB START", "USB ENDE",
+sections = ("START", "PCI START", "PCI ENDE", "I226 START", "I226 ENDE", "USB START", "USB ENDE",
             "USB-MSC START", "USB-MSC ENDE", "NVME START", "NVME ENDE",
-            "HID START", "HID ENDE", "ENDE")
+            "I226 PHY START", "I226 PHY ENDE", "HID START", "HID ENDE", "ENDE")
 pos = 0
 for section in sections:
     marker = ("MOO-KERNEL SAMMEL " + section + " ").encode()
@@ -549,6 +565,60 @@ for section in sections:
 for label, value in (("PCI NVME-KANDIDATEN", 1), ("NVME GPT-PROFIL", int(mode != "inventar")),
                      ("USB ENDE", 1), ("USB-MSC ENDE", 1), ("NVME ENDE", 1), ("HID ENDE", 1)):
     assert ("MOO-KERNEL SAMMEL %s %016X" % (label, value)).encode() in wire, label
+igb = sys.argv[3] == "1"
+expected_ports = {0x28: (0x525400225701, 0), 0x50: (0x525400225702, 0)} if igb else {}
+diag_start = wire.index(b"MOO-KERNEL SAMMEL I226 START ")
+diag_end = wire.index(b"MOO-KERNEL SAMMEL I226 ENDE ", diag_start)
+diag = wire[diag_start:diag_end]
+ports = list(re.finditer(rb"MOO-KERNEL I226 PORT START ([0-9A-F]{16})", diag))
+assert [int(port[1], 16) for port in ports] == list(expected_ports)
+assert ("MOO-KERNEL I226 PORTS %016X" % len(ports)).encode() in diag
+assert ("MOO-KERNEL SAMMEL I226 ENDE %016X" % len(ports)).encode() in wire
+for port in ports:
+    bdf = int(port[1], 16)
+    end = diag.index(b"MOO-KERNEL I226 PORT ENDE " + port[1], port.end())
+    values = {label.decode(): int(value, 16) for label, value in
+              re.findall(rb"MOO-KERNEL I226 ([A-Z0-9 ]+?) ([0-9A-F]{16})", diag[port.end():end])}
+    mac, link = expected_ports[bdf]
+    assert values["PCI ID"] == 0x10C98086 and values["PCI COMMAND"] & 2, (bdf, values)
+    assert values["BAR0"] != 0 and "MMIO FEHLER" not in values, (bdf, values)
+    assert values["LINK"] == link == bool(values["STATUS"] & 2), values
+    assert values["SPEED MBIT"] == (1000 if link else 0), values
+    assert values["NVM AUTO READ"] == bool(values["EECD"] & 0x200), values
+    raw = struct.pack("<IH", values["RAL0"], values["RAH0"] & 0xFFFF)
+    assert values["RAR0 MAC GUELTIG"] == 1 and values["RAH0"] & 0x80000000, values
+    assert values["RAR0 MAC"] == mac == int.from_bytes(raw, "big"), values
+
+phy_start = wire.index(b"MOO-KERNEL SAMMEL I226 PHY START ")
+phy_end = wire.index(b"MOO-KERNEL SAMMEL I226 PHY ENDE ", phy_start)
+phy_log = wire[phy_start:phy_end]
+phy_ports = list(re.finditer(rb"MOO-KERNEL I226 PHY PORT START ([0-9A-F]{16})", phy_log))
+assert [int(port[1], 16) for port in phy_ports] == list(expected_ports)
+assert ("MOO-KERNEL I226 PHY PORTS %016X" % len(phy_ports)).encode() in phy_log
+assert ("MOO-KERNEL SAMMEL I226 PHY ENDE %016X" % len(phy_ports)).encode() in wire
+mdic_answers = []
+for port in phy_ports:
+    end = phy_log.index(b"MOO-KERNEL I226 PHY PORT ENDE " + port[1], port.end())
+    values = {}
+    for label, value in re.findall(rb"MOO-KERNEL I226 ([A-Z0-9 ]+?) ([0-9A-F]{16})", phy_log[port.end():end]):
+        values.setdefault(label.decode(), []).append(int(value, 16))
+    assert "PHY FEHLER" not in values, values
+    assert values["PHY ADRESSE"] == [1] and values["PHY REG"] == [2, 3], values
+    assert values["MDIC READ CMD"] == [0x08220000, 0x08230000], values
+    assert values["MDIC READY"] == [1, 1] and values["MDIC ERROR"] == [0, 0], values
+    assert len(values["PHY SWFW NACH FREIGABE"]) == 2 and all(
+        value & 2 == 0 for value in values["PHY SWFW NACH FREIGABE"]
+    ), values
+    id1, id2 = (values[f"PHY ID{word}"][0] for word in (1, 2))
+    assert values["PHY ID ROH"] == [id1 << 16 | id2] and values["PHY ID EMPFANGEN"] == [1], values
+    mdic_answers.extend(values["MDIC ANTWORT"])
+if igb:
+    trace = (out / "nvme.trace").read_text(errors="replace")
+    transactions = re.findall(r"igb_core_mdic_read .*?MDIC READ: PHY\[(\d+)\] = 0x([0-9a-f]+)", trace)
+    assert [int(reg) for reg, _ in transactions] == [2, 3, 2, 3], transactions
+    assert [int(data, 16) | 0x10000000 for _, data in transactions] == mdic_answers
+    assert not re.search(r"igb_core_mdic_(write|read_unhandled)", trace)
+    print("      OK: igb/82576, zwei BAR0/MAC-Snapshots, genau vier PHY-Reads und SW/FW-Freigabe")
 port_starts = re.findall(rb"MOO-KERNEL USB INVENTAR PORT START ([0-9A-F]{16})", wire)
 port_ends = re.findall(rb"MOO-KERNEL USB INVENTAR PORT ENDE ([0-9A-F]{16})", wire)
 assert len(port_starts) == len(port_ends) and len(set(port_starts)) == len(port_starts) >= 2
@@ -961,7 +1031,7 @@ if [ "$PRUEFUNG" = "nativ" ] || [ "$PRUEFUNG" = "nativ-trap" ] || [ "$PRUEFUNG" 
   if [ "$PRUEFUNG" = "nativ" ]; then
     # P7-T19: "N 3"/"N 90" = u64 aus @nativ als Laenge/Adresse an kern_text_in_puffer.
     # P7-T22: "N 700481670"/"N 165" = reine Hardwarekoerper (Port-I/O) dynamisch gerufen.
-    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 2027" "N 2028" "N 2029" "N 2030" "N 2031" "N 2032" "N 2033" "N 2034" "N 2035" "N 2036" "N 999"; do
+    for m in "N -12345" "N 213" "N 1152921504606846984" "N -6000000000000000001" "N 1" "N 3" "N 90" "N 700481670" "N 165" "N 2023" "N 2024" "N 2025" "N 2026" "N 2027" "N 2028" "N 2029" "N 2030" "N 2031" "N 2032" "N 2033" "N 2034" "N 2035" "N 2036" "N 2037" "N 999"; do
       tr -d '\r' <"$SERIAL_LOG" | grep -qax -- "$m" || fail "Zeile '$m' fehlt auf COM1"
     done
     echo "      OK: dynamische Argumente, exakte i64/u64-Argumente und -Rueckgaben im UEFI-Profil"

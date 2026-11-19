@@ -13,6 +13,18 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/i226_diagnose.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T11: BAR0-Portdiagnose im x86-64-Kern und QEMU-igb-Gate"
+    },
+    {
       "path": "beispiele/kernel/nvme.moos",
       "category": "profile",
       "args": [

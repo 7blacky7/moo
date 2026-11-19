@@ -746,6 +746,25 @@ funktion nvme_serien_test() -> u64:
             gib_zurück 3605
         gib_zurück 2036
 
+aus "../../../beispiele/kernel/i226_diagnose" importiere I226_PCI_ID, IGB_PCI_ID, i226_status_tempo
+
+@nativ
+funktion i226_status_test() -> u64:
+    unsicher:
+        wenn i226_status_tempo(0x400080, I226_PCI_ID) != 0:
+            gib_zurück 3701
+        wenn i226_status_tempo(0x02, I226_PCI_ID) != 10:
+            gib_zurück 3702
+        wenn i226_status_tempo(0x400042, I226_PCI_ID) != 100:
+            gib_zurück 3703
+        wenn i226_status_tempo(0x82, I226_PCI_ID) != 1000:
+            gib_zurück 3704
+        wenn i226_status_tempo(0x400082, I226_PCI_ID) != 2500:
+            gib_zurück 3705
+        wenn i226_status_tempo(0x400082, IGB_PCI_ID) != 1000:
+            gib_zurück 3706
+        gib_zurück 2037
+
 funktion moo_efi_haupt():
     setze a auf 0 - 12345
     setze b auf 200 + 13
@@ -784,4 +803,5 @@ funktion moo_efi_haupt():
         zeile(nvme_cqe_test())
         zeile(nvme_namespace_test())
         zeile(nvme_serien_test())
+        zeile(i226_status_test())
         zeile(999)

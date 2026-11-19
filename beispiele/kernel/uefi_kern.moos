@@ -22,6 +22,7 @@ aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, xh_ascii, usb_inventar
 aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
+aus "i226_diagnose" importiere i226_inventar
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
 aus "../uefi/netz_geraet" importiere nt_finde, nt_bar, nt_oeffnen_in, nt_link, nt_senden, nt_udp_rahmen, nt_kopiere, pci_lese32, pci_schreibe32
@@ -49,6 +50,9 @@ statisch NVME_LESEN_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 1, 0, 0, 0, 0
 # des expliziten NVMe-Inventarziels. Inventar startet keine I/O-Queue.
 @nativ
 statisch SAMMEL_ZIEL: [u64; 3] auf [0x4C4D4D41534F4F4D, 0, 0]
+# Dieselbe lesende Diagnose mit QEMU-igb nur in einer privaten ELF-Kopie.
+@nativ
+statisch SAMMEL_I226_ZIEL: [u64; 2] auf [0x4F52363232494F4D, 0x125C8086]
 @nativ
 statisch NVME_INVENTAR_ZIEL: [u64; 8] auf [0x4E564D45524F3031, 65536, 0, 0, 0, 0, 0, 0]
 
@@ -2043,6 +2047,14 @@ konstante SAM_T_BAR0: [u8; _] auf "MOO-KERNEL SAMMEL PCI BAR0 ROH "
 @nativ
 konstante SAM_T_PCI_ZIEL: [u8; _] auf "MOO-KERNEL SAMMEL PCI NVME-KANDIDATEN "
 @nativ
+konstante SAM_T_I226_START: [u8; _] auf "MOO-KERNEL SAMMEL I226 START "
+@nativ
+konstante SAM_T_I226_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL I226 ENDE "
+@nativ
+konstante SAM_T_I226_PHY_START: [u8; _] auf "MOO-KERNEL SAMMEL I226 PHY START "
+@nativ
+konstante SAM_T_I226_PHY_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL I226 PHY ENDE "
+@nativ
 konstante SAM_T_USB_START: [u8; _] auf "MOO-KERNEL SAMMEL USB START "
 @nativ
 konstante SAM_T_USB_ENDE: [u8; _] auf "MOO-KERNEL SAMMEL USB ENDE "
@@ -2113,6 +2125,12 @@ funktion sammel_lauf(tsc: u64, bi: u64) -> void:
         setze bdf: u64 auf sammel_pci(speicher_lesen(adresse_von(SAMMEL_ZIEL) + 16, 8))
         sammel_wartung(log)
 
+        meldung(adresse_von(SAM_T_I226_START), 1)
+        setze netz_id: u64 auf speicher_lesen(adresse_von(SAMMEL_I226_ZIEL) + 8, 8)
+        setze nic_bereit: u64 auf i226_inventar(adresse_von(NETZ_PCI), netz_id, bi, map, log, adresse_von(sammel_wartung), tsc, falsch)
+        meldung(adresse_von(SAM_T_I226_ENDE), nic_bereit)
+        sammel_wartung(log)
+
         meldung(adresse_von(SAM_T_USB_START), 1)
         setze usb_ok: bool auf usb_inventar(pfa_nehme(64), tsc, bi, map, log, adresse_von(sammel_wartung))
         meldung(adresse_von(SAM_T_USB_ENDE), u64(usb_ok))
@@ -2138,6 +2156,11 @@ funktion sammel_lauf(tsc: u64, bi: u64) -> void:
                 speicher_schreiben(inventar + 8, bdf, 8)
                 setze nv_ok auf nvme_pruefen(pfa_nehme(39), tsc, bi, map, log, inventar)
         meldung(adresse_von(SAM_T_NVME_ENDE), u64(nv_ok))
+        sammel_wartung(log)
+
+        meldung(adresse_von(SAM_T_I226_PHY_START), 1)
+        setze phy_bereit: u64 auf i226_inventar(adresse_von(NETZ_PCI), netz_id, bi, map, log, adresse_von(sammel_wartung), tsc, wahr)
+        meldung(adresse_von(SAM_T_I226_PHY_ENDE), phy_bereit)
         sammel_wartung(log)
 
 # ---------------- Kern ----------------
