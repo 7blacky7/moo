@@ -44,6 +44,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${MOO_COMPILER:-$ROOT/compiler/target/release/moo-compiler}"
 # P7-T14: MOO_UEFI_PRUEFUNG=e1000 prueft den Moo-e1000-Treiber (eigene App, eigener QEMU-Lauf).
 PRUEFUNG="${MOO_UEFI_PRUEFUNG:-}"
+NETZ_PING="${MOO_UEFI_PING:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
 elif [ "$PRUEFUNG" = "lader" ]; then
@@ -86,6 +87,21 @@ skip() {
   exit 0
 }
 
+case "$NETZ_PING" in
+  0) ;;
+  e1000|igb)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_NETZ:-1}" = 1 ] || fail "PING braucht PRUEFUNG=kern und NETZ=1"
+    for t in ip ping unshare; do
+      command -v "$t" >/dev/null || fail "PING-Gate braucht $t"
+    done
+    # Linux-ping und QEMU im selben privaten Namespace. Kein Slirp/Forwarding.
+    if [ "${MOO_UEFI_PING_NS:-0}" != 1 ]; then
+      exec unshare -Urn -- env MOO_UEFI_PING_NS=1 bash "$0" "$@"
+    fi
+    ;;
+  *) fail "PING: 0, e1000 oder igb" ;;
+esac
+
 [ -x "$BIN" ] || fail "moo-compiler fehlt: $BIN (erst mise run p4-build-vulkan)"
 [ -f "$MOO_SRC" ] || fail "moo-Quelle fehlt: $MOO_SRC"
 if [ -n "${MOO_UEFI_OUT:-}" ]; then
@@ -99,17 +115,45 @@ fi
 
 # UDP-Nutzlasten gegen jede vollstaendige COM1-Kernzeile pruefen (auch vor NIC-Init).
 kern_netz_pruefen() {
-  uv run --no-project python - "$1" "$2" <<'PY'
+  uv run --no-project python - "$1" "$2" "$NETZ_PING" <<'PY'
 import collections, pathlib, struct, sys
 raw = pathlib.Path(sys.argv[1]).read_bytes()
 assert raw[:4] in (b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4")
 endian = "<" if raw[0] == 0xd4 else ">"
 assert struct.unpack_from(endian + "I", raw, 20)[0] == 1
 packets, pos = [], 24
+echo_test = sys.argv[3] != "0"
+host_ip = bytes((192, 0, 2, 1))
+guest_ip = bytes((192, 0, 2, 2))
+guest_mac = bytes.fromhex("525400123459")
+arp_requests, arp_replies = 0, 0
+echo_requests, echo_replies = collections.Counter(), collections.Counter()
+
+def checksum_ok(data):
+    data += b"\x00" * (len(data) % 2)
+    return sum(struct.unpack("!%dH" % (len(data) // 2), data)) % 65535 == 0
+
 while pos + 16 <= len(raw):
     size = struct.unpack_from(endian + "I", raw, pos + 8)[0]
     frame = raw[pos + 16:pos + 16 + size]
     pos += 16 + size
+    if echo_test and len(frame) >= 42:
+        if frame[12:20] == b"\x08\x06\x00\x01\x08\x00\x06\x04":
+            if frame[20:22] == b"\x00\x01" and frame[28:32] == host_ip and frame[38:42] == guest_ip:
+                arp_requests += 1
+            if frame[20:22] == b"\x00\x02" and frame[28:32] == guest_ip and frame[38:42] == host_ip:
+                assert frame[6:12] == frame[22:28] == guest_mac and frame[:6] == frame[32:38]
+                arp_replies += 1
+        if frame[12:14] == b"\x08\x00" and frame[14] == 0x45 and frame[23] == 1:
+            size_ip = struct.unpack_from("!H", frame, 16)[0]
+            icmp = frame[34:14 + size_ip]
+            if frame[26:34] == host_ip + guest_ip and icmp[:2] == b"\x08\x00":
+                assert frame[:6] == guest_mac
+                echo_requests[icmp[4:]] += 1
+            if frame[26:34] == guest_ip + host_ip and icmp[:2] == b"\x00\x00":
+                assert frame[6:12] == guest_mac and 28 <= size_ip <= len(frame) - 14
+                assert checksum_ok(frame[14:34]) and checksum_ok(icmp)
+                echo_replies[icmp[4:]] += 1
     if len(frame) < 42 or frame[12:14] != b"\x08\x00" or frame[23] != 17:
         continue
     ip = frame[14:]
@@ -134,6 +178,12 @@ assert "MOO-KERNEL OK" in packets
 assert serial.index("MOO-KERNEL NETZ PORTS ") < serial.index("MOO-KERNEL TABELLEN FREI ")
 assert "MOO-KERNEL NETZ DMA-STOP FEHLER" not in serial
 print("      OK: %d COM1-Kernzeilen im UDP-pcap (%d Datagramme), Port 7777/IPv4-Pruefsumme" % (len(lines), len(packets)))
+if echo_test:
+    assert arp_requests and arp_replies, (arp_requests, arp_replies)
+    assert sorted(map(len, echo_requests.elements())) == [61] * 20 + [1476]
+    assert echo_requests == echo_replies, "ICMP Identifier/Sequenz/Nutzlast bzw. Anzahl weicht ab"
+    assert "MOO-KERNEL NETZ IPV4 BEREIT 00000000C0000202" in serial
+    print("      OK: Host-ping über %s, ARP + 21 Echo-Paare samt Prüfsummen und unveränderter Nutzlast" % sys.argv[3])
 PY
 }
 
@@ -314,6 +364,18 @@ path.write_bytes(elf)
 PY
     [ "$?" -eq 0 ] || fail "Sammelvertrag in privater ELF-Kopie"
   fi
+  if [ "$NETZ_PING" != 0 ]; then
+    uv run --no-project python - "$OUT/KERN.ELF" "$NETZ_PING" <<'PY'
+import pathlib, struct, sys
+path = pathlib.Path(sys.argv[1])
+elf = bytearray(path.read_bytes())
+vertrag = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
+assert elf.count(vertrag) == 1, "Eindeutiger deaktivierter IPv4-Vertrag fehlt"
+struct.pack_into("<2Q", elf, elf.index(vertrag) + 8, 0xc0000202, int(sys.argv[2] == "igb"))
+path.write_bytes(elf)
+PY
+    [ "$?" -eq 0 ] || fail "IPv4-Vertrag in privater ELF-Kopie"
+  fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
   for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd \
@@ -340,7 +402,13 @@ PY
   KERN_QEMU=()
   [ "${MOO_UEFI_DIAG:-0}" != 1 ] || KERN_QEMU+=(-d int,guest_errors,cpu_reset -D "$OUT/cpu.log")
   NETZ="${MOO_UEFI_NETZ:-1}"
-  if [ "$NETZ" = 1 ]; then
+  if [ "$NETZ_PING" != 0 ]; then
+    ip link set lo up && ip tuntap add dev moo-ping mode tap &&
+      ip address add 192.0.2.1/24 dev moo-ping && ip link set moo-ping up || fail "TAP im Test-Namespace nicht bereit"
+    KERN_QEMU+=(-netdev tap,id=n0,ifname=moo-ping,script=no,downscript=no
+      -device "$NETZ_PING,netdev=n0,mac=52:54:00:12:34:59,romfile="
+      -object filter-dump,id=klog,netdev=n0,file="$OUT/net.pcap")
+  elif [ "$NETZ" = 1 ]; then
     KERN_QEMU+=(-netdev user,id=n0 -device e1000,netdev=n0,romfile=
       -object filter-dump,id=klog,netdev=n0,file="$OUT/net.pcap")
   else
@@ -380,7 +448,15 @@ PY
       <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
   QPID=$!
   KEY_SENT=0
+  IGB_LINK=0
   for ((i = 0; i < WAIT_S; i++)); do
+    # QEMU igb laesst STATUS.LU nach CTRL.RST geloescht (igb_core.c:
+    # 4389,4463–4490). TAP-Link nach dem Reset wie am Kabel neu melden.
+    if [ "$NETZ_PING" = igb ] && [ "$IGB_LINK" -eq 0 ] &&
+       grep -aqF "MOO-KERNEL NETZ IGB INITIALISIERT " "$OUT/serial.log"; then
+      printf 'set_link n0 off\nset_link n0 on\n' >&3
+      IGB_LINK=1
+    fi
     BEREIT="MOO-KERNEL TASTATUR BEREIT 0000000000000001"
     [ "$USB" != 1 ] || BEREIT="MOO-KERNEL USB BEREIT POLLING 0000000000000001"
     if [ "$KEY_SENT" -eq 0 ] && grep -aqF "$BEREIT" "$OUT/serial.log" 2>/dev/null; then
@@ -392,6 +468,13 @@ PY
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
   done
+  PING_OK=0
+  if [ "$NETZ_PING" != 0 ] && grep -aqF "MOO-KERNEL OK" "$OUT/serial.log"; then
+    {
+      LC_ALL=C ping -4 -n -I moo-ping -c 20 -i 0.25 -W 1 -w 10 -s 57 192.0.2.2 &&
+      LC_ALL=C ping -4 -n -I moo-ping -c 1 -W 1 -w 3 -M do -s 1472 192.0.2.2
+    } >"$OUT/ping.log" 2>&1 && PING_OK=1
+  fi
   # USB bleibt nach OK aktiv: Shift und mehr als 256 Press/Release-Reports
   # pruefen Event-Cycle sowie Link-TRB/Cycle des Transfer-Rings.
   if [ "$USB" = 1 ] && grep -aq "MOO-KERNEL OK" "$OUT/serial.log"; then
@@ -712,7 +795,11 @@ print("      OK: NVMe %s, %d Admin/%d Reads, jedes CQE/CID/Phase gegen QEMU-Trac
 PY
     [ "$?" -eq 0 ] || fail "NVMe-Opcode/CQE/GPT/Serien-/Nur-Lese-Gate"
   fi
-  [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log unvollstaendig"
+  if [ "$NETZ_PING" != 0 ]; then
+    [ ! -f "$OUT/ping.log" ] || sed 's/^/      | /' "$OUT/ping.log"
+    [ "$PING_OK" -eq 1 ] || fail "Linux-Ping über $NETZ_PING fehlgeschlagen"
+  fi
+  [ "$NETZ" != 1 ] || kern_netz_pruefen "$OUT/net.pcap" "$OUT/serial.log" || fail "Kern-Netz-Log oder Ping-pcap unvollstaendig"
   # Reihenfolge: Kern laeuft erst NACH ExitBootServices.
   Z_EBS="$(grep -an 'MOO-LADER EXITBOOTSERVICES OK' "$OUT/serial.log" | head -1 | cut -d: -f1)"
   Z_KERN="$(grep -an 'MOO-KERNEL START' "$OUT/serial.log" | head -1 | cut -d: -f1)"

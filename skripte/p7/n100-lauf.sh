@@ -20,6 +20,7 @@ DIAGNOSE=0
 INVENTAR=0
 MODUS=1
 WATCHDOG_S=10
+PING_IP=
 KONFIG_QUELLE=
 KONFIG_ZIEL=
 KONFIG_LOADER_QUELLE=
@@ -35,6 +36,7 @@ while (($#)); do
     --diagnose) DIAGNOSE=1; MODUS=0; SEKUNDEN=20; shift;;
     --it8613-messreihe) DIAGNOSE=0; MODUS=6; SEKUNDEN=70; shift;;
     --watchdog-test) DIAGNOSE=0; MODUS=7; SEKUNDEN=45; shift;;
+    --ping) PING_IP=192.168.77.2; shift;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -55,6 +57,7 @@ while (($#)); do
       '--synapse-zeitlimit N: eigenes Startlimit nach Windows-Rueckkehr (Standard600s).' \
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern mit 10s IT8613-Safety. --watchdog-test: 10s IT8613, 45s Softwarefrist.' \
+      '--ping: Im regulaeren Kernlauf IPv4 aktivieren, nach Kernelmarker ARP pruefen und RTT in ping.log messen.' \
       '--diagnose: TCO und IT8613 lesen, dann Software-Reset.' \
       '--modus 5 --sekunden 25 --watchdog-sekunden 10: IT8613 bedienen und vor Software-Reset abschalten.' \
       '--it8613-messreihe: IT8613 lesend bei 0, 2 und 70 s, dann Software-Reset.' \
@@ -92,12 +95,14 @@ if ((MODUS==6 && SEKUNDEN!=70)); then
   exit 2
 fi
 [[ "$IFACE" == enp60s0 ]] || { echo 'Nur das belegte Direktkabel enp60s0 ist erlaubt' >&2; exit 2; }
+[[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo '--ping braucht den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project python - "$1" "$2" "${3:-$SEKUNDEN}" "${4:-$WATCHDOG_S}" "${5:-$MODUS}" <<'PY'
-import pathlib, struct, sys
+  uv run --no-project python - "$1" "$2" "${3:-$SEKUNDEN}" "${4:-$WATCHDOG_S}" "${5:-$MODUS}" "$PING_IP" <<'PY'
+import ipaddress, pathlib, struct, sys
 src, dst = map(pathlib.Path, sys.argv[1:3])
 seconds, watchdog, mode = map(int, sys.argv[3:6])
+ping_ip = sys.argv[6]
 if src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 data = bytearray(src.read_bytes())
@@ -106,28 +111,41 @@ if data[:7] != b"\x7fELF\x02\x01\x01" or struct.unpack_from("<HH", data, 16) != 
 magic = struct.pack("<Q", 0x353254504F4F4D21)
 off = struct.unpack_from("<Q", data, 32)[0]
 size, count = struct.unpack_from("<HH", data, 54)
-hits = []
+bereiche = []
 for i in range(count):
     p = off + i * size
     typ, flags, start = struct.unpack_from("<IIQ", data, p)
     length = struct.unpack_from("<Q", data, p + 32)[0]
-    if typ != 1 or not flags & 2:
-        continue
-    pos = data.find(magic, start, start + length)
-    while pos >= 0:
-        if pos + 32 <= start + length:
-            hits.append(pos)
-        pos = data.find(magic, pos + 1, start + length)
-if len(hits) != 1:
-    raise SystemExit("Testvertrag nicht eindeutig in schreibbarem PT_LOAD")
+    if typ == 1 and flags & 2:
+        bereiche.append((start, start + length))
+
+def vertrag(suche, groesse, name):
+    hits = []
+    for start, ende in bereiche:
+        pos = data.find(suche, start, ende)
+        while pos >= 0:
+            if pos + groesse <= ende:
+                hits.append(pos)
+            pos = data.find(suche, pos + 1, ende)
+    if len(hits) != 1:
+        raise SystemExit(f"{name} nicht eindeutig in schreibbarem PT_LOAD")
+    return hits[0]
+
+testvertrag = vertrag(magic, 32, "Testvertrag")
 # 0: Lesen. 1: regulaerer Kernlauf mit IT8613. 3: IT8613-Rueckfall ohne USB.
 # 5: kurzer IT8613-Bedienlauf mit Abschalten vor Software-Reset.
 # 6: IT8613 lesend in einem Boot bei 0, 2 und 70 s. 7: IT8613-Safety.
 # 100/101/103/104: ausschliesslich ICH9-QEMU.
-struct.pack_into("<QQQ", data, hits[0] + 8, seconds, watchdog, mode)
+struct.pack_into("<QQQ", data, testvertrag + 8, seconds, watchdog, mode)
+if ping_ip:
+    leer = struct.pack("<3Q", 0x00345650494F4F4D, 0, 0)
+    pos = vertrag(leer, len(leer), "Deaktivierter IPv4-Vertrag")
+    struct.pack_into("<Q", data, pos + 8, int(ipaddress.IPv4Address(ping_ip)))
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_bytes(data)
 print(f"Kern-Kopie {dst}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
+if ping_ip:
+    print(f"IPv4 der Kern-Kopie: {ping_ip}")
 PY
 }
 loader_kopie() {
@@ -188,6 +206,9 @@ if ((TROCKEN)); then
     printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=IT8613-Kernlauf,5=IT8613-Bedienlauf,7=IT8613-Safety)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
   fi
   printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
+  if [[ -n "$PING_IP" ]]; then
+    printf '   Nach Kernelmarker ARP/Ping an %s auf %s; arp.log, ping.log (RTT) und ICMP in netz.pcap.\n' "$PING_IP" "$IFACE"
+  fi
   printf '%s\n' '4. Synapse-Waechter-Zustand sichern, pausieren; build/koord/sanft_aus.ps1 per WinRM.'
   printf '%s\n' '5. Genau einen USB-Eintrag als {fwbootmgr} bootsequence setzen, danach shutdown /r /t 5.'
   if ((MODUS==1 || MODUS==5)); then
@@ -226,6 +247,11 @@ fi
 for tool in uv timeout setsid flock sudo tcpdump curl ss; do
   command -v "$tool" >/dev/null || { echo "Werkzeug nicht gefunden: $tool" >&2; exit 2; }
 done
+if [[ -n "$PING_IP" ]]; then
+  for tool in arping ping; do
+    command -v "$tool" >/dev/null || { echo "Werkzeug nicht gefunden: $tool" >&2; exit 2; }
+  done
+fi
 OUT="${RESTORE:-${MOO_N100_AUSGABE:-$ROOT/build/n100-laeufe/$(date -u +%Y%m%dT%H%M%S)-${BASHPID}}}"
 mkdir -p "$OUT" "$(dirname "$NOTIZ")" "$ROOT/build/n100-laeufe"
 exec 9>"$ROOT/build/n100-laeufe/.lauf.lock"
@@ -411,7 +437,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM HUP
 exec > >(exec 9>&-; tee -a "$OUT/lauf.log") 2>&1
 printf 'Laufordner: %s\n' "$OUT"
-setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "arp or udp" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" &
+capture_filter='arp or udp'
+[[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
+setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
 MOO_NETZ_TFTP="$OUT/tftp" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
 SERVER_PID=$!
@@ -428,6 +456,9 @@ notiz "Kernlauf beginnt: Modus=$MODUS, Laufzeit=$SEKUNDEN, Watchdog=$WATCHDOG_S"
 timeout --foreground 90s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" runfile "$STOPP_SK"
 remote booten
 bis=$((SECONDS+ZEITLIMIT))
+ping_versucht=0
+arp_belegt=0
+ping_belegt=0
 while ((SECONDS<bis)); do
   kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
   ende=0
@@ -435,6 +466,22 @@ while ((SECONDS<bis)); do
     grep -aEq 'MOO-KERNEL (IT8613 SAFETY OHNE BEDIENUNG|NEUSTART)' "$OUT/netz.log" && ende=1
   elif grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
     ende=1
+  fi
+  # Windows hat dieselbe IP. Nur die Probe zwischen Kernmarker und Neustart
+  # zaehlt, und der regulaere Kernel-/Windows-Abschluss muss erhalten bleiben.
+  if [[ -n "$PING_IP" ]] && ((ping_versucht==0 && ende==0)) &&
+     grep -aFq 'MOO-KERNEL NETZ IPV4 BEREIT ' "$OUT/netz.log"; then
+    ping_versucht=1
+    # Frische ARP-Anfrage auch dann, wenn der Host die MAC vom Loader kennt.
+    if LC_ALL=C timeout --foreground 5s sudo -n arping -I "$IFACE" -c 1 -w 3 "$PING_IP" >"$OUT/arp.log" 2>&1; then
+      arp_belegt=1
+    fi
+    cat "$OUT/arp.log"
+    if LC_ALL=C timeout --foreground 10s ping -4 -n -D -I "$IFACE" -c 5 -W 1 "$PING_IP" >"$OUT/ping.log" 2>&1 &&
+       ! grep -aFq 'MOO-KERNEL NEUSTART' "$OUT/netz.log"; then
+      ping_belegt=1
+    fi
+    cat "$OUT/ping.log"
   fi
   if ((ende)); then
     if timeout --foreground 50s uv run --with pywinrm python -I "$ROOT/skripte/p2/minipc_winrm.py" run \
@@ -473,6 +520,10 @@ while ((SECONDS<bis)); do
           it8613_safety_nachweis "$antwort_ms" "$boot_alter" || exit 1
         else
           echo 'Kern-Abschluss und neue Windows-Bootzeit belegt'
+        fi
+        if [[ -n "$PING_IP" ]]; then
+          ((arp_belegt && ping_belegt)) || { echo 'FEHLER: ARP und Ping im Kernfenster nicht vollstaendig belegt.' >&2; exit 1; }
+          echo 'ARP und Ping im Kernfenster belegt; RTT in ping.log'
         fi
         exit 0
       fi

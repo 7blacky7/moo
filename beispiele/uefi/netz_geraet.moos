@@ -44,6 +44,26 @@ funktion nt_b16(p: u64, off: u64, wert: u64) -> void:
         nt_b8(p, off + 1, wert)
 
 @nativ
+funktion nt_r16(p: u64, off: u64) -> u64:
+    unsicher:
+        gib_zurück (u64(speicher_lesen(p + off, 1)) << 8) | u64(speicher_lesen(p + off + 1, 1))
+
+# IPv4 und ICMP nutzen dieselbe Einerkomplement-Summe (RFC 1071, Abschnitt 1).
+@nativ
+funktion nt_pruefsumme(p: u64, off: u64, laenge: u64) -> u64:
+    unsicher:
+        setze summe: u64 auf 0
+        setze i: u64 auf 0
+        solange i + 1 < laenge:
+            setze summe auf summe + nt_r16(p, off + i)
+            setze i auf i + 2
+        wenn i < laenge:
+            setze summe auf summe + (u64(speicher_lesen(p + off + i, 1)) << 8)
+        solange summe > 0xFFFF:
+            setze summe auf (summe & 0xFFFF) + (summe >> 16)
+        gib_zurück 0xFFFF - summe
+
+@nativ
 funktion pci_lese32(pci: u64, bdf: u64, off: u64) -> u64:
     unsicher:
         setze basis: u64 auf speicher_lesen(pci, 8)
@@ -72,6 +92,9 @@ funktion nt_typ(id: u64) -> u64:
         # I226-LM, I226-V, I226-IT, I226 ohne NVM (igc_hw.h:29-33)
         wenn geraet == 0x125B oder geraet == 0x125C oder geraet == 0x125D oder geraet == 0x125F:
             gib_zurück 2
+        # 82576 (QEMU igb). Der Kern sucht Typ 3 nur im privaten Ping-Gate.
+        wenn geraet == 0x10C9:
+            gib_zurück 3
         gib_zurück 0
 
 @nativ
@@ -316,12 +339,28 @@ funktion nt_ring_empfangen(nic: u64, ziel: u64) -> u64:
     unsicher:
         setze i: u64 auf speicher_lesen(nic + 80, 8)
         setze desk: u64 auf speicher_lesen(nic + 64, 8) + i * 16
-        # STATUS @12: DD (Bit 0); Laenge @8 (16 Bit, ohne FCS wegen SECRC).
-        wenn nt_desk_fertig(desk + 12) == falsch:
+        setze advanced: bool auf speicher_lesen(nic, 8) == 3
+        setze status_off: u64 auf 12
+        setze laenge_off: u64 auf 8
+        # QEMU v11.0.1 igb_core.c:243–249,1592–1619 emuliert den
+        # Advanced-RX-Writeback. DD/EOP @8, Laenge @12 (16 Bit).
+        wenn advanced:
+            setze status_off auf 8
+            setze laenge_off auf 12
+        wenn nicht nt_desk_fertig(desk + status_off):
             gib_zurück 0
-        setze laenge: u64 auf u64(speicher_lesen(desk + 8, 2))
-        nt_kopiere(ziel, speicher_lesen(nic + 72, 8) + i * 2048, laenge)
-        speicher_schreiben(desk + 12, 0, 4)
+        setze laenge: u64 auf u64(speicher_lesen(desk + laenge_off, 2))
+        setze puffer: u64 auf speicher_lesen(nic + 72, 8) + i * 2048
+        wenn laenge <= 2048 und (speicher_lesen(desk + status_off, 1) & 2) != 0:
+            nt_kopiere(ziel, puffer, laenge)
+        sonst:
+            setze laenge auf 0
+        wenn advanced:
+            # Writeback ersetzt auch die Pufferadresse im Deskriptor.
+            speicher_schreiben(desk, puffer, 8)
+            speicher_schreiben(desk + 8, 0, 8)
+        sonst:
+            speicher_schreiben(desk + 12, 0, 4)
         # Deskriptor an die Hardware zurueckgeben (Ende-Register der RX-Queue).
         nt_reg_glocke(nic, speicher_lesen(nic + 88, 8) + 0x18, i)
         speicher_schreiben(nic + 80, (i + 1) % 16, 8)
@@ -437,6 +476,10 @@ funktion i226_init(nic: u64) -> bool:
             nt_reg_setze(nic, 0x5200 + i * 4, 0)
             setze i auf i + 1
         # 7) Ringe: Queue 0 RX 0xC000, TX 0xE000, mit Queue-Enable (Bit 25).
+        # Nur QEMU-82576: SRRCTL0, DESCTYPE=Advanced One Buffer, 2 KiB.
+        # Linux v6.12 igb/e1000_{regs,defines}.h und igb_configure_rx_ring.
+        wenn speicher_lesen(nic, 8) == 3:
+            nt_reg_setze(nic, 0xC00C, 0x02000002)
         wenn nt_ringe_init(nic, 0xC000, 0xE000, wahr) == falsch:
             gib_zurück falsch
         # 8) TCTL: EN | PSP | CT 0x0F | COLD 0x40 (alte CT/COLD-Felder loeschen).
@@ -468,15 +511,7 @@ funktion nt_udp_rahmen(p: u64, nic: u64, laenge: u64) -> u64:
             nt_b8(p, 26 + i, 0)
             nt_b8(p, 30 + i, 255)
             setze i auf i + 1
-        # IPv4-Kopfpruefsumme: Einerkomplement der 16-Bit-Summe ueber 20 Byte.
-        setze summe: u64 auf 0
-        setze i auf 0
-        solange i < 20:
-            setze summe auf summe + u64(speicher_lesen(p + 14 + i, 1)) * 256 + u64(speicher_lesen(p + 15 + i, 1))
-            setze i auf i + 2
-        solange summe > 0xFFFF:
-            setze summe auf (summe & 0xFFFF) + (summe >> 16)
-        nt_b16(p, 24, 0xFFFF - summe)
+        nt_b16(p, 24, nt_pruefsumme(p, 14, 20))
         nt_b16(p, 34, 7777)
         nt_b16(p, 36, 7777)
         nt_b16(p, 38, 8 + laenge)
