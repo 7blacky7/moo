@@ -1,0 +1,115 @@
+# A/B der vier Bare-Rasteroperationen gegen den vorhandenen C-Surface-Kern.
+aus "../../../beispiele/kernel/kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text
+
+extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
+extern "C" funktion moo_surface_core_clear(kern: ptr[u8], farbe: u32) -> u8
+extern "C" funktion moo_surface_core_rect(kern: ptr[u8], x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8
+extern "C" funktion moo_surface_core_text_3x5(kern: ptr[u8], x: i32, y: i32, skala: i32, text: ptr[u8], laenge: u64, farbe: u32) -> u8
+
+@nativ
+statisch RASTER_MOO_KERN: [u64; 5] auf 0
+@nativ
+@ausrichten(16)
+statisch RASTER_C_KERN: [u8; 1024] auf 0
+@nativ
+statisch RASTER_MOO_BILD: [u8; 1648] auf 0
+@nativ
+statisch RASTER_C_BILD: [u8; 1648] auf 0
+@nativ
+statisch RASTER_TESTZEICHEN: [u8; 1] auf 0
+@nativ
+konstante RASTER_TESTTEXT: [u8; _] auf "10 A-Z.\nHELLO, MOOS!"
+
+@nativ
+funktion raster_ab_gleich() -> bool:
+    unsicher:
+        setze a: u64 auf adresse_von(RASTER_MOO_BILD)
+        setze b: u64 auf adresse_von(RASTER_C_BILD)
+        setze i: u64 auf 0
+        solange i < 1648:
+            setze v: u8 auf speicher_lesen(a + i, 1)
+            wenn v != speicher_lesen(b + i, 1):
+                gib_zurück falsch
+            # Drei Vorsatzbytes, vier Paddingbytes/Zeile und Nachsatz.
+            wenn i < 3 oder i >= 1635:
+                wenn v != 0xA5:
+                    gib_zurück falsch
+            sonst:
+                wenn (i - 3) % 96 >= 92 und v != 0xA5:
+                    gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion raster_ab_clear(farbe: u32) -> bool:
+    unsicher:
+        setze a: u8 auf kern_raster_clear(adresse_von(RASTER_MOO_KERN), farbe)
+        setze b: u8 auf moo_surface_core_clear(zeiger(adresse_von(RASTER_C_KERN)), farbe)
+        gib_zurück a == 1 und b == 1 und raster_ab_gleich()
+
+@nativ
+funktion raster_ab_rect(x: i32, y: i32, b: i32, h: i32, farbe: u32, erwartet: u8) -> bool:
+    unsicher:
+        setze a: u8 auf kern_raster_rect(adresse_von(RASTER_MOO_KERN), x, y, b, h, farbe)
+        setze c: u8 auf moo_surface_core_rect(zeiger(adresse_von(RASTER_C_KERN)), x, y, b, h, farbe)
+        gib_zurück a == erwartet und c == erwartet und raster_ab_gleich()
+
+@nativ
+funktion raster_ab_text(x: i32, y: i32, skala: i32, adr: u64, laenge: u64, farbe: u32, erwartet: u8) -> bool:
+    unsicher:
+        setze a: u8 auf kern_raster_text(adresse_von(RASTER_MOO_KERN), x, y, skala, adr, laenge, farbe)
+        setze c: u8 auf moo_surface_core_text_3x5(zeiger(adresse_von(RASTER_C_KERN)), x, y, skala, zeiger(adr), laenge, farbe)
+        gib_zurück a == erwartet und c == erwartet und raster_ab_gleich()
+
+@nativ
+funktion main() -> i32:
+    unsicher:
+        setze ma: u64 auf adresse_von(RASTER_MOO_BILD)
+        setze ca: u64 auf adresse_von(RASTER_C_BILD)
+        setze mk: u64 auf adresse_von(RASTER_MOO_KERN)
+        setze ck: u64 auf adresse_von(RASTER_C_KERN)
+        setze i: u64 auf 0
+        solange i < 1648:
+            speicher_schreiben(ma + i, 0xA5, 1)
+            speicher_schreiben(ca + i, 0xA5, 1)
+            setze i auf i + 1
+        wenn kern_raster_init(mk, ma + 3, 1631, 23, 17, 96) != 0 oder moo_surface_core_init(zeiger(ck), zeiger(ca + 3), 1631, 23, 17, 96) != 0:
+            gib_zurück 10
+        wenn kern_raster_init(mk, ma + 3, 1632, 23, 17, 91) != 0 oder moo_surface_core_init(zeiger(ck), zeiger(ca + 3), 1632, 23, 17, 91) != 0:
+            gib_zurück 11
+        wenn kern_raster_init(mk, ma + 3, 1632, 23, 17, 96) != 1 oder moo_surface_core_init(zeiger(ck), zeiger(ca + 3), 1632, 23, 17, 96) != 1:
+            gib_zurück 12
+        wenn nicht raster_ab_gleich():
+            gib_zurück 13
+
+        # Alle 256 Vordergrund-Alphas, mit je wechselndem Hintergrund-Alpha.
+        setze a: u32 auf 0
+        solange a < 256:
+            wenn nicht raster_ab_clear((((a * 37) & 255) << 24) | 0x1170F1):
+                gib_zurück 20
+            wenn nicht raster_ab_rect(-3, -2, 21, 13, (a << 24) | 0xC88A29, 1):
+                gib_zurück 21
+            wenn nicht raster_ab_rect(17, 11, 19, 15, (a << 24) | 0xF26403, 1):
+                gib_zurück 22
+            setze a auf a + 1
+        wenn nicht raster_ab_rect(-2147483648, 1, 2147483647, 4, 0xFF112233, 1):
+            gib_zurück 23
+        wenn nicht raster_ab_rect(2147483647, 2147483647, 2147483647, 2147483647, 0xFF112233, 1):
+            gib_zurück 24
+        wenn nicht raster_ab_rect(0, 0, -1, 3, 0xFF112233, 0) oder nicht raster_ab_rect(5, 6, 0, 4, 0xFF112233, 1):
+            gib_zurück 25
+
+        # Jedes Byte separat, damit eine nachfolgende Glyphe Unterschiede
+        # nicht ueberzeichnet. Anschliessend Mehrzeilentext und Clipping.
+        setze z: u64 auf 0
+        setze adr: u64 auf adresse_von(RASTER_TESTZEICHEN)
+        solange z < 256:
+            speicher_schreiben(adr, als(u8, z), 1)
+            wenn nicht raster_ab_clear(0x12113366) oder nicht raster_ab_text(3, 1, 2, adr, 1, 0xB1923456, 1):
+                gib_zurück 30
+            setze z auf z + 1
+        wenn nicht raster_ab_text(-5, -1, 2, adresse_von(RASTER_TESTTEXT), 20, 0xFF457AC8, 1):
+            gib_zurück 31
+        wenn nicht raster_ab_text(1, 1, 0, adr, 1, 0, 0) oder nicht raster_ab_text(1, 1, 2, 0, 1, 0, 0):
+            gib_zurück 32
+        gib_zurück 0

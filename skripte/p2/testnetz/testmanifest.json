@@ -13,6 +13,14 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/kern_raster.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7: natives RGBA8888-Raster mit A/B-Pixelvergleich"
+    },
+    {
       "path": "beispiele/kernel/kernel_test_builtins.moos",
       "category": "profile",
       "args": [

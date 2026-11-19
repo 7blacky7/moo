@@ -4,11 +4,11 @@
 # Einsprung moo_kern_start (@nackt): cli, eigener Stack (KERN_STAPEL, in Moo),
 # kern_haupt(boot_info). Der Loader (beispiele/uefi/moo_lader.moos) hat
 # ExitBootServices schon gerufen; hier gibt es keine Firmwaredienste mehr.
-# P7-T6: Kernlogik in Moo, Darstellung mit dem vorhandenen C-Surface-Kern:
+# P7-T6: Kernlogik, Raster und Darstellung in Moo:
 #   - eigene GDT (64-Bit-Code/Daten), lgdt + Segmentneuladen
 #   - eigene Seitentabellen: Identitaet 0..N GiB (2-MiB-Seiten), Framebuffer,
 #     Kern in der oberen Haelfte (4-KiB-Seiten) -> CR3
-#   - Zeichnen NUR in den Surface-Rueckpuffer (RGBA8888, moo_surface_core),
+#   - Zeichnen NUR in den RGBA8888-Rueckpuffer im RAM,
 #     Present auf den GOP-Framebuffer mit Pixelformat-Umsetzung:
 #     0 = RGBX, 1 = BGRX, 2 = Bitmaske (beliebige Masken), 3 = BltOnly -> nur COM1
 #   - Textkonsole ueber Surface-Text (3x5-Schrift), Scrollen, Zeilen-Present
@@ -19,6 +19,7 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
+aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, xh_ascii, usb_inventar
 aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
@@ -120,10 +121,10 @@ statisch KERN_STAPEL: [u8; 65536] auf 0
 @ausrichten(4096)
 statisch BILD: [u8; 33177600] auf 0
 
-# MooSurfaceCore (C-Struktur, < 1 KiB) und Kleinkram.
+# KernRaster-Zustand mit fuenf u64-Feldern.
 @nativ
 @ausrichten(16)
-statisch SURFACE_KERN: [u8; 1024] auf 0
+statisch RASTER_KERN: [u64; 5] auf 0
 
 @nativ
 statisch ZEICHEN: [u8; 8] auf 0
@@ -223,15 +224,8 @@ statisch TEST_QUELLE: [u32; 4] auf [0xFF563412, 0xFF563412, 0xFF563412, 0]
 @nativ
 statisch TEST_ZIEL: [u32; 4] auf [0, 0, 0, 0]
 
-# Vorhandener Surface-Kern (compiler/runtime/moo_surface_core.c, RGBA8888,
-# stride in Bytes). bool-Ergebnis als u8; MooSurfaceColor {r,g,b,a} wird als
-# u32 = r | g<<8 | b<<16 | a<<24 uebergeben (SysV: beide INTEGER in einem Register).
 extern "C" funktion moo_bare_krypto_provider_kat() -> u64
 
-extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
-extern "C" funktion moo_surface_core_clear(kern: ptr[u8], farbe: u32) -> u8
-extern "C" funktion moo_surface_core_rect(kern: ptr[u8], x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8
-extern "C" funktion moo_surface_core_text_3x5(kern: ptr[u8], x: i32, y: i32, skala: i32, text: ptr[u8], laenge: u64, farbe: u32) -> u8
 
 @nativ
 konstante T_START: [u8; _] auf "MOO-KERNEL START\n"
@@ -612,7 +606,7 @@ funktion kon_rollen() -> void:
                 speicher_schreiben(puffer + y * ps + links * 4 + x * 8, speicher_lesen(puffer + (y + h) * ps + links * 4 + x * 8, 8), 8)
                 setze x auf x + 1
             setze y auf y + 1
-        moo_surface_core_rect(zeiger(speicher_lesen(s + versatz_von(Schirm, s_kern), 8)), i32(links), i32(y), i32(rechts - links), i32(unten - y), u32(kon(versatz_von(Konsole, k_grund))))
+        kern_raster_rect(speicher_lesen(s + versatz_von(Schirm, s_kern), 8), i32(links), i32(y), i32(rechts - links), i32(unten - y), u32(kon(versatz_von(Konsole, k_grund))))
         kon_schmutz(oben, unten)
 
 @nativ
@@ -644,7 +638,7 @@ funktion zeichen(z: u8) -> void:
         setze x auf kon(versatz_von(Konsole, k_x))
         setze y auf kon(versatz_von(Konsole, k_y))
         speicher_schreiben(adresse_von(ZEICHEN), z, 1)
-        moo_surface_core_text_3x5(zeiger(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8)), i32(x), i32(y), i32(skala), zeiger(adresse_von(ZEICHEN)), 1, u32(kon(versatz_von(Konsole, k_farbe))))
+        kern_raster_text(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8), i32(x), i32(y), i32(skala), adresse_von(ZEICHEN), 1, u32(kon(versatz_von(Konsole, k_farbe))))
         kon_schmutz(y, y + 5 * skala)
         kon_setze(versatz_von(Konsole, k_x), x + 4 * skala)
         wenn x + 7 * skala > kon(versatz_von(Konsole, k_rechts)):
@@ -2065,8 +2059,8 @@ funktion konsolen_status(pfa_frei: u64, ticks: u64) -> void:
             speicher_schreiben(zeile + 9 + i, hex_ziffer(pfa_frei, i), 1)
             speicher_schreiben(zeile + 40 + i, hex_ziffer(ticks, i), 1)
             setze i auf i + 1
-        moo_surface_core_rect(zeiger(kern), 40, i32(unten), i32(breite) - 80, 20, rgba(20, 55, 75))
-        moo_surface_core_text_3x5(zeiger(kern), i32(links), i32(unten + 5), skala, zeiger(zeile), laenge, rgba(200, 230, 255))
+        kern_raster_rect(kern, 40, i32(unten), i32(breite) - 80, 20, rgba(20, 55, 75))
+        kern_raster_text(kern, i32(links), i32(unten + 5), skala, zeile, laenge, rgba(200, 230, 255))
         schirm_zeilen(unten, unten + 20)
 
 # Fester Eingabebereich unterhalb der rollenden Diagnosekonsole.
@@ -2087,10 +2081,10 @@ funktion eingabe_zeigen() -> void:
         setze n: u64 auf speicher_lesen(adresse_von(EINGABE_N), 8)
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
             gib_zurück
-        moo_surface_core_rect(zeiger(kern), 40, i32(boden), i32(breite) - 80, 60, rgba(20, 55, 75))
-        moo_surface_core_text_3x5(zeiger(kern), 52, i32(boden + 6), 2, zeiger(adresse_von(T_EINGABE)), 7, rgba(200, 230, 255))
-        moo_surface_core_text_3x5(zeiger(kern), 52, i32(boden + 28), 3, zeiger(adresse_von(EINGABE)), n, rgba(255, 230, 160))
-        moo_surface_core_rect(zeiger(kern), i32(52 + n * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
+        kern_raster_rect(kern, 40, i32(boden), i32(breite) - 80, 60, rgba(20, 55, 75))
+        kern_raster_text(kern, 52, i32(boden + 6), 2, adresse_von(T_EINGABE), 7, rgba(200, 230, 255))
+        kern_raster_text(kern, 52, i32(boden + 28), 3, adresse_von(EINGABE), n, rgba(255, 230, 160))
+        kern_raster_rect(kern, i32(52 + n * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
         schirm_zeilen(boden, boden + 60)
 
 @nativ
@@ -2457,7 +2451,7 @@ funktion kern_haupt(bi: u64) -> void:
                 setze t0 auf takt()
                 fuellen(fb, breite, hoehe, stride, pixel(format, 32, 96, 128))
                 setze t_alt auf takt() - t0
-            setze kern auf adresse_von(SURFACE_KERN)
+            setze kern auf adresse_von(RASTER_KERN)
             speicher_schreiben(s + versatz_von(Schirm, s_fb), fb, 8)
             speicher_schreiben(s + versatz_von(Schirm, s_breite), breite, 8)
             speicher_schreiben(s + versatz_von(Schirm, s_hoehe), hoehe, 8)
@@ -2469,13 +2463,13 @@ funktion kern_haupt(bi: u64) -> void:
             speicher_schreiben(s + versatz_von(Schirm, s_puffer), adresse_von(BILD), 8)
             speicher_schreiben(s + versatz_von(Schirm, s_puffer_stride), breite * 4, 8)
             speicher_schreiben(s + versatz_von(Schirm, s_kern), kern, 8)
-            setze ok auf moo_surface_core_init(zeiger(kern), zeiger(adresse_von(BILD)), breite * 4 * hoehe, i32(breite), i32(hoehe), breite * 4)
+            setze ok auf kern_raster_init(kern, adresse_von(BILD), breite * 4 * hoehe, i32(breite), i32(hoehe), breite * 4)
             meldung(adresse_von(T_SURFACE), u64(ok))
             wenn ok != 0:
-                moo_surface_core_clear(zeiger(kern), rgba(32, 96, 128))
-                moo_surface_core_rect(zeiger(kern), 40, 40, i32(breite) - 80, 140, rgba(255, 196, 64))
-                moo_surface_core_text_3x5(zeiger(kern), 64, 60, 12, zeiger(adresse_von(T_SCHIRM)), 13, rgba(20, 20, 20))
-                moo_surface_core_text_3x5(zeiger(kern), 64, 220, 6, zeiger(adresse_von(T_SCHIRM2)), 25, rgba(240, 240, 240))
+                kern_raster_clear(kern, rgba(32, 96, 128))
+                kern_raster_rect(kern, 40, 40, i32(breite) - 80, 140, rgba(255, 196, 64))
+                kern_raster_text(kern, 64, 60, 12, adresse_von(T_SCHIRM), 13, rgba(20, 20, 20))
+                kern_raster_text(kern, 64, 220, 6, adresse_von(T_SCHIRM2), 30, rgba(240, 240, 240))
                 setze t0 auf takt()
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0

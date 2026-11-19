@@ -1,0 +1,200 @@
+# RGBA8888-Raster des Bare-Kerns. Die Flaeche beginnt beim ersten Bildpixel.
+# Abmessungen, Zeilenabstand in Byte und Kapazitaet begrenzen jeden RAM-Zugriff.
+struktur KernRaster:
+    kr_pixel: u64
+    kr_bytes: u64
+    kr_breite: u64
+    kr_hoehe: u64
+    kr_stride: u64
+
+@nativ
+funktion raster_puffer_ok(pixel: u64, bytes: u64, breite: u64, hoehe: u64, stride: u64) -> bool:
+    wenn pixel == 0 oder breite == 0 oder hoehe == 0 oder breite > 2147483647 oder hoehe > 2147483647:
+        gib_zurück falsch
+    wenn stride < breite * 4 oder bytes > 0xFFFFFFFFFFFFFFFF - pixel:
+        gib_zurück falsch
+    gib_zurück hoehe <= bytes / stride
+
+@nativ
+funktion raster_wert(kern: u64, feld: u64) -> u64:
+    unsicher:
+        gib_zurück speicher_lesen(kern + feld, 8)
+
+@nativ
+funktion raster_gueltig(kern: u64) -> bool:
+    unsicher:
+        wenn kern == 0:
+            gib_zurück falsch
+        gib_zurück raster_puffer_ok(raster_wert(kern, versatz_von(KernRaster, kr_pixel)), raster_wert(kern, versatz_von(KernRaster, kr_bytes)), raster_wert(kern, versatz_von(KernRaster, kr_breite)), raster_wert(kern, versatz_von(KernRaster, kr_hoehe)), raster_wert(kern, versatz_von(KernRaster, kr_stride)))
+
+@nativ
+funktion kern_raster_init(kern: u64, pixel: u64, bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8:
+    unsicher:
+        wenn kern == 0 oder breite <= 0 oder hoehe <= 0:
+            gib_zurück 0
+        setze b: u64 auf als(u64, breite)
+        setze h: u64 auf als(u64, hoehe)
+        wenn nicht raster_puffer_ok(pixel, bytes, b, h, stride):
+            gib_zurück 0
+        speicher_schreiben(kern + versatz_von(KernRaster, kr_pixel), pixel, 8)
+        speicher_schreiben(kern + versatz_von(KernRaster, kr_bytes), bytes, 8)
+        speicher_schreiben(kern + versatz_von(KernRaster, kr_breite), b, 8)
+        speicher_schreiben(kern + versatz_von(KernRaster, kr_hoehe), h, 8)
+        speicher_schreiben(kern + versatz_von(KernRaster, kr_stride), stride, 8)
+        gib_zurück 1
+
+# Unpraemultipliziertes Source-over mit der gerundeten C-Referenzformel.
+# Aufrufer behandelt Alpha 0 und 255. Jeder Kanal und beide Alphas sind <=255.
+@nativ
+funktion raster_mischen(adr: u64, farbe: u32, a: u64) -> void:
+    unsicher:
+        setze bg: u64 auf als(u64, speicher_lesen(adr, 4))
+        setze alt_a: u64 auf bg >> 24
+        wenn alt_a == 0:
+            speicher_schreiben(adr, farbe, 4)
+            gib_zurück
+        setze fg: u64 auf als(u64, farbe)
+        setze inv: u64 auf 255 - a
+        setze alpha: u64 auf a * 255 + alt_a * inv
+        setze ergebnis: u64 auf ((alpha + 127) / 255) << 24
+        setze shift: u64 auf 0
+        solange shift < 24:
+            setze vorn: u64 auf (fg >> shift) & 255
+            setze hinten: u64 auf (bg >> shift) & 255
+            setze zaehler: u64 auf vorn * a * 255 + hinten * alt_a * inv
+            setze ergebnis auf ergebnis | (((zaehler + alpha / 2) / alpha) << shift)
+            setze shift auf shift + 8
+        speicher_schreiben(adr, als(u32, ergebnis), 4)
+
+@nativ
+funktion raster_flaeche(kern: u64, x0: u64, y0: u64, x1: u64, y1: u64, farbe: u32, kopieren: bool) -> void:
+    unsicher:
+        setze a: u64 auf als(u64, farbe >> 24)
+        setze direkt: bool auf kopieren oder a == 255
+        wenn nicht direkt und a == 0:
+            gib_zurück
+        setze p: u64 auf raster_wert(kern, versatz_von(KernRaster, kr_pixel))
+        setze stride: u64 auf raster_wert(kern, versatz_von(KernRaster, kr_stride))
+        setze y: u64 auf y0
+        solange y < y1:
+            setze adr: u64 auf p + y * stride + x0 * 4
+            setze ende: u64 auf adr + (x1 - x0) * 4
+            solange adr < ende:
+                wenn direkt:
+                    speicher_schreiben(adr, farbe, 4)
+                sonst:
+                    raster_mischen(adr, farbe, a)
+                setze adr auf adr + 4
+            setze y auf y + 1
+
+@nativ
+funktion kern_raster_clear(kern: u64, farbe: u32) -> u8:
+    unsicher:
+        wenn nicht raster_gueltig(kern):
+            gib_zurück 0
+        raster_flaeche(kern, 0, 0, raster_wert(kern, versatz_von(KernRaster, kr_breite)), raster_wert(kern, versatz_von(KernRaster, kr_hoehe)), farbe, wahr)
+        gib_zurück 1
+
+@nativ
+funktion kern_raster_rect(kern: u64, x: i32, y: i32, breite: i32, hoehe: i32, farbe: u32) -> u8:
+    unsicher:
+        wenn breite < 0 oder hoehe < 0 oder nicht raster_gueltig(kern):
+            gib_zurück 0
+        setze x0: i64 auf als(i64, x)
+        setze y0: i64 auf als(i64, y)
+        setze x1: i64 auf x0 + als(i64, breite)
+        setze y1: i64 auf y0 + als(i64, hoehe)
+        setze rand_x: i64 auf als(i64, raster_wert(kern, versatz_von(KernRaster, kr_breite)))
+        setze rand_y: i64 auf als(i64, raster_wert(kern, versatz_von(KernRaster, kr_hoehe)))
+        wenn x0 < 0:
+            setze x0 auf 0
+        wenn y0 < 0:
+            setze y0 auf 0
+        wenn x1 > rand_x:
+            setze x1 auf rand_x
+        wenn y1 > rand_y:
+            setze y1 auf rand_y
+        wenn x0 < x1 und y0 < y1:
+            raster_flaeche(kern, als(u64, x0), als(u64, y0), als(u64, x1), als(u64, y1), farbe, falsch)
+        gib_zurück 1
+
+# 3x5 aus moo_surface_core.c. A-Z, 0-9, Leerzeichen, - . ! : , und ?.
+@nativ
+konstante RASTER_GLYPHEN: [u8; 215] auf [
+    7, 5, 7, 5, 5,  6, 5, 6, 5, 6,  7, 4, 4, 4, 7,  6, 5, 5, 5, 6,
+    7, 4, 6, 4, 7,  7, 4, 6, 4, 4,  7, 4, 5, 5, 7,  5, 5, 7, 5, 5,
+    7, 2, 2, 2, 7,  1, 1, 1, 5, 7,  5, 5, 6, 5, 5,  4, 4, 4, 4, 7,
+    5, 7, 7, 5, 5,  5, 7, 7, 7, 5,  7, 5, 5, 5, 7,  7, 5, 7, 4, 4,
+    7, 5, 5, 7, 1,  7, 5, 6, 5, 5,  7, 4, 7, 1, 7,  7, 2, 2, 2, 2,
+    5, 5, 5, 5, 7,  5, 5, 5, 5, 2,  5, 5, 7, 7, 5,  5, 5, 2, 5, 5,
+    5, 5, 2, 2, 2,  7, 1, 2, 4, 7,  7, 5, 5, 5, 7,  2, 6, 2, 2, 7,
+    7, 1, 7, 4, 7,  7, 1, 7, 1, 7,  5, 5, 7, 1, 1,  7, 4, 7, 1, 7,
+    7, 4, 7, 5, 7,  7, 1, 1, 1, 1,  7, 5, 7, 5, 7,  7, 5, 7, 1, 7,
+    0, 0, 0, 0, 0,  0, 0, 7, 0, 0,  0, 0, 0, 0, 2,  2, 0, 2, 2, 2,
+    0, 2, 0, 2, 0,  0, 0, 0, 2, 4,  7, 1, 3, 0, 2
+]
+
+@nativ
+funktion raster_glyphe(z: u64) -> u64:
+    wenn z >= 97 und z <= 122:
+        gib_zurück z - 97
+    wenn z >= 65 und z <= 90:
+        gib_zurück z - 65
+    wenn z >= 48 und z <= 57:
+        gib_zurück 26 + z - 48
+    wenn z == 32:
+        gib_zurück 36
+    wenn z == 45:
+        gib_zurück 37
+    wenn z == 46:
+        gib_zurück 38
+    wenn z == 33:
+        gib_zurück 39
+    wenn z == 58:
+        gib_zurück 40
+    wenn z == 44:
+        gib_zurück 41
+    gib_zurück 42
+
+@nativ
+funktion raster_zeichen(kern: u64, glyph: u64, x: i64, y: i64, skala: i32, farbe: u32) -> void:
+    unsicher:
+        setze s: i64 auf als(i64, skala)
+        setze adr: u64 auf adresse_von(RASTER_GLYPHEN) + glyph * 5
+        setze r: u64 auf 0
+        solange r < 5:
+            setze zeile: u64 auf als(u64, speicher_lesen(adr + r, 1))
+            setze gy: i64 auf y + als(i64, r) * s
+            setze spalte: u64 auf 0
+            solange spalte < 3:
+                setze gx: i64 auf x + als(i64, spalte) * s
+                wenn (zeile & (1 << (2 - spalte))) != 0 und gx >= -2147483648 und gx <= 2147483647 und gy >= -2147483648 und gy <= 2147483647:
+                    kern_raster_rect(kern, als(i32, gx), als(i32, gy), skala, skala, farbe)
+                setze spalte auf spalte + 1
+            setze r auf r + 1
+
+@nativ
+funktion kern_raster_text(kern: u64, x: i32, y: i32, skala: i32, textadresse: u64, laenge: u64, farbe: u32) -> u8:
+    unsicher:
+        wenn textadresse == 0 oder laenge > 0xFFFFFFFFFFFFFFFF - textadresse oder skala <= 0 oder nicht raster_gueltig(kern):
+            gib_zurück 0
+        setze pos_x: i64 auf als(i64, x)
+        setze pos_y: i64 auf als(i64, y)
+        setze max: i64 auf 9223372036854775807
+        setze dx: i64 auf als(i64, skala) * 4
+        setze dy: i64 auf als(i64, skala) * 6
+        setze i: u64 auf 0
+        solange i < laenge:
+            setze z: u64 auf als(u64, speicher_lesen(textadresse + i, 1))
+            wenn pos_y > max - dy:
+                gib_zurück 0
+            wenn z == 10:
+                setze pos_x auf als(i64, x)
+                setze pos_y auf pos_y + dy
+            sonst:
+                wenn pos_x > max - dx:
+                    gib_zurück 0
+                raster_zeichen(kern, raster_glyphe(z), pos_x, pos_y, skala, farbe)
+                setze pos_x auf pos_x + dx
+            setze i auf i + 1
+        gib_zurück 1
