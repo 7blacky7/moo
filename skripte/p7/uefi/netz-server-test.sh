@@ -77,7 +77,7 @@ chmod +x "$T/bin/"*
 
 kurz_adressen() { ip -6 -o addr show dev "$TEST_DEV" scope link | awk '{print $4}' | sort; }
 
-for profil in folgesignal verwaltet fehlgeschlagen; do
+for profil in folgesignal verwaltet fehlgeschlagen nur-link; do
   export TEST_CASE="$profil" TEST_DIR="$T/$profil"
   mkdir -p "$TEST_DIR/steuerung"
   : >"$TEST_DIR/trace"
@@ -92,22 +92,32 @@ for profil in folgesignal verwaltet fehlgeschlagen; do
     sysctl -q -w "net/ipv6/conf/$TEST_DEV/disable_ipv6=0"
     ip -6 addr add fe80::72/64 dev "$TEST_DEV" nodad
     ip -6 addr add fe80::73/64 dev "$TEST_DEV" nodad
-  else
+  elif [ "$profil" != nur-link ]; then
     ip -4 addr add 192.168.77.1/24 dev "$TEST_DEV"
   fi
   sysctl -n "net/ipv6/conf/$TEST_DEV/disable_ipv6" >"$TEST_DIR/disable.before"
   kurz_adressen >"$TEST_DIR/ll.before"
   ip -4 -o addr show dev "$TEST_DEV" >"$TEST_DIR/v4.before"
 
-  MOO_NETZ_IF="$TEST_DEV" MOO_NETZ_TFTP="$TEST_DIR/tftp" MOO_NETZ_STEUERUNG="$TEST_DIR/steuerung" MOO_NETZ_IPV6=1 \
-    setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$LOADER" >"$TEST_DIR/server.log" 2>&1 &
+  link=0
+  bereit='TFTP root is synthetic'
+  loader="$LOADER"
+  if [ "$profil" = nur-link ]; then
+    link=1
+    bereit='MOO-NETZ LINK BEREIT'
+    loader="$TEST_DIR/kein-loader.efi"
+  fi
+  MOO_NETZ_NUR_LINK="$link" MOO_NETZ_IF="$TEST_DEV" MOO_NETZ_TFTP="$TEST_DIR/tftp" \
+    MOO_NETZ_STEUERUNG="$TEST_DIR/steuerung" MOO_NETZ_IPV6=1 \
+    setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$loader" >"$TEST_DIR/server.log" 2>&1 &
   pid=$!
   for ((i=0; i<100; i++)); do
-    grep -Fq 'TFTP root is synthetic' "$TEST_DIR/server.log" && break
+    grep -Fq "$bereit" "$TEST_DIR/server.log" && break
     kill -0 "$pid" 2>/dev/null || { cat "$TEST_DIR/server.log"; exit 1; }
     sleep 0.05
   done
-  grep -Fq 'TFTP root is synthetic' "$TEST_DIR/server.log"
+  grep -Fq "$bereit" "$TEST_DIR/server.log"
+  ip -4 -o addr show dev "$TEST_DEV" | grep -Fq 'inet 192.168.77.1/24'
   [ "$(sysctl -n "net/ipv6/conf/$TEST_DEV/disable_ipv6")" = 0 ]
   [ -n "$(kurz_adressen)" ]
   : >"$TEST_DIR/steuerung/stopp"
@@ -132,7 +142,13 @@ for profil in folgesignal verwaltet fehlgeschlagen; do
   ip -4 -o addr show dev "$TEST_DEV" >"$TEST_DIR/v4.after"
   cmp "$TEST_DIR/v4.before" "$TEST_DIR/v4.after"
   [ ! -e "$TEST_DIR/firewall" ]
-  grep -qx dnsmasq-term "$TEST_DIR/trace"
+  if [ "$profil" = nur-link ]; then
+    [ ! -e "$TEST_DIR/tftp" ]
+    ! grep -Fq 'TFTP root is synthetic' "$TEST_DIR/server.log"
+    ! grep -qx dnsmasq-term "$TEST_DIR/trace"
+  else
+    grep -qx dnsmasq-term "$TEST_DIR/trace"
+  fi
   if [ "$profil" = verwaltet ]; then
     grep -qx yes "$TEST_DIR/managed"
     grep -qx "$TEST_UUID" "$TEST_DIR/uuid"

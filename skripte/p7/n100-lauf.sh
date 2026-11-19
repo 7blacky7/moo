@@ -54,6 +54,7 @@ while (($#)); do
     --ssh-info) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=2; SSH_PQ=0; shift;;
     --ssh-pq) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=2; SSH_PQ=1; shift;;
     --ssh-shell) PING_IP=192.168.77.2; TRANSPORT=$((TRANSPORT | 1)); SSH=3; SSH_PQ=1; shift;;
+    --ssh-schluessel) SSH_KEY="${2:?Datei fuer --ssh-schluessel fehlt}"; shift 2;;
     --modus) MODUS="$2"; shift 2;;
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
@@ -83,6 +84,7 @@ while (($#)); do
       '--ssh-info: Ed25519-Laufkey erzeugen und moo-info auf TCP 2223 pruefen.' \
       '--ssh-pq: moo-info mit ML-KEM-768/X25519 und erzwungenem X25519 pruefen.' \
       '--ssh-shell: dazu die PTY-Shell mit einem Skript ueber stdin pruefen.' \
+      '--ssh-schluessel DATEI: Ed25519-Testidentitaet mit DATEI.pub, Pflicht fuer ESP-SSH-Anmeldung.' \
       '--ecam-ipv6: ECAM-Abgleich und IPv6-Link-Local/NDP/Ping pruefen.' \
       '--krypto-selbsttest: KATs und CPU-Entropie im Sammelkern pruefen.' \
       '--trocken mit Netz- oder Kryptooption: Gemeinsame lokale ELF-/PE-Vorbereitung im Speicher.' \
@@ -127,8 +129,8 @@ fi
 
 ((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
 if [[ -n "$ESP_KERN" ]]; then
-  if ((INVENTAR || MODUS!=1)) || [[ -n "$PING_IP" || -n "$RESTORE" ]]; then
-    echo '--esp-kern braucht Modus 1 mit UDP-Mitschnitt. Ping-/SSHD-Proben verwenden den Netzwerk-Runner.' >&2
+  if ((INVENTAR || MODUS!=1)) || [[ -n "$RESTORE" ]]; then
+    echo '--esp-kern braucht den regulaeren Kernlauf (Modus 1)' >&2
     exit 2
   fi
   LADER_MODUS=3
@@ -136,6 +138,26 @@ fi
 
 ((SSH==0)) || command -v ssh >/dev/null || { echo 'SSH-Probe braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
 ((SSH<2)) || command -v ssh-keygen >/dev/null || { echo 'SSH-Anmeldung braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
+if ((SSH>=2)) && [[ -z "$SSH_KEY" && ( -n "$ESP_KERN" || -n "$KONFIG_QUELLE" ) ]]; then
+  echo 'Vorbereitete SSH-Anmeldung braucht --ssh-schluessel DATEI und DATEI.pub' >&2
+  exit 2
+fi
+if [[ -n "$SSH_KEY" ]]; then
+  if ((SSH<2)) || [[ ! -f "$SSH_KEY" || ! -f "$SSH_KEY.pub" ]]; then
+    echo '--ssh-schluessel braucht eine SSH-Anmeldeprobe und beide Schluesseldateien' >&2
+    exit 2
+  fi
+  if ! abgeleitet="$(ssh-keygen -y -P '' -f "$SSH_KEY" </dev/null)"; then
+    echo 'Ed25519-Laufkey konnte nicht gelesen werden' >&2
+    exit 2
+  fi
+  read -r lauf_typ lauf_key _ <<<"$abgeleitet"
+  if ! read -r pub_typ pub_key _ <"$SSH_KEY.pub" ||
+     [[ "$lauf_typ" != ssh-ed25519 || "$pub_typ" != ssh-ed25519 || -z "$lauf_key" || "$lauf_key" != "$pub_key" ]]; then
+    echo 'Ed25519-Laufkey stimmt nicht mit DATEI.pub ueberein' >&2
+    exit 2
+  fi
+fi
 
 kern_kopie() {
   uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" "${13:-0}" "${14:-}" <<'PY'
@@ -301,6 +323,9 @@ if ((TROCKEN)); then
   fi
   if [[ -n "$ESP_KERN" ]]; then
     printf '3. Bootquelle ESP, UDP-Mitschnitt auf %s; TFTP-Anfragen im Mitschnitt pruefen.\n' "$IFACE"
+    if [[ -n "$PING_IP" ]]; then
+      printf '%s\n' '   Direktlink mit Wiederherstellungsbeleg vorbereiten, Netzproben nach dem ESP-Start.'
+    fi
   else
     printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
   fi
@@ -317,7 +342,11 @@ if ((TROCKEN)); then
     printf '%s\n' '   Krypto- und Entropie-Status im Netzlog, Nachweis in krypto.log.'
   fi
   if ((SSH>=2)); then
-    printf '%s\n' '   Neuen Ed25519-Laufkey erzeugen, OpenSSH moo-info pruefen und Laufkey loeschen.'
+    if [[ -n "$SSH_KEY" ]]; then
+      printf '%s\n' '   Vorbereitete Ed25519-Identitaet geprueft, OpenSSH moo-info und Shell pruefen.'
+    else
+      printf '%s\n' '   Neuen Ed25519-Laufkey erzeugen, OpenSSH moo-info pruefen und Laufkey loeschen.'
+    fi
   elif ((SSH)); then
     printf '%s\n' '   OpenSSH auf TCP 2223 mit gepinntem Boot-Hostkey, Protokoll ssh-kex.log.'
   fi
@@ -346,7 +375,7 @@ if [[ -n "$KONFIG_LOADER_QUELLE" ]]; then
   exit 0
 fi
 if [[ -n "$KONFIG_QUELLE" ]]; then
-  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH"
+  kern_kopie "$KONFIG_QUELLE" "$KONFIG_ZIEL" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}" "$SSH_PQ" "$IPV6_PROBE"
   exit 0
 fi
 ((KOORDINATOR || INVENTAR)) || { echo 'Echte Laeufe/Wiederherstellung sind nur mit --koordinator erlaubt' >&2; exit 2; }
@@ -532,7 +561,7 @@ PY
 }
 
 if [[ -z "$RESTORE" ]]; then
-  if ((SSH>=2 && INVENTAR==0)); then
+  if ((SSH>=2 && INVENTAR==0)) && [[ -z "$SSH_KEY" ]]; then
     trap ssh_laufkey_loeschen EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM HUP
@@ -576,17 +605,24 @@ printf 'Laufordner: %s\n' "$OUT"
 capture_filter='arp or udp'
 [[ -z "$PING_IP" ]] || capture_filter='arp or udp or icmp'
 ((!IPV6_PROBE)) || capture_filter+=' or icmp6'
-((TRANSPORT==0)) || capture_filter='arp or udp or icmp or (tcp port 8080)'
+((TRANSPORT==0)) || capture_filter+=' or (tcp port 8080)'
 (( (TRANSPORT & 2) == 0 )) || capture_filter+=' or (tcp port 2222)'
 ((SSH==0)) || capture_filter+=' or (tcp port 2223)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
+netz_nur_link=0
+server_marker='dnsmasq-tftp.*TFTP root'
+: >"$OUT/server.log"
 if [[ -n "$ESP_KERN" ]]; then
-  printf '%s\n' 'MOO-LAUF BOOTQUELLE ESP' >"$OUT/server.log"
-else
+  printf '%s\n' 'MOO-LAUF BOOTQUELLE ESP' >>"$OUT/server.log"
+  netz_nur_link=1
+  server_marker='MOO-NETZ LINK BEREIT'
+fi
+if [[ -z "$ESP_KERN" || -n "$PING_IP" ]]; then
   mkdir -m 700 -- "$OUT/netz-steuerung"
-  MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" MOO_NETZ_STEUERUNG="$OUT/netz-steuerung" \
-    setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
+  MOO_NETZ_NUR_LINK="$netz_nur_link" MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" \
+    MOO_NETZ_IPV6="$IPV6_PROBE" MOO_NETZ_STEUERUNG="$OUT/netz-steuerung" \
+    setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >>"$OUT/server.log" 2>&1 &
   SERVER_PID=$!
 fi
 laufprozesse_aktiv() {
@@ -594,7 +630,7 @@ laufprozesse_aktiv() {
 }
 mitschnitt_bereit() {
   [[ -s "$OUT/netz.pcap" ]] &&
-    { [[ -n "$ESP_KERN" ]] || grep -q 'dnsmasq-tftp.*TFTP root' "$OUT/server.log"; }
+    { [[ -z "$SERVER_PID" ]] || grep -q "$server_marker" "$OUT/server.log"; }
 }
 for ((i=0;i<30;i++)); do
   laufprozesse_aktiv || { echo 'Server/Mitschnitt vorzeitig beendet' >&2; exit 1; }

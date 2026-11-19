@@ -20,53 +20,62 @@
 # Umgebung: MOO_NETZ_IF (enp60s0), MOO_NETZ_ADR (192.168.77.1/24),
 #           MOO_NETZ_NUR_KOPIEREN=1 (nur moo.efi/.pruef erneuern, kein Server).
 #           MOO_NETZ_STEUERUNG (privates Laufverzeichnis fuer Snapshot, stopp, fertig).
+#           MOO_NETZ_NUR_LINK=1 (IPv4/IPv6 vorbereiten und restaurieren).
 set -euo pipefail
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 IFACE="${MOO_NETZ_IF:-enp60s0}"
 ADR="${MOO_NETZ_ADR:-192.168.77.1/24}"
 IP="${ADR%/*}"
-EFI="${1:-$ROOT/build/p7-netz/run5-hallo/BOOTX64.EFI}"
 TFTP="${MOO_NETZ_TFTP:-$ROOT/build/p7-netz/tftp}"
-# Optional fuer Kern-Updates: Loader und seine Pruefdatei bleiben bytegleich.
-if [ "${MOO_NETZ_NUR_KERN:-0}" = 1 ]; then
-  EFI="$TFTP/moo.efi"
-  [ -s "$TFTP/moo.efi.pruef" ] || { echo "Vorhandene Loader-Pruefdatei fehlt" >&2; exit 2; }
-  [ -n "${MOO_NETZ_KERN:-${2:-}}" ] || { echo "Kernel-only braucht einen Kern" >&2; exit 2; }
-fi
+NUR_LINK="${MOO_NETZ_NUR_LINK:-0}"
+case "$NUR_LINK" in
+  0|1) ;;
+  *) echo 'MOO_NETZ_NUR_LINK: 0 oder 1' >&2; exit 2 ;;
+esac
 
 [ "$IFACE" != "enp59s0" ] || { echo "enp59s0 ist das Heimnetz - verweigert." >&2; exit 2; }
-[ -f "$EFI" ] || { echo "EFI-Datei fehlt: $EFI" >&2; exit 2; }
-file -b "$EFI" | grep -q 'PE32+ executable for EFI' || { echo "Kein PE32+-EFI-Image: $EFI" >&2; exit 2; }
 ip link show "$IFACE" >/dev/null 2>&1 || { echo "Schnittstelle fehlt: $IFACE" >&2; exit 2; }
+if [ "$NUR_LINK" = 0 ]; then
+  EFI="${1:-$ROOT/build/p7-netz/run5-hallo/BOOTX64.EFI}"
+  # Optional fuer Kern-Updates: Loader und seine Pruefdatei bleiben bytegleich.
+  if [ "${MOO_NETZ_NUR_KERN:-0}" = 1 ]; then
+    EFI="$TFTP/moo.efi"
+    [ -s "$TFTP/moo.efi.pruef" ] || { echo "Vorhandene Loader-Pruefdatei fehlt" >&2; exit 2; }
+    [ -n "${MOO_NETZ_KERN:-${2:-}}" ] || { echo "Kernel-only braucht einen Kern" >&2; exit 2; }
+  fi
 
-mkdir -p "$TFTP"
-if [ "${MOO_NETZ_NUR_KERN:-0}" != 1 ]; then
-cp "$EFI" "$TFTP/moo.efi.neu" && mv "$TFTP/moo.efi.neu" "$TFTP/moo.efi"
-printf '%s %s\n' "$(stat -c %s "$TFTP/moo.efi")" \
-  "$(gzip -c -n "$TFTP/moo.efi" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.efi.pruef"
-echo "moo.efi:       $(sha256sum "$TFTP/moo.efi" | cut -c1-64)  (aus $EFI)"
-echo "moo.efi.pruef: $(cat "$TFTP/moo.efi.pruef")"
-fi
-# P7-T5: optionaler Kern fuer den Moo-UEFI-Loader (moo.efi = beispiele/uefi/moo_lader.moos),
-# 2. Argument oder MOO_NETZ_KERN. Der Netz-Lader holt ihn als moo.kern und uebergibt
-# ihn per LoadOptions. Ohne Kern werden alte moo.kern-Dateien entfernt.
-KERN="${MOO_NETZ_KERN:-${2:-}}"
-if [ -n "$KERN" ]; then
-  [ -f "$KERN" ] || { echo "Kern-Datei fehlt: $KERN" >&2; exit 2; }
-  [ "$(head -c4 "$KERN" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || { echo "Kein ELF: $KERN" >&2; exit 2; }
-  cp "$KERN" "$TFTP/moo.kern.neu" && mv "$TFTP/moo.kern.neu" "$TFTP/moo.kern"
-  printf '%s %s\n' "$(stat -c %s "$TFTP/moo.kern")" \
-    "$(gzip -c -n "$TFTP/moo.kern" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.kern.pruef"
-  echo "moo.kern:      $(sha256sum "$TFTP/moo.kern" | cut -c1-64)  (aus $KERN)"
-  echo "moo.kern.pruef: $(cat "$TFTP/moo.kern.pruef")"
-else
-  rm -f "$TFTP/moo.kern" "$TFTP/moo.kern.pruef"
-fi
-[ -z "${MOO_NETZ_NUR_KOPIEREN:-}" ] || exit 0
+  [ -f "$EFI" ] || { echo "EFI-Datei fehlt: $EFI" >&2; exit 2; }
+  file -b "$EFI" | grep -q 'PE32+ executable for EFI' || { echo "Kein PE32+-EFI-Image: $EFI" >&2; exit 2; }
 
-command -v dnsmasq >/dev/null || { echo "dnsmasq fehlt" >&2; exit 2; }
-sudo -n true 2>/dev/null || { echo "sudo ohne Passwort noetig (Port 69, Adresse)" >&2; exit 2; }
+  mkdir -p "$TFTP"
+  if [ "${MOO_NETZ_NUR_KERN:-0}" != 1 ]; then
+    cp "$EFI" "$TFTP/moo.efi.neu" && mv "$TFTP/moo.efi.neu" "$TFTP/moo.efi"
+    printf '%s %s\n' "$(stat -c %s "$TFTP/moo.efi")" \
+      "$(gzip -c -n "$TFTP/moo.efi" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.efi.pruef"
+    echo "moo.efi:       $(sha256sum "$TFTP/moo.efi" | cut -c1-64)  (aus $EFI)"
+    echo "moo.efi.pruef: $(cat "$TFTP/moo.efi.pruef")"
+  fi
+  # P7-T5: optionaler Kern fuer den Moo-UEFI-Loader (moo.efi = beispiele/uefi/moo_lader.moos),
+  # 2. Argument oder MOO_NETZ_KERN. Der Netz-Lader holt ihn als moo.kern und uebergibt
+  # ihn per LoadOptions. Ohne Kern werden alte moo.kern-Dateien entfernt.
+  KERN="${MOO_NETZ_KERN:-${2:-}}"
+  if [ -n "$KERN" ]; then
+    [ -f "$KERN" ] || { echo "Kern-Datei fehlt: $KERN" >&2; exit 2; }
+    [ "$(head -c4 "$KERN" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ] || { echo "Kein ELF: $KERN" >&2; exit 2; }
+    cp "$KERN" "$TFTP/moo.kern.neu" && mv "$TFTP/moo.kern.neu" "$TFTP/moo.kern"
+    printf '%s %s\n' "$(stat -c %s "$TFTP/moo.kern")" \
+      "$(gzip -c -n "$TFTP/moo.kern" | tail -c8 | od -An -tx4 -N4 | tr -d ' \n')" >"$TFTP/moo.kern.pruef"
+    echo "moo.kern:      $(sha256sum "$TFTP/moo.kern" | cut -c1-64)  (aus $KERN)"
+    echo "moo.kern.pruef: $(cat "$TFTP/moo.kern.pruef")"
+  else
+    rm -f "$TFTP/moo.kern" "$TFTP/moo.kern.pruef"
+  fi
+  [ -z "${MOO_NETZ_NUR_KOPIEREN:-}" ] || exit 0
+
+  command -v dnsmasq >/dev/null || { echo "dnsmasq fehlt" >&2; exit 2; }
+fi
+sudo -n true 2>/dev/null || { echo "sudo ohne Passwort fuer die Netzkonfiguration noetig" >&2; exit 2; }
 netz="${IP%.*}."
 if ip -4 -o addr show | grep -F " inet $netz" | grep -vq "inet $IP/"; then
   echo "Andere IPv4 aus ${netz}0/24 schon gesetzt - abgebrochen:" >&2
@@ -77,7 +86,12 @@ KLIENT="${MOO_NETZ_KLIENT:-${netz}2}"
 STEUERUNG="${MOO_NETZ_STEUERUNG:-}"
 zustand="$STEUERUNG"
 if [ -z "$zustand" ]; then
-  zustand="$(mktemp -d "$(dirname "$TFTP")/.netz-zustand.XXXXXX")"
+  basis="$(dirname "$TFTP")"
+  if [ "$NUR_LINK" = 1 ]; then
+    basis="$ROOT/build"
+    mkdir -p "$basis"
+  fi
+  zustand="$(mktemp -d "$basis/.netz-zustand.XXXXXX")"
 else
   [ -d "$zustand" ] || { echo "Netz-Steuerverzeichnis fehlt: $zustand" >&2; exit 2; }
 fi
@@ -223,6 +237,11 @@ fi
 if [ "${MOO_NETZ_IPV6:-0}" = 1 ]; then
   ipv6_vorbereiten || { echo "IPv6 auf $IFACE konnte nicht vorbereitet werden" >&2; exit 2; }
   ip -6 -o addr show dev "$IFACE" scope link
+fi
+if [ "$NUR_LINK" = 1 ]; then
+  printf 'MOO-NETZ LINK BEREIT %s %s\n' "$IFACE" "$ADR"
+  while [ -z "$STEUERUNG" ] || [ ! -e "$STEUERUNG/stopp" ]; do sleep 0.1; done
+  exit 0
 fi
 # Laufzeit-Firewallregel fuer den bekannten TFTP-Client.
 if command -v iptables >/dev/null 2>&1; then
