@@ -5,19 +5,10 @@ aus "../uefi/netz_geraet" importiere nt_kopiere, nt_b8, nt_b32, nt_r32
 aus "../uefi/hardware_pci" importiere nt_null, takt
 aus "netz_ssh_shell" importiere SSH_SHELL_FENSTER, ssh_info_schreiben, ssh_shell_starten, ssh_shell_eingang, ssh_shell_eingang_belegt, ssh_shell_fortsetzen, ssh_shell_aus_adresse, ssh_shell_aus_laenge, ssh_shell_aus_quittieren, ssh_shell_beendet
 
-extern "C" funktion moo_bare_ssh_boot() -> u64
+aus "netz_ssh_krypto" importiere moo_bare_ssh_boot, moo_bare_ssh_public, moo_bare_ssh_random, moo_bare_ssh_clear, moo_bare_ssh_versions, moo_bare_ssh_inits, moo_bare_ssh_exchange, moo_bare_ssh_length, moo_bare_ssh_seal, moo_bare_ssh_open, moo_bare_ssh_userauth, SSH_HYBRID_CLIENT_BYTES, SSH_HYBRID_REPLY_BYTES
+
 extern "C" funktion moo_bare_ssh_sicherheit_pruefen() -> u64
-extern "C" funktion moo_bare_ssh_public() -> u64
-extern "C" funktion moo_bare_ssh_random(ziel: u64, laenge: u64) -> u64
-extern "C" funktion moo_bare_ssh_clear() -> void
-extern "C" funktion moo_bare_ssh_versions(client: u64, client_n: u64, server: u64, server_n: u64) -> void
-extern "C" funktion moo_bare_ssh_inits(client: u64, client_n: u64, server: u64, server_n: u64) -> void
-extern "C" funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_n: u64, antwort: u64) -> u64
-extern "C" funktion moo_bare_ssh_length(paket: u64, seq: u64) -> u64
-extern "C" funktion moo_bare_ssh_seal(paket: u64, laenge: u64, seq: u64) -> u64
-extern "C" funktion moo_bare_ssh_open(paket: u64, laenge: u64, seq: u64) -> u64
 extern "C" funktion moo_bare_ssh_key_erlaubt(zustand: u64, erwartet: u64, angeboten: u64) -> u64
-extern "C" funktion moo_bare_ssh_userauth(zustand: u64, erwartet: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64
 
 @nativ
 konstante SSH_EINGANG_MAX: u64 auf 35000
@@ -164,10 +155,6 @@ konstante SSH_KEX_ANGEBOT_N: u64 auf 68
 konstante SSH_KEX_X25519: u64 auf 1
 @nativ
 konstante SSH_KEX_HYBRID: u64 auf 2
-@nativ
-konstante SSH_HYBRID_CLIENT_BYTES: u64 auf 1216
-@nativ
-konstante SSH_HYBRID_REPLY_BYTES: u64 auf 1120
 @nativ
 konstante SSH_STRIKT_CLIENT: [u8; _] auf "kex-strict-c-v00@openssh.com"
 @nativ

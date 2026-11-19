@@ -65,6 +65,22 @@
       "proof": "P7-T11: nativer SSH-Transport, QEMU-TAP mit OpenSSH bis geschuetzter Service-Runde"
     },
     {
+      "path": "beispiele/kernel/krypto_drbg.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7: nativer HMAC-DRBG-Zustand, C-ABI fuer SHA-512 und CPU-Seed"
+    },
+    {
+      "path": "beispiele/kernel/netz_ssh_krypto.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7: native SSH-KEX- und Schluesselpolitik, C-Provider"
+    },
+    {
       "path": "beispiele/kernel/netz_ssh_shell.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

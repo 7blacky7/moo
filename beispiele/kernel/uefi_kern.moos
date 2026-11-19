@@ -28,6 +28,7 @@ aus "netz_ipv6" importiere netz_ipv6_port_an, netz_ipv6_wartung, netz_ipv6_link_
 aus "pci_ecam" importiere pci_ecam_starten
 aus "netz_tcp" importiere netz_tcp_wartung
 aus "netz_ssh" importiere ssh_booten, ssh_bereit
+aus "krypto_drbg" importiere drbg_selbsttest, drbg_entropie_selbsttest
 aus "netz_ssh_shell" importiere ssh_shell_kern, ssh_shell_pci_eintrag, ssh_shell_pci_anzahl
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
@@ -225,8 +226,7 @@ statisch TEST_ZIEL: [u32; 4] auf [0, 0, 0, 0]
 # Vorhandener Surface-Kern (compiler/runtime/moo_surface_core.c, RGBA8888,
 # stride in Bytes). bool-Ergebnis als u8; MooSurfaceColor {r,g,b,a} wird als
 # u32 = r | g<<8 | b<<16 | a<<24 uebergeben (SysV: beide INTEGER in einem Register).
-extern "C" funktion moo_bare_krypto_selbsttest() -> u64
-extern "C" funktion moo_bare_entropie_selbsttest() -> u64
+extern "C" funktion moo_bare_krypto_provider_kat() -> u64
 
 extern "C" funktion moo_surface_core_init(kern: ptr[u8], pixel: ptr[u8], bytes: u64, breite: i32, hoehe: i32, stride: u64) -> u8
 extern "C" funktion moo_surface_core_clear(kern: ptr[u8], farbe: u32) -> u8
@@ -2211,7 +2211,7 @@ funktion sammel_krypto(log: u64) -> void:
     unsicher:
         meldung(adresse_von(SAM_K_START), 1)
         sammel_wartung(log)
-        setze kat: u64 auf moo_bare_krypto_selbsttest()
+        setze kat: u64 auf moo_bare_krypto_provider_kat() | (drbg_selbsttest() << 7)
         meldung(adresse_von(SAM_K_SHA256), (kat >> 0) & 1)
         meldung(adresse_von(SAM_K_SHA512), (kat >> 1) & 1)
         meldung(adresse_von(SAM_K_HMAC_SHA256), (kat >> 2) & 1)
@@ -2222,7 +2222,7 @@ funktion sammel_krypto(log: u64) -> void:
         meldung(adresse_von(SAM_K_HMAC_DRBG), (kat >> 7) & 1)
         meldung(adresse_von(SAM_K_ENTROPIE_LOGIK), (kat >> 8) & 1)
         sammel_wartung(log)
-        setze quellen: u64 auf moo_bare_entropie_selbsttest()
+        setze quellen: u64 auf drbg_entropie_selbsttest()
         meldung(adresse_von(SAM_K_RDSEED), quellen & 15)
         meldung(adresse_von(SAM_K_RDRAND), (quellen >> 4) & 15)
         setze quelle: u64 auf (quellen >> 8) & 15

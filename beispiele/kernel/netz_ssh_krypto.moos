@@ -1,0 +1,210 @@
+# SSH-Krypto-Zustand fuer den einzelnen TCP-Slot. Die Primitive und der
+# Tag-/Signaturvergleich werden ueber die vorhandenen C-Provider aufgerufen.
+aus "krypto_drbg" importiere drbg_zufall, crypto_wipe
+aus "../uefi/netz_geraet" importiere nt_b32, nt_kopiere
+
+extern "C" funktion moo_krypto_sha256(daten: ptr[u8], laenge: u64, ausgabe: ptr[u8]) -> void
+extern "C" funktion moo_krypto_sha256_init(ctx: ptr[u8]) -> void
+extern "C" funktion moo_krypto_sha256_update(ctx: ptr[u8], daten: ptr[u8], laenge: u64) -> void
+extern "C" funktion moo_krypto_sha256_final(ctx: ptr[u8], ausgabe: ptr[u8]) -> void
+extern "C" funktion moo_krypto_x25519_basis(oeffentlich: ptr[u8], skalar: ptr[u8]) -> i32
+extern "C" funktion moo_krypto_x25519(gemeinsam: ptr[u8], skalar: ptr[u8], gegenstelle: ptr[u8]) -> i32
+extern "C" funktion moo_mlkem768_enc_derand(ciphertext: ptr[u8], secret: ptr[u8], pk: ptr[u8], coins: ptr[u8]) -> i32
+extern "C" funktion crypto_ed25519_key_pair(secret: ptr[u8], public_key: ptr[u8], seed: ptr[u8]) -> void
+extern "C" funktion crypto_ed25519_sign(signatur: ptr[u8], secret: ptr[u8], daten: ptr[u8], laenge: u64) -> void
+extern "C" funktion moo_bare_ssh_encode_k(ausgabe: ptr[u8], x25519: ptr[u8]) -> u64
+extern "C" funktion moo_bare_ssh_paketlaenge(key: ptr[u8], paket: u64, seq: u64) -> u64
+extern "C" funktion moo_bare_ssh_paket_seal(key: ptr[u8], paket: u64, laenge: u64, seq: u64) -> u64
+extern "C" funktion moo_bare_ssh_paket_open(key: ptr[u8], paket: u64, laenge: u64, seq: u64) -> u64
+extern "C" funktion moo_bare_ssh_session_userauth(id: ptr[u8], zustand: u64, erlaubt: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64
+
+# Kontextgroesse und providerseitige ML-KEM-Groessen werden in
+# moo_bare_ssh_krypto.c zur Compile-Zeit geprueft.
+@nativ
+konstante SSH_HASH_BYTES: u64 auf 112
+@nativ
+konstante SSH_X25519_BYTES: u64 auf 32
+@nativ
+konstante SSH_HYBRID_CLIENT_BYTES: u64 auf 1216
+@nativ
+konstante SSH_HYBRID_REPLY_BYTES: u64 auf 1120
+@nativ
+statisch SSH_EXCHANGE_HASH: [u64; 14] auf 0
+@nativ
+statisch SSH_HOST_PUBLIC: [u64; 4] auf 0
+@nativ
+statisch SSH_HOST_SECRET: [u64; 8] auf 0
+@nativ
+statisch SSH_HOST_BEREIT: [u64; 1] auf 0
+@nativ
+statisch SSH_SENDE_KEY: [u64; 8] auf 0
+@nativ
+statisch SSH_EMPFANGS_KEY: [u64; 8] auf 0
+@nativ
+statisch SSH_SESSION_ID: [u64; 4] auf 0
+@nativ
+statisch SSH_KEYS_BEREIT: [u64; 1] auf 0
+
+@nativ
+funktion moo_bare_ssh_boot() -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_HOST_BEREIT), 8) != 0:
+            gib_zurück 1
+        setze seed: [u64; 4] auf [0, 0, 0, 0]
+        setze p: u64 auf adresse_von(seed)
+        setze ok: bool auf drbg_zufall(p, 32)
+        wenn ok:
+            crypto_ed25519_key_pair(zeiger(adresse_von(SSH_HOST_SECRET)), zeiger(adresse_von(SSH_HOST_PUBLIC)), zeiger(p))
+            speicher_schreiben(adresse_von(SSH_HOST_BEREIT), 1, 8)
+        crypto_wipe(zeiger(p), 32)
+        wenn ok:
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+funktion moo_bare_ssh_public() -> u64:
+    unsicher:
+        gib_zurück adresse_von(SSH_HOST_PUBLIC)
+
+@nativ
+funktion moo_bare_ssh_random(ziel: u64, laenge: u64) -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_HOST_BEREIT), 8) != 0 und drbg_zufall(ziel, laenge):
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+funktion moo_bare_ssh_clear() -> void:
+    unsicher:
+        crypto_wipe(zeiger(adresse_von(SSH_EXCHANGE_HASH)), SSH_HASH_BYTES)
+        crypto_wipe(zeiger(adresse_von(SSH_SENDE_KEY)), 64)
+        crypto_wipe(zeiger(adresse_von(SSH_EMPFANGS_KEY)), 64)
+        crypto_wipe(zeiger(adresse_von(SSH_SESSION_ID)), 32)
+        speicher_schreiben(adresse_von(SSH_KEYS_BEREIT), 0, 8)
+
+@nativ
+funktion ssh_hash_string(ctx: u64, daten: u64, laenge: u64) -> void:
+    unsicher:
+        setze kopf: u32 auf 0
+        nt_b32(adresse_von(kopf), 0, laenge)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(adresse_von(kopf)), 4)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(daten), laenge)
+
+@nativ
+funktion moo_bare_ssh_versions(client: u64, client_n: u64, server: u64, server_n: u64) -> void:
+    unsicher:
+        moo_bare_ssh_clear()
+        moo_krypto_sha256_init(zeiger(adresse_von(SSH_EXCHANGE_HASH)))
+        moo_bare_ssh_inits(client, client_n, server, server_n)
+
+@nativ
+funktion moo_bare_ssh_inits(client: u64, client_n: u64, server: u64, server_n: u64) -> void:
+    unsicher:
+        setze ctx: u64 auf adresse_von(SSH_EXCHANGE_HASH)
+        ssh_hash_string(ctx, client, client_n)
+        ssh_hash_string(ctx, server, server_n)
+
+# RFC 4253 7.2. H ist fuer den initialen Austausch der Session-Identifier.
+@nativ
+funktion ssh_key_ableiten(ausgabe: u64, k: u64, k_n: u64, h: u64, kennung: u8) -> void:
+    unsicher:
+        setze puffer: [u64; 14] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze ctx: u64 auf adresse_von(puffer)
+        moo_krypto_sha256_init(zeiger(ctx))
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(k), k_n)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(h), 32)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(adresse_von(kennung)), 1)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(h), 32)
+        moo_krypto_sha256_final(zeiger(ctx), zeiger(ausgabe))
+
+        moo_krypto_sha256_init(zeiger(ctx))
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(k), k_n)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(h), 32)
+        moo_krypto_sha256_update(zeiger(ctx), zeiger(ausgabe), 32)
+        moo_krypto_sha256_final(zeiger(ctx), zeiger(ausgabe + 32))
+        crypto_wipe(zeiger(ctx), SSH_HASH_BYTES)
+
+# Antwortpuffer: Server-Blob mit anschliessender roher Ed25519-Signatur.
+# Hybrid-Layout: draft-ietf-sshm-mlkem-hybrid-kex-10, 2.2–2.5.
+@nativ
+funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_n: u64, antwort: u64) -> u64:
+    unsicher:
+        wenn client_n != SSH_X25519_BYTES und client_n != SSH_HYBRID_CLIENT_BYTES:
+            gib_zurück 0
+        setze hybrid: bool auf client_n == SSH_HYBRID_CLIENT_BYTES
+        setze server_n: u64 auf SSH_X25519_BYTES
+        wenn hybrid:
+            setze server_n auf SSH_HYBRID_REPLY_BYTES
+        setze skalar: [u64; 4] auf [0, 0, 0, 0]
+        setze coins: [u64; 4] auf [0, 0, 0, 0]
+        setze shared: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze kodiert: [u64; 5] auf [0, 0, 0, 0, 0]
+        setze hash: [u64; 4] auf [0, 0, 0, 0]
+        setze client_x: u64 auf client + client_n - SSH_X25519_BYTES
+        setze server_x: u64 auf antwort + server_n - SSH_X25519_BYTES
+        setze shared_x: u64 auf adresse_von(shared) + 32
+        setze k: u64 auf adresse_von(kodiert)
+        setze h: u64 auf adresse_von(hash)
+        setze ctx: u64 auf adresse_von(SSH_EXCHANGE_HASH)
+
+        setze ok: bool auf speicher_lesen(adresse_von(SSH_HOST_BEREIT), 8) != 0 und drbg_zufall(adresse_von(skalar), 32)
+        setze ok auf ok und moo_krypto_x25519_basis(zeiger(server_x), zeiger(adresse_von(skalar))) == 0
+        setze ok auf ok und moo_krypto_x25519(zeiger(shared_x), zeiger(adresse_von(skalar)), zeiger(client_x)) == 0
+        setze k_n: u64 auf 36
+        wenn ok und hybrid:
+            setze ok auf drbg_zufall(adresse_von(coins), 32) und moo_mlkem768_enc_derand(zeiger(antwort), zeiger(adresse_von(shared)), zeiger(client), zeiger(adresse_von(coins))) == 0
+            wenn ok:
+                # SSH string mit SHA-256(K_PQ || K_CL).
+                nt_b32(k, 0, 32)
+                moo_krypto_sha256(zeiger(adresse_von(shared)), 64, zeiger(k + 4))
+        wenn ok:
+            wenn nicht hybrid:
+                setze k_n auf moo_bare_ssh_encode_k(zeiger(k), zeiger(shared_x))
+            ssh_hash_string(ctx, host_blob, host_n)
+            ssh_hash_string(ctx, client, client_n)
+            ssh_hash_string(ctx, antwort, server_n)
+            moo_krypto_sha256_update(zeiger(ctx), zeiger(k), k_n)
+            moo_krypto_sha256_final(zeiger(ctx), zeiger(h))
+            nt_kopiere(adresse_von(SSH_SESSION_ID), h, 32)
+            crypto_ed25519_sign(zeiger(antwort + server_n), zeiger(adresse_von(SSH_HOST_SECRET)), zeiger(h), 32)
+            ssh_key_ableiten(adresse_von(SSH_EMPFANGS_KEY), k, k_n, h, 67) # 'C', Client -> Server
+            ssh_key_ableiten(adresse_von(SSH_SENDE_KEY), k, k_n, h, 68) # 'D', Server -> Client
+            speicher_schreiben(adresse_von(SSH_KEYS_BEREIT), 1, 8)
+
+        crypto_wipe(zeiger(adresse_von(skalar)), 32)
+        crypto_wipe(zeiger(adresse_von(coins)), 32)
+        crypto_wipe(zeiger(adresse_von(shared)), 64)
+        crypto_wipe(zeiger(k), 40)
+        crypto_wipe(zeiger(h), 32)
+        crypto_wipe(zeiger(ctx), SSH_HASH_BYTES)
+        wenn ok:
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+funktion moo_bare_ssh_length(paket: u64, seq: u64) -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
+            gib_zurück 0
+        gib_zurück moo_bare_ssh_paketlaenge(zeiger(adresse_von(SSH_EMPFANGS_KEY)), paket, seq)
+
+@nativ
+funktion moo_bare_ssh_seal(paket: u64, laenge: u64, seq: u64) -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
+            gib_zurück 0
+        gib_zurück moo_bare_ssh_paket_seal(zeiger(adresse_von(SSH_SENDE_KEY)), paket, laenge, seq)
+
+@nativ
+funktion moo_bare_ssh_open(paket: u64, laenge: u64, seq: u64) -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
+            gib_zurück 0
+        gib_zurück moo_bare_ssh_paket_open(zeiger(adresse_von(SSH_EMPFANGS_KEY)), paket, laenge, seq)
+
+@nativ
+funktion moo_bare_ssh_userauth(zustand: u64, erwartet: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64:
+    unsicher:
+        wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
+            gib_zurück 0
+        gib_zurück moo_bare_ssh_session_userauth(zeiger(adresse_von(SSH_SESSION_ID)), zustand, erwartet, angeboten, praefix, laenge, signatur)

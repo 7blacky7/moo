@@ -22,31 +22,13 @@ typedef enum {
     MOO_ENTROPY_RDRAND = 2,
 } MooEntropySource;
 
-typedef struct {
-    MooEntropyStatus rdseed;
-    MooEntropyStatus rdrand;
-    MooEntropySource source;
-} MooEntropyReport;
+/* Seed-Ausgabe fuer den Moo-DRBG. Ergebnisbits 0..3 und 4..7 sind
+ * RDSEED-/RDRAND-Status, 8..11 enthalten die gewaehlte Quelle.
+ * Ohne gueltige Quelle wird die Ausgabe geloescht. */
+uint64_t moo_bare_entropie_seed(uint8_t seed[48]);
 
-typedef struct {
-    uint8_t key[64];
-    uint8_t value[64];
-    unsigned requests_left;
-} MooBareDrbg;
-
-/* Der Aufrufer verwaltet einen Zustand pro Nutzer und synchronisiert Zugriffe.
- * Start prueft beide CPU-Quellen und instanziiert HMAC-DRBG(SHA-512).
- * Nach Fehler bleibt der Zustand geloescht. 0 = bereit, -1 = Fehler. */
-int moo_bare_drbg_start(MooBareDrbg *rng, MooEntropyReport *report);
-
-/* 1 bis 65536 Bytes je Aufruf, maximal 4096 Aufrufe je Instanziierung.
- * Bei -1 bleibt die Ausgabe unveraendert. Erneut starten zieht neues Seed-Material. */
-int moo_bare_drbg_generate(MooBareDrbg *rng, uint8_t *out, size_t n);
-void moo_bare_drbg_wipe(MooBareDrbg *rng);
-
-/* Ergebnisbits der KATs und Quellenauswahl, keine Nutz-/Seed-Daten. */
-uint64_t moo_bare_krypto_selbsttest(void);
-uint64_t moo_bare_drbg_kat(void);
-uint64_t moo_bare_entropie_selbsttest(void);
+/* Nur Ergebnisbits, niemals Seed- oder Schluesseldaten. */
+uint64_t moo_bare_entropie_kat(void);
+uint64_t moo_bare_krypto_provider_kat(void);
 
 #endif

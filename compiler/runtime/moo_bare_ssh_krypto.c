@@ -11,20 +11,14 @@ enum {
     SSH_TAG_BYTES = 16,
     SSH_KEY_BYTES = 64,
     SSH_AUTH_PREFIX_MAX = 128,
-    SSH_X25519_BYTES = 32,
-    SSH_HYBRID_CLIENT_BYTES = MLKEM768_PUBLICKEYBYTES + SSH_X25519_BYTES,
-    SSH_HYBRID_REPLY_BYTES = MLKEM768_CIPHERTEXTBYTES + SSH_X25519_BYTES,
 };
 
-/* Ein TCP-Slot. Hostkey und DRBG leben bis zum Ende des Laufprofils.
- * Transkript und Paketschluessel gehoeren zur jeweiligen Verbindung. */
-static MooBareDrbg ssh_rng;
-static uint8_t host_public[32];
-static uint8_t host_secret[64];
-static MooSha256Ctx exchange_hash;
-static uint8_t send_key[SSH_KEY_BYTES], recv_key[SSH_KEY_BYTES];
-static uint8_t session_id[32];
-static bool boot_ready, keys_ready;
+/* Der Moo-Orchestrator reserviert 14 u64 fuer einen SHA-256-Kontext und
+ * verwendet die SSH-Drahtlaengen aus dem ML-KEM-768-Provider. */
+_Static_assert(sizeof(MooSha256Ctx) == 112 && _Alignof(MooSha256Ctx) <= 8,
+               "Moo SSH SHA-256 context ABI");
+_Static_assert(MLKEM768_PUBLICKEYBYTES == 1184 && MLKEM768_CIPHERTEXTBYTES == 1088 &&
+               MLKEM768_BYTES == 32 && MLKEM_SYMBYTES == 32, "Moo SSH ML-KEM-768 lengths");
 
 static uint8_t *bytes_at(uint64_t address)
 {
@@ -37,77 +31,9 @@ static void put_u32be(uint8_t out[4], uint32_t n)
         out[3 - i] = (uint8_t)(n >> (8 * i));
 }
 
-static bool random_bytes(uint8_t *out, size_t size)
-{
-    if (ssh_rng.requests_left == 0) {
-        MooEntropyReport report;
-        if (moo_bare_drbg_start(&ssh_rng, &report) != 0)
-            return false;
-    }
-    return moo_bare_drbg_generate(&ssh_rng, out, size) == 0;
-}
-
-uint64_t moo_bare_ssh_boot(void)
-{
-    if (boot_ready)
-        return 1;
-    uint8_t seed[32];
-    if (!random_bytes(seed, sizeof(seed))) {
-        crypto_wipe(seed, sizeof(seed));
-        return 0;
-    }
-    crypto_ed25519_key_pair(host_secret, host_public, seed);
-    crypto_wipe(seed, sizeof(seed));
-    boot_ready = true;
-    return 1;
-}
-
-uint64_t moo_bare_ssh_public(void)
-{
-    return (uint64_t)(uintptr_t)host_public;
-}
-
-uint64_t moo_bare_ssh_random(uint64_t out, uint64_t size)
-{
-    return boot_ready && random_bytes(bytes_at(out), size);
-}
-
-void moo_bare_ssh_clear(void)
-{
-    crypto_wipe(&exchange_hash, sizeof(exchange_hash));
-    crypto_wipe(send_key, sizeof(send_key));
-    crypto_wipe(recv_key, sizeof(recv_key));
-    crypto_wipe(session_id, sizeof(session_id));
-    keys_ready = false;
-}
-
-static void hash_string(MooSha256Ctx *ctx, const uint8_t *data, size_t size)
-{
-    uint8_t header[4];
-    put_u32be(header, (uint32_t)size);
-    moo_krypto_sha256_update(ctx, header, sizeof(header));
-    moo_krypto_sha256_update(ctx, data, size);
-}
-
-void moo_bare_ssh_versions(uint64_t client, uint64_t client_len,
-                           uint64_t server, uint64_t server_len)
-{
-    moo_bare_ssh_clear();
-    moo_krypto_sha256_init(&exchange_hash);
-    hash_string(&exchange_hash, bytes_at(client), client_len);
-    hash_string(&exchange_hash, bytes_at(server), server_len);
-}
-
-void moo_bare_ssh_inits(uint64_t client, uint64_t client_len,
-                        uint64_t server, uint64_t server_len)
-{
-    hash_string(&exchange_hash, bytes_at(client), client_len);
-    hash_string(&exchange_hash, bytes_at(server), server_len);
-}
-
 /* RFC 8731 3.1/3.2: X25519 liefert 32 Oktette. Fuer SSH bilden genau
  * diese Oktette den Big-Endian-Betrag des mpint (RFC 4251 5). */
-static size_t encode_k(uint8_t out[37], const uint8_t raw[32])
+size_t moo_bare_ssh_encode_k(uint8_t out[37], const uint8_t raw[32])
 {
     size_t first = 0;
     while (first < 32 && raw[first] == 0)
@@ -119,79 +45,6 @@ static size_t encode_k(uint8_t out[37], const uint8_t raw[32])
         out[4] = 0;
     memcpy(out + 4 + pad, raw + first, n);
     return 4 + pad + n;
-}
-
-/* RFC 4253 7.2. H ist beim initialen Austausch auch der Session-Identifier. */
-static void derive_key(uint8_t out[SSH_KEY_BYTES], const uint8_t *k, size_t k_len,
-                       const uint8_t h[32], uint8_t letter)
-{
-    MooSha256Ctx ctx;
-    moo_krypto_sha256_init(&ctx);
-    moo_krypto_sha256_update(&ctx, k, k_len);
-    moo_krypto_sha256_update(&ctx, h, 32);
-    moo_krypto_sha256_update(&ctx, &letter, 1);
-    moo_krypto_sha256_update(&ctx, h, 32);
-    moo_krypto_sha256_final(&ctx, out);
-
-    moo_krypto_sha256_init(&ctx);
-    moo_krypto_sha256_update(&ctx, k, k_len);
-    moo_krypto_sha256_update(&ctx, h, 32);
-    moo_krypto_sha256_update(&ctx, out, 32);
-    moo_krypto_sha256_final(&ctx, out + 32);
-    crypto_wipe(&ctx, sizeof(ctx));
-}
-
-/* reply: server blob followed by a raw 64-byte Ed25519 signature.
- * Hybrid layout and transcript: draft-ietf-sshm-mlkem-hybrid-kex-10, 2.2–2.5. */
-uint64_t moo_bare_ssh_exchange(uint64_t q_client, uint64_t client_n,
-                               uint64_t host_blob, uint64_t blob_len, uint64_t reply)
-{
-    if (client_n != SSH_X25519_BYTES && client_n != SSH_HYBRID_CLIENT_BYTES)
-        return 0;
-
-    const bool hybrid = client_n == SSH_HYBRID_CLIENT_BYTES;
-    const size_t server_n = hybrid ? SSH_HYBRID_REPLY_BYTES : SSH_X25519_BYTES;
-    uint8_t scalar[SSH_X25519_BYTES], coins[MLKEM_SYMBYTES];
-    uint8_t shared[MLKEM768_BYTES + SSH_X25519_BYTES], k[37], h[32];
-    uint8_t *q_server = bytes_at(reply);
-    const uint8_t *q_peer = bytes_at(q_client);
-    const uint8_t *peer_x = q_peer + (client_n - SSH_X25519_BYTES);
-    uint8_t *server_x = q_server + (server_n - SSH_X25519_BYTES);
-    uint8_t *shared_x = shared + MLKEM768_BYTES;
-
-    bool ok = boot_ready && random_bytes(scalar, sizeof(scalar)) &&
-              moo_krypto_x25519_basis(server_x, scalar) == 0 &&
-              moo_krypto_x25519(shared_x, scalar, peer_x) == 0;
-    if (ok && hybrid) {
-        /* The provider checks the public key modulus before encapsulating. */
-        ok = random_bytes(coins, sizeof(coins)) &&
-             moo_mlkem768_enc_derand(q_server, shared, q_peer, coins) == 0;
-        if (ok) {
-            /* SSH string containing SHA-256(K_PQ || K_CL). */
-            put_u32be(k, 32);
-            moo_krypto_sha256(shared, sizeof(shared), k + 4);
-        }
-    }
-    if (ok) {
-        const size_t k_len = hybrid ? 36 : encode_k(k, shared_x);
-        hash_string(&exchange_hash, bytes_at(host_blob), blob_len);
-        hash_string(&exchange_hash, q_peer, client_n);
-        hash_string(&exchange_hash, q_server, server_n);
-        moo_krypto_sha256_update(&exchange_hash, k, k_len);
-        moo_krypto_sha256_final(&exchange_hash, h);
-        memcpy(session_id, h, sizeof(session_id));
-        crypto_ed25519_sign(q_server + server_n, host_secret, h, sizeof(h));
-        derive_key(recv_key, k, k_len, h, 'C');
-        derive_key(send_key, k, k_len, h, 'D');
-        keys_ready = true;
-    }
-    crypto_wipe(scalar, sizeof(scalar));
-    crypto_wipe(coins, sizeof(coins));
-    crypto_wipe(shared, sizeof(shared));
-    crypto_wipe(k, sizeof(k));
-    crypto_wipe(h, sizeof(h));
-    crypto_wipe(&exchange_hash, sizeof(exchange_hash));
-    return ok;
 }
 
 /* OpenSSH V_9_9_P2 cipher-chachapoly.c:48,82-112. Beim IETF-Block
@@ -211,26 +64,28 @@ static void crypt_packet(uint8_t *packet, size_t n,
     moo_krypto_chacha20_xor(key, 1, nonce, packet + 4, packet + 4, n - 4);
 }
 
-uint64_t moo_bare_ssh_length(uint64_t address, uint64_t sequence)
+uint64_t moo_bare_ssh_paketlaenge(const uint8_t key[SSH_KEY_BYTES],
+                                 uint64_t address, uint64_t sequence)
 {
     uint8_t nonce[12], length[4];
-    if (!keys_ready || sequence > UINT32_MAX)
+    if (sequence > UINT32_MAX)
         return 0;
     make_nonce(nonce, sequence);
-    moo_krypto_chacha20_xor(recv_key + 32, 0, nonce, bytes_at(address), length, 4);
+    moo_krypto_chacha20_xor(key + 32, 0, nonce, bytes_at(address), length, 4);
     return ((uint64_t)length[0] << 24) | ((uint64_t)length[1] << 16) |
            ((uint64_t)length[2] << 8) | length[3];
 }
 
-uint64_t moo_bare_ssh_seal(uint64_t address, uint64_t n, uint64_t sequence)
+uint64_t moo_bare_ssh_paket_seal(const uint8_t key[SSH_KEY_BYTES],
+                                uint64_t address, uint64_t n, uint64_t sequence)
 {
-    if (!keys_ready || n < 12 || n > SSH_PACKET_MAX - SSH_TAG_BYTES || sequence > UINT32_MAX)
+    if (n < 12 || n > SSH_PACKET_MAX - SSH_TAG_BYTES || sequence > UINT32_MAX)
         return 0;
     uint8_t nonce[12], poly_key[32];
     uint8_t *packet = bytes_at(address);
     make_nonce(nonce, sequence);
-    moo_krypto_chacha20_poly1305_keygen(send_key, nonce, poly_key);
-    crypt_packet(packet, n, send_key, nonce);
+    moo_krypto_chacha20_poly1305_keygen(key, nonce, poly_key);
+    crypt_packet(packet, n, key, nonce);
     moo_krypto_poly1305(poly_key, packet, n, packet + n);
     crypto_wipe(poly_key, sizeof(poly_key));
     return 1;
@@ -250,13 +105,14 @@ static bool open_with_key(uint8_t *packet, size_t n,
     return ok;
 }
 
-uint64_t moo_bare_ssh_open(uint64_t address, uint64_t n, uint64_t sequence)
+uint64_t moo_bare_ssh_paket_open(const uint8_t key[SSH_KEY_BYTES],
+                                uint64_t address, uint64_t n, uint64_t sequence)
 {
-    if (!keys_ready || n < 12 || n > SSH_PACKET_MAX - SSH_TAG_BYTES || sequence > UINT32_MAX)
+    if (n < 12 || n > SSH_PACKET_MAX - SSH_TAG_BYTES || sequence > UINT32_MAX)
         return 0;
     uint8_t nonce[12];
     make_nonce(nonce, sequence);
-    return open_with_key(bytes_at(address), n, recv_key, nonce);
+    return open_with_key(bytes_at(address), n, key, nonce);
 }
 
 typedef enum {
@@ -311,11 +167,12 @@ static bool userauth(const uint8_t id[32], CredentialState state,
     return credential_matches(state, stored, 32, offered, 32, signature_n, rc);
 }
 
-uint64_t moo_bare_ssh_userauth(uint64_t state, uint64_t stored, uint64_t offered,
-                              uint64_t prefix, uint64_t prefix_n, uint64_t signature)
+uint64_t moo_bare_ssh_session_userauth(const uint8_t id[32],
+                                      uint64_t state, uint64_t stored, uint64_t offered,
+                                      uint64_t prefix, uint64_t prefix_n, uint64_t signature)
 {
-    return keys_ready && state == SSH_CREDENTIAL_ACTIVE &&
-           userauth(session_id, SSH_CREDENTIAL_ACTIVE, bytes_at(stored), bytes_at(offered),
+    return state == SSH_CREDENTIAL_ACTIVE &&
+           userauth(id, SSH_CREDENTIAL_ACTIVE, bytes_at(stored), bytes_at(offered),
                     bytes_at(prefix), prefix_n, bytes_at(signature), 64);
 }
 

@@ -304,7 +304,7 @@ static bool kat_aead(void)
     return ok && rejected;
 }
 
-uint64_t moo_bare_krypto_selbsttest(void)
+uint64_t moo_bare_krypto_provider_kat(void)
 {
     uint64_t sha256 = kat_sha256_digest(sha256_msg, 0, sha256_empty) &&
                       kat_sha256_digest(sha256_msg, sizeof(sha256_msg), sha256_out);
@@ -312,5 +312,5 @@ uint64_t moo_bare_krypto_selbsttest(void)
                       kat_sha512_digest(sha512_msg, sizeof(sha512_msg), sha512_out);
     return sha256 | (sha512 << 1) | (kat_hmac_both() << 2) |
            ((uint64_t)kat_x25519() << 4) | ((uint64_t)kat_ed25519() << 5) |
-           ((uint64_t)kat_aead() << 6) | (moo_bare_drbg_kat() << 7);
+           ((uint64_t)kat_aead() << 6) | (moo_bare_entropie_kat() << 8);
 }
