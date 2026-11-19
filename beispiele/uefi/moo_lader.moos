@@ -260,7 +260,9 @@ konstante W_F_KERN: [u16; _] auf "Moo-Lader FEHLER: Kern nicht gefunden (\\EFI\\
 konstante W_F_ELF: [u16; _] auf "Moo-Lader FEHLER: Kern-ELF oder Seitentabelle (Details auf COM1)\r\n"
 
 @nativ
-konstante T_START: [u8; _] auf "MOO-LADER START (MOO, OHNE C)\n"
+konstante T_START: [u8; _] auf "MOO-LADER START (STEUERUNG IN MOO)\n"
+@nativ
+konstante T_ESP_KERN: [u8; _] auf "MOO-LADER ESP-KERN EIGENES GERAET\n"
 
 @nativ
 konstante T_GOP: [u8; _] auf "MOO-LADER GOP "
@@ -447,7 +449,7 @@ funktion guid_gleich(a: u64, b: u64) -> bool:
 # https://uefi.org/specs/UEFI/2.10_A/03_Boot_Manager.html
 # Layout: edk2 MdePkg/Include/Uefi/UefiSpec.h und Protocol/DevicePath.h.
 @nativ
-statisch RUECKKEHR_KONFIG: [u64; 2] auf [0x353254524F4F4D21, 0]
+statisch RUECKKEHR_KONFIG: [u64; 2] auf [0x325654524F4F4D21, 0]
 @nativ
 konstante RF_GUID: [u64; 2] auf [0x11D293CA8BE4DF61, 0x8C2B0398E0000DAA]
 @nativ
@@ -579,10 +581,10 @@ funktion rf_lesen(rt: u64, name: u64, arbeit: u64, puffer: u64, max: u64) -> u64
 funktion rueckkehr_vorbereiten(st: u64, bs: u64) -> bool:
     unsicher:
         setze modus: u64 auf speicher_lesen(adresse_von(RUECKKEHR_KONFIG) + 8, 8)
-        wenn modus == 0:
-            gib_zurück wahr
-        wenn modus != 1:
+        wenn modus > 3:
             gib_zurück rf_fehler(1)
+        wenn (modus & 1) == 0:
+            gib_zurück wahr
         setze rt: u64 auf dienst(st, versatz_von(EfiSystemTabelle, laufzeitdienste))
         wenn rt == 0 oder speicher_lesen(rt, 8) != 0x56524553544E5552 oder u64(speicher_lesen(rt + 12, 4)) < groesse_von(EfiLaufzeitDienste):
             gib_zurück rf_fehler(2)
@@ -671,10 +673,12 @@ funktion datei_lesen(bs: u64, geraet: u64, ausgabe: u64) -> u64:
             speicher_schreiben(ausgabe, groesse, 8)
         gib_zurück puffer
 
-# Kern suchen: Uebergabe (LoadOptions), Geraet des Laders, alle Dateisysteme.
+# Profilbit 1 bindet den Kern an das Geraet des gestarteten EFI-Images.
+# Der Standardpfad kennt auch LoadOptions und weitere Dateisysteme.
 @nativ
 funktion kern_holen(bs: u64, bild: u64, ausgabe: u64) -> u64:
     unsicher:
+        setze nur_esp: bool auf (speicher_lesen(adresse_von(RUECKKEHR_KONFIG) + 8, 8) & 2) != 0
         setze li: u64 auf 0
         setze geraet: u64 auf 0
         setze optionen: u64 auf 0
@@ -683,17 +687,22 @@ funktion kern_holen(bs: u64, bild: u64, ausgabe: u64) -> u64:
         setze anzahl: u64 auf 0
         setze i: u64 auf 0
         wenn ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_handle_protocol)), bild, adresse_von(BILD_GUID), adresse_von(li)) == 0 und li != 0:
-            setze optionen auf speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen), 8)
-            wenn optionen != 0 und u64(speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen_groesse), 4)) == groesse_von(MooKernUebergabe):
-                wenn speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_magie), 8) == KERN_UEBERGABE_MAGIE:
-                    text(adresse_von(T_UEBERGABE))
-                    speicher_schreiben(ausgabe, speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_laenge), 8), 8)
-                    gib_zurück speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_adresse), 8)
+            wenn nicht nur_esp:
+                setze optionen auf speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen), 8)
+                wenn optionen != 0 und u64(speicher_lesen(li + versatz_von(EfiGeladenesBild, li_optionen_groesse), 4)) == groesse_von(MooKernUebergabe):
+                    wenn speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_magie), 8) == KERN_UEBERGABE_MAGIE:
+                        text(adresse_von(T_UEBERGABE))
+                        speicher_schreiben(ausgabe, speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_laenge), 8), 8)
+                        gib_zurück speicher_lesen(optionen + versatz_von(MooKernUebergabe, ku_adresse), 8)
             setze geraet auf speicher_lesen(li + versatz_von(EfiGeladenesBild, li_geraet), 8)
         wenn geraet != 0:
             setze puffer auf datei_lesen(bs, geraet, ausgabe)
             wenn puffer != 0:
+                wenn nur_esp:
+                    text(adresse_von(T_ESP_KERN))
                 gib_zurück puffer
+        wenn nur_esp:
+            gib_zurück 0
         # LocateHandleBuffer(ByProtocol = 2, Dateisystem-GUID)
         wenn ruf5(dienst(bs, versatz_von(EfiBootDienste, bs_locate_handle_buffer)), 2, adresse_von(DATEISYSTEM_GUID), 0, adresse_von(anzahl), adresse_von(handles)) != 0:
             gib_zurück 0

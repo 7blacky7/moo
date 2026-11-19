@@ -333,8 +333,19 @@ if [ "$PRUEFUNG" = "kern" ]; then
   lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /opt:ref /Brepro \
       /out:"$OUT/BOOTX64.EFI" "$OUT/lader.obj" >"$OUT/link.err" 2>&1 \
     || { sed 's/^/      | /' "$OUT/link.err"; fail "Loader nicht gelinkt (fehlende Symbole = versteckte Runtime?)"; }
-  file "$OUT/BOOTX64.EFI" | grep -qiE "EFI.*application|PE32\\+" || fail "Loader ist kein PE32+ EFI-Binary"
+  file "$OUT/BOOTX64.EFI" | grep -qiE "EFI.*application|PE32\+" || fail "Loader ist kein PE32+ EFI-Binary"
   echo "      OK: $(file -b "$OUT/BOOTX64.EFI"), $(stat -c %s "$OUT/BOOTX64.EFI") Bytes aus 1 Objekt"
+  LADER_EFI="$OUT/BOOTX64.EFI"
+  ESP_KERN_PRUEFUNG="${MOO_UEFI_ESP_KERN:-0}"
+  case "$ESP_KERN_PRUEFUNG" in
+    0) ;;
+    1)
+      LADER_EFI="$OUT/BOOTX64-ESP.EFI"
+      uv run --no-project --offline python -B "$ROOT/skripte/p7/loader_laufprofil.py" \
+        "$OUT/BOOTX64.EFI" "$LADER_EFI" 0 2 || fail "ESP-Profil fuer OVMF nicht gesetzt"
+      ;;
+    *) fail "MOO_UEFI_ESP_KERN: 0 oder 1" ;;
+  esac
   phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
   "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
       -o "$OUT/KERN.ELF" >"$OUT/kern.err" 2>&1 || { sed 's/^/      | /' "$OUT/kern.err"; fail "Kern nicht gebaut"; }
@@ -539,12 +550,14 @@ PY
     [ -f "$c" ] && { KOVMF_CODE="$c"; KOVMF_VARS="${c/CODE/VARS}"; break; }
   done
   [ -n "$KOVMF_CODE" ] && [ -f "$KOVMF_VARS" ] || skip "OVMF fehlt" "sudo pacman -S edk2-ovmf" "Build K1/K2 gruen — OVMF-Boot GESKIPPT."
-  kern_image() {  # Image, mit Kern (1/0)
+  kern_image() {  # Image, mit Kern (1/0), mit Loader (Standard 1)
     rm -f "$1"; truncate -s 48M "$1" || fail "Image nicht anlegbar"
     parted -s "$1" mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1 || fail "parted"
     mformat -i "$1"@@$((2048*512)) -F :: >/dev/null 2>&1 || fail "mformat"
     mmd -i "$1"@@$((2048*512)) ::/EFI ::/EFI/BOOT ::/EFI/MOO >/dev/null 2>&1
-    mcopy -i "$1"@@$((2048*512)) "$OUT/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1 || fail "mcopy Loader"
+    if [ "${3:-1}" = 1 ]; then
+      mcopy -i "$1"@@$((2048*512)) "$LADER_EFI" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1 || fail "mcopy Loader"
+    fi
     if [ "$2" = 1 ]; then
       mcopy -i "$1"@@$((2048*512)) "$OUT/KERN.ELF" ::/EFI/MOO/KERN.ELF >/dev/null 2>&1 || fail "mcopy Kern"
     fi
@@ -713,7 +726,7 @@ PY
   printf 'quit\n' >&3 2>/dev/null || true; exec 3>&-; wait "$QPID" 2>/dev/null
   tr -d '\000\r' <"$OUT/serial.log" | grep -aE "MOO-(LADER|KERNEL)" | sed 's/^/      | /'
   grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" && fail "Loader meldet FEHLER (siehe oben)"
-  for m in "MOO-LADER START (MOO, OHNE C)" "MOO-LADER GOP " "MOO-LADER FB-STRIDE " "MOO-LADER RSDP " \
+  for m in "MOO-LADER START (STEUERUNG IN MOO)" "MOO-LADER GOP " "MOO-LADER FB-STRIDE " "MOO-LADER RSDP " \
            "MOO-LADER KERN-DATEI " "MOO-LADER SEGMENT " "MOO-LADER KERN-EINSTIEG " \
            "MOO-LADER KERN-PHYSISCH " "MOO-LADER SEITENTABELLE " \
            "MOO-LADER EXITBOOTSERVICES OK " "MOO-LADER KARTE " "MOO-LADER SPRUNG " \
@@ -1148,12 +1161,19 @@ PY
     # Nur Info: die 3x5-Pixelschrift liest tesseract unzuverlaessig (M -> H/W).
     echo "      Info OCR: $(tesseract "$OUT/screenshot.png" - --psm 6 2>/dev/null | tr '\n' ' ')"
   fi
-  # Negativfall: ohne Kern-Datei kein ExitBootServices, Fehlermeldung, Rueckkehr zur Firmware.
+  # Negativfall: kein Kern auf dem gestarteten Geraet. Der zweite Datentraeger
+  # der ESP-Pruefung hat einen Kern, aber keinen startbaren Loader.
+  OHNE_EXTRA=()
+  if [ "$ESP_KERN_PRUEFUNG" = 1 ]; then
+    grep -aqF 'MOO-LADER ESP-KERN EIGENES GERAET' "$OUT/serial.log" || fail "Direkter ESP-Kernpfad unbelegt"
+    kern_image "$OUT/anderer-kern.img" 1 0
+    OHNE_EXTRA=(-drive "if=virtio,format=raw,readonly=on,file=$OUT/anderer-kern.img")
+  fi
   : >"$OUT/serial-ohne.log"
   timeout --foreground 40s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars-ohne.fd" \
-      -drive if=virtio,format=raw,file="$OUT/ohne-kern.img" -net none \
+      -drive if=virtio,format=raw,file="$OUT/ohne-kern.img" "${OHNE_EXTRA[@]}" -net none \
       -m 256M -vga std -display none -no-reboot -monitor none \
       -serial file:"$OUT/serial-ohne.log" >"$OUT/qemu-ohne.log" 2>&1 &
   QPID=$!
@@ -1167,7 +1187,7 @@ PY
   grep -aq "EXITBOOTSERVICES OK" "$OUT/serial-ohne.log" && fail "Negativfall: ExitBootServices trotz fehlendem Kern"
   echo "      OK: Negativfall ohne KERN.ELF: Meldung, kein ExitBootServices"
   if [ -n "${MOO_UEFI_OUT:-}" ]; then
-    (cd "$OUT" && sha256sum BOOTX64.EFI KERN.ELF uefi.img screenshot.png serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
+    (cd "$OUT" && sha256sum "${LADER_EFI##*/}" KERN.ELF uefi.img screenshot.png serial.log >sha256.txt) && sed 's/^/      sha256: /' "$OUT/sha256.txt"
     sha256sum "$BIN" | sed 's/^/      sha256: /'
   fi
   echo "############################################################"
@@ -1533,7 +1553,7 @@ if [ "$PRUEFUNG" = "netz-kern" ]; then
   done
   kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
   tr -d '\000\r' <"$SERIAL_LOG" | grep -aE "MOO-(LADER|KERNEL|UEFI-BILD)" | sed 's/^/      | /'
-  for m in "UEBERGABE AN MOO.EFI" "MOO-UEFI-BILD-KERN" "MOO-LADER START (MOO, OHNE C)" \
+  for m in "UEBERGABE AN MOO.EFI" "MOO-UEFI-BILD-KERN" "MOO-LADER START (STEUERUNG IN MOO)" \
            "MOO-LADER KERN AUS UEBERGABE" "MOO-LADER EXITBOOTSERVICES OK" \
            "MOO-KERNEL RIP FFFFFFFF8" "MOO-KERNEL OK"; do
     grep -aqF -- "$m" "$SERIAL_LOG" || fail "Netz-Kern: '$m' fehlt"

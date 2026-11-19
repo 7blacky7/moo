@@ -381,7 +381,7 @@ konstante T_OK: [u8; _] auf "MOO-KERNEL OK\n"
 konstante T_SCHIRM: [u8; _] auf "MOO-KERNEL OK"
 
 @nativ
-konstante T_SCHIRM2: [u8; _] auf "MOO LADER UND KERN OHNE C"
+konstante T_SCHIRM2: [u8; _] auf "LADER UND KERNSTEUERUNG IN MOO"
 
 @nativ
 konstante T_KON1: [u8; _] auf "MOO-KONSOLE: SURFACE-PRESENT AUF GOP\n"

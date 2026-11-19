@@ -1486,6 +1486,9 @@ fn build_kernel(
                 .arg("-I")
                 .arg(runtime_dir.join("mlkem-native"));
         }
+        if emit == "elf" {
+            cmd.args(["-ffunction-sections", "-fdata-sections"]);
+        }
         cmd.args(&cc_target_args)
             .args(KERNEL_CFLAGS)
             .args(&arch_cflags)
@@ -1598,7 +1601,11 @@ fn build_kernel(
         tmp.join("kernel.elf")
     };
     let mut ld = Command::new(ld_prog);
-    ld.arg("-n").arg("-T").arg(&script).arg("-o").arg(&elf_path);
+    ld.arg("-n");
+    if emit == "elf" {
+        ld.arg("--gc-sections");
+    }
+    ld.arg("-T").arg(&script).arg("-o").arg(&elf_path);
     for o in &objects {
         ld.arg(o);
     }

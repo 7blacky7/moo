@@ -7,6 +7,8 @@ EFI="$ROOT/build/p7-t25/stick/tftp/moo.efi"
 KERN="$ROOT/build/p7-t25/stick/tftp/moo.kern"
 RUECKFALL="$ROOT/build/p7-t25/rueckkehr/RUECKFALL.ELF"
 RUECKFALL_SHA=
+ESP_KERN=
+LADER_MODUS=1
 IFACE=enp60s0
 SEKUNDEN=90
 ZEITLIMIT=600
@@ -56,6 +58,7 @@ while (($#)); do
     --watchdog-sekunden) WATCHDOG_S="$2"; shift 2;;
     --efi) EFI="$2"; shift 2;;
     --kern) KERN="$2"; shift 2;;
+    --esp-kern) ESP_KERN="${2:?Datei fuer --esp-kern fehlt}"; shift 2;;
     --rueckfall-kern) RUECKFALL="$2"; shift 2;;
     --interface) IFACE="$2"; shift 2;;
     --sekunden) SEKUNDEN="$2"; shift 2;;
@@ -69,6 +72,7 @@ while (($#)); do
     --aufraeumen) RESTORE="$2"; shift 2;;
     --hilfe) printf '%s\n' 'n100-lauf.sh --trocken | --koordinator --diagnose --efi DATEI --kern DATEI --usb-serie SERIE --partition {GUID} --stick-sha256 SHA256' \
       '--rueckfall-kern ELF: IT8613, exakt 20s/10s/Modus 3; SHA muss EFI/MOO/KERN.ELF auf dem Stick entsprechen.' \
+      '--esp-kern ELF: bereits gepatchte Laufdatei auf EFI/MOO/KERN.ELF, direkter Loader mit ESP-Profil.' \
       '--synapse-zeitlimit N: eigenes Startlimit nach Windows-Rueckkehr (Standard600s).' \
       '--inventar: Helfer hochladen und nur USB-/Firmware-/Waechter-Inventar lesen; kein Boot.' \
       'Normaler Lauf: 90s Kern mit 10s IT8613-Safety. --watchdog-test: 10s IT8613, 45s Softwarefrist.' \
@@ -122,12 +126,19 @@ fi
 [[ -z "$PING_IP" || "$MODUS" == 1 ]] || { echo 'Netzoptionen brauchen den regulaeren Kernlauf (Modus 1)' >&2; exit 2; }
 
 ((KRYPTO==0 || MODUS==1)) || { echo '--krypto-selbsttest braucht den regulaeren Sammellauf (Modus 1)' >&2; exit 2; }
+if [[ -n "$ESP_KERN" ]]; then
+  if ((INVENTAR || MODUS!=1)) || [[ -n "$PING_IP" || -n "$RESTORE" ]]; then
+    echo '--esp-kern braucht Modus 1 mit UDP-Mitschnitt. Ping-/SSHD-Proben verwenden den Netzwerk-Runner.' >&2
+    exit 2
+  fi
+  LADER_MODUS=3
+fi
 
 ((SSH==0)) || command -v ssh >/dev/null || { echo 'SSH-Probe braucht OpenSSH auf dem Linux-PC' >&2; exit 2; }
 ((SSH<2)) || command -v ssh-keygen >/dev/null || { echo 'SSH-Anmeldung braucht ssh-keygen auf dem Linux-PC' >&2; exit 2; }
 
 kern_kopie() {
-  uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" "${13:-0}" <<'PY'
+  uv run --no-project --offline python -B - "$1" "$2" "$3" "$4" "$5" "${6:-}" "${7:-0}" "${8:-0}" "${9:-0}" "${10:-0}" "$ROOT/skripte/p7" "${11:-}" "${12:-0}" "${13:-0}" "${14:-}" <<'PY'
 import ipaddress, pathlib, struct, sys
 src = pathlib.Path(sys.argv[1])
 dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
@@ -139,6 +150,7 @@ krypto = sys.argv[9] == "1"
 ssh_modus = int(sys.argv[10])
 ssh_pq = sys.argv[13] == "1"
 ipv6 = sys.argv[14] == "1"
+esp_kern = pathlib.Path(sys.argv[15]) if sys.argv[15] else None
 if dst is not None and src.resolve() == dst.resolve():
     raise SystemExit("Quell-Kern darf nicht ueberschrieben werden")
 original = src.read_bytes()
@@ -212,6 +224,8 @@ if ssh_modus >= 2:
 if unveraendert and data != original:
     print("IT8613-Rueckfallkern muss exakt 20s/10s/Modus 3 haben", file=sys.stderr)
     sys.exit(2)
+if esp_kern is not None and esp_kern.read_bytes() != data:
+    raise SystemExit("ESP-Laufkern passt byteweise nicht zur konfigurierten Laufkopie")
 if dst is None:
     print(f"Kern-Vorbereitung {src}: {seconds}s, Watchdog {watchdog}s, Modus {mode}")
 else:
@@ -239,91 +253,57 @@ if ssh_modus >= 2:
 PY
 }
 loader_kopie() {
-  uv run --no-project --offline python - "$1" "$2" "${3:-0}" <<'PY'
-import pathlib, struct, sys
-src = pathlib.Path(sys.argv[1])
-dst = pathlib.Path(sys.argv[2]) if sys.argv[2] else None
-unveraendert = sys.argv[3] == "1"
-if dst is not None and src.resolve() == dst.resolve():
-    raise SystemExit("Quell-Loader darf nicht ueberschrieben werden")
-original = src.read_bytes()
-data = bytearray(original)
-if data[:2] != b"MZ" or len(data) < 64:
-    raise SystemExit("Kein PE-Loader")
-pe = struct.unpack_from("<I", data, 60)[0]
-if pe + 24 > len(data) or data[pe:pe+4] != b"PE\0\0":
-    raise SystemExit("Kein PE-Kopf")
-machine, count = struct.unpack_from("<HH", data, pe+4)
-optlen = struct.unpack_from("<H", data, pe+20)[0]
-opt = pe + 24
-if machine != 0x8664 or optlen < 152 or opt + optlen > len(data):
-    raise SystemExit("Kein PE64 x86-64")
-if struct.unpack_from("<H", data, opt)[0] != 0x20b or struct.unpack_from("<H", data, opt+68)[0] != 10:
-    raise SystemExit("Kein EFI-Application PE32+")
-if struct.unpack_from("<I", data, opt+64)[0] or any(data[opt+144:opt+152]):
-    raise SystemExit("Nur eigener unsignierter Loader ohne PE-Pruefsumme")
-magic = struct.pack("<Q", 0x353254524F4F4D21)
-hits = []
-for i in range(count):
-    h = opt + optlen + i*40
-    if h+40 > len(data):
-        raise SystemExit("Abgeschnittener Abschnittskopf")
-    length, start = struct.unpack_from("<II", data, h+16)
-    flags = struct.unpack_from("<I", data, h+36)[0]
-    if start + length > len(data):
-        raise SystemExit("Abgeschnittener Abschnitt")
-    if not flags & 0x80000000:
-        continue
-    pos = data.find(magic, start, start+length)
-    while pos >= 0:
-        if pos+16 <= start+length:
-            hits.append(pos)
-        pos = data.find(magic, pos+1, start+length)
-if len(hits) != 1:
-    raise SystemExit("Rueckkehrvertrag nicht eindeutig im schreibbaren PE-Abschnitt")
-if struct.unpack_from("<Q", data, hits[0]+8)[0] not in (0, 1):
-    raise SystemExit("Unbekannte Rueckkehrkonfiguration")
-struct.pack_into("<Q", data, hits[0]+8, 1)
-if unveraendert and data != original:
-    print("Testloader muss sichere Windows-BootNext-Rueckkehr aktiv haben (--loader-konfigurieren)", file=sys.stderr)
-    sys.exit(2)
-if dst is None:
-    print(f"Loader-Vorbereitung {src}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
-else:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(data)
-    print(f"Loader-Kopie {dst}: Windows-BootNext vor Kernstart, BootOrder unveraendert")
-PY
+  uv run --no-project --offline python -B "$ROOT/skripte/p7/loader_laufprofil.py" "$1" "$2" "${3:-0}" "$LADER_MODUS"
 }
 
 lauf_vorbereiten() {
   local ziel="$1"
-  [[ -f "$RUECKFALL" ]] || { echo 'Befristeter lokaler Rueckfallkern ist Pflicht (--rueckfall-kern)' >&2; exit 2; }
-  kern_kopie "$RUECKFALL" "${ziel:+$ziel/rueckfall-geprueft.elf}" 20 10 3 "" 1
-  RUECKFALL_SHA="$(sha256sum "$RUECKFALL" | cut -d ' ' -f1)"
+  if [[ -z "$ESP_KERN" ]]; then
+    [[ -f "$RUECKFALL" ]] || { echo 'Befristeter lokaler Rueckfallkern ist Pflicht (--rueckfall-kern)' >&2; exit 2; }
+    kern_kopie "$RUECKFALL" "${ziel:+$ziel/rueckfall-geprueft.elf}" 20 10 3 "" 1
+    RUECKFALL_SHA="$(sha256sum "$RUECKFALL" | cut -d ' ' -f1)"
+  else
+    [[ -f "$ESP_KERN" ]] || { echo 'Vorbereiteter ESP-Laufkern fehlt' >&2; exit 2; }
+    RUECKFALL_SHA="$(sha256sum "$ESP_KERN" | cut -d ' ' -f1)"
+  fi
   ((INVENTAR==0)) || return 0
   loader_kopie "$EFI" "${ziel:+$ziel/loader-geprueft.efi}" 1
   [[ -f "$EFI" && -f "$KERN" && -s "$STOPP_SK" ]] || { echo 'Loader/Kern oder vorhandenes sanft_aus.ps1 nicht gefunden' >&2; exit 2; }
   [[ "$USB_SERIE" =~ ^[a-zA-Z0-9_-]+$ && "$PARTITION" =~ ^\{[0-9a-fA-F-]{36}\}$ && "$STICK_SHA" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Belegte Stick-Identitaet ist Pflicht' >&2; exit 2; }
-  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}" "$SSH_PQ" "$IPV6_PROBE"
+  if [[ -n "$ESP_KERN" && "${STICK_SHA,,}" != "$(sha256sum "$EFI" | cut -d ' ' -f1)" ]]; then
+    echo 'Stick-SHA muss beim ESP-Lauf dem vorbereiteten Loader entsprechen' >&2
+    exit 2
+  fi
+  kern_kopie "$KERN" "${ziel:+$ziel/moo.kern}" "$SEKUNDEN" "$WATCHDOG_S" "$MODUS" "$PING_IP" 0 "$TRANSPORT" "$KRYPTO" "$SSH" "${SSH_KEY:+$SSH_KEY.pub}" "$SSH_PQ" "$IPV6_PROBE" "$ESP_KERN"
   if [[ -n "$ziel" ]]; then
     sha256sum "$EFI" "$KERN" "$ziel/moo.kern" >"$ziel/sha256.txt"
+    if [[ -n "$ESP_KERN" ]]; then
+      sha256sum "$ESP_KERN" >>"$ziel/sha256.txt"
+    fi
   fi
 }
 
 if ((TROCKEN)); then
   printf '%s\n' 'TROCKEN: keine WinRM-/sudo-/Netzwerkbefehle, keine Laufdateien.'
-  if [[ -n "$PING_IP" ]] || ((KRYPTO)); then
+  if [[ -n "$PING_IP" || -n "$ESP_KERN" ]] || ((KRYPTO)); then
     lauf_vorbereiten ""
   fi
   printf '1. USB-ESP per Seriennummer+GPT-GUID+NT-Geraetepfad+SHA256 belegen: %s %s %s\n' "$USB_SERIE" "$PARTITION" "$STICK_SHA"
-  printf 'Lokalen IT8613-Rueckfallkern (20s,10s,Modus3) und ESP-SHA pruefen: %s\n' "$RUECKFALL"
+  if [[ -n "$ESP_KERN" ]]; then
+    printf 'Lokalen ESP-Laufkern im bestaetigten Profil pruefen: %s\n' "$ESP_KERN"
+  else
+    printf 'Lokalen IT8613-Rueckfallkern (20s,10s,Modus3) und ESP-SHA pruefen: %s\n' "$RUECKFALL"
+  fi
   if ((MODUS==6)); then
     printf '%s\n' '2. Private Kern-Kopie: Modus 6, lesende IT8613-Messreihe bei 0, 2 und 70 s.'
   else
     printf '2. Private Kern-Kopie: %ss, Watchdog %ss; Modus=%s (0=Lesen,1=IT8613-Kernlauf,5=IT8613-Bedienlauf,7=IT8613-Safety)\n' "$SEKUNDEN" "$WATCHDOG_S" "$MODUS"
   fi
-  printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
+  if [[ -n "$ESP_KERN" ]]; then
+    printf '3. Bootquelle ESP, UDP-Mitschnitt auf %s; TFTP-Anfragen im Mitschnitt pruefen.\n' "$IFACE"
+  else
+    printf '3. Bestehenden netz-server starten: %s %s; tcpdump auf %s\n' "$EFI" "$KERN" "$IFACE"
+  fi
   if [[ -n "$PING_IP" ]]; then
     printf '   Nach Kernelmarker ARP/Ping an %s auf %s; arp.log, ping.log (RTT) und ICMP in netz.pcap.\n' "$PING_IP" "$IFACE"
   fi
@@ -589,14 +569,25 @@ capture_filter='arp or udp'
 ((SSH==0)) || capture_filter+=' or (tcp port 2223)'
 setsid bash -c 'sudo -n tcpdump -ni "$1" -s0 -U -w - "$3" 2>"$2/tcpdump.log" | tee "$2/netz.pcap" | tcpdump -n -tt -l -A -r - "udp dst port 7777" >"$2/netz.log" 2>"$2/decode.log"; exit "${PIPESTATUS[0]}"' _ "$IFACE" "$OUT" "$capture_filter" &
 CAPTURE_PID=$!
-MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
-SERVER_PID=$!
+if [[ -n "$ESP_KERN" ]]; then
+  printf '%s\n' 'MOO-LAUF BOOTQUELLE ESP' >"$OUT/server.log"
+else
+  MOO_NETZ_TFTP="$OUT/tftp" MOO_NETZ_IF="$IFACE" MOO_NETZ_IPV6="$IPV6_PROBE" setsid mise run -C "$ROOT/skripte/p7/uefi" netz-server "$EFI" "$OUT/moo.kern" >"$OUT/server.log" 2>&1 &
+  SERVER_PID=$!
+fi
+laufprozesse_aktiv() {
+  kill -0 "$CAPTURE_PID" && { [[ -z "$SERVER_PID" ]] || kill -0 "$SERVER_PID"; }
+}
+mitschnitt_bereit() {
+  [[ -s "$OUT/netz.pcap" ]] &&
+    { [[ -n "$ESP_KERN" ]] || grep -q 'dnsmasq-tftp.*TFTP root' "$OUT/server.log"; }
+}
 for ((i=0;i<30;i++)); do
-  kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt vorzeitig beendet' >&2; exit 1; }
-  if grep -q 'dnsmasq-tftp.*TFTP root' "$OUT/server.log" && [[ -s "$OUT/netz.pcap" ]]; then break; fi
+  laufprozesse_aktiv || { echo 'Server/Mitschnitt vorzeitig beendet' >&2; exit 1; }
+  if mitschnitt_bereit; then break; fi
   sleep 1
 done
-grep -q 'dnsmasq-tftp.*TFTP root' "$OUT/server.log" && [[ -s "$OUT/netz.pcap" ]] || { echo 'Server/Capture nicht betriebsbereit' >&2; exit 1; }
+mitschnitt_bereit || { echo 'Server/Capture nicht betriebsbereit' >&2; exit 1; }
 REMOTE_ANGEFASST=1
 remote pausieren
 SYNAPSE_STOPP=1
@@ -612,7 +603,7 @@ ping_belegt=0
 transport_belegt=0
 ssh_belegt=0
 while ((SECONDS<bis)); do
-  kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
+  laufprozesse_aktiv || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
   ende=0
   if ((MODUS==7)); then
     grep -aEq 'MOO-KERNEL (IT8613 SAFETY OHNE BEDIENUNG|NEUSTART)' "$OUT/netz.log" && ende=1
@@ -704,7 +695,7 @@ while ((SECONDS<bis)); do
             echo 'FEHLER: IT8613-Safety-Start ohne Reload nicht vollstaendig belegt.' >&2
             exit 1
           fi
-          kill -0 "$CAPTURE_PID" && kill -0 "$SERVER_PID" || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
+          laufprozesse_aktiv || { echo 'Server/Mitschnitt waehrend Lauf ausgefallen' >&2; exit 1; }
           it8613_safety_nachweis "$antwort_ms" "$boot_alter" || exit 1
         else
           echo 'Kern-Abschluss und neue Windows-Bootzeit belegt'
@@ -778,6 +769,19 @@ while ((SECONDS<bis)); do
           else
             echo 'OpenSSH-Transport und Kernmarker belegt'
           fi
+        fi
+        if [[ -n "$ESP_KERN" ]]; then
+          beenden_gruppe "$CAPTURE_PID"
+          CAPTURE_PID=
+          tcpdump -nn -r "$OUT/netz.pcap" 'udp dst port 69' >"$OUT/tftp-anfragen.log" 2>"$OUT/tftp-decode.log" || {
+            echo 'FEHLER: Mitschnitt fuer ESP-Nachweis nicht lesbar.' >&2
+            exit 1
+          }
+          if [[ -s "$OUT/tftp-anfragen.log" ]]; then
+            echo 'FEHLER: TFTP-Anfrage waehrend ESP-Lauf protokolliert.' >&2
+            exit 1
+          fi
+          echo 'ESP-Lauf: USB-Loader und -Kern verifiziert, Netzlog und Rueckkehr belegt, null TFTP-Anfragen.'
         fi
         exit 0
       fi
