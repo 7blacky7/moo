@@ -19,6 +19,10 @@ statisch RASTER_C_BILD: [u8; 1648] auf 0
 statisch RASTER_TESTZEICHEN: [u8; 1] auf 0
 @nativ
 konstante RASTER_TESTTEXT: [u8; _] auf "10 A-Z.\nHELLO, MOOS!"
+# Diese 26 ASCII-Zeichen fallen in C auf '?' zurueck. Die erweiterten
+# Glyphen der DE-Haupt- und AltGr-Ebenen haben einen eigenen QEMU-Pixeltest.
+@nativ
+konstante RASTER_NEUE_ASCII: [u8; 26] auf [34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 47, 59, 60, 61, 62, 64, 91, 92, 93, 94, 95, 96, 123, 124, 125, 126]
 
 @nativ
 funktion raster_ab_gleich() -> bool:
@@ -104,9 +108,16 @@ funktion main() -> i32:
         setze z: u64 auf 0
         setze adr: u64 auf adresse_von(RASTER_TESTZEICHEN)
         solange z < 256:
-            speicher_schreiben(adr, als(u8, z), 1)
-            wenn nicht raster_ab_clear(0x12113366) oder nicht raster_ab_text(3, 1, 2, adr, 1, 0xB1923456, 1):
-                gib_zurück 30
+            setze eigene_glyphe: bool auf falsch
+            setze i auf 0
+            solange i < 26:
+                wenn z == u64(speicher_lesen(adresse_von(RASTER_NEUE_ASCII) + i, 1)):
+                    setze eigene_glyphe auf wahr
+                setze i auf i + 1
+            wenn nicht eigene_glyphe:
+                speicher_schreiben(adr, als(u8, z), 1)
+                wenn nicht raster_ab_clear(0x12113366) oder nicht raster_ab_text(3, 1, 2, adr, 1, 0xB1923456, 1):
+                    gib_zurück 30
             setze z auf z + 1
         wenn nicht raster_ab_text(-5, -1, 2, adresse_von(RASTER_TESTTEXT), 20, 0xFF457AC8, 1):
             gib_zurück 31

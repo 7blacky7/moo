@@ -1,0 +1,60 @@
+# USB HID Keyboard/Keypad-Usages sind Positionen. DE ist die ISO-Belegung.
+aus "usb_xhci" importiere xh_ascii
+
+@nativ
+konstante DE_SHIFT_ZAHLEN: [u8; 10] auf [33, 34, 0xA7, 36, 37, 38, 47, 40, 41, 61]
+# Usages 0x2D bis 0x38. Beide Positionen fuer Raute (ANSI/ISO).
+@nativ
+konstante DE_ZEICHEN: [u8; 12] auf [0xDF, 0xB4, 0xFC, 43, 35, 35, 0xF6, 0xE4, 94, 44, 46, 45]
+@nativ
+konstante DE_SHIFT_ZEICHEN: [u8; 12] auf [63, 96, 0xDC, 42, 39, 39, 0xD6, 0xC4, 0xB0, 59, 58, 95]
+# AltGr 7, 8, 9, 0.
+@nativ
+konstante DE_ALTGR_ZAHLEN: [u8; 4] auf [123, 91, 93, 125]
+
+@nativ
+funktion tastatur_altgr(usage: u64) -> u64:
+    unsicher:
+        wenn usage == 20:
+            gib_zurück 64
+        wenn usage == 8:
+            gib_zurück 0x20AC
+        wenn usage >= 36 und usage <= 39:
+            gib_zurück u64(speicher_lesen(adresse_von(DE_ALTGR_ZAHLEN) + usage - 36, 1))
+        wenn usage == 45:
+            gib_zurück 92
+        wenn usage == 48:
+            gib_zurück 126
+        wenn usage == 100:
+            gib_zurück 124
+        gib_zurück 0
+
+@nativ
+funktion tastatur_codepunkt(usage: u64, mods: u64, caps: bool, us: bool) -> u64:
+    unsicher:
+        # Links/Rechts-Shift und fuer DE Rechts-Alt. Ctrl/GUI/Links-Alt
+        # sind Tastenkombinationen und liefern keinen druckbaren Text.
+        wenn (mods & 0x9D) != 0:
+            gib_zurück 0
+        wenn usage == 42 und (mods & 0x40) == 0:
+            gib_zurück 8
+        wenn us:
+            gib_zurück u64(xh_ascii(usage, mods, caps))
+        wenn (mods & 0x40) != 0:
+            gib_zurück tastatur_altgr(usage)
+        setze shift: bool auf (mods & 0x22) != 0
+        wenn usage == 28 oder usage == 29:
+            gib_zurück u64(xh_ascii(57 - usage, mods, caps))
+        wenn usage >= 30 und usage <= 39 und shift:
+            gib_zurück u64(speicher_lesen(adresse_von(DE_SHIFT_ZAHLEN) + usage - 30, 1))
+        wenn usage >= 45 und usage <= 56:
+            wenn caps und (usage == 47 oder usage == 51 oder usage == 52):
+                setze shift auf nicht shift
+            wenn shift:
+                gib_zurück u64(speicher_lesen(adresse_von(DE_SHIFT_ZEICHEN) + usage - 45, 1))
+            gib_zurück u64(speicher_lesen(adresse_von(DE_ZEICHEN) + usage - 45, 1))
+        wenn usage == 100:
+            wenn shift:
+                gib_zurück 62
+            gib_zurück 60
+        gib_zurück u64(xh_ascii(usage, mods, caps))

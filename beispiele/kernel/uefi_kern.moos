@@ -19,8 +19,10 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
-aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text
-aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, xh_ascii, usb_inventar
+aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_zeichen
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar
+aus "kern_tastatur" importiere tastatur_codepunkt
+aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
 aus "usb_speicher" importiere usb_speicher_pruefen
 aus "nvme" importiere nvme_pruefen
 aus "i226_diagnose" importiere i226_inventar
@@ -127,7 +129,7 @@ statisch BILD: [u8; 33177600] auf 0
 statisch RASTER_KERN: [u64; 5] auf 0
 
 @nativ
-statisch ZEICHEN: [u8; 8] auf 0
+statisch KONSOLE_UTF8: [u64; 2] auf 0
 
 @nativ
 statisch KONSOLE: Konsole auf 0
@@ -619,26 +621,38 @@ funktion kon_neue_zeile() -> void:
             kon_rollen()
             kon_setze(versatz_von(Konsole, k_y), kon(versatz_von(Konsole, k_y)) - h)
 
-# Ein Zeichen auf beide Kanaele: COM1/0xE9 immer, Schirm wenn aktiv.
+# Serielle Ausgabe und Netzlog behalten ihre Bytes. Der Schirm rendert Skalare.
 @nativ
 funktion zeichen(z: u8) -> void:
     unsicher:
-        setze skala: u64 auf 0
-        setze x: u64 auf 0
-        setze y: u64 auf 0
         seriell(z)
         netz_zeichen(z)
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
             gib_zurück
-        setze skala auf kon(versatz_von(Konsole, k_skala))
+        setze zustand: u64 auf adresse_von(KONSOLE_UTF8)
+        setze n: u64 auf speicher_lesen(zustand + 8, 8)
+        setze bytes: u64 auf speicher_lesen(zustand, 8) | (u64(z) << (n * 8))
+        setze n auf n + 1
+        setze einheit: u64 auf utf8_dekodieren(bytes, n)
+        solange einheit != 0:
+            konsole_zeichen(einheit & 0xFFFFFFFF)
+            setze n auf n - (einheit >> 32)
+            setze bytes auf bytes >> ((einheit >> 32) * 8)
+            setze einheit auf utf8_dekodieren(bytes, n)
+        speicher_schreiben(zustand, bytes, 8)
+        speicher_schreiben(zustand + 8, n, 8)
+
+@nativ
+funktion konsole_zeichen(z: u64) -> void:
+    unsicher:
+        setze skala: u64 auf kon(versatz_von(Konsole, k_skala))
         wenn z == 10:
             kon_neue_zeile()
             kon_zeigen()
             gib_zurück
-        setze x auf kon(versatz_von(Konsole, k_x))
-        setze y auf kon(versatz_von(Konsole, k_y))
-        speicher_schreiben(adresse_von(ZEICHEN), z, 1)
-        kern_raster_text(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8), i32(x), i32(y), i32(skala), adresse_von(ZEICHEN), 1, u32(kon(versatz_von(Konsole, k_farbe))))
+        setze x: u64 auf kon(versatz_von(Konsole, k_x))
+        setze y: u64 auf kon(versatz_von(Konsole, k_y))
+        kern_raster_zeichen(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8), i32(x), i32(y), i32(skala), z, u32(kon(versatz_von(Konsole, k_farbe))))
         kon_schmutz(y, y + 5 * skala)
         kon_setze(versatz_von(Konsole, k_x), x + 4 * skala)
         wenn x + 7 * skala > kon(versatz_von(Konsole, k_rechts)):
@@ -1720,6 +1734,25 @@ konstante T_USB_TASTE_SLOT: [u8; _] auf "MOO-KERNEL USB TASTE SLOT "
 statisch USB_TASTEN: [u64; 1] auf 0
 @nativ
 statisch USB_CAPS: [u64; 1] auf 0
+@nativ
+statisch USB_LAYOUT_US: [u64; 1] auf 0
+@nativ
+statisch USB_UTF8: [u8; 4] auf 0
+@nativ
+konstante T_LAYOUT_DE: [u8; _] auf "MOO-KERNEL TASTATUR LAYOUT DE\n"
+@nativ
+konstante T_LAYOUT_US: [u8; _] auf "MOO-KERNEL TASTATUR LAYOUT US\n"
+
+@nativ
+funktion usb_layout_wechseln() -> void:
+    unsicher:
+        setze us: u64 auf speicher_lesen(adresse_von(USB_LAYOUT_US), 8) ^ 1
+        speicher_schreiben(adresse_von(USB_LAYOUT_US), us, 8)
+        wenn us != 0:
+            text(adresse_von(T_LAYOUT_US))
+        sonst:
+            text(adresse_von(T_LAYOUT_DE))
+        eingabe_zeigen()
 
 # Zustand gehaltener Tasten pro HID-Slot, CapsLock fuer die gemeinsame Konsole.
 @nativ
@@ -1747,11 +1780,19 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
                 speicher_schreiben(adresse_von(USB_TASTEN), speicher_lesen(adresse_von(USB_TASTEN), 8) + 1, 8)
                 wenn usage == 57:
                     speicher_schreiben(adresse_von(USB_CAPS), speicher_lesen(adresse_von(USB_CAPS), 8) ^ 1, 8)
-                setze c: u8 auf xh_ascii(usage, report & 255, speicher_lesen(adresse_von(USB_CAPS), 8) != 0)
+                wenn usage == 69 und (report & 255) == 0:
+                    usb_layout_wechseln()
+                setze c: u64 auf tastatur_codepunkt(usage, report & 255, speicher_lesen(adresse_von(USB_CAPS), 8) != 0, speicher_lesen(adresse_von(USB_LAYOUT_US), 8) != 0)
                 wenn c != 0:
-                    meldung(adresse_von(T_USB_TASTE), u64(c))
-                    zeichen(c)
-                    zeichen(10)
+                    meldung(adresse_von(T_USB_TASTE), c)
+                    wenn c != 8:
+                        setze adr: u64 auf adresse_von(USB_UTF8)
+                        setze breite: u64 auf utf8_schreiben(adr, 4, c)
+                        setze j: u64 auf 0
+                        solange j < breite:
+                            zeichen(speicher_lesen(adr + j, 1))
+                            setze j auf j + 1
+                        zeichen(10)
                     eingabe_taste(c)
             setze i auf i + 1
         speicher_schreiben(zuletzt, report, 8)
@@ -2065,11 +2106,14 @@ funktion konsolen_status(pfa_frei: u64, ticks: u64) -> void:
 
 # Fester Eingabebereich unterhalb der rollenden Diagnosekonsole.
 @nativ
-statisch EINGABE: [u8; 256] auf 0
+# Bis zu 255 sichtbare Skalare mit je vier UTF-8-Bytes.
+statisch EINGABE: [u8; 1020] auf 0
 @nativ
 statisch EINGABE_N: [u64; 1] auf 0
 @nativ
-konstante T_EINGABE: [u8; _] auf "EINGABE"
+konstante T_EINGABE_DE: [u8; _] auf "EINGABE DE (F12: US)"
+@nativ
+konstante T_EINGABE_US: [u8; _] auf "EINGABE US (F12: DE)"
 
 @nativ
 funktion eingabe_zeigen() -> void:
@@ -2082,34 +2126,37 @@ funktion eingabe_zeigen() -> void:
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
             gib_zurück
         kern_raster_rect(kern, 40, i32(boden), i32(breite) - 80, 60, rgba(20, 55, 75))
-        kern_raster_text(kern, 52, i32(boden + 6), 2, adresse_von(T_EINGABE), 7, rgba(200, 230, 255))
+        setze titel: u64 auf adresse_von(T_EINGABE_DE)
+        wenn speicher_lesen(adresse_von(USB_LAYOUT_US), 8) != 0:
+            setze titel auf adresse_von(T_EINGABE_US)
+        kern_raster_text(kern, 52, i32(boden + 6), 2, titel, 20, rgba(200, 230, 255))
         kern_raster_text(kern, 52, i32(boden + 28), 3, adresse_von(EINGABE), n, rgba(255, 230, 160))
-        kern_raster_rect(kern, i32(52 + n * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
+        setze anzahl: u64 auf utf8_zeichenanzahl(adresse_von(EINGABE), n)
+        kern_raster_rect(kern, i32(52 + anzahl * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
         schirm_zeilen(boden, boden + 60)
 
 @nativ
-funktion eingabe_taste(c: u8) -> void:
+funktion eingabe_taste(c: u64) -> void:
     unsicher:
         setze breite: u64 auf speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_breite), 8)
+        setze adr: u64 auf adresse_von(EINGABE)
         setze n: u64 auf speicher_lesen(adresse_von(EINGABE_N), 8)
-        setze max: u64 auf 0
-        setze i: u64 auf 1
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0 oder breite < 160:
             gib_zurück
-        setze max auf (breite - 116) / 12
+        setze max: u64 auf (breite - 116) / 12
         wenn max > 255:
             setze max auf 255
         wenn c == 8:
-            wenn n > 0:
-                setze n auf n - 1
-        sonst wenn c >= 32 und c <= 126:
-            wenn n == max:
+            setze n auf utf8_letzter_anfang(adr, n)
+        sonst wenn c >= 32:
+            wenn utf8_zeichenanzahl(adr, n) == max:
+                setze erstes: u64 auf utf8_lesen(adr, n) >> 32
+                setze i: u64 auf erstes
                 solange i < n:
-                    speicher_schreiben(adresse_von(EINGABE) + i - 1, speicher_lesen(adresse_von(EINGABE) + i, 1), 1)
+                    speicher_schreiben(adr + i - erstes, speicher_lesen(adr + i, 1), 1)
                     setze i auf i + 1
-                setze n auf n - 1
-            speicher_schreiben(adresse_von(EINGABE) + n, c, 1)
-            setze n auf n + 1
+                setze n auf n - erstes
+            setze n auf n + utf8_schreiben(adr + n, 1020 - n, c)
         sonst:
             # Noch keine Kommandoausfuehrung: Enter laesst den Text sichtbar.
             gib_zurück

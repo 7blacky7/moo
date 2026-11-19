@@ -13,6 +13,22 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/kern_tastatur.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T28: HID-Layout DE/US fuer den Bare-Kern"
+    },
+    {
+      "path": "beispiele/kernel/kern_utf8.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P7-T28: begrenzte UTF-8-Verarbeitung ohne Laufzeit"
+    },
+    {
       "path": "beispiele/kernel/kern_raster.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

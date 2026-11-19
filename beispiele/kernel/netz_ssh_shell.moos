@@ -1,6 +1,7 @@
 # Zeileneditor und lesende Befehle fuer eine authentifizierte Bare-SSH-Sitzung.
 aus "../uefi/netz_geraet" importiere nt_b8, nt_kopiere, nt_mac, nt_tempo
 aus "../uefi/hardware_pci" importiere nt_null
+aus "kern_utf8" importiere utf8_dekodieren, utf8_schreiben, utf8_letzter_anfang
 
 @nativ
 konstante SSH_SHELL_FENSTER: u64 auf 512
@@ -279,7 +280,7 @@ funktion ssh_shell_beendet() -> bool:
         gib_zurück sh_wert(versatz_von(SshShell, beendet)) != 0
 
 @nativ
-funktion sh_zeichen(ziel: u64, c: u64, ms: u64, frei: u64) -> u64:
+funktion sh_zeichen(ziel: u64, c: u64, breite: u64, ms: u64, frei: u64) -> u64:
     unsicher:
         setze cr: bool auf sh_wert(versatz_von(SshShell, vorher_cr)) != 0
         sh_setze(versatz_von(SshShell, vorher_cr), u64(c == 13))
@@ -294,20 +295,19 @@ funktion sh_zeichen(ziel: u64, c: u64, ms: u64, frei: u64) -> u64:
         wenn c == 8 oder c == 127:
             wenn n == 0 oder sh_wert(versatz_von(SshShell, zu_lang)) != 0:
                 gib_zurück ziel
-            sh_setze(versatz_von(SshShell, zeile_n), n - 1)
+            sh_setze(versatz_von(SshShell, zeile_n), utf8_letzter_anfang(adresse_von(SSH_SHELL_ZEILE), n))
             nt_b8(ziel, 0, 8)
             nt_b8(ziel, 1, 32)
             nt_b8(ziel, 2, 8)
             gib_zurück ziel + 3
-        wenn c < 32 oder c > 126:
+        wenn c < 32 oder (c >= 127 und c < 0xA0):
             gib_zurück ziel
-        wenn n == SSH_SHELL_ZEILEN_MAX:
+        wenn breite > SSH_SHELL_ZEILEN_MAX - n:
             sh_setze(versatz_von(SshShell, zu_lang), 1)
             gib_zurück ziel
-        nt_b8(adresse_von(SSH_SHELL_ZEILE), n, c)
-        sh_setze(versatz_von(SshShell, zeile_n), n + 1)
-        nt_b8(ziel, 0, c)
-        gib_zurück ziel + 1
+        utf8_schreiben(adresse_von(SSH_SHELL_ZEILE) + n, breite, c)
+        sh_setze(versatz_von(SshShell, zeile_n), n + breite)
+        gib_zurück ziel + utf8_schreiben(ziel, breite, c)
 
 @nativ
 funktion ssh_shell_starten() -> void:
@@ -362,11 +362,29 @@ funktion ssh_shell_fortsetzen(eof: bool, ms: u64, frei: u64) -> void:
         setze kopf: u64 auf sh_wert(versatz_von(SshShell, rx_kopf))
         setze rest: u64 auf ssh_shell_eingang_belegt()
         # Unter 256 Echo-Bytes bleibt Platz fuer einen PCI-Auszug mit 64 Eintraegen.
-        solange rest != 0 und ziel - basis < 256 und nicht ssh_shell_beendet():
-            setze c: u64 auf u64(speicher_lesen(adresse_von(SSH_SHELL_RX) + kopf, 1))
-            setze kopf auf (kopf + 1) % SSH_SHELL_FENSTER
-            setze rest auf rest - 1
-            setze ziel auf sh_zeichen(ziel, c, ms, frei)
+        solange rest != 0 und ziel - basis <= 252 und nicht ssh_shell_beendet():
+            setze rx: u64 auf adresse_von(SSH_SHELL_RX)
+            setze bytes: u64 auf u64(speicher_lesen(rx + kopf, 1))
+            setze gelesen: u64 auf 1
+            wenn bytes >= 128:
+                solange gelesen < 4 und gelesen < rest:
+                    setze b: u64 auf u64(speicher_lesen(rx + (kopf + gelesen) % SSH_SHELL_FENSTER, 1))
+                    setze bytes auf bytes | (b << (gelesen * 8))
+                    setze gelesen auf gelesen + 1
+            setze einheit: u64 auf utf8_dekodieren(bytes, gelesen)
+            wenn einheit == 0:
+                # Ein Codepunkt kann zwei CHANNEL_DATA-Nachrichten ueberspannen.
+                wenn eof:
+                    setze kopf auf (kopf + rest) % SSH_SHELL_FENSTER
+                    setze rest auf 0
+                stopp
+            setze breite: u64 auf einheit >> 32
+            setze c: u64 auf einheit & 0xFFFFFFFF
+            setze kopf auf (kopf + breite) % SSH_SHELL_FENSTER
+            setze rest auf rest - breite
+            # Ungueltige Eingabe verwerfen, ohne sie ans Terminal zurueckzusenden.
+            wenn breite != 1 oder c != 0xFFFD:
+                setze ziel auf sh_zeichen(ziel, c, breite, ms, frei)
         wenn eof und rest == 0 und ziel - basis < 256 und nicht ssh_shell_beendet():
             wenn sh_wert(versatz_von(SshShell, zeile_n)) != 0:
                 setze ziel auf sh_befehl(sh_lf(ziel, wahr), ms, frei)

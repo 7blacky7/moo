@@ -1,0 +1,96 @@
+# Dekodierung aus bis zu vier Bytes in LE-Reihenfolge. Ergebnis:
+# Byteanzahl oberhalb von Bit 31, Codepunkt darunter. Null wartet auf Folgedaten.
+@nativ
+funktion utf8_dekodieren(bytes: u64, n: u64) -> u64:
+    wenn n == 0:
+        gib_zurück 0
+    setze erstes: u64 auf bytes & 255
+    wenn erstes < 128:
+        gib_zurück (1 << 32) | erstes
+    setze ersatz: u64 auf (1 << 32) | 0xFFFD
+    wenn erstes < 0xC2 oder erstes > 0xF4:
+        gib_zurück ersatz
+    setze breite: u64 auf 2
+    setze wert: u64 auf erstes & 31
+    wenn erstes >= 0xF0:
+        setze breite auf 4
+        setze wert auf erstes & 7
+    sonst wenn erstes >= 0xE0:
+        setze breite auf 3
+        setze wert auf erstes & 15
+    setze i: u64 auf 1
+    solange i < breite und i < n:
+        setze b: u64 auf (bytes >> (i * 8)) & 255
+        wenn (b & 0xC0) != 0x80:
+            gib_zurück ersatz
+        wenn i == 1:
+            # Ueberlange Formen, Surrogate und Werte ab U+110000.
+            wenn (erstes == 0xE0 und b < 0xA0) oder (erstes == 0xED und b >= 0xA0) oder (erstes == 0xF0 und b < 0x90) oder (erstes == 0xF4 und b >= 0x90):
+                gib_zurück ersatz
+        setze wert auf (wert << 6) | (b & 63)
+        setze i auf i + 1
+    wenn i < breite:
+        gib_zurück 0
+    gib_zurück (breite << 32) | wert
+
+@nativ
+funktion utf8_lesen(adr: u64, n: u64) -> u64:
+    unsicher:
+        wenn n == 0:
+            gib_zurück 0
+        setze bytes: u64 auf u64(speicher_lesen(adr, 1))
+        wenn bytes < 128:
+            gib_zurück (1 << 32) | bytes
+        setze i: u64 auf 1
+        solange i < 4 und i < n:
+            setze bytes auf bytes | (u64(speicher_lesen(adr + i, 1)) << (i * 8))
+            setze i auf i + 1
+        gib_zurück utf8_dekodieren(bytes, i)
+
+# Kodiert einen Unicode-Skalar vollstaendig oder laesst den Puffer unveraendert.
+@nativ
+funktion utf8_schreiben(adr: u64, kapazitaet: u64, z: u64) -> u64:
+    unsicher:
+        wenn z > 0x10FFFF oder (z >= 0xD800 und z <= 0xDFFF):
+            gib_zurück 0
+        setze breite: u64 auf 1
+        setze anfang: u64 auf 0
+        wenn z >= 0x10000:
+            setze breite auf 4
+            setze anfang auf 0xF0
+        sonst wenn z >= 0x800:
+            setze breite auf 3
+            setze anfang auf 0xE0
+        sonst wenn z >= 0x80:
+            setze breite auf 2
+            setze anfang auf 0xC0
+        wenn kapazitaet < breite:
+            gib_zurück 0
+        setze i: u64 auf breite - 1
+        solange i > 0:
+            speicher_schreiben(adr + i, als(u8, 0x80 | (z & 63)), 1)
+            setze z auf z >> 6
+            setze i auf i - 1
+        speicher_schreiben(adr, als(u8, anfang | z), 1)
+        gib_zurück breite
+
+# Beide Aufrufe erwarten einen vollstaendigen, gueltigen UTF-8-Puffer.
+@nativ
+funktion utf8_zeichenanzahl(adr: u64, n: u64) -> u64:
+    unsicher:
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < n:
+            wenn (u64(speicher_lesen(adr + i, 1)) & 0xC0) != 0x80:
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        gib_zurück anzahl
+
+@nativ
+funktion utf8_letzter_anfang(adr: u64, n: u64) -> u64:
+    unsicher:
+        solange n > 0:
+            setze n auf n - 1
+            wenn (u64(speicher_lesen(adr + n, 1)) & 0xC0) != 0x80:
+                gib_zurück n
+        gib_zurück 0

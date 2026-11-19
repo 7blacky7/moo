@@ -52,7 +52,9 @@ case "$modus" in
     {
       printf 'hilfx\177e\r\nmoo-info\npci\nnetz\nspeicher\nunbekannt\n'
       printf '%0700d\n' 0
-      printf 'hilfxy\b\177e\nbeenden\n'
+      printf 'hilfxy\b\177e\n'
+      printf 'gru\303\237e \303\244\303\266\303\274 \342\202\254\n'
+      printf 'hilf\342\202\254\177\303\244\177e\nbeenden\n'
     } >"$eingabe"
     ;;
   passwort)
@@ -171,6 +173,7 @@ import re
 import sys
 
 daten = pathlib.Path(sys.argv[1]).read_bytes()
+daten.decode("utf-8")
 zeilen = daten.split(b"\r\n")
 hilfe = b"hilfe moo-info pci netz speicher beenden"
 pflicht = (
@@ -186,6 +189,9 @@ pflicht = (
     b"moo> " + b"0" * 96,
     b"Zeile zu lang",
     b"moo> hilfxy\b \b\b \be",
+    "moo> gruße äöü €".encode(),
+    b"Unbekannter Befehl",
+    "moo> hilf€\b \bä\b \be".encode(),
 )
 if zeilen[:1] != [b"MoOS Bare SSH"] or zeilen[-3:] != [b"moo> beenden", b"MoOS Shell beendet", b""]:
     sys.exit("SSH-Shell: Start oder sauberer Abschluss fehlt")
@@ -195,8 +201,9 @@ for zeile in pflicht:
         position = zeilen.index(zeile, position) + 1
     except ValueError:
         sys.exit(f"SSH-Shell: erwartete Ausgabe fehlt ({zeile!r})")
-if zeilen.count(hilfe) != 2:
-    sys.exit("SSH-Shell: Hilfe nach beiden korrigierten Eingaben fehlt")
+if zeilen.count(hilfe) != 3:
+    sys.exit("SSH-Shell: Hilfe nach korrigierten ASCII-/UTF-8-Eingaben fehlt")
+print("SSH/2223 UTF-8: äöüß€ bytegleich, Backspace entfernt ganze Codepunkte")
 
 def zahl(name):
     werte = [z[len(name):] for z in zeilen if z.startswith(name)]

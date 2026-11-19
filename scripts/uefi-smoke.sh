@@ -50,6 +50,7 @@ KERN_ECAM="${MOO_UEFI_ECAM:-0}"
 NETZ_TRANSPORT="${MOO_UEFI_TRANSPORT:-0}"
 NETZ_TCP_ECHO="${MOO_UEFI_TCP_ECHO:-0}"
 NETZ_SSH="${MOO_UEFI_SSH:-0}"
+KERN_TASTATUR="${MOO_UEFI_TASTATUR:-0}"
 KRYPTO="${MOO_UEFI_KRYPTO:-0}"
 if [ "$PRUEFUNG" = "e1000" ]; then
   MOO_SRC="${MOO_UEFI_APP:-$ROOT/beispiele/uefi/netz_e1000.moos}"
@@ -83,6 +84,11 @@ QEMU_ACCEL=()
 [ "${MOO_UEFI_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
 
 fail() { echo "      FAIL: $*"; echo "# ERGEBNIS: ROT"; exit 1; }
+case "$KERN_TASTATUR" in
+  0) ;;
+  1) [ "$PRUEFUNG" = kern ] || fail "Tastaturprobe braucht MOO_UEFI_PRUEFUNG=kern" ;;
+  *) fail "Tastaturprobe: 0 oder 1" ;;
+esac
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
 skip() {
   echo "      SKIP: $1"
@@ -263,8 +269,8 @@ while pos + 16 <= len(raw):
     assert sum(struct.unpack("!" + "H" * (ihl // 2), ip[:ihl])) % 65535 == 0
     length = struct.unpack_from("!H", udp, 4)[0]
     assert 8 <= length <= len(udp)
-    packets.append(udp[8:length].decode("ascii"))
-serial = pathlib.Path(sys.argv[2]).read_bytes().replace(b"\r", b"").decode("ascii", "replace")
+    packets.append(udp[8:length].decode("utf-8"))
+serial = pathlib.Path(sys.argv[2]).read_bytes().replace(b"\r", b"").decode("utf-8", "replace")
 assert "MOO-KERNEL START\n" in serial
 lines = [line for line in serial[serial.index("MOO-KERNEL START\n"):].splitlines() if line]
 missing = collections.Counter(lines) - collections.Counter(packets)
@@ -591,6 +597,9 @@ PY
     KERN_QEMU+=(-net none)
   fi
   USB="${MOO_UEFI_USB:-1}"
+  if [ "$KERN_TASTATUR" = 1 ] && [ "$USB" != 1 ]; then
+    fail "Tastaturprobe braucht MOO_UEFI_USB=1"
+  fi
   USB_VERSION="${MOO_UEFI_USB_VERSION:-2}"
   case "$USB_VERSION" in 1|2) ;; *) fail "USB_VERSION: nur 1 (Full-Speed) oder 2 (High-Speed)";; esac
   if [ "$USB" = 1 ]; then
@@ -711,6 +720,26 @@ PY
   if [ "$USB" = 1 ] && grep -aq "MOO-KERNEL OK" "$OUT/serial.log"; then
     printf 'screendump %s -f png\n' "$OUT/boot-screenshot.png" >&3
     for ((j = 0; j < 15; j++)); do [ -s "$OUT/boot-screenshot.png" ] && break; sleep 0.1; done
+    if [ "$KERN_TASTATUR" = 1 ]; then
+      # QEMU sendet physische Tastenpositionen an die USB-Boot-Tastatur.
+      for taste in y z \
+          shift-1 shift_r-2 shift-3 shift-4 shift-5 shift-6 shift-7 shift-8 shift-9 shift-0 shift-minus \
+          alt_r-q alt_r-e alt_r-7 alt_r-0 alt_r-8 alt_r-9 alt_r-minus alt_r-less alt_r-bracket_right \
+          apostrophe semicolon bracket_left shift-apostrophe shift-semicolon shift_r-bracket_left minus \
+          alt_r-e backspace apostrophe backspace caps_lock apostrophe shift-apostrophe caps_lock f12 y f12 y; do
+        printf 'sendkey %s 70\n' "$taste" >&3
+        sleep 0.22
+      done
+      # Der Framebuffer-Present kann dem seriellen Tastenmarker nachlaufen.
+      sleep 1
+      printf 'screendump %s\n' "$OUT/tastatur.ppm" >&3
+      for ((j = 0; j < 25; j++)); do
+        [ -s "$OUT/tastatur.ppm" ] && break
+        sleep 0.1
+      done
+      uv run --no-project --offline python "$ROOT/skripte/p7/tastatur-pixel.py" \
+        "$OUT/tastatur.ppm" "$OUT/serial.log" || fail "Tastaturprobe"
+    fi
     printf 'sendkey shift-b 60\n' >&3
     sleep 0.2
     for ((j = 0; j < 140; j++)); do
