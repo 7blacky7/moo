@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "status": "draft_not_integrated",
-  "purpose": "T33-Profil- und Kontextinventar nach Korrektur von neun Beispielen, kein Freigabemanifest und keine automatischen Ausnahmen",
-  "source_snapshot": "fa6bdfef36443b5e711a4a4d3e9b0559b7f736a2",
-  "compiler_sha256": "57efe709787ee966efa39f6a95542ffebe104dbfe97fcecf1535d2ff175e2298",
+  "status": "integrated_profiles_no_exceptions",
+  "purpose": "T33-Profilinventar mit historischen Kontextdiagnosen und dokumentierten Reparaturen; keine automatischen Fehlerausnahmen",
+  "historical_source_snapshot": "fa6bdfef36443b5e711a4a4d3e9b0559b7f736a2",
+  "historical_compiler_sha256": "57efe709787ee966efa39f6a95542ffebe104dbfe97fcecf1535d2ff175e2298",
   "evidence": "87704a8a-4a58-484e-95c7-2183ad916efe",
   "policy": {
     "unknown_case": "fail_closed",
     "known_failures": "not_accepted_as_success",
     "compiler_profile": "--emit-ir zeigt Frontend-/Codegen-Erfolg, kein ABI-Nachweis",
-    "runner_integration": "nicht implementiert"
+    "runner_integration": "legacy_ir.sh uebernimmt ausschliesslich category=profile; alle anderen Faelle bleiben im strengen vollstaendigen Quellenlauf"
   },
   "cases": [
     {

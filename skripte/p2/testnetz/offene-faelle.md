@@ -1,103 +1,98 @@
-# P2-T33: Testkontexte und offene Fälle
+# P2-T33: abgeschlossene Testnetz-Untersuchung
 
-Stand des Untersuchungsbefunds: Commit `fa6bdfe`, Compiler-SHA256
-`57efe709787ee966efa39f6a95542ffebe104dbfe97fcecf1535d2ff175e2298`.
-[Das Manifest](testmanifest.json) dokumentierte ursprünglich die 24 damals
-fehlgeschlagenen Quellen. Neun korrigierte Spiele wurden daraus entfernt;
-verbleiben sechs Profile und neun offene Fälle. Es ist keine vollständige
-Aufzählung aller Dateien und keine Liste erfolgreich kompilierender Quellen. Der Shell-Runner `legacy_ir.sh --profiles` übernimmt nur
-die sechs belegten IR-Profilargumente; DB-Kontexte werden nicht automatisch
-zusammengesetzt oder übersprungen.
-Unbekannte, ungeprüfte oder nicht erfolgreich kompilierende Fälle bleiben
-offen; ein wiederholbarer Fehler ist kein grünes Gate.
+Stand: 20.11.2026. Die ursprüngliche Untersuchung betraf Commit
+`fa6bdfef36443b5e711a4a4d3e9b0559b7f736a2`: 460 Quellen,
+24 Compilefehler und 293 unterschiedliche IR-Einträge zwischen zwei Läufen.
+Die Tabelle bewahrt diese historischen Diagnosen; sie bezeichnet keine
+aktuellen Fehler und keine absichtlichen Negativtests.
 
-## Profile und Datenbank-Kontexte
+## Die 24 historischen Compilefehler
 
-Sechs Boot-/Kernel-/UEFI-Quellen erzeugten mit den im Manifest angegebenen
-Argumenten erfolgreich IR (Job `0f8927ca`). `--emit-ir` kehrt in
-`compiler/src/main.rs:995–1000` vor der Objekt- und Linkerzeugung zurück:
-Das ist weder ein Ziel-ABI- noch Boot-Nachweis. Die späteren Ziel- und
-Plattformtests bleiben Pflicht. Bei künftiger Integration Compiler-Binary,
-Quellen, importierte Dateien, Profil und Flags mit Hash festhalten.
+Pfade ohne Präfix liegen unter `beispiele/`. „Profil“ bedeutet einen
+fehlenden Ziel-/Buildkontext. Die anderen Fälle waren Inkonsistenzen der
+Beispiele, Imports oder APIs; ein zeitlicher Compiler-Regressionsbeginn wurde
+damals nicht nachgewiesen.
 
-Fünf der sieben DB-Benchmark-/Smoke-Dateien dokumentieren einen historischen
-Zusammenbau aus einem fest angegebenen Zeilenpräfix von
-`beispiele/domain/db/postgres_client.moos` und der jeweiligen Testdatei.
-Die Zeilenanzahlen stehen als historische Angaben im Manifest. Beim Clientstand
-SHA256 `26b1a97007d129b6ffa12c1981996ec679fb015d9026d52b45c92e3c340e93cc`
-(Job 44e6d6b4) enden die Präfixe 592, 760 und 978 vor der erst in
-`postgres_client.moos:983` definierten Methode `schliesse`, die die
-betroffenen Benchmarks aufrufen. Der Pool-Präfix 1024 endet vor
-`PgPool.schliesse_alle` in Zeile 1029, das der Pool-Benchmark aufruft.
-Der Pipelining-Präfix 1024 endet innerhalb `PgPool.checkin`; ob dieser
-unvollständige Teil für den Pipelining-Fall relevant ist, ist ungeprüft.
-Die historischen Zeilenangaben sind somit keine belastbaren Eingabeverträge;
-ihre vollständige, versionierte Ersetzung bleibt offen (Thought 3104a9b2).
-Ein zusätzlicher manueller Versuch mit dem hashgebundenen Clientteil bis
-Zeile 1034 und jedem der fünf Fragmente erzeugte jeweils erfolgreich IR
-(5/5 RC0, Thought `f484f698`). Dies belegt keine Laufzeit- oder
-Datenbankfunktion und macht die historischen Präfixlängen nicht gültig. Ein
-versionsgebundener automatischer Kontext samt Importgraph bleibt offen.
-Der vorhandene Handoff `beispiele/domain/db/bench/HANDOFF_2026-05.md:15–20`
-beschreibt bereits das Ausschneiden vor dem `# Smoketest`-Marker. Dieser
-Marker steht aktuell in `postgres_client.moos:1037`; seine Eindeutigkeit und
-alle beteiligten Hashes müssen vor einer Automatisierung geprüft werden.
+| Quelle | Historische Diagnose | Klassifikation und heutige Auflösung |
+|---|---|---|
+| bootloader/stage2.moos | kern_outw nur bare | Profil: i386-bare |
+| kernel/arm64_test.moos | kern_seriell_zeichen nur bare | Profil: aarch64-bare |
+| kernel/hallo_kern.moos | kern_seriell_zeichen nur bare | Profil: x86_64-bare |
+| kernel/pf_test.moos | kern_seriell_zeichen nur bare | Profil: x86_64-bare |
+| kernel/stackprot_test.moos | kern_seriell_zeichen nur bare | Profil: x86_64-bare |
+| uefi/hallo_uefi.moos | kern_outw nur bare | Profil: x86_64-unknown-uefi |
+| coin_catcher.moos:45 | erwartete Einrückung bei Set | Beispielsyntax: mehrzeiliger wenn-Block |
+| doodle_jump.moos:68 | erwartete Einrückung bei Return | Beispielsyntax: mehrzeiliger wenn-Block |
+| game_2048.moos:21 | erwartete Einrückung bei Return | Beispielsyntax: Block; reservierte lokale Variable umbenannt |
+| mine_run.moos:45 | erwartete Einrückung bei Set | Beispielsyntax: mehrzeiliger wenn-Block |
+| pipe_puzzle.moos:32 | erwartete Einrückung bei Return | Beispielsyntax: mehrzeiliger wenn-Block |
+| pong_plus.moos:76 | erwartete Einrückung bei Set | Beispielsyntax: mehrzeiliger wenn-Block |
+| simon.moos:20 | erwartete Einrückung bei Return | Beispielsyntax: mehrzeiliger wenn-Block |
+| snake_plus.moos:212 | erwartete Einrückung bei Set | Beispielsyntax: mehrzeiliger wenn-Block |
+| tic_tac_toe.moos:220 | erwartete Einrückung bei Set | Beispielsyntax: mehrzeiliger wenn-Block |
+| domain/db/bench/bench_binary.moos:14 | Methode verbinde nicht gefunden | Importkontext: selektiver Import aus ../postgres_client |
+| domain/db/bench/bench_copy.moos:19 | Methode verbinde nicht gefunden | Importkontext: selektiver Import aus ../postgres_client |
+| domain/db/bench/bench_pipelining.moos:17 | Methode verbinde nicht gefunden | Importkontext: selektiver Import aus ../postgres_client |
+| domain/db/bench/bench_pool.moos:17 | Methode verbinde nicht gefunden | Importkontext: selektiver Import aus ../postgres_client |
+| domain/db/bench/bench_prepared.moos:15 | Methode verbinde nicht gefunden | Importkontext: selektiver Import aus ../postgres_client |
+| domain/db/bench/bench_baseline_perfphase.moos:9 | Modul postgres_client_lib nicht gefunden | Importpfad: ../postgres_client |
+| domain/db/bench/scram_e2e_smoke.moos:1 | relativer Import nicht gefunden | Importpfad: ../postgres_client |
+| domain/db/mini_db.moos:447 | Methode alle nicht gefunden | API: deutsche BTree-Adapter auf put/get/scan/dump |
+| compiler/tests/test_stdlib.moos | Funktion durchschnitt nicht gefunden | API: durchschnitt in stdlib/liste, leer ergibt nichts |
 
-Die verbleibenden zwei Dateien benötigen ein benanntes Modul beziehungsweise
-einen relativen Import. `main.rs:176–199` löst Pfadimporte relativ zum
-Verzeichnis der importierenden Datei auf. Modulbereitstellung, Importpfad und
-vollständiger Graph sind vor einem reproduzierbaren Lauf zu klären. Keine
-Produktbeispiele umschreiben oder still ausschließen.
+Alle Profile enthalten zusätzlich `--no-stdlib`; das Manifest führt die
+heute benötigten Zielprofile vollständig. DB-Importe übernehmen Definitionen,
+keine ausführbaren Client-Testteile. Historische Präfix-Zusammenbauten sind
+für diese Quellen nicht mehr erforderlich. Ein IR-Erfolg der DB-Beispiele
+belegt keinen Lauf gegen einen PostgreSQL-Server.
 
-## Neun behobene Einzeilen-wenn-Fälle
+Quellbelege im Abschlussstand:
+`beispiele/domain/db/bench/bench_binary.moos:1–3`,
+`bench_baseline_perfphase.moos:9–11`, `scram_e2e_smoke.moos:1–3`;
+`beispiele/domain/db/mini_db.moos:220–233`;
+`stdlib/liste.moos:15–20`.
+Die historischen Parserdiagnosen bezogen sich auf die damaligen Quellzeilen,
+nicht auf unveränderte Zeilennummern im heutigen Stand.
 
-Der User entschied, die Beispiele auf mehrzeilige Blöcke umzustellen und den
-Parser beizubehalten. Batch 30837 setzte dies um; Batch 30842 benannte im
-Spiel 2048 zusätzlich die lokale Variable mit reserviertem Schlüsselwort um.
-Alle neun kompilierten und linkten erfolgreich (Thought fba5fd3d); ihre
-grafische Laufzeit wurde dabei nicht geprüft. Die folgende Tabelle bewahrt die
-historischen ersten Diagnosezeilen.
+## Die 293 historischen IR-Abweichungen
 
-| Datei unter `beispiele/` | Erste gemeldete Zeile |
-|---|---:|
-| `coin_catcher.moos` | 45 |
-| `doodle_jump.moos` | 68 |
-| `game_2048.moos` | 21 |
-| `mine_run.moos` | 45 |
-| `pipe_puzzle.moos` | 32 |
-| `pong_plus.moos` | 76 |
-| `simon.moos` | 20 |
-| `snake_plus.moos` | 212 |
-| `tic_tac_toe.moos` | 220 |
+| Klasse | Nachmessung / Grenze | Behandlung |
+|---|---|---|
+| Zufällige lokale Freigabereihenfolge | Zwei unabhängige Nachmessungen derselben 293 Quellen: 287 bzw. 288 Paare unterschieden sich ausschließlich bei local_exit-Loads; 6 bzw. 5 Paare waren diesmal gleich | Compiler sortiert lokale Namen vor Pointer-Deduplizierung und Release |
+| Auswahl aus ungeordneten Methoden-/Fallback-Mengen | Damals statisch benanntes Risiko; kein geändertes Callziel in den beiden Nachmessungen beobachtet | Keine historische Anzahl oder Ursache erfunden; vollständige IR-Vergleiche bleiben maßgeblich |
+| Modulheader | Bereits normalisiert; kein belegter Auslöser der 293 Befunde | Nur ModuleID/source_filename werden vereinheitlicht |
+| Nutzliterale / absolute Projektpfade | Zwei spätere unsafe_path_in_ir-Fälle waren echte absolute Literale in elf_reader/x86dis, getrennt von den 293 Ursachen | Quellen wurden projektrelativ korrigiert; weitere absolute Projektpfade bleiben FAIL |
 
-Parser-Beleg: `compiler/src/parser.rs:219–226` verlangt nach dem Doppelpunkt
-ein `Indent`. Die Diagnose stammt aus Job `ffab97de`; jede Datei kann
-weitere Fehler enthalten, die nach einer Änderung erst sichtbar werden.
+Die Nachmessungen klassifizieren nicht rückwirkend jedes ursprüngliche Paar.
+Release-Reihenfolgen können Ressourcenfreigaben beeinflussen und werden
+nicht sortierend aus dem IR entfernt. Aktueller Produktbeleg:
+`compiler/src/codegen.rs:4543–4566`, `release_function_locals`.
+Die Normalisierung in `legacy_ir.sh:201–224` ändert nur Modulheader und
+Zeilenenden; Nutzliteral-, SSA-, Call- und Freigabedifferenzen bleiben sichtbar.
 
-## Zwei offene Fälle
+## Reproduzierbarer Abschluss
 
-- `beispiele/domain/db/mini_db.moos`: `BTree` definiert laut Zeilen
-  192–219 `put`, `get`, `scan` und `dump`. Die Quelle ruft dagegen
-  `selbst.index.alle()` in Zeile 324 und im Test u. a. `baum.einfuegen`,
-  `baum.suche` und `baum.alle` in Zeilen 434–447 auf. Der Compiler meldet
-  zuerst „Methode 'alle' nicht gefunden“. Das ist ein belegter Namenskonflikt;
-  ob die Aufrufe oder die API geändert werden sollen und ob danach weitere
-  Probleme auftreten, ist offen.
-- `compiler/tests/test_stdlib.moos:2–3,16` importiert `mathe` und
-  `liste` und ruft `durchschnitt(zahlen)` auf. Beide vollständig gelesenen
-  Module `stdlib/mathe.moos:1–55` und `stdlib/liste.moos:1–42` definieren
-  keine solche Funktion; der Compiler meldet entsprechend eine fehlende
-  Funktion (Job `3866bf90`). Dies ist eine Test-/Bibliotheksinkonsistenz,
-  keine nachgewiesene Negativprobe. API-Semantik und Verhalten für leere
-  Listen bleiben zu klären; Quellhashes und Belege stehen in Thought
-  `a6828102`. Die frühere Index-Sichtbarkeitslücke ist inzwischen behoben.
+Auf dem isolierten Commit `7aa6351b0d6da3448d3ee6554fa489e9e369d7d8`
+wurden drei Läufe hintereinander mit demselben Release-Compiler ausgeführt:
 
-## Baseline-Grenze
+1. `mise run test-legacy-ir` (Build, Mutationsprobe und erste Aufnahme).
+2. `mise run -C skripte/p2/testnetz legacy-ir --output build/p2-ir/t33-lauf-2.json --baseline skripte/p2/testnetz/legacy-ir-baseline.json --profiles skripte/p2/testnetz/testmanifest.json`.
+3. Derselbe Befehl mit `t33-lauf-3.json`.
 
-Die historischen Läufe waren wegen wechselnder Release-Reihenfolgen nicht
-identisch. Spätere Aufnahmen zeigten deterministische IR-Ergebnisse; zuletzt
-belegt Thought d1f92038 drei gleiche Aufnahmen, neun bestätigte Diagnosen und
-zwei separat dreifach bytegleich geprüfte Nutzliteral-IRs. Das ist ein
-manueller Nachweis nach der M1-Regel; der vorhandene Runner meldet weiterhin
-RC1 und ist kein automatisiertes grünes Gate. Semantisch relevante Unterschiede
-wie Release-Reihenfolge oder Nutzliterale dürfen nicht herausnormalisiert werden.
+Dabei galt jeweils
+`CARGO_TARGET_DIR=/home/blacky/dev/moo/build/p2-t123/target`.
+Jeder Lauf: **493 Quellen, 493 IR-Dateien, 0 Fehler, Comparison: IDENTICAL,
+Exit 0**. Die vollständigen JSON-Dateien
+`build/p2-ir/root-gate.json`, `t33-lauf-2.json` und `t33-lauf-3.json`
+sind bytegleich, jeweils SHA256:
+
+`7aaf28575fa14d760881afd103cf50b4b647dc741f18ff6fed0b104bdfbd9b2a`
+
+Dies umfasst die normalisierten IR-Hashes, exakten Quellen-/Importinventare,
+Profile, Toolchain und Driftprüfung. Der Vertrag bleibt
+`module-header-root-v2`; keine Baseline-Fehlerausnahme wurde verwendet.
+Die Mutationsprobe lehnt sowohl einen veränderten IR-Hash als auch ein
+verändertes Importinventar ab. Codebelege:
+`legacy_ir.sh:136–173,176–224,246–275`,
+`legacy_ir_compare.sh:7–35` und `legacy_ir_selftest.sh:18–34`.
+Für diesen Abschluss wurden keine Compilerdateien geändert.
