@@ -23,6 +23,12 @@ on:
       # run_all.sh und die zusaetzlichen Core-Gates verwenden diese Eingaben.
       - "scripts/game-test-runner.sh"
       - "skripte/p2/ffi/klein_roundtrip.sh"
+      - "skripte/p2/abi/aarch64_struct_slice.sh"
+      - "skripte/p2/abi/struct_by_value.c"
+      - "skripte/p2/abi/struct_by_value.h"
+      - "skripte/p7/lader/system_ffi_struct.moos"
+      - "scripts/kernel-smoke.sh"
+      - "beispiele/kernel/hallo_kern.moos"
       - "skripte/p2/zahlen/**"
       - "beispiele/kernel/netz_tcp.moos"
       - "skripte/p2/runtime/rc_geteilt_stress.sh"
@@ -43,7 +49,6 @@ jobs:
   core:
     name: ${{ matrix.os }} / run_all.sh
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.experimental }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -51,13 +56,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            experimental: false
+            arch: X64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            experimental: true
+            arch: X64
           - os: macos-latest
             target: aarch64-apple-darwin
-            experimental: false
+            arch: ARM64
 
     steps:
       - name: Checkout
@@ -66,12 +71,11 @@ jobs:
       - name: Matrix contract
         shell: bash
         run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$RUNNER_ARCH" = "${{ matrix.arch }}"
           echo "OS=${{ matrix.os }}"
           echo "TARGET=${{ matrix.target }}"
-          echo "EXPERIMENTAL=${{ matrix.experimental }}"
-          if [[ "${{ matrix.experimental }}" == "true" ]]; then
-            echo "Diese Plattformzelle ist sichtbar experimentell; Fehler werden protokolliert, nicht als Ubuntu-Gate gewertet."
-          fi
 
       - name: Install Ubuntu core dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -83,11 +87,12 @@ jobs:
           echo "deb http://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list >/dev/null
           sudo apt-get update
           sudo apt-get install -y \
-            llvm-22-dev libpolly-22-dev libclang-22-dev \
+            clang-22 lld-22 llvm-22-dev libpolly-22-dev libclang-22-dev \
             libgtk-3-dev libappindicator3-dev \
             libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
             libsdl2-dev libsdl2-image-dev \
-            libsqlite3-dev libssl-dev pkg-config python3 ripgrep
+            libsqlite3-dev libssl-dev pkg-config python3 ripgrep \
+            qemu-system-x86 grub-common grub-pc-bin xorriso
           echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
           echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
@@ -239,6 +244,26 @@ jobs:
           bash compiler/tests/run_all.sh 2>&1 | tee "core-ci-${{ runner.os }}.log"
           grep -F 'Ergebnis:' "core-ci-${{ runner.os }}.log"
 
+      - name: Record native platform evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_host="$(rustc -vV | tr -d '\r' | awk '$1 == "host:" {print $2}')"
+          test "$native_host" = "${{ matrix.target }}"
+          native_compiler="${CARGO_TARGET_DIR:-compiler/target}/release/moo-compiler"
+          checksum=(sha256sum)
+          case "$RUNNER_OS" in
+            Windows) native_compiler+=.exe ;;
+            macOS) checksum=(shasum -a 256) ;;
+          esac
+          {
+            printf 'SOURCE_SHA=%s\n' "$GITHUB_SHA"
+            printf 'RUNNER=%s/%s IMAGE=%s/%s\n' "$RUNNER_OS" "$RUNNER_ARCH" "${ImageOS:-}" "${ImageVersion:-}"
+            printf 'RUN_ID=%s ATTEMPT=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            rustc -vV
+            "${checksum[@]}" "$native_compiler" "core-ci-$RUNNER_OS.log"
+          } | tee "p2-native-platform-$RUNNER_OS.log"
+
       - name: Install mise for native bit and crypto contracts
         if: matrix.os == 'ubuntu-latest'
         uses: jdx/mise-action@v2
@@ -254,6 +279,37 @@ jobs:
           mise -C skripte/p2/zahlen run crypto 2>&1 | tee p125-crypto-ci.log
           mise -C skripte/p2/zahlen run tcp-sequenz 2>&1 | tee p125-tcp-ci.log
           mise -C skripte/p2/zahlen run modulo-codegen 2>&1 | tee p127-modulo-ci.log
+
+
+      - name: Check Linux native C ABI and verify LLVM IR
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          P2_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
+            bash skripte/p2/ffi/klein_roundtrip.sh 2>&1 | tee p2-native-abi-linux.log
+          opt -passes=verify -disable-output build/p2-ffi-klein-roundtrip/probe.ll
+          echo 'LLVM verify: native Linux ABI IR' | tee -a p2-native-abi-linux.log
+
+      - name: Check AArch64 cross ABI and verify LLVM IR
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          bash skripte/p2/abi/aarch64_struct_slice.sh \
+            "$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" 2>&1 | tee p2-aarch64-cross.log
+          grep -F 'PASS AArch64 Moo->C' p2-aarch64-cross.log
+
+      - name: Check x86_64 bare QEMU boot
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          MOO_BIN="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
+            bash scripts/kernel-smoke.sh 2>&1 | tee p2-bare-qemu.log
+          grep -Fx '# ERGEBNIS: ALLE 4 Phasen gruen.' p2-bare-qemu.log
 
       - name: Check failed system thread starts
         shell: bash
@@ -292,6 +348,11 @@ jobs:
           name: core-ci-${{ runner.os }}-${{ github.run_attempt }}
           path: |
             core-ci-${{ runner.os }}.log
+            p2-native-platform-${{ runner.os }}.log
+            p2-native-abi-linux.log
+            p2-aarch64-cross.log
+            p2-bare-qemu.log
+            build/p2/aarch64-ffi/file-headers.txt
             build/p2-msvc-zweige/
             thread-start-ci-${{ runner.os }}.log
             ffi-darwin-ci.log

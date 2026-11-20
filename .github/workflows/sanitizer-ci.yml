@@ -1,6 +1,6 @@
 name: Runtime Sanitizers
 
-# ASan + UBSan fuer die isolierten C-Runtime-Harnesses. Kein -fwrapv.
+# ASan und UBSan fuer die isolierten C-Runtime-Harnesses, auf Linux auch LSan. Kein -fwrapv.
 # Alle drei Plattformjobs sind verbindlich; plattformspezifische Harness-Caps
 # werden vom Runner einzeln als SKIP mit Begruendung ausgegeben.
 on:
@@ -97,12 +97,16 @@ jobs:
           "$CC" --version
           bash compiler/runtime/tests/run_sanitize.sh all 2>&1 | tee "sanitizer-${{ runner.os }}.log"
 
-      - name: Assert no wrapped-overflow masking
+      - name: Assert effective sanitizer modes
         shell: bash
         run: |
+          set -euo pipefail
           if grep -F -- '-fwrapv' "sanitizer-${{ runner.os }}.log" | grep -v -F 'KEIN -fwrapv'; then
             echo "Verbotenes -fwrapv im effektiven Sanitizerlauf gefunden"
             exit 1
+          fi
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            grep -Fx ' ENV  : ASAN_OPTIONS=detect_leaks=1:abort_on_error=1' "sanitizer-$RUNNER_OS.log"
           fi
           grep -F 'MODUS asan ABGESCHLOSSEN:' "sanitizer-${{ runner.os }}.log"
           grep -F 'MODUS ubsan ABGESCHLOSSEN:' "sanitizer-${{ runner.os }}.log"
