@@ -308,7 +308,15 @@ jobs:
         run: |
           set -euo pipefail
           qemu-system-x86_64 --version
-          MOO_BIN="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
+          # Bare startup enables SSE2. Keep cc independent of the runner's ISA default.
+          mkdir -p "$RUNNER_TEMP/p2-bare-cc"
+          cat > "$RUNNER_TEMP/p2-bare-cc/cc" <<'EOF'
+          #!/bin/sh
+          exec /usr/bin/cc -march=x86-64 "$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/p2-bare-cc/cc"
+          PATH="$RUNNER_TEMP/p2-bare-cc:$PATH" \
+            MOO_BIN="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
             MOO_KERNEL_GRUB_DIR=/usr/lib/grub/i386-pc \
             MOO_KERNEL_BIOS=/usr/share/seabios/bios-256k.bin MOO_KERNEL_OUT=build/p2-bare-qemu \
             bash scripts/kernel-smoke.sh 2>&1 | tee p2-bare-qemu.log
