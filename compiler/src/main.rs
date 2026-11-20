@@ -1,5 +1,6 @@
 mod ast;
 mod bindgen;
+mod cpp_bindgen;
 mod boards;
 mod builtin_aritaet;
 mod codegen;
@@ -79,6 +80,24 @@ enum Commands {
         /// Unvollständigen Entwurf trotz Diagnosen anzeigen
         #[arg(long)]
         allow_partial: bool,
+    },
+    /// Erzeugt C++17-C-Adapter und Moo-Griffbindungen (enge, geprüfte Teilmenge)
+    BindgenCpp {
+        header: PathBuf,
+        #[arg(long = "class", required = true)]
+        classes: Vec<String>,
+        #[arg(long, default_value = "moo_cpp")]
+        prefix: String,
+        #[arg(long)]
+        library: String,
+        #[arg(long, default_value = cpp_bindgen::DEFAULT_TARGET)]
+        target: String,
+        #[arg(long, value_parser = ["cpp", "moo"])]
+        emit: String,
+        #[arg(short = 'I')]
+        include: Vec<PathBuf>,
+        #[arg(short = 'D')]
+        define: Vec<String>,
     },
     /// Parser-AST zur Diagnose ausgeben (Debugformat, nicht stabil)
     Ast {
@@ -265,6 +284,12 @@ fn main_kern(cli: Cli) {
                 Ok(code) if code != 0 => std::process::exit(code),
                 Ok(_) => {}
                 Err(e) => { eprintln!("bindgen: {e}"); std::process::exit(1); }
+            }
+        }
+        Commands::BindgenCpp { header, classes, prefix, library, target, emit, include, define } => {
+            if let Err(e) = cpp_bindgen::run(&header, &classes, &prefix, &library, &target, &emit, &include, &define) {
+                eprintln!("bindgen-cpp: {e}");
+                std::process::exit(2);
             }
         }
         Commands::Ast { file, imports } => {

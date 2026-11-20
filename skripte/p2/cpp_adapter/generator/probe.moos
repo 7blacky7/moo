@@ -1,0 +1,50 @@
+# Wird an die generierte Bindung angehaengt; kein handgeschriebener Adapter.
+@nativ
+funktion ist_max(p: puffer[u64]) -> bool:
+    gib_zurück p[0] == 18446744073709551615
+
+unsicher:
+    setze z auf tg_Zaehler_k_neu_i32(4)
+    setze alias auf z
+    setze i auf puffer_erstellen(i32, 1)
+    setze f auf puffer_erstellen(f64, 1)
+    setze u auf puffer_erstellen(u64, 1)
+    zeige tg_Zaehler_m_wert_leer_const(z, i)
+    zeige i[0]
+    zeige tg_Zaehler_m_addiere_i32(z, 3)
+    zeige tg_Zaehler_m_mal_i32_const(z, 5, i)
+    zeige i[0]
+    zeige tg_Zaehler_m_mal_f64_const(z, 0.5, f)
+    zeige f[0]
+    zeige tg_Zaehler_m_gross_leer_const(z, u)
+    zeige ist_max(u)
+    setze leer auf puffer_erstellen(i32, 0)
+    zeige tg_Zaehler_m_wert_leer_const(z, leer)
+    i[0] = 77
+    zeige tg_Zaehler_m_mal_i32_const(z, -1, i)
+    zeige i[0]
+    zeige tg_fehler()
+    zeige tg_Zaehler_frei(z)
+versuche:
+    unsicher:
+        setze r auf tg_Zaehler_m_wert_leer_const(alias, i)
+fange e:
+    zeige "alias-gesperrt"
+versuche:
+    unsicher:
+        setze r auf tg_Zaehler_frei(alias)
+fange e:
+    zeige "doppelfrei-gesperrt"
+unsicher:
+    setze schlecht auf tg_Zaehler_k_neu_i32(-1)
+    zeige schlecht
+    zeige tg_fehler()
+    setze fremd auf tg_Fremd_k_neu_leer()
+versuche:
+    unsicher:
+        setze r auf tg_Zaehler_m_wert_leer_const(fremd, i)
+fange e:
+    zeige "typ-gesperrt"
+unsicher:
+    zeige tg_Fremd_frei(fremd)
+zeige griffe_offen()

@@ -44,3 +44,9 @@ dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/cpp_adapter/test.sh sanitize"
 
 
+[tasks.generator]
+description = "P2-T24: C++-Klassenadapter generieren, C++/Moo-Roundtrip und Vertragsdiagnosen"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/cpp_adapter/generator/test.sh"
+
+

@@ -33,15 +33,16 @@ else empty end
 #[derive(Default)]
 struct Node { kind: String, name: String, fields: Vec<Vec<String>>, meta: Vec<String> }
 
-fn command(program: &str, args: &[String]) -> Result<String, String> {
+pub(super) fn command(program: &str, args: &[String]) -> Result<String, String> {
     let out = Command::new(program).args(args).output().map_err(|e| format!("{program}: {e}"))?;
     if !out.status.success() {
         return Err(format!("{program}: {}: {}", out.status, String::from_utf8_lossy(&out.stderr)));
     }
     String::from_utf8(out.stdout).map_err(|_| format!("{program}: output is not UTF-8"))
 }
-fn jq(ast: &str) -> Result<String, String> {
-    let mut child = Command::new("jq").args(["-r", FILTER]).stdin(Stdio::piped())
+fn jq(ast: &str) -> Result<String, String> { jq_filter(ast, FILTER) }
+pub(super) fn jq_filter(ast: &str, filter: &str) -> Result<String, String> {
+    let mut child = Command::new("jq").args(["-r", filter]).stdin(Stdio::piped())
         .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("jq: {e}"))?;
     let mut input = child.stdin.take().ok_or("jq stdin unavailable")?;
     let bytes = ast.as_bytes().to_vec();
@@ -71,7 +72,7 @@ fn parse_nodes(raw: &str) -> Result<Vec<Node>, String> {
     if active.is_some() { return Err("unterminated AST record".into()); }
     Ok(nodes)
 }
-fn valid_name(s: &str) -> bool {
+pub(super) fn valid_name(s: &str) -> bool {
     let mut chars = s.chars();
     let first = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
     first && chars.all(|c| c.is_ascii_alphanumeric() || c == '_') &&
@@ -110,7 +111,7 @@ fn moo_type(raw: &str, aliases: &BTreeMap<String,String>, records: &BTreeSet<Str
     }
     Err(format!("unsupported C type {raw:?}"))
 }
-fn make_deps(raw: &str) -> Result<Vec<String>,String> {
+pub(super) fn make_deps(raw: &str) -> Result<Vec<String>,String> {
     let tail = raw.split_once(':').ok_or("invalid clang dependency output")?.1;
     let mut result = Vec::new(); let mut item = String::new(); let mut chars = tail.chars();
     while let Some(c) = chars.next() {

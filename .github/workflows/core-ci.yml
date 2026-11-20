@@ -25,6 +25,7 @@ on:
       - "skripte/p2/ffi/klein_roundtrip.sh"
       - "skripte/p2/ffi/rueckruf*"
       - "skripte/p2/native_pointer/**"
+      - "skripte/p2/cpp_adapter/**"
       - "skripte/p8/smp/assembler_modus_probe.moos"
       - "skripte/p2/abi/aarch64_struct_slice.sh"
       - "skripte/p2/abi/struct_by_value.c"
@@ -115,6 +116,7 @@ jobs:
             zlib
             libxml2
             libxml2-devel
+            jq
           cache-environment: true
 
       - name: Configure MSVC developer environment
@@ -268,9 +270,21 @@ jobs:
             "${checksum[@]}" "$native_compiler" "core-ci-$RUNNER_OS.log"
           } | tee "p2-native-platform-$RUNNER_OS.log"
 
-      - name: Install mise for native bit and crypto contracts
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install mise for native contracts
+        if: matrix.os != 'macos-latest'
         uses: jdx/mise-action@v2
+
+      - name: Check generated C++ adapters with native Moo handles
+        if: matrix.os != 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          fi
+          export MOO_COMPILER="$PWD/compiler/target/release/moo-compiler"
+          if [[ "$RUNNER_OS" == Windows ]]; then export MOO_COMPILER="$MOO_COMPILER.exe"; fi
+          mise -C skripte/p2/cpp_adapter run generator 2>&1 | tee "p24-generator-$RUNNER_OS.log"
 
       - name: Check native bit and crypto contracts
         if: matrix.os == 'ubuntu-latest'
@@ -398,6 +412,8 @@ jobs:
             p2-native-abi-linux.log
             p2-native-defer-linux.log
             p10-native-linux.log
+            p24-generator-*.log
+            build/p2-t24/generator/
             p2-rueckruf-linux.log
             build/p10-t4/
             build/p10-t5/
