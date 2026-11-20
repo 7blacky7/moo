@@ -38,19 +38,19 @@ for name in Vorlage Erbe Referenz Zeiger BoolTyp Variadisch Virtuell Standardarg
  "$compiler" bindgen-cpp "$src/negativ.hpp" --class "$name" --prefix tg --library p2_cpp_generated --target "$target" --emit moo > "$out/neg-$name.out" 2> "$out/neg-$name.err" || rc=$?
  test "$rc" -eq 2
  test ! -s "$out/neg-$name.out"
- rg -q "negativ.hpp:[1-9][0-9]*:[0-9]+:.*$name" "$out/neg-$name.err"
+ grep -Eq "negativ.hpp:[1-9][0-9]*:[0-9]+:.*$name" "$out/neg-$name.err"
 done
 rc=0
 "$compiler" bindgen-cpp "$src/indirekt.hpp" --class Referenz --prefix tg --library p2_cpp_generated --emit moo > "$out/indirekt.out" 2> "$out/indirekt.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/indirekt.out"
-rg -q "negativ.hpp:5:[0-9]+:.*Referenz" "$out/indirekt.err"
+grep -Eq "negativ.hpp:5:[0-9]+:.*Referenz" "$out/indirekt.err"
 rc=0
 "$compiler" bindgen-cpp "$src/negativ.hpp" --class Referenz --class Zeiger --prefix tg --library p2_cpp_generated --emit cpp > "$out/teil.out" 2> "$out/teil.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/teil.out"
 rc=0
 "$compiler" bindgen-cpp "$src/negativ.hpp" --class A --class A_m_b --prefix tg --library p2_cpp_generated --emit cpp > "$out/kollision.out" 2> "$out/kollision.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/kollision.out"
-rg -q "Symbolkollision.*tg_A_m_b_m_c_leer" "$out/kollision.err"
+grep -Eq "Symbolkollision.*tg_A_m_b_m_c_leer" "$out/kollision.err"
 if [[ "$target" == x86_64-unknown-linux-gnu ]]; then
  mkdir -p "$out/gcc-bin"
  gcc_path="$(command -v gcc)"
