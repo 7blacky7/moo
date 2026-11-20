@@ -1,4 +1,7 @@
 #pragma once
+struct Funktionswert { Funktionswert(); void (*wert())(); };
+struct Funktionsreferenz { Funktionsreferenz(); void (&wert())(); };
+
 template<class T> struct Vorlage { Vorlage(); T wert(); };
 struct Basis {};
 struct Erbe: Basis { Erbe(); int wert(); };

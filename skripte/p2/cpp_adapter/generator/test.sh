@@ -33,7 +33,7 @@ sed 's/\r$//' "$out/program.out" > "$out/program.normalized"
 diff -u "$out/expected.normalized" "$out/program.normalized"
 "$compiler" compile "$out/program.moos" --emit-ir -o "$out/program.ll" > "$out/ir.log" 2>&1
 opt -passes=verify -disable-output "$out/program.ll"
-for name in Vorlage Erbe Referenz Zeiger BoolTyp Variadisch Virtuell Standardarg Statisch OhneKonstruktor Privat; do
+for name in Funktionswert Funktionsreferenz Vorlage Erbe Referenz Zeiger BoolTyp Variadisch Virtuell Standardarg Statisch OhneKonstruktor Privat; do
  rc=0
  "$compiler" bindgen-cpp "$src/negativ.hpp" --class "$name" --prefix tg --library p2_cpp_generated --target "$target" --emit moo > "$out/neg-$name.out" 2> "$out/neg-$name.err" || rc=$?
  test "$rc" -eq 2
@@ -43,7 +43,7 @@ done
 rc=0
 "$compiler" bindgen-cpp "$src/indirekt.hpp" --class Referenz --prefix tg --library p2_cpp_generated --emit moo > "$out/indirekt.out" 2> "$out/indirekt.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/indirekt.out"
-grep -Eq "negativ.hpp:5:[0-9]+:.*Referenz" "$out/indirekt.err"
+grep -Eq "negativ.hpp:8:[0-9]+:.*Referenz" "$out/indirekt.err"
 rc=0
 "$compiler" bindgen-cpp "$src/negativ.hpp" --class Referenz --class Zeiger --prefix tg --library p2_cpp_generated --emit cpp > "$out/teil.out" 2> "$out/teil.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/teil.out"
@@ -63,4 +63,4 @@ if [[ "$target" == x86_64-unknown-linux-gnu ]]; then
  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$out/referenz-san"
  "$compiler" bindgen-cpp "$src/probe.hpp" --class Zaehler --prefix tg --library p2_cpp_generated --target x86_64-pc-windows-msvc --emit moo > "$out/windows.moo"
 fi
-echo "PASS C++-Generator: deterministisch, C++/Moo-Roundtrip, Exceptions, Griffschutz, 11 Positionsdiagnosen, kein Teilentwurf ($target)"
+echo "PASS C++-Generator: deterministisch, C++/Moo-Roundtrip, Exceptions, Griffschutz, 13 Positionsdiagnosen, kein Teilentwurf ($target)"

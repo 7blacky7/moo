@@ -67,7 +67,7 @@ MOO_COMPILER=/pfad/zum/moo-compiler mise -C skripte/p2/cpp_adapter run generator
 
 Doppelte Generierung, zwei Klassen, Konstruktoren, Overloads, const/void,
 C++/Moo-Roundtrip, voller U64MAX, Exception mit unverändertem Ergebnis,
-Nullargumente, explizite Freigabe, Alias-/Doppelfrei-/Typprüfung sowie elf
+Nullargumente, explizite Freigabe, Alias-/Doppelfrei-/Typprüfung sowie dreizehn
 negative Positionsdiagnosen werden geprüft. Vier kleine Rust-Gegenproben prüfen
 Windows-Laufwerkspfade, maskierte Leerzeichen/#, Zeilenfortsetzung sowie
 Clang-TSV-Pfade unabhängig vom Host. Unter Linux instrumentiert

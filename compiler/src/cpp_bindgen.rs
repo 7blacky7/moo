@@ -161,6 +161,10 @@ fn parse(raw: &str, selected: &BTreeSet<String>, prefix: &str, target: &str, hea
                     p[7]!="false" || p[8]!="0" || p[9]!="false" || (!ctor && !valid_name(&p[2])) {
                     return Err(fail("nur gewöhnliche öffentliche Konstruktoren/Methoden; keine Templates, Operatoren, statischen, virtuellen, variadischen, gelöschten, attributierten oder makroerzeugten Methoden".into()));
                 }
+                // Wie im C-Generator: komplexe Deklaratoren nicht als void() deuten.
+                if p[3].contains(['*','&','[',']']) {
+                    return Err(fail(format!("Zeiger-, Referenz-, Array- und Funktionswerte nicht unterstützt: {}",p[3])));
+                }
                 let (ret,tail)=p[3].split_once('(').ok_or_else(||fail("Funktionssignatur fehlt".into()))?;
                 let suffix=tail.rsplit_once(')').ok_or_else(||fail("Funktionssignatur unvollständig".into()))?.1.trim();
                 if !matches!(suffix,""|"const"|"noexcept"|"const noexcept") {return Err(fail(format!("Methodenqualifikation '{suffix}' nicht unterstützt")));}
