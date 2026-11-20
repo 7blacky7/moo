@@ -40,25 +40,21 @@ static std::condition_variable& condition_for(void* key){
     auto& c=b.conditions[key];if(!c)c=std::make_unique<std::condition_variable>();return *c;
 }
 extern "C" {
-void* native_context() asm("__moo_native.laufzeit_kontext");
-void* native_planner() asm("__moo_native.smp_planer");
-uint64_t native_mask() asm("__moo_native.smp_online_maske");
-uint32_t native_spawn(uint64_t,uint64_t,uint64_t) asm("__moo_native.smp_faden_anbieten");
-void native_lock(void*,void*) asm("__moo_native.mutex_nimm");
-bool native_unlock(void*,void*) asm("__moo_native.mutex_gib");
-void native_wait(void*,void*,void*) asm("__moo_native.bedingung_warten");
-void native_signal(void*,void*) asm("__moo_native.bedingung_wecken");
-void native_broadcast(void*) asm("__moo_native.laufzeit_alle_wecken");
+void* native_context() asm("moo_backend_kontext");
+uint64_t native_spawn(uint64_t,uint64_t) asm("moo_backend_starten");
+void native_lock(void*) asm("moo_backend_mutex_nimm");
+bool native_unlock(void*) asm("moo_backend_mutex_gib");
+void native_wait(void*,void*) asm("moo_backend_bedingung_warten");
+void native_signal(void*) asm("moo_backend_bedingung_wecken");
+void native_broadcast(void*) asm("moo_backend_alle_wecken");
 void post_drain(void*) asm("__moo_native.laufzeit_post_leeren");
 void post_close(void*) asm("__moo_native.laufzeit_post_schliessen");
 void post_drop(void*) asm("__moo_native.laufzeit_post_freigeben");
 int32_t native_status() asm("__moo_native.laufzeit_status");
 }
 extern "C" void* native_context(){return &context;}
-extern "C" void* native_planner(){return &context;}
-extern "C" uint64_t native_mask(){return 15;}
-extern "C" uint32_t native_spawn(uint64_t entry,uint64_t data,uint64_t mask){
-    if(!entry||!mask)std::abort();
+extern "C" uint64_t native_spawn(uint64_t entry,uint64_t data){
+    if(!entry)std::abort();
     auto& b=backend();std::lock_guard<std::mutex> l(b.gate);
     b.threads.emplace_back([entry,data]{
         context.worker=1;
@@ -67,16 +63,16 @@ extern "C" uint32_t native_spawn(uint64_t entry,uint64_t data,uint64_t mask){
     });
     ++b.starts;return 1;
 }
-extern "C" void native_lock(void*,void* key){
+extern "C" void native_lock(void* key){
     auto& m=mutex_for(key);m.value.lock();
     if(m.owner.exchange(&context)!=nullptr)std::abort();
 }
-extern "C" bool native_unlock(void*,void* key){
+extern "C" bool native_unlock(void* key){
     auto& m=mutex_for(key);
     if(m.owner.exchange(nullptr)!=&context)std::abort();
     m.value.unlock();return true;
 }
-extern "C" void native_wait(void*,void* cond,void* mutex){
+extern "C" void native_wait(void* cond,void* mutex){
     auto& cv=condition_for(cond);
     auto& m=mutex_for(mutex);
     if(m.owner.exchange(nullptr)!=&context)std::abort();
@@ -85,8 +81,15 @@ extern "C" void native_wait(void*,void* cond,void* mutex){
     if(m.owner.exchange(&context)!=nullptr)std::abort();
     lock.release();
 }
-extern "C" void native_signal(void*,void* cond){condition_for(cond).notify_one();}
+extern "C" void native_signal(void* cond){condition_for(cond).notify_one();}
 extern "C" void native_broadcast(void* cond){condition_for(cond).notify_all();}
+extern "C" void moo_backend_abgeben(){std::this_thread::yield();}
+extern "C" void moo_backend_warten(uint64_t){/* Kernelvertrag: Abschluss in finish(). */}
+extern "C" void moo_backend_ende(){}
+extern "C" void moo_backend_ausgabe(const char* text,bool zeile){
+    std::fputs(text,stdout);if(zeile)std::fputc('\n',stdout);
+}
+extern "C" [[noreturn]] void moo_backend_anhalten(){std::abort();}
 extern "C" void moo_uefi_print(const char* text){std::puts(text);}
 extern "C" [[noreturn]] void kern_panic(const char* text){
     std::fprintf(stderr,"FAIL Native-Backend Panik: %s\n",text);std::abort();

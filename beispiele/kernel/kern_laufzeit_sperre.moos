@@ -1,9 +1,8 @@
+aus "kern_laufzeit_plattform" importiere LaufzeitMutex, kern_c_moo_backend_mutex_nimm, kern_c_moo_backend_mutex_gib
 # P10-T14: Sperren besitzen ihren Inhalt; derselbe Graphschutz wie hosted.
-aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_typen" importiere LaufzeitWert
 aus "kern_laufzeit_faden" importiere laufzeit_kontext
 aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_nullspeicher, laufzeit_werfen, laufzeit_erwartet, kern_c_moo_retain, kern_c_moo_release, free
-aus "kern_smp" importiere smp_planer
-aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
 
 extern "C" funktion kern_c_moo_ist_heap_wert(wert: LaufzeitWert) -> bool
 extern "C" funktion kern_c_moo_sperre_unterelemente_sichern(wert: LaufzeitWert) -> void
@@ -17,7 +16,7 @@ struktur LaufzeitSperre:
     reserve: i32
     inhalt: LaufzeitWert
     besitzer: atom[u64]
-    mutex: KernMutex
+    mutex: LaufzeitMutex
 
 @nativ
 konstante LWS_WER: [u8; 12] auf [109, 105, 116, 32, 46, 46, 46, 32, 97, 108, 115, 0]
@@ -69,7 +68,7 @@ funktion kern_rt_moo_sperre_betreten(wert: LaufzeitWert) -> LaufzeitWert:
         wenn atom_laden(s.besitzer, ordnung=locker) == ich:
             laufzeit_werfen(zeiger(adresse_von(LWS_NEST)))
             gib_zurück laufzeit_nichts()
-        mutex_nimm(smp_planer(), zeiger(adresse_von(s.mutex)))
+        kern_c_moo_backend_mutex_nimm(zeiger(adresse_von(s.mutex)))
         atom_speichern(s.besitzer, ich, ordnung=locker)
         kern_c_moo_retain(s.inhalt)
         gib_zurück s.inhalt
@@ -85,7 +84,7 @@ funktion kern_rt_moo_sperre_verlassen(wert: LaufzeitWert, pruefen: LaufzeitWert)
         setze entkommen: bool auf pruefen.tag == 2 und pruefen.daten != 0 und laufzeit_referenzen(s.inhalt) > 1
         kern_c_moo_sperre_unterelemente_sichern(s.inhalt)
         atom_speichern(s.besitzer, 0, ordnung=locker)
-        mutex_gib(smp_planer(), zeiger(adresse_von(s.mutex)))
+        kern_c_moo_backend_mutex_gib(zeiger(adresse_von(s.mutex)))
         wenn entkommen:
             laufzeit_werfen(zeiger(adresse_von(LWS_ESCAPE)))
         gib_zurück laufzeit_nichts()

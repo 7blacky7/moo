@@ -174,33 +174,8 @@ struktur EfiGuid:
     d3: u16
     d4: [u8; 8]
 
-# ---------------- ELF64 ----------------
-struktur Elf64Kopf:
-    e_ident_a: u64
-    e_ident_b: u64
-    e_typ: u16
-    e_maschine: u16
-    e_version: u32
-    e_einstieg: u64
-    e_phoff: u64
-    e_shoff: u64
-    e_flags: u32
-    e_ehgroesse: u16
-    e_phgroesse: u16
-    e_phanzahl: u16
-    e_shgroesse: u16
-    e_shanzahl: u16
-    e_shnamen: u16
-
-struktur Elf64Programmkopf:
-    ph_typ: u32
-    ph_flags: u32
-    ph_versatz: u64
-    ph_vadr: u64
-    ph_padr: u64
-    ph_dateigroesse: u64
-    ph_speichergroesse: u64
-    ph_ausrichtung: u64
+# Gemeinsame ELF64-Ladelogik mit dem Benutzerlader des Kerns.
+aus "../kernel/moo_elf64" importiere Elf64Bild, Elf64Segment, ELF64_PT_LOAD, elf64_oeffnen, elf64_programmkopf, elf64_segment, elf64_kopieren
 
 # ---------------- Vertrag Loader -> Kern ----------------
 # Eine Quelle fuer Loader und Kern (beispiele/kernel/moo_bootvertrag.moos).
@@ -722,70 +697,51 @@ funktion kern_holen(bs: u64, bild: u64, ausgabe: u64) -> u64:
 @nativ
 funktion elf_laden(bs: u64, elf: u64, laenge: u64, bi: u64) -> u64:
     unsicher:
-        setze phoff: u64 auf 0
-        setze phgroesse: u64 auf 0
-        setze phanzahl: u64 auf 0
+        setze bild: Elf64Bild auf Elf64Bild(0, 0, 0, 0, 0)
+        setze segment: Elf64Segment auf Elf64Segment(0, 0, 0, 0, 0)
+        setze eb: ptr[Elf64Bild] auf zeiger(adresse_von(bild))
+        setze sg: ptr[Elf64Segment] auf zeiger(adresse_von(segment))
+        wenn nicht elf64_oeffnen(elf, laenge, eb):
+            meldung(adresse_von(T_F_ELF), laenge)
+            gib_zurück 0
         setze i: u64 auf 0
         setze ph: u64 auf 0
-        setze ziel: u64 auf 0
-        setze dateigroesse: u64 auf 0
-        setze speichergroesse: u64 auf 0
-        setze quelle: u64 auf 0
         setze vunten: u64 auf 0xFFFFFFFFFFFFFFFF
         setze voben: u64 auf 0
-        setze seitenzahl: u64 auf 0
-        setze physisch: u64 auf 0
-        setze einstieg: u64 auf 0
-        # \x7fELF, ELFCLASS64, ET_EXEC, EM_X86_64
-        wenn speicher_lesen(elf, 4) != 0x464C457F oder speicher_lesen(elf + 4, 1) != 2 oder speicher_lesen(elf + versatz_von(Elf64Kopf, e_typ), 2) != 2 oder speicher_lesen(elf + versatz_von(Elf64Kopf, e_maschine), 2) != 0x3E:
-            meldung(adresse_von(T_F_ELF), speicher_lesen(elf, 8))
-            gib_zurück 0
-        setze phoff auf speicher_lesen(elf + versatz_von(Elf64Kopf, e_phoff), 8)
-        setze phgroesse auf u64(speicher_lesen(elf + versatz_von(Elf64Kopf, e_phgroesse), 2))
-        setze phanzahl auf u64(speicher_lesen(elf + versatz_von(Elf64Kopf, e_phanzahl), 2))
-        wenn phgroesse < groesse_von(Elf64Programmkopf) oder phoff + phanzahl * phgroesse > laenge:
-            meldung(adresse_von(T_F_ELF), phoff)
-            gib_zurück 0
-        # Durchgang 1: Bereich aller PT_LOAD (= 1) pruefen und bestimmen.
-        solange i < phanzahl:
-            setze ph auf elf + phoff + i * phgroesse
-            wenn speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_typ), 4) == 1:
-                setze ziel auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_vadr), 8)
-                setze dateigroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_dateigroesse), 8)
-                setze speichergroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_speichergroesse), 8)
-                setze quelle auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_versatz), 8)
-                wenn quelle + dateigroesse > laenge oder dateigroesse > speichergroesse oder ziel < KERN_HOCH:
-                    meldung(adresse_von(T_F_ELF), ziel)
+        solange i < bild.eb_phanzahl:
+            setze ph auf elf64_programmkopf(eb, i)
+            wenn speicher_lesen(ph, 4) == ELF64_PT_LOAD:
+                wenn nicht elf64_segment(eb, ph, sg) oder segment.es_virt < KERN_HOCH:
+                    meldung(adresse_von(T_F_ELF), i)
                     gib_zurück 0
-                wenn (ziel & 0xFFFFFFFFFFFFF000) < vunten:
-                    setze vunten auf ziel & 0xFFFFFFFFFFFFF000
-                wenn ziel + speichergroesse > voben:
-                    setze voben auf ziel + speichergroesse
+                setze seite: u64 auf segment.es_virt & 0xFFFFFFFFFFFFF000
+                wenn seite < vunten:
+                    setze vunten auf seite
+                setze ende: u64 auf segment.es_virt + segment.es_speichergroesse
+                wenn ende > voben:
+                    setze voben auf ende
             setze i auf i + 1
         # Ein Seitenverzeichnis (1 GiB) ab genau KERN_HOCH.
-        wenn voben == 0 oder vunten != KERN_HOCH oder voben - vunten > 0x40000000:
+        wenn vunten != KERN_HOCH oder voben <= vunten oder voben - vunten > 0x40000000:
             meldung(adresse_von(T_F_ELF), vunten)
             gib_zurück 0
-        setze seitenzahl auf (voben - vunten + 4095) / 4096
-        setze physisch auf seiten(bs, seitenzahl)
-        wenn physisch == 0:
-            meldung(adresse_von(T_F_SPEICHER), seitenzahl)
-            gib_zurück 0
-        # Durchgang 2: Dateiinhalt kopieren (Rest ist schon genullt).
-        setze i auf 0
-        solange i < phanzahl:
-            setze ph auf elf + phoff + i * phgroesse
-            wenn speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_typ), 4) == 1:
-                setze ziel auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_vadr), 8)
-                setze dateigroesse auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_dateigroesse), 8)
-                setze quelle auf speicher_lesen(ph + versatz_von(Elf64Programmkopf, ph_versatz), 8)
-                ruf3(dienst(bs, versatz_von(EfiBootDienste, bs_copy_mem)), physisch + (ziel - vunten), elf + quelle, dateigroesse)
-                meldung(adresse_von(T_SEGMENT), ziel)
-            setze i auf i + 1
-        setze einstieg auf speicher_lesen(elf + versatz_von(Elf64Kopf, e_einstieg), 8)
+        setze einstieg: u64 auf bild.eb_einstieg
         wenn einstieg < vunten oder einstieg >= voben:
             meldung(adresse_von(T_F_ELF), einstieg)
             gib_zurück 0
+        setze seitenzahl: u64 auf (voben - vunten + 4095) / 4096
+        setze physisch: u64 auf seiten(bs, seitenzahl)
+        wenn physisch == 0:
+            meldung(adresse_von(T_F_SPEICHER), seitenzahl)
+            gib_zurück 0
+        setze i auf 0
+        solange i < bild.eb_phanzahl:
+            setze ph auf elf64_programmkopf(eb, i)
+            wenn speicher_lesen(ph, 4) == ELF64_PT_LOAD:
+                elf64_segment(eb, ph, sg)
+                elf64_kopieren(eb, sg, physisch + (segment.es_virt - vunten))
+                meldung(adresse_von(T_SEGMENT), segment.es_virt)
+            setze i auf i + 1
         speicher_schreiben(bi + versatz_von(MooBootInfo, kern_basis), physisch, 8)
         speicher_schreiben(bi + versatz_von(MooBootInfo, kern_ende), physisch + seitenzahl * 4096, 8)
         speicher_schreiben(bi + versatz_von(MooBootInfo, kern_virtuell), vunten, 8)

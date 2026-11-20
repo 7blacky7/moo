@@ -1454,6 +1454,56 @@ einem fremden Faden wird an dessen Besitzer übergeben. Der Laufzeitheap umfasst
 16 MiB; die verfügbaren Fadenplätze bestimmt der Kernelplaner. Sind seine Plätze
 belegt, meldet `starte` einen fangbaren Fehler.
 
+## Native Benutzerprogramme unter MoOS
+
+Das Ziel `x86_64-moos` erzeugt ein statisches x86-64-ELF; zum Linken
+wird GNU ld benötigt. Das native Hauptprogramm exportiert
+`benutzer_haupt() -> u64` und importiert den Start aus `moos_syscall`:
+
+```bash
+moo compile beispiele/moos/hallo_benutzer.moos \
+    --target x86_64-moos -o HALLO.ELF
+```
+
+Der Rückgabewert beendet den Prozess. `moos_schreiben`, `moos_abgeben`
+und `moos_schlafen` verwenden die Systemaufrufe des Kerns. Der Lader prüft
+Segmentgrenzen, überlappende Seitenspannen und W^X. Jeder Prozess erhält
+einen privaten, nicht ausführbaren Stack mit Wächterseite; seine Daten und
+Seitentabellen werden nach dem letzten Kontextwechsel freigegeben.
+
+
+Der Träger `beispiele/moos/moos_laufzeit.moos` stellt im Benutzerraum dieselben
+Moo-Operationen `starte`, `warten`, `atom`, `sperre` und `kanal` bereit.
+Die Beispielhülle importiert diesen Träger und die unveränderte Konto-Fixture:
+
+```bash
+moo compile skripte/p8/smp/benutzer_sperre_konto.moos \
+    --target x86_64-moos -o KONTO.ELF
+```
+
+Fehlerzustand und Besitzübergaben gehören zum einzelnen Benutzerfaden. Der
+erste Wartende besitzt das Ergebnis und kann erneut warten; ein fremder
+Wartender erhält den gleichen fangbaren Fehler wie im gehosteten Programm.
+Der Benutzer-Träger verwendet die gemeinsame Moo-Laufzeit und einen privaten
+16-MiB-Heap. Pro Prozess stehen ein Hauptfaden und bis zu 15 weitere Fäden mit
+je 16-KiB-Stack, Wächterseite und eigener TLS-Seite bereit.
+
+Die native Schnittstelle `moos_faden_neu(einstieg, daten)` liefert einen
+prozessgebundenen Griff. Der Einstieg erhält `daten` nach SysV in RDI und endet
+mit `moos_ende(kode)`. `moos_faden_warten(griff)` verbraucht diesen nativen
+Griff einmal und liefert den Exitcode; vor einer Wiederverwendung des Platzes
+ist auch der letzte Kernelstackwechsel abgeschlossen. Alte Griffgenerationen
+sind ungültig.
+
+`moos_futex_warten(adresse, erwartet)` prüft ein ausgerichtetes, schreibbares
+32-Bit-Wort und reiht den Faden ohne verlorenes Wecken ein.
+`moos_futex_wecken(adresse, anzahl)` weckt höchstens diese Anzahl im selben
+Prozess. Ein geänderter Wert liefert `-11`; nach dem Aufwachen prüft die
+Benutzerschleife ihre Bedingung erneut. Ungültige Adressen liefern `-14`,
+ungültige Griffe/Argumente `-22`, unbekannte Aufrufe `-38`, jeweils als
+`u64`-Bitmuster. `moos_tls()` liefert die eigene TLS-Basis; die ersten
+32 Bytes sind für den Startvertrag reserviert.
+
 ## Funktionen als Werte (First-Class)
 
 Funktionsnamen sind in moo gewöhnliche Werte. Du kannst sie einer Variable

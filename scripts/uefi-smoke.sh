@@ -119,6 +119,23 @@ case "$RING3_PROBE" in
     ;;
   *) fail "Ring-3-Probe: 0 oder 1" ;;
 esac
+BENUTZER_PROBE="${MOO_UEFI_BENUTZER:-0}"
+case "$BENUTZER_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] && [ "$SMP_STRESS" = 0 ] &&
+      [ "$FADEN_WACHT" = 0 ] && [ "$AR_PROBE" = 0 ] && [ "$RING3_PROBE" = 0 ] ||
+      fail "Benutzer-ELF-Probe braucht Kernprofil mit MOO_UEFI_SMP=4"
+    ;;
+  2)
+    [ "$PRUEFUNG" = kern ] && [ "$SMP_STRESS" = 0 ] && [ "$FADEN_WACHT" = 0 ] &&
+      [ "$AR_PROBE" = 0 ] && [ "$RING3_PROBE" = 0 ] ||
+      fail "Benutzerlaufzeit braucht das eigene Kernprofil"
+    case "${MOO_UEFI_SMP:-1}" in 1|4) ;; *) fail "Benutzerlaufzeit: SMP 1 oder 4" ;; esac
+    [ -f "${MOO_UEFI_BENUTZER_ERWARTET:-}" ] || fail "Benutzerlaufzeit braucht eine .expected-Datei"
+    ;;
+  *) fail "Benutzer-ELF-Probe: 0, 1 oder 2 (Moo-Laufzeit)" ;;
+esac
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
 skip() {
   echo "      SKIP: $1"
@@ -389,6 +406,17 @@ if [ "$PRUEFUNG" = "kern" ]; then
     1) KERN_STDLIB_FLAGS=(); KERN_IR_FLAGS=(--kernel) ;;
     *) fail "MOO_UEFI_KERN_LAUFZEIT: 0 oder 1" ;;
   esac
+  if [ "$BENUTZER_PROBE" != 0 ]; then
+    phase K2a "Benutzerprogramm: Moo-Start, Syscalls, x86_64-moos ELF"
+    "$BIN" compile "${MOO_UEFI_BENUTZER_SRC:-$ROOT/beispiele/moos/hallo_benutzer.moos}" --target x86_64-moos \
+      --lib-pfad "$ROOT/stdlib" -o "$OUT/HALLO.ELF" || fail "Benutzer-ELF nicht gebaut"
+    readelf -Whl "$OUT/HALLO.ELF" >"$OUT/benutzer-elf.txt" || fail "Benutzer-ELF nicht lesbar"
+    objcopy -I binary -O elf64-x86-64 -B i386:x86-64 --strip-all \
+      --rename-section .data=.moo_benutzer_elf,alloc,load,readonly,data,contents \
+      "$OUT/HALLO.ELF" "$OUT/benutzer-elf.o" || fail "Benutzer-ELF nicht als Probe einbettbar"
+    printf 'INPUT("%s")\nINCLUDE "%s"\n' "$OUT/benutzer-elf.o" "$KERN_LD" >"$OUT/linker-benutzer.ld"
+    KERN_LD="$OUT/linker-benutzer.ld"
+  fi
   phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
   "$BIN" compile "$KERN_SRC" "${KERN_STDLIB_FLAGS[@]}" --target x86_64-bare --kernel --linker-script "$KERN_LD" \
       -o "$OUT/KERN.ELF" >"$OUT/kern.err" 2>&1 || { sed 's/^/      | /' "$OUT/kern.err"; fail "Kern nicht gebaut"; }
@@ -643,6 +671,10 @@ if inhalt.count(vertrag) != 1:
 elf.write_bytes(inhalt.replace(vertrag, b"MOORING3" + (1).to_bytes(8, "little")))
 PY
       fail "Ring-3-Profil in privater ELF-Kopie"
+  fi
+  if [ "$BENUTZER_PROBE" = 2 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p8/smp/benutzer_profil.py" "$OUT/KERN.ELF" ||
+      fail "Benutzerlaufzeit-Profil nicht gesetzt"
   fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
@@ -1281,6 +1313,27 @@ PY
     done
     echo "      OK: Ring 3, Syscalls, XSAVE, #GP und #PF pro Prozess"
   fi
+  if [ "$BENUTZER_PROBE" = 1 ]; then
+    grep -aFxq 'MOO-ELF-BENUTZER-OK' "$OUT/serial.log" || fail "Benutzer-ELF-Probe fehlt"
+    grep -aFxq 'MOO-ELF ABGELEHNT 000000000000001F' "$OUT/serial.log" || fail "ELF-Fehlerfälle nicht vollständig abgelehnt"
+    grep -aFxq 'MOO-ELF PARALLEL 000000000000000F' "$OUT/serial.log" || fail "Vier Benutzerfäden nicht gleichzeitig beobachtet"
+    [ "$(grep -aFxc 'MOO-ELF BENUTZER HALLO' "$OUT/serial.log")" -eq 4 ] || fail "Vier vollständige ELF-Benutzerausgaben erwartet"
+    echo "      OK: vier Ring-3-ELFs, fünf Ablehnungen, Wächterseite und PFA-Bilanz"
+  fi
+  if [ "$BENUTZER_PROBE" = 2 ]; then
+    grep -aFxq 'MOO-ELF-BENUTZER-OK' "$OUT/serial.log" || fail "Benutzerlaufzeit-Probe fehlt"
+    grep -aFxq 'MOO-ELF LAUFZEIT 0000000000000001' "$OUT/serial.log" || fail "Benutzerlaufzeit oder PFA-Bilanz fehlgeschlagen"
+    awk '
+      { sub(/\r$/, "") }
+      $0 == "MOO-LAUFZEIT-BEGIN" { active=1; begin++; next }
+      $0 == "MOO-LAUFZEIT-END" { active=0; finish++; next }
+      $0 == "MOO-LAUFZEIT-FAIL" { bad=1; active=0; next }
+      active { print }
+      END { if (begin != 1 || finish != 1 || bad) exit 2 }
+    ' "$OUT/serial.log" >"$OUT/benutzer.out" || fail "Benutzerlaufzeit nicht sauber beendet"
+    diff -u "$MOO_UEFI_BENUTZER_ERWARTET" "$OUT/benutzer.out" || fail "Benutzerlaufzeit: .expected weicht ab"
+    echo "      OK: gemeinsame Moo-Laufzeit in Ring 3, .expected identisch, PFA-Bilanz"
+  fi
   if [ "$AR_PROBE" = 1 ]; then
     grep -aFxq 'MOO-AR-OK' "$OUT/serial.log" || fail "Adressraumprüfung fehlt"
     echo "      OK: getrennte Adressräume, Rechte, zugelassene Zugriffe und Freigabe"
@@ -1363,16 +1416,9 @@ PY
     BALKEN="$(magick "$OUT/screenshot.png" -format '%[pixel:p{45,45}]' info: 2>/dev/null)"
     case "$HG" in *"32,96,128"*) ;; *) fail "Hintergrund ist '$HG' statt srgb(32,96,128) (Kern hat nicht gezeichnet?)" ;; esac
     case "$BALKEN" in *"255,196,64"*) ;; *) fail "Balken ist '$BALKEN' statt srgb(255,196,64)" ;; esac
-    # Text ueber moo_surface_core_text_3x5: \"M\" (Skala 12 ab 64,60) hat links eine
-    # volle Spalte (dunkel), die Luecke zwischen M und O (Spalte 3) bleibt Balken;
-    # Zeile 2 (Skala 6 ab 64,220) beginnt ebenfalls mit voller M-Spalte (hell).
-    GLYPHE="$(magick "$OUT/screenshot.png" -format '%[pixel:p{70,100}]' info: 2>/dev/null)"
-    LUECKE="$(magick "$OUT/screenshot.png" -format '%[pixel:p{106,100}]' info: 2>/dev/null)"
-    ZEILE2="$(magick "$OUT/screenshot.png" -format '%[pixel:p{66,236}]' info: 2>/dev/null)"
-    case "$GLYPHE" in *"20,20,20"*) ;; *) fail "Glyphe M (70,100) ist '$GLYPHE' statt srgb(20,20,20)" ;; esac
-    case "$LUECKE" in *"255,196,64"*) ;; *) fail "Zeichenluecke (106,100) ist '$LUECKE' statt Balkenfarbe" ;; esac
-    case "$ZEILE2" in *"240,240,240"*) ;; *) fail "Zeile 2 (66,236) ist '$ZEILE2' statt srgb(240,240,240)" ;; esac
-    echo "      OK: Pixel Hintergrund $HG, Balken $BALKEN, Glyphe $GLYPHE, Luecke $LUECKE, Zeile 2 $ZEILE2"
+    uv run --no-project --offline python -B "$ROOT/skripte/p7/kern-titel-pixel.py" \
+      "$ROOT/compiler/runtime/moo_font_aa.h" "$OUT/screenshot.png" || fail "Kernüberschriften im Pixelvergleich"
+    echo "      OK: Pixel Hintergrund $HG, Balken $BALKEN"
     # P7-T6: Textkonsole (Surface-Text, Farbe 200,230,255) ab y=300 per Present sichtbar.
     KON="$(magick "$OUT/screenshot.png" -crop 2000x200+0+296 +repage -format %c histogram:info:- 2>/dev/null | awk '/\(200,230,255/{print $1}' | tr -d ':')"
     [ -n "$KON" ] && [ "$KON" -gt 200 ] || fail "Konsolentext (200,230,255) im Bereich y=296..496 fehlt ('$KON' Pixel)"

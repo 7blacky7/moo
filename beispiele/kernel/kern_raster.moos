@@ -21,6 +21,7 @@ struktur KernAaSchrift:
     ks_extra_anzahl: u32
 
 extern "C" konstante moo_bare_font_mono: KernAaSchrift
+extern "C" konstante moo_bare_font_fett: KernAaSchrift
 
 @nativ
 funktion raster_puffer_ok(pixel: u64, bytes: u64, breite: u64, hoehe: u64, stride: u64) -> bool:
@@ -241,13 +242,18 @@ funktion raster_kompakt_zeichen(kern: u64, glyph: u64, x: i64, y: i64, skala: i3
             setze r auf r + 1
 
 @nativ
-funktion kern_schrift_abstand(schrift: u64) -> u64:
+funktion raster_schrift_vorschub(schrift: u64, z: u64) -> u64:
     unsicher:
         wenn schrift == 0:
             gib_zurück 4
-        # Der Leerschritt bestimmt die feste Zellbreite der Konsole.
         setze vorschuebe: u64 auf speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_vorschuebe), 8)
-        gib_zurück als(u64, speicher_lesen(vorschuebe, 1))
+        gib_zurück als(u64, speicher_lesen(vorschuebe + raster_aa_index(schrift, z), 1))
+
+@nativ
+funktion kern_schrift_abstand(schrift: u64) -> u64:
+    unsicher:
+        # Der Leerschritt bestimmt die feste Zellbreite der Konsole.
+        gib_zurück raster_schrift_vorschub(schrift, 32)
 
 @nativ
 funktion kern_schrift_hoehe(schrift: u64) -> u64:
@@ -329,7 +335,6 @@ funktion kern_raster_schrift_text(kern: u64, schrift: u64, x: i32, y: i32, skala
         setze pos_x: i64 auf als(i64, x)
         setze pos_y: i64 auf als(i64, y)
         setze max: i64 auf 9223372036854775807
-        setze dx: i64 auf als(i64, skala) * als(i64, kern_schrift_abstand(schrift))
         setze dy: i64 auf als(i64, skala) * (als(i64, kern_schrift_hoehe(schrift)) + 1)
         setze i: u64 auf 0
         solange i < laenge:
@@ -344,6 +349,7 @@ funktion kern_raster_schrift_text(kern: u64, schrift: u64, x: i32, y: i32, skala
                 setze pos_x auf als(i64, x)
                 setze pos_y auf pos_y + dy
             sonst:
+                setze dx: i64 auf als(i64, skala) * als(i64, raster_schrift_vorschub(schrift, z))
                 wenn pos_x > max - dx:
                     gib_zurück 0
                 # Ursprünge darüber liegen ganz rechts bzw. unter dem Raster.

@@ -1,0 +1,147 @@
+# Ring-3-Plattformanschluss; keine Ports, CLI/STI oder Kernelzeiger.
+aus "../../stdlib/moos_syscall" importiere moos_schreiben, moos_abgeben, moos_faden_neu, moos_faden_warten, moos_futex_warten, moos_futex_wecken, moos_ende, moos_tls
+aus "../kernel/kern_laufzeit_plattform" importiere LaufzeitFehler, LaufzeitMutex, LaufzeitBedingung, LaufzeitSpin
+
+struktur BenutzerLaufzeitWort:
+    wert: atom[u32]
+
+@nativ
+statisch BENUTZER_AUSGABE_SPERRE: LaufzeitSpin auf 0
+@nativ
+konstante BENUTZER_ZEILENENDE: [u8; 1] auf [10]
+
+@nativ
+funktion kern_rt_moo_backend_anhalten() -> void:
+    unsicher:
+        moos_ende(1)
+
+@nativ
+funktion kern_rt_moo_backend_kontext() -> ptr[LaufzeitFehler]:
+    unsicher:
+        setze tls: u64 auf moos_tls()
+        wenn tls == 0 oder groesse_von(LaufzeitFehler) > 4096 - 32:
+            kern_rt_moo_backend_anhalten()
+        setze k: ptr[LaufzeitFehler] auf zeiger(tls + 32)
+        wenn nicht k.bereit:
+            k.letzter.tag = 3
+            k.letzter.daten = 0
+            k.worker = u8(speicher_lesen(tls + 8, 8) != 0)
+            k.bereit = wahr
+        gib_zurück k
+
+@nativ
+funktion kern_rt_moo_backend_abgeben() -> void:
+    unsicher:
+        moos_abgeben()
+
+@nativ
+funktion kern_rt_moo_backend_starten(einstieg: u64, daten: u64) -> u64:
+    unsicher:
+        setze griff: u64 auf moos_faden_neu(einstieg, daten)
+        wenn griff >= 0x8000000000000000:
+            gib_zurück 0
+        gib_zurück griff
+
+@nativ
+funktion kern_rt_moo_backend_warten(griff: u64) -> void:
+    unsicher:
+        wenn moos_faden_warten(griff) != 0:
+            kern_rt_moo_backend_anhalten()
+
+@nativ
+funktion kern_rt_moo_backend_ende() -> void:
+    unsicher:
+        moos_ende(0)
+
+@nativ
+funktion benutzer_wort_sperren(adresse: u64) -> void:
+    unsicher:
+        setze p: ptr[BenutzerLaufzeitWort] auf zeiger(adresse)
+        solange atom_tauschen(p.wert, 1, ordnung=erwerben) != 0:
+            setze r: u64 auf moos_futex_warten(adresse, 1)
+            wenn r != 0 und r != 0xFFFFFFFFFFFFFFF5:
+                kern_rt_moo_backend_anhalten()
+
+@nativ
+funktion benutzer_wort_freigeben(adresse: u64) -> void:
+    unsicher:
+        setze p: ptr[BenutzerLaufzeitWort] auf zeiger(adresse)
+        atom_speichern(p.wert, 0, ordnung=freigeben)
+        wenn moos_futex_wecken(adresse, 1) > 1:
+            kern_rt_moo_backend_anhalten()
+
+@nativ
+funktion kern_rt_moo_backend_mutex_nimm(p: ptr[LaufzeitMutex]) -> void:
+    unsicher:
+        benutzer_wort_sperren(u64(p))
+
+@nativ
+funktion kern_rt_moo_backend_mutex_gib(p: ptr[LaufzeitMutex]) -> bool:
+    unsicher:
+        benutzer_wort_freigeben(u64(p))
+        gib_zurück wahr
+
+# Sequenz lesen, solange der zugehörige Mutex noch gehalten wird.
+# Ein Signal zwischen Freigabe und Warten führt dann zu EAGAIN statt Schlaf.
+@nativ
+funktion kern_rt_moo_backend_bedingung_warten(b: ptr[LaufzeitBedingung], m: ptr[LaufzeitMutex]) -> void:
+    unsicher:
+        setze sequenz: ptr[BenutzerLaufzeitWort] auf zeiger(u64(b))
+        setze erwartet: u32 auf atom_laden(sequenz.wert, ordnung=erwerben)
+        kern_rt_moo_backend_mutex_gib(m)
+        setze r: u64 auf moos_futex_warten(u64(b), erwartet)
+        wenn r != 0 und r != 0xFFFFFFFFFFFFFFF5:
+            kern_rt_moo_backend_anhalten()
+        kern_rt_moo_backend_mutex_nimm(m)
+
+@nativ
+funktion benutzer_bedingung_wecken(b: ptr[LaufzeitBedingung], anzahl: u64) -> void:
+    unsicher:
+        setze sequenz: ptr[BenutzerLaufzeitWort] auf zeiger(u64(b))
+        atom_addieren(sequenz.wert, 1, ordnung=freigeben)
+        wenn moos_futex_wecken(u64(b), anzahl) > anzahl:
+            kern_rt_moo_backend_anhalten()
+
+@nativ
+funktion kern_rt_moo_backend_bedingung_wecken(b: ptr[LaufzeitBedingung]) -> void:
+    unsicher:
+        benutzer_bedingung_wecken(b, 1)
+
+@nativ
+funktion kern_rt_moo_backend_alle_wecken(b: ptr[LaufzeitBedingung]) -> void:
+    unsicher:
+        benutzer_bedingung_wecken(b, 0xFFFFFFFF)
+
+@nativ
+funktion kern_rt_moo_backend_spin_nimm(p: ptr[LaufzeitSpin]) -> u64:
+    unsicher:
+        benutzer_wort_sperren(u64(p))
+        gib_zurück 0
+
+@nativ
+funktion kern_rt_moo_backend_spin_gib(p: ptr[LaufzeitSpin], zustand: u64) -> void:
+    unsicher:
+        benutzer_wort_freigeben(u64(p))
+
+# Auch lange Zeilen erscheinen ohne fremde Thread-Ausgabe dazwischen.
+@nativ
+funktion kern_rt_moo_backend_ausgabe(text: ptr[u8], zeile: bool) -> void:
+    unsicher:
+        setze sperre: ptr[LaufzeitSpin] auf zeiger(adresse_von(BENUTZER_AUSGABE_SPERRE))
+        kern_rt_moo_backend_spin_nimm(sperre)
+        setze anfang: u64 auf u64(text)
+        setze anzahl: u64 auf 0
+        solange speicher_lesen(anfang + anzahl, 1) != 0:
+            setze anzahl auf anzahl + 1
+            wenn anzahl == 256:
+                wenn moos_schreiben(anfang, anzahl) != anzahl:
+                    kern_rt_moo_backend_anhalten()
+                setze anfang auf anfang + anzahl
+                setze anzahl auf 0
+        wenn anzahl != 0:
+            wenn moos_schreiben(anfang, anzahl) != anzahl:
+                kern_rt_moo_backend_anhalten()
+        wenn zeile:
+            wenn moos_schreiben(adresse_von(BENUTZER_ZEILENENDE), 1) != 1:
+                kern_rt_moo_backend_anhalten()
+        kern_rt_moo_backend_spin_gib(sperre, 0)

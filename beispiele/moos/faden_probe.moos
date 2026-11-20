@@ -1,0 +1,92 @@
+# P10-T18: echte Ring-3-Fäden, Futex-Rennen, FS-TLS und generationierte Griffe.
+aus "moos_syscall" importiere _start, moos_aufruf, moos_schreiben, moos_abgeben, moos_schlafen, moos_faden_neu, moos_faden_warten, moos_futex_warten, moos_futex_wecken, moos_ende, moos_tls
+
+struktur ThreadProbe:
+    bereit: atom[u32]
+    los: atom[u32]
+    summe: atom[u32]
+
+@nativ
+statisch THREAD_PROBE: ThreadProbe auf 0
+@nativ
+konstante T_THREAD_OK: [u8; _] auf "MOO-THREAD-ABI-OK\n"
+@nativ
+konstante T_THREAD_BEGINN: [u8; _] auf "MOO-LAUFZEIT-BEGIN\n"
+@nativ
+konstante T_THREAD_ENDE: [u8; _] auf "MOO-LAUFZEIT-END\n"
+
+@nativ
+funktion benutzer_arbeiter(daten: u64) -> void:
+    unsicher:
+        setze p: ptr[ThreadProbe] auf zeiger(adresse_von(THREAD_PROBE))
+        setze tls: u64 auf moos_tls()
+        wenn tls == 0 oder speicher_lesen(tls + 8, 8) == 0:
+            moos_ende(1)
+        speicher_schreiben(tls + 32, daten, 8)
+        atom_addieren(p.bereit, 1, ordnung=freigeben)
+        solange atom_laden(p.los, ordnung=erwerben) == 0:
+            setze r: u64 auf moos_futex_warten(adresse_von(p.los), 0)
+            wenn r != 0 und r != 0xFFFFFFFFFFFFFFF5:
+                moos_ende(2)
+        setze i: u32 auf 0
+        solange i < 10000:
+            atom_addieren(p.summe, 1, ordnung=locker)
+            wenn i % 256 == 0:
+                moos_abgeben()
+            wenn moos_tls() != tls oder speicher_lesen(tls + 32, 8) != daten:
+                moos_ende(3)
+            setze i auf i + 1
+        moos_ende(daten + 100)
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        setze p: ptr[ThreadProbe] auf zeiger(adresse_von(THREAD_PROBE))
+        setze tls: u64 auf moos_tls()
+        wenn tls == 0 oder speicher_lesen(tls + 8, 8) != 0:
+            gib_zurück 1
+        speicher_schreiben(tls + 32, 0x12345678, 8)
+        wenn moos_schreiben(adresse_von(T_THREAD_BEGINN), 19) != 19:
+            gib_zurück 1
+        # FS-TLS muss auch über den Timer-/Schlafpfad erhalten bleiben.
+        wenn moos_schlafen(100) != 0:
+            gib_zurück 2
+        wenn moos_faden_neu(0, 0) != 0xFFFFFFFFFFFFFFF2 oder moos_faden_warten(0) != 0xFFFFFFFFFFFFFFEA:
+            gib_zurück 3
+        wenn moos_futex_warten(1, 0) != 0xFFFFFFFFFFFFFFEA oder moos_futex_warten(0, 0) != 0xFFFFFFFFFFFFFFF2:
+            gib_zurück 4
+        wenn moos_futex_warten(adresse_von(p.los), 1) != 0xFFFFFFFFFFFFFFF5 oder moos_aufruf(8, 0, 0) != 0xFFFFFFFFFFFFFFDA:
+            gib_zurück 5
+        wenn moos_futex_wecken(adresse_von(benutzer_arbeiter) & 0xFFFFFFFFFFFFFFFC, 1) != 0xFFFFFFFFFFFFFFF2:
+            gib_zurück 6
+        setze griffe: [u64; 4] auf [0, 0, 0, 0]
+        setze g: ptr[u64] auf zeiger(adresse_von(griffe))
+        setze i: u64 auf 0
+        solange i < 4:
+            setze griff: u64 auf moos_faden_neu(adresse_von(benutzer_arbeiter), i + 1)
+            wenn griff >= 0x8000000000000000:
+                gib_zurück 7
+            volatile_schreiben(g, i, griff)
+            setze i auf i + 1
+        solange atom_laden(p.bereit, ordnung=erwerben) != 4:
+            moos_abgeben()
+        atom_speichern(p.los, 1, ordnung=freigeben)
+        wenn moos_futex_wecken(adresse_von(p.los), 4) > 4:
+            gib_zurück 8
+        setze i auf 0
+        solange i < 4:
+            wenn moos_faden_warten(volatile_lesen(g, i)) != i + 101:
+                gib_zurück 9
+            setze i auf i + 1
+        setze alt: u64 auf volatile_lesen(g, 0)
+        wenn moos_faden_warten(alt) != 0xFFFFFFFFFFFFFFEA:
+            gib_zurück 10
+        setze folgegriff: u64 auf moos_faden_neu(adresse_von(benutzer_arbeiter), 5)
+        wenn folgegriff >= 0x8000000000000000 oder folgegriff == alt oder moos_faden_warten(alt) != 0xFFFFFFFFFFFFFFEA oder moos_faden_warten(folgegriff) != 105:
+            gib_zurück 11
+        wenn atom_laden(p.summe, ordnung=erwerben) != 50000 oder moos_tls() != tls oder speicher_lesen(tls + 32, 8) != 0x12345678:
+            gib_zurück 12
+        wenn moos_schreiben(adresse_von(T_THREAD_OK), 18) != 18 oder moos_schreiben(adresse_von(T_THREAD_ENDE), 17) != 17:
+            gib_zurück 13
+        gib_zurück 0

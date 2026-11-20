@@ -3,7 +3,7 @@
 #ifdef MOO_BARE_FONT_MONO
 
 /* Gelesen als KernAaSchrift in kern_raster.moos (64-Bit-Bare-ABI).
- * Eine eigene Monospace-Sicht hält die übrigen Faces aus dem Bare-ELF. */
+ * Separate Deskriptoren binden die Konsolen- und Titelschrift einzeln. */
 _Static_assert(offsetof(MooFontAaFace, width) == 24 &&
                offsetof(MooFontAaFace, extra_count) == 40 &&
                sizeof(MooFontAaFace) == 48, "KernAaSchrift ABI");
@@ -19,7 +19,18 @@ const MooFontAaFace moo_bare_font_mono = {
     MOO_FONT_AA_MONOSPACE_EXTRA_COUNT,
 };
 
-#endif /* MOO_BARE_FONT_MONO: Schriftansicht */
+const MooFontAaFace moo_bare_font_fett = {
+    moo_font_aa_fett,
+    moo_font_aa_fett_adv,
+    moo_font_aa_extra_cp,
+    MOO_FONT_AA_FETT_W,
+    MOO_FONT_AA_FETT_H,
+    MOO_FONT_AA_FETT_FIRST,
+    MOO_FONT_AA_FETT_TOTAL_COUNT,
+    MOO_FONT_AA_FETT_EXTRA_COUNT,
+};
+
+#endif /* MOO_BARE_FONT_MONO: Schriftansichten */
 
 /* Das Thread-Vollprofil nutzt zusätzlich die gemeinsamen Surface-Werte. */
 #if !defined(MOO_BARE_FONT_MONO) || defined(MOO_BARE_THREADS)

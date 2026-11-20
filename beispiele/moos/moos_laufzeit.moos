@@ -1,0 +1,56 @@
+# Explizites Vollprofil: gemeinsame Moo-Threadlaufzeit im MoOS-Benutzerraum.
+aus "../../stdlib/moos_syscall" importiere _start
+aus "moos_laufzeit_backend" importiere kern_rt_moo_backend_kontext
+aus "../kernel/kern_laufzeit_atom_api" importiere kern_rt_moo_atom_neu
+aus "../kernel/kern_laufzeit_sperre" importiere kern_rt_moo_sperre_neu
+aus "../kernel/kern_laufzeit_kanal" importiere kern_rt_moo_channel_new
+aus "../kernel/kern_laufzeit_thread" importiere laufzeit_post_mein
+aus "../kernel/kern_laufzeit_postfach" importiere LaufzeitPostfach, laufzeit_post_leeren, laufzeit_post_schliessen, laufzeit_post_freigeben
+aus "../kernel/kern_laufzeit_faden" importiere laufzeit_kontext, laufzeit_kontext_starten
+aus "../kernel/kern_laufzeit_speicher" importiere laufzeit_speicher_starten, laufzeit_text, laufzeit_anhalten
+aus "../kernel/kern_laufzeit_fehler" importiere laufzeit_status
+
+extern "C" funktion kern_c_moo_laufzeit_programm() -> i32
+
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante BENUTZER_LAUFZEIT_PROFIL: [u64; 1] auf [1]
+@nativ
+@sektion(".data.moo_benutzer_laufzeit")
+konstante BENUTZER_LAUFZEIT_BEREICH: [u64; 1] auf [1]
+
+@nativ
+konstante BLW_BEGINN: [u8; _] auf "MOO-LAUFZEIT-BEGIN\n"
+@nativ
+konstante BLW_ENDE: [u8; _] auf "MOO-LAUFZEIT-END\n"
+@nativ
+konstante BLW_FEHLER: [u8; _] auf "MOO-LAUFZEIT-FAIL\n"
+
+@nativ
+funktion laufzeit_programm_beginnen() -> void:
+    unsicher:
+        laufzeit_speicher_starten()
+        wenn nicht laufzeit_kontext_starten(0):
+            laufzeit_anhalten()
+        laufzeit_text(zeiger(adresse_von(BLW_BEGINN)))
+
+@nativ
+funktion laufzeit_programm_enden() -> i32:
+    unsicher:
+        setze post: ptr[LaufzeitPostfach] auf laufzeit_post_mein()
+        laufzeit_post_leeren(post)
+        laufzeit_post_schliessen(post)
+        laufzeit_kontext().postfach = 0
+        laufzeit_post_freigeben(post)
+        setze status: i32 auf laufzeit_status()
+        wenn status == 0:
+            laufzeit_text(zeiger(adresse_von(BLW_ENDE)))
+        sonst:
+            laufzeit_text(zeiger(adresse_von(BLW_FEHLER)))
+        gib_zurück status
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        gib_zurück u64(u32(kern_c_moo_laufzeit_programm()))

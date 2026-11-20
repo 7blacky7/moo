@@ -1,5 +1,5 @@
 # P10-T14: Fehler und aufräumen-Zwischenzustand gehören dem aktuellen Faden.
-aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_typen" importiere LaufzeitWert
 aus "kern_laufzeit_faden" importiere laufzeit_kontext
 aus "kern_laufzeit_werte" importiere laufzeit_nichts, kern_c_moo_release, kern_c_moo_retain
 aus "kern_laufzeit_thread" importiere LaufzeitWertPlatz

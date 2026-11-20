@@ -232,6 +232,8 @@ pub struct CodeGen<'ctx> {
     global_fremd_cache: std::cell::RefCell<HashMap<String, inkwell::values::IntValue<'ctx>>>,
 }
 
+pub const MOOS_USER_TARGET: &str = "x86_64-moos";
+
 impl<'ctx> CodeGen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str, target: &str) -> Result<Self, String> {
         let module = context.create_module(module_name);
@@ -243,7 +245,11 @@ impl<'ctx> CodeGen<'ctx> {
         let native = target.is_empty() || target == "native";
         let cpu = if native { TargetMachine::get_host_cpu_name().to_string() } else { "generic".to_string() };
         let features = if native { TargetMachine::get_host_cpu_features().to_string() } else { String::new() };
-        let reloc = if triple_str.contains("-none") { RelocMode::Static } else { RelocMode::PIC };
+        let reloc = if triple_str.contains("-none") && target != MOOS_USER_TARGET {
+            RelocMode::Static
+        } else {
+            RelocMode::PIC
+        };
         let machine = target_obj.create_target_machine(
             &triple, &cpu, &features, OptimizationLevel::Default, reloc, CodeModel::Default,
         ).ok_or(format!("Konnte TargetMachine fuer '{}' nicht erstellen", triple_str))?;
@@ -1930,7 +1936,7 @@ impl<'ctx> CodeGen<'ctx> {
             // (x86_64-w64-mingw32-gcc bzw. nativ unter Windows, siehe
             // runtime/win_regex/README.md + P013-Doku).
             "x86_64-windows" | "windows" | "win64" => "x86_64-pc-windows-gnu".to_string(),
-            "x86_64-bare" | "x64-bare" => "x86_64-unknown-none".to_string(),
+            "x86_64-bare" | "x64-bare" | MOOS_USER_TARGET => "x86_64-unknown-none".to_string(),
             // P012-B1: 32-bit-x86-Bare explizit (Legacy-Stage2-Pfad, P011-F1).
             "i386-bare" | "i686-bare" | "x86-bare" => "i686-unknown-none".to_string(),
             "x86" | "i686" | "i386" => "i686-unknown-linux-gnu".to_string(),
@@ -1964,6 +1970,7 @@ impl<'ctx> CodeGen<'ctx> {
             ("x86_64", "64-bit x86 (Linux)"),
             ("x86_64-windows", "64-bit x86 (Windows, COFF — Linken via MinGW/Windows)"),
             ("x86_64-bare", "Freestanding x86_64 (Bare-Metal OS)"),
+            (MOOS_USER_TARGET, "MoOS-Benutzerprogramm (statisches x86-64 ELF)"),
             ("i686-bare", "Freestanding 32-bit x86 (Bare-Metal, Legacy-Stage2)"),
             ("x86", "32-bit x86 (Linux)"),
             ("arm", "ARMv7 (Linux, z.B. Raspberry Pi)"),
@@ -2020,7 +2027,9 @@ impl<'ctx> CodeGen<'ctx> {
         // GOT, der Loader laedt ein flaches Image an eine feste Adresse.
         // Auf x86_64-bare ist es ein No-op (RIP-relativ, keine GOT noetig);
         // auf i686-none (Legacy-Stage2) behebt es den fehlenden-GOT-Crash.
-        let reloc_mode = if triple_str.contains("-none") {
+        // Das MoOS-Benutzerfenster beginnt oberhalb des Small-Code-Model-
+        // Adressbereichs. PIC hält Symbolzugriffe PC-relativ.
+        let reloc_mode = if triple_str.contains("-none") && target != MOOS_USER_TARGET {
             RelocMode::Static
         } else {
             RelocMode::PIC
@@ -2034,6 +2043,7 @@ impl<'ctx> CodeGen<'ctx> {
         let code_model = if triple_str.starts_with("x86_64-")
             && triple_str.contains("-none")
             && self.bare_mode
+            && target != MOOS_USER_TARGET
         {
             CodeModel::Kernel
         } else if triple_str.starts_with("riscv64-")

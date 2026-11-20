@@ -1,0 +1,18 @@
+# Einzige Plattformgrenze der gemeinsamen Thread-/Wertlaufzeit.
+# Der bestehende Provider erzeugt geprüfte, typisierte SysV-Adapter.
+aus "kern_laufzeit_typen" importiere LaufzeitFehler, LaufzeitMutex, LaufzeitBedingung, LaufzeitSpin
+
+extern "C" funktion kern_c_moo_backend_kontext() -> ptr[LaufzeitFehler]
+extern "C" funktion kern_c_moo_backend_abgeben() -> void
+extern "C" funktion kern_c_moo_backend_starten(einstieg: u64, daten: u64) -> u64
+extern "C" funktion kern_c_moo_backend_warten(griff: u64) -> void
+extern "C" funktion kern_c_moo_backend_ende() -> void
+extern "C" funktion kern_c_moo_backend_mutex_nimm(p: ptr[LaufzeitMutex]) -> void
+extern "C" funktion kern_c_moo_backend_mutex_gib(p: ptr[LaufzeitMutex]) -> bool
+extern "C" funktion kern_c_moo_backend_bedingung_warten(b: ptr[LaufzeitBedingung], m: ptr[LaufzeitMutex]) -> void
+extern "C" funktion kern_c_moo_backend_bedingung_wecken(b: ptr[LaufzeitBedingung]) -> void
+extern "C" funktion kern_c_moo_backend_alle_wecken(b: ptr[LaufzeitBedingung]) -> void
+extern "C" funktion kern_c_moo_backend_spin_nimm(p: ptr[LaufzeitSpin]) -> u64
+extern "C" funktion kern_c_moo_backend_spin_gib(p: ptr[LaufzeitSpin], zustand: u64) -> void
+extern "C" funktion kern_c_moo_backend_ausgabe(text: ptr[u8], zeile: bool) -> void
+extern "C" funktion kern_c_moo_backend_anhalten() -> void

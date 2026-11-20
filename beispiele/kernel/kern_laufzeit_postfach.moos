@@ -1,6 +1,6 @@
 # P10-T14: Besitz-Handoff nach moo_thread.c:43–192.
 # Die Identität lebt auf dem Heap; CPU-/Planerslots dürfen wiederverwendet werden.
-aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_typen" importiere LaufzeitWert
 
 aus "kern_laufzeit_werte" importiere kern_c_moo_alloc, free, kern_c_moo_release
 

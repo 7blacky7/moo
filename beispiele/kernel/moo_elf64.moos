@@ -1,0 +1,88 @@
+# Gemeinsame ELF64-Prüfung für Moo-UEFI-Loader und Benutzerprogramme.
+# ELF gABI, ELF Header und Program Header. Der jeweilige Lader legt die
+# Abbildungsrechte fest. Die Eingabebytes bleiben während des Ladens stabil.
+
+@nativ
+konstante ELF64_PT_LOAD: u64 auf 1
+@nativ
+konstante ELF64_PF_X: u64 auf 1
+@nativ
+konstante ELF64_PF_W: u64 auf 2
+@nativ
+konstante ELF64_PF_R: u64 auf 4
+
+struktur Elf64Bild:
+    eb_basis: u64
+    eb_laenge: u64
+    eb_phoff: u64
+    eb_phanzahl: u64
+    eb_einstieg: u64
+
+struktur Elf64Segment:
+    es_flags: u64
+    es_versatz: u64
+    es_virt: u64
+    es_dateigroesse: u64
+    es_speichergroesse: u64
+
+@nativ
+funktion elf64_oeffnen(elf: u64, laenge: u64, bild: ptr[Elf64Bild]) -> bool:
+    unsicher:
+        wenn elf == 0 oder laenge < 64 oder laenge > 0xFFFFFFFFFFFFFFFF - elf:
+            gib_zurück falsch
+        # Magic, ELFCLASS64, ELFDATA2LSB, EV_CURRENT, ET_EXEC und EM_X86_64.
+        wenn (speicher_lesen(elf, 8) & 0x00FFFFFFFFFFFFFF) != 0x00010102464C457F oder speicher_lesen(elf + 16, 8) != 0x00000001003E0002:
+            gib_zurück falsch
+        wenn speicher_lesen(elf + 52, 2) != 64 oder speicher_lesen(elf + 54, 2) != 56:
+            gib_zurück falsch
+        setze phoff: u64 auf speicher_lesen(elf + 32, 8)
+        setze anzahl: u64 auf u64(speicher_lesen(elf + 56, 2))
+        # PN_XNUM benötigt Abschnittskopf 0. Dieses Profil verwendet die
+        # reguläre Programmkopftabelle.
+        wenn phoff < 64 oder phoff > laenge oder anzahl == 0 oder anzahl == 0xFFFF oder anzahl > (laenge - phoff) / 56:
+            gib_zurück falsch
+        setze bild.eb_basis auf elf
+        setze bild.eb_laenge auf laenge
+        setze bild.eb_phoff auf phoff
+        setze bild.eb_phanzahl auf anzahl
+        setze bild.eb_einstieg auf speicher_lesen(elf + 24, 8)
+        gib_zurück wahr
+
+# Aufrufer iterieren ausschließlich über 0 bis eb_phanzahl-1.
+@nativ
+funktion elf64_programmkopf(bild: ptr[Elf64Bild], index: u64) -> u64:
+    unsicher:
+        gib_zurück bild.eb_basis + bild.eb_phoff + index * 56
+
+@nativ
+funktion elf64_segment(bild: ptr[Elf64Bild], kopf: u64, segment: ptr[Elf64Segment]) -> bool:
+    unsicher:
+        setze versatz: u64 auf speicher_lesen(kopf + 8, 8)
+        setze virt: u64 auf speicher_lesen(kopf + 16, 8)
+        setze dateigroesse: u64 auf speicher_lesen(kopf + 32, 8)
+        setze speichergroesse: u64 auf speicher_lesen(kopf + 40, 8)
+        setze ausrichtung: u64 auf speicher_lesen(kopf + 48, 8)
+        wenn versatz > bild.eb_laenge oder dateigroesse > bild.eb_laenge - versatz oder dateigroesse > speichergroesse oder speichergroesse > 0xFFFFFFFFFFFFFFFF - virt:
+            gib_zurück falsch
+        wenn ausrichtung > 1 und ((ausrichtung & (ausrichtung - 1)) != 0 oder (virt & (ausrichtung - 1)) != (versatz & (ausrichtung - 1))):
+            gib_zurück falsch
+        setze segment.es_flags auf u64(speicher_lesen(kopf + 4, 4))
+        setze segment.es_versatz auf versatz
+        setze segment.es_virt auf virt
+        setze segment.es_dateigroesse auf dateigroesse
+        setze segment.es_speichergroesse auf speichergroesse
+        gib_zurück wahr
+
+# Der Aufrufer hat das gesamte Ziel bereits genullt, auch BSS und Seitenränder.
+@nativ
+funktion elf64_kopieren(bild: ptr[Elf64Bild], segment: ptr[Elf64Segment], ziel: u64) -> void:
+    unsicher:
+        setze quelle: u64 auf bild.eb_basis + segment.es_versatz
+        setze laenge: u64 auf segment.es_dateigroesse
+        setze i: u64 auf 0
+        solange laenge - i >= 8:
+            speicher_schreiben(ziel + i, speicher_lesen(quelle + i, 8), 8)
+            setze i auf i + 8
+        solange i < laenge:
+            speicher_schreiben(ziel + i, speicher_lesen(quelle + i, 1), 1)
+            setze i auf i + 1

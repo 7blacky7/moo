@@ -38,6 +38,10 @@ SECTIONS
     .rodata ALIGN(4K) :
     {
         *(.rodata .rodata.*)
+        . = ALIGN(8);
+        __moo_benutzer_elf_anfang = .;
+        KEEP(*(.moo_benutzer_elf))
+        __moo_benutzer_elf_ende = .;
     }
 
     .data ALIGN(4K) :

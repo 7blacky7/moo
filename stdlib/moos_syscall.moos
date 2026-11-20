@@ -1,0 +1,65 @@
+# Start und SysV-Aufrufgrenze zu kern_syscall.moos.
+# Das Hauptprogramm exportiert @nativ @einstieg benutzer_haupt() -> u64.
+
+@nativ
+@nackt
+@einstieg
+funktion _start() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="andq $$-16, %rsp; callq benutzer_haupt; movq %rax, %rdi; xorl %eax, %eax; syscall; ud2", clobber=["memory"])
+
+@nativ
+@nackt
+funktion moos_aufruf(nummer: u64, a: u64, b: u64) -> u64:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rdi, %rax; movq %rsi, %rdi; movq %rdx, %rsi; syscall; retq", clobber=["memory"])
+
+@nativ
+funktion moos_schreiben(puffer: u64, laenge: u64) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(1, puffer, laenge)
+
+@nativ
+funktion moos_abgeben() -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(2, 0, 0)
+
+@nativ
+funktion moos_schlafen(ticks: u64) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(3, ticks, 0)
+
+
+# Neue Fäden starten mit RDI=daten, SysV-Stack und eigenem FS-TLS.
+# Der Einstieg beendet sich mit moos_ende; Rückkehr ohne Aufrufer ist ungültig.
+@nativ
+funktion moos_faden_neu(einstieg: u64, daten: u64) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(4, einstieg, daten)
+
+@nativ
+funktion moos_faden_warten(griff: u64) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(5, griff, 0)
+
+@nativ
+funktion moos_futex_warten(adresse: u64, erwartet: u32) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(6, adresse, u64(erwartet))
+
+@nativ
+funktion moos_futex_wecken(adresse: u64, anzahl: u64) -> u64:
+    unsicher:
+        gib_zurück moos_aufruf(7, adresse, anzahl)
+
+@nativ
+funktion moos_ende(kode: u64) -> void:
+    unsicher:
+        moos_aufruf(0, kode, 0)
+        solange wahr:
+            assembler(ziel="x86_64", code="ud2", clobber=["memory"])
+
+@nativ
+funktion moos_tls() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq %fs:0, $0", ausgang="=r", clobber=["memory"])

@@ -1,3 +1,4 @@
+aus "kern_laufzeit_backend" importiere kern_rt_moo_backend_kontext
 # P10-T14: explizites Vollprofil mit dem bestehenden nativen Kernel.
 aus "uefi_kern" importiere kern_haupt
 aus "kern_laufzeit_atom_api" importiere kern_rt_moo_atom_neu

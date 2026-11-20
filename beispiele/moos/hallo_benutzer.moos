@@ -1,0 +1,21 @@
+# moo-compiler compile beispiele/moos/hallo_benutzer.moos --target x86_64-moos -o HALLO.ELF
+aus "moos_syscall" importiere _start, moos_schreiben, moos_abgeben, moos_schlafen
+
+@nativ
+konstante T_HALLO: [u8; _] auf "MOO-ELF BENUTZER HALLO\n"
+@nativ
+statisch BENUTZER_ZAEHLER: [u64; 1] auf 0
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        setze zaehler: ptr[u64] auf zeiger(adresse_von(BENUTZER_ZAEHLER))
+        wenn volatile_lesen(zaehler, 0) != 0:
+            gib_zurück 1
+        volatile_schreiben(zaehler, 0, 23)
+        wenn moos_abgeben() != 0 oder moos_schlafen(100) != 0:
+            gib_zurück 2
+        wenn moos_schreiben(adresse_von(T_HALLO), 23) != 23:
+            gib_zurück 3
+        gib_zurück volatile_lesen(zaehler, 0)

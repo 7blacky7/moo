@@ -406,3 +406,24 @@ funktion ar_benutzer_kopieren(raum: ptr[Adressraum], ziel: u64, quelle: u64, anz
         spin_gib(sperre, irq)
         gib_zurück erlaubt
 
+
+
+# Futex-Wörter werden ausgerichtet und in EINEM 32-Bit-Zugriff gelesen.
+# RW-Prüfung vor STAC; aktive Benutzerabbildungen sind unveränderlich.
+@nativ
+funktion ar_benutzer_lesen32(raum: ptr[Adressraum], virt: u64, ziel: ptr[u32]) -> bool:
+    unsicher:
+        wenn (virt & 3) != 0 oder virt < AR_ERSTE_VA oder virt > AR_ENDE_VA - 4:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE) und (ar_eintrag_lesen(raum.ar_pml4, virt) & 7) == 7
+        wenn erlaubt:
+            setze wert: u32 auf 0
+            wenn (ar_cr4_lesen() & 0x200000) != 0:
+                setze wert auf assembler(ziel="x86_64", code="stac; movl ($1), $0; clac", eingaenge={"r": virt}, ausgang="=r", clobber=["cc", "memory"])
+            sonst:
+                setze wert auf assembler(ziel="x86_64", code="movl ($1), $0", eingaenge={"r": virt}, ausgang="=r", clobber=["memory"])
+            volatile_schreiben(ziel, 0, wert)
+        spin_gib(sperre, irq)
+        gib_zurück erlaubt

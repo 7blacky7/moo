@@ -1,5 +1,5 @@
 # P10-T14: öffentliche Atom-API. Semantik wie moo_thread.c:782–908.
-aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_typen" importiere LaufzeitWert
 aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_bool, laufzeit_erwartet, laufzeit_zahl_pruefen, LW_ERWARTET_ATOM, kern_c_moo_alloc, free
 aus "kern_laufzeit_atom" importiere LaufzeitAtom, laufzeit_atom_init, laufzeit_atom_laden, laufzeit_atom_speichern, laufzeit_atom_addieren, laufzeit_atom_tauschen, laufzeit_atom_vergleichen
 

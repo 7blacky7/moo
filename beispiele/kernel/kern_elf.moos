@@ -1,0 +1,161 @@
+# Eigentümer von Benutzerdaten, Seitentabellen und Benutzer-XSAVE.
+aus "moo_elf64" importiere Elf64Bild, Elf64Segment, ELF64_PT_LOAD, ELF64_PF_R, ELF64_PF_W, ELF64_PF_X, elf64_oeffnen, elf64_programmkopf, elf64_segment, elf64_kopieren
+aus "kern_adressraum" importiere Adressraum, AR_ERSTE_VA, AR_ENDE_VA, AR_SCHREIBEN, AR_AUSFUEHREN, adressraum_neu, adressraum_freigeben, ar_abbilden, ar_nullseiten, ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "kern_syscall" importiere BenutzerProzess, BenutzerGruppe, BENUTZER_FADEN_ANZAHL, BENUTZER_FADEN_SEITEN, BENUTZER_POOL_UNTEN, syscall_gruppe_initialisieren, syscall_prozess_starten
+
+@nativ
+konstante ELF_STACK_SEITEN: u64 auf 4
+@nativ
+konstante ELF_STACK_OBEN: u64 auf AR_ENDE_VA - 4096
+@nativ
+konstante ELF_STACK_UNTEN: u64 auf ELF_STACK_OBEN - ELF_STACK_SEITEN * 4096
+@nativ
+konstante ELF_STACK_WAECHTER: u64 auf ELF_STACK_UNTEN - 4096
+
+struktur ElfProzess:
+    ep_raum: Adressraum
+    ep_benutzer: BenutzerProzess
+    ep_gruppe: BenutzerGruppe
+    ep_phys: u64
+    ep_seiten: u64
+    ep_einstieg: u64
+
+# Statisches x86-64-Benutzerprofil. PT_LOAD steht laut ELF gABI nach
+# p_vaddr sortiert. Hier müssen auch die Seitenspannen disjunkt sein.
+@nativ
+funktion elf_benutzer_seiten(bild: ptr[Elf64Bild]) -> u64:
+    unsicher:
+        setze seiten: u64 auf 0
+        setze ende: u64 auf AR_ERSTE_VA
+        setze einstieg_ok: bool auf falsch
+        setze s: Elf64Segment auf Elf64Segment(0, 0, 0, 0, 0)
+        setze segment: ptr[Elf64Segment] auf zeiger(adresse_von(s))
+        setze i: u64 auf 0
+        solange i < bild.eb_phanzahl:
+            setze ph: u64 auf elf64_programmkopf(bild, i)
+            setze typ: u64 auf u64(speicher_lesen(ph, 4))
+            # PT_DYNAMIC, PT_INTERP und PT_TLS benötigen einen anderen Lader.
+            wenn typ == 2 oder typ == 3 oder typ == 7:
+                gib_zurück 0
+            wenn typ == ELF64_PT_LOAD:
+                wenn nicht elf64_segment(bild, ph, segment):
+                    gib_zurück 0
+                wenn s.es_virt < AR_ERSTE_VA oder s.es_virt >= BENUTZER_POOL_UNTEN oder s.es_speichergroesse > BENUTZER_POOL_UNTEN - s.es_virt:
+                    gib_zurück 0
+                # x86-64 kann die Leseberechtigung einer vorhandenen Seite
+                # nicht getrennt abschalten. Das Benutzerprofil verlangt PF_R.
+                wenn (s.es_flags & ELF64_PF_R) == 0 oder (s.es_flags & (ELF64_PF_W | ELF64_PF_X)) == (ELF64_PF_W | ELF64_PF_X) oder (s.es_virt & 4095) != (s.es_versatz & 4095):
+                    gib_zurück 0
+                wenn s.es_speichergroesse != 0:
+                    setze unten: u64 auf s.es_virt & 0xFFFFFFFFFFFFF000
+                    wenn unten < ende:
+                        gib_zurück 0
+                    setze ende auf (s.es_virt + s.es_speichergroesse + 4095) & 0xFFFFFFFFFFFFF000
+                    setze seiten auf seiten + (ende - unten) / 4096
+                    wenn (s.es_flags & ELF64_PF_X) != 0 und bild.eb_einstieg >= s.es_virt und bild.eb_einstieg - s.es_virt < s.es_dateigroesse:
+                        setze einstieg_ok auf wahr
+            setze i auf i + 1
+        wenn nicht einstieg_ok:
+            gib_zurück 0
+        gib_zurück seiten
+
+@nativ
+funktion elf_seiten_abbilden(raum: ptr[Adressraum], virt: u64, phys: u64, seiten: u64, rechte: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < seiten:
+            wenn nicht ar_abbilden(raum, virt + i * 4096, phys + i * 4096, rechte):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion elf_benutzer_abbilden(bild: ptr[Elf64Bild], raum: ptr[Adressraum], phys: u64) -> bool:
+    unsicher:
+        setze s: Elf64Segment auf Elf64Segment(0, 0, 0, 0, 0)
+        setze segment: ptr[Elf64Segment] auf zeiger(adresse_von(s))
+        setze i: u64 auf 0
+        setze frei: u64 auf phys
+        solange i < bild.eb_phanzahl:
+            setze ph: u64 auf elf64_programmkopf(bild, i)
+            wenn speicher_lesen(ph, 4) == ELF64_PT_LOAD:
+                elf64_segment(bild, ph, segment)
+                wenn s.es_speichergroesse != 0:
+                    setze in_seite: u64 auf s.es_virt & 4095
+                    setze seiten: u64 auf (in_seite + s.es_speichergroesse + 4095) / 4096
+                    setze rechte: u64 auf 0
+                    wenn (s.es_flags & ELF64_PF_W) != 0:
+                        setze rechte auf AR_SCHREIBEN
+                    wenn (s.es_flags & ELF64_PF_X) != 0:
+                        setze rechte auf AR_AUSFUEHREN
+                    elf64_kopieren(bild, segment, frei + in_seite)
+                    wenn nicht elf_seiten_abbilden(raum, s.es_virt - in_seite, frei, seiten, rechte):
+                        gib_zurück falsch
+                    setze frei auf frei + seiten * 4096
+            setze i auf i + 1
+        setze platz: u64 auf 0
+        solange platz < BENUTZER_FADEN_ANZAHL:
+            setze oben: u64 auf ELF_STACK_OBEN - platz * BENUTZER_FADEN_SEITEN * 4096
+            setze tls: u64 auf oben - BENUTZER_FADEN_SEITEN * 4096
+            wenn nicht elf_seiten_abbilden(raum, tls, frei, 1, AR_SCHREIBEN) oder nicht elf_seiten_abbilden(raum, oben - ELF_STACK_SEITEN * 4096, frei + 4096, ELF_STACK_SEITEN, AR_SCHREIBEN):
+                gib_zurück falsch
+            setze frei auf frei + BENUTZER_FADEN_SEITEN * 4096
+            setze platz auf platz + 1
+        gib_zurück wahr
+
+# Der Aufrufer besitzt das Prozessobjekt exklusiv. Bei einem begonnenen Prozess
+# kann die Freigabe erst nach dessen letztem Kontextwechsel gelingen.
+@nativ
+funktion prozess_freigeben(prozess: ptr[ElfProzess]) -> bool:
+    unsicher:
+        setze raum: ptr[Adressraum] auf zeiger(adresse_von(prozess.ep_raum))
+        wenn raum.ar_pml4 != 0 und nicht adressraum_freigeben(raum):
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < prozess.ep_seiten:
+            ar_rahmen_freigeben(prozess.ep_phys + i * 4096)
+            setze i auf i + 1
+        setze prozess.ep_phys auf 0
+        setze prozess.ep_seiten auf 0
+        setze prozess.ep_einstieg auf 0
+        atom_speichern(prozess.ep_benutzer.bp_status, 0, ordnung=locker)
+        gib_zurück wahr
+
+# Vor der ersten Reservierung alle Programmköpfe prüfen. Bei Fehlern werden
+# auch unvollständige Seitentabellen und Kopien vollständig zurückgegeben.
+@nativ
+funktion elf_laden(prozess: ptr[ElfProzess], elf: u64, laenge: u64) -> bool:
+    unsicher:
+        setze raum: ptr[Adressraum] auf zeiger(adresse_von(prozess.ep_raum))
+        wenn prozess.ep_phys != 0 oder raum.ar_pml4 != 0:
+            gib_zurück falsch
+        setze bild: Elf64Bild auf Elf64Bild(0, 0, 0, 0, 0)
+        setze eb: ptr[Elf64Bild] auf zeiger(adresse_von(bild))
+        wenn nicht elf64_oeffnen(elf, laenge, eb):
+            gib_zurück falsch
+        setze seiten: u64 auf elf_benutzer_seiten(eb)
+        wenn seiten == 0:
+            gib_zurück falsch
+        # PT_LOAD plus fester TLS/Stack/XSAVE-Vorrat; Wächter bleiben ungemappt.
+        setze seiten auf seiten + BENUTZER_FADEN_ANZAHL * BENUTZER_FADEN_SEITEN
+        setze phys: u64 auf ar_rahmen_nehmen(seiten)
+        wenn phys == 0:
+            gib_zurück falsch
+        setze prozess.ep_phys auf phys
+        setze prozess.ep_seiten auf seiten
+        ar_nullseiten(phys, seiten)
+        wenn nicht adressraum_neu(raum) oder nicht elf_benutzer_abbilden(eb, raum, phys):
+            prozess_freigeben(prozess)
+            gib_zurück falsch
+        syscall_gruppe_initialisieren(zeiger(adresse_von(prozess.ep_gruppe)), zeiger(adresse_von(prozess.ep_benutzer)), phys + (seiten - BENUTZER_FADEN_ANZAHL * BENUTZER_FADEN_SEITEN) * 4096)
+        setze prozess.ep_einstieg auf bild.eb_einstieg
+        gib_zurück wahr
+
+@nativ
+funktion prozess_starten(prozess: ptr[ElfProzess], cpu: u32) -> bool:
+    unsicher:
+        wenn prozess.ep_phys == 0:
+            gib_zurück falsch
+        setze raum: ptr[Adressraum] auf zeiger(adresse_von(prozess.ep_raum))
+        setze benutzer: ptr[BenutzerProzess] auf zeiger(adresse_von(prozess.ep_benutzer))
+        gib_zurück syscall_prozess_starten(cpu, benutzer, raum, prozess.ep_einstieg, ELF_STACK_OBEN, prozess.ep_gruppe.bg_phys + 5 * 4096)

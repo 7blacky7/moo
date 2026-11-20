@@ -1,0 +1,40 @@
+# Plattformunabhängiger Speichervertrag der nativen Moo-Laufzeit.
+struktur LaufzeitWert:
+    tag: u64
+    daten: u64
+
+struktur LaufzeitFehler:
+    flag: i32
+    tiefe: i32
+    letzter: LaufzeitWert
+    wurfort: u64
+    gemeldet: i32
+    nativer_faden: i32
+    worker: u8
+    postfach: u64
+    bereit: bool
+
+# Der Caller hat owning Fehler-/Postfachwerte vor Wiederverwendung abgegeben.
+@nativ
+funktion laufzeit_kontext_starten_fuer(p: ptr[LaufzeitFehler], worker: u8) -> bool:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück falsch
+        wenn p.flag != 0 oder p.tiefe != 0 oder p.letzter.tag != 3 oder p.postfach != 0:
+            gib_zurück falsch
+        p.wurfort = 0
+        p.gemeldet = 0
+        p.nativer_faden = 1
+        p.worker = worker
+        gib_zurück wahr
+
+# Opaque Plattformplätze aus u64 (8-Byte-Alignment); Kernel prüft die Größe.
+# Benutzer-Backend nutzt ausgerichtete 32-Bit-Futex-Wörter im selben Platz.
+struktur LaufzeitMutex:
+    speicher: [u64; 4]
+
+struktur LaufzeitBedingung:
+    speicher: [u64; 3]
+
+struktur LaufzeitSpin:
+    speicher: u64

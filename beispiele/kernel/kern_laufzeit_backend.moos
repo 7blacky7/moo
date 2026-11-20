@@ -1,0 +1,101 @@
+# P10-T18: Kernelanschluss des gemeinsamen Moo-Laufzeitvertrags.
+aus "kern_laufzeit_plattform" importiere LaufzeitFehler, LaufzeitMutex, LaufzeitBedingung, LaufzeitSpin
+aus "kern_laufzeit_kontext" importiere LaufzeitCpu, laufzeit_kontext_fuer
+aus "kern_smp" importiere smp_planer, smp_nummer
+aus "kern_smp_planer" importiere smp_faden_anbieten, smp_online_maske
+aus "kern_faden" importiere FADEN_ANZAHL, faden_abgeben, faden_wartenden_holen, faden_wartenden_wecken
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_bedingung" importiere KernBedingung, bedingung_warten, bedingung_wecken
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+aus "uefi_kern" importiere moo_kern_ausgabe
+
+@nativ
+funktion kern_rt_moo_backend_anhalten() -> void:
+    unsicher:
+        solange wahr:
+            assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+
+@nativ
+funktion laufzeit_backend_layout_pruefen() -> void:
+    unsicher:
+        wenn groesse_von(KernMutex) != groesse_von(LaufzeitMutex) oder groesse_von(KernBedingung) != groesse_von(LaufzeitBedingung) oder groesse_von(KernSperre) != groesse_von(LaufzeitSpin):
+            kern_rt_moo_backend_anhalten()
+
+@nativ
+funktion kern_rt_moo_backend_kontext() -> ptr[LaufzeitFehler]:
+    unsicher:
+        laufzeit_backend_layout_pruefen()
+        setze slot: u32 auf smp_planer().fp_aktiv
+        wenn u64(FADEN_ANZAHL) * groesse_von(LaufzeitFehler) > groesse_von(LaufzeitCpu) oder slot >= FADEN_ANZAHL:
+            kern_rt_moo_backend_anhalten()
+        gib_zurück laufzeit_kontext_fuer(smp_nummer(), slot)
+
+@nativ
+funktion kern_rt_moo_backend_abgeben() -> void:
+    unsicher:
+        faden_abgeben(smp_planer())
+
+@nativ
+funktion kern_rt_moo_backend_starten(einstieg: u64, daten: u64) -> u64:
+    unsicher:
+        gib_zurück u64(smp_faden_anbieten(einstieg, daten, smp_online_maske()))
+
+# Das Kernelobjekt ist vom Planerslot unabhängig; der alte T14-Vertrag bleibt.
+# Ring3 wartet zusätzlich auf den letzten Wechsel vor TLS-/Stack-Wiederverwendung.
+@nativ
+funktion kern_rt_moo_backend_warten(griff: u64) -> void:
+    unsicher:
+        gib_zurück
+
+@nativ
+funktion kern_rt_moo_backend_ende() -> void:
+    unsicher:
+        gib_zurück
+
+@nativ
+funktion kern_rt_moo_backend_mutex_nimm(p: ptr[LaufzeitMutex]) -> void:
+    unsicher:
+        laufzeit_backend_layout_pruefen()
+        mutex_nimm(smp_planer(), zeiger(u64(p)))
+
+@nativ
+funktion kern_rt_moo_backend_mutex_gib(p: ptr[LaufzeitMutex]) -> bool:
+    unsicher:
+        gib_zurück mutex_gib(smp_planer(), zeiger(u64(p)))
+
+@nativ
+funktion kern_rt_moo_backend_bedingung_warten(b: ptr[LaufzeitBedingung], m: ptr[LaufzeitMutex]) -> void:
+    unsicher:
+        bedingung_warten(smp_planer(), zeiger(u64(b)), zeiger(u64(m)))
+
+@nativ
+funktion kern_rt_moo_backend_bedingung_wecken(b: ptr[LaufzeitBedingung]) -> void:
+    unsicher:
+        bedingung_wecken(smp_planer(), zeiger(u64(b)))
+
+@nativ
+funktion kern_rt_moo_backend_alle_wecken(b: ptr[LaufzeitBedingung]) -> void:
+    unsicher:
+        setze k: ptr[KernBedingung] auf zeiger(u64(b))
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(k.kb_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze adresse: u64 auf faden_wartenden_holen(zeiger(adresse_von(k.kb_warte)))
+        solange adresse != 0:
+            faden_wartenden_wecken(adresse)
+            setze adresse auf faden_wartenden_holen(zeiger(adresse_von(k.kb_warte)))
+        spin_gib(sperre, irq)
+
+@nativ
+funktion kern_rt_moo_backend_spin_nimm(p: ptr[LaufzeitSpin]) -> u64:
+    unsicher:
+        gib_zurück spin_nimm(zeiger(u64(p)))
+
+@nativ
+funktion kern_rt_moo_backend_spin_gib(p: ptr[LaufzeitSpin], zustand: u64) -> void:
+    unsicher:
+        spin_gib(zeiger(u64(p)), zustand)
+
+@nativ
+funktion kern_rt_moo_backend_ausgabe(text: ptr[u8], zeile: bool) -> void:
+    unsicher:
+        moo_kern_ausgabe(text, zeile)

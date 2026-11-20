@@ -1302,6 +1302,14 @@ fn kernel_source_root() -> Option<PathBuf> {
     None
 }
 
+// Gemeinsame freestanding Wertkerne für Kernel- und Benutzerlaufzeit.
+const NATIVE_VALUE_SOURCES: &[&str] = &[
+    "boot/uefi_rt.c", "moo_value.c", "moo_memory.c", "moo_string.c",
+    "moo_list.c", "moo_dict.c", "moo_stdlib.c", "moo_print.c", "moo_frame.c",
+    "moo_object.c", "moo_buffer.c", "moo_buffer_index.c", "moo_struct_box.c",
+    "moo_struct_dyn.c", "moo_handle.c", "moo_defer_stack.c", "moo_defer_error.c",
+];
+
 /// One-Shot-Kernel-Pipeline (Plan-010 C2): erzeugt aus einer .moos-Datei ein
 /// bootbares Multiboot2-ELF. Reproduzierbar: FESTE Quell-Liste + FESTE
 /// Flag-Liste, keine Umgebungs-Magie. MOO_VERBOSE=1 zeigt alle Kommandos.
@@ -1476,10 +1484,7 @@ fn build_kernel(
     };
     let thread_runtime = compiler.hat_sektion(crate::runtime_provider::SECTION);
     let runtime_sources: &[&str] = if thread_runtime {
-        &["boot/uefi_rt.c", "moo_value.c", "moo_memory.c", "moo_string.c",
-          "moo_list.c", "moo_dict.c", "moo_stdlib.c", "moo_print.c", "moo_frame.c",
-          "moo_object.c", "moo_buffer.c", "moo_buffer_index.c", "moo_struct_box.c",
-          "moo_struct_dyn.c", "moo_handle.c", "moo_defer_stack.c", "moo_defer_error.c"]
+        NATIVE_VALUE_SOURCES
     } else { &[] };
     const KERNEL_CFLAGS: [&str; 10] = [
         "-c", "-ffreestanding", "-fno-pic", "-fno-pie",
@@ -2117,7 +2122,83 @@ fn windows_compile_allows_run(
     started && !timed_out && return_code == Some(0) && output_exists
 }
 
+/// MoOS-Benutzerprogramme sind statische ELF64-Dateien mit eigenem SysV-Start.
+fn build_moos_benutzer(
+    file: &std::path::Path,
+    compiler: &codegen::CodeGen,
+    output: Option<&std::path::Path>,
+    linker_script: Option<&std::path::Path>,
+    entry_point: Option<&str>,
+    libraries: &[String],
+    lib_paths: &[PathBuf],
+) -> Result<(), String> {
+    let elf = output.map(|pfad| pfad.to_path_buf()).unwrap_or_else(|| file.with_extension("elf"));
+    let object = elf.with_extension(format!("moo-{}.o", std::process::id()));
+    let temporary = elf.with_extension(format!("moo-{}.tmp", std::process::id()));
+    let ergebnis = (|| {
+        compiler.write_object(&object, codegen::MOOS_USER_TARGET)?;
+        let mut ld = Command::new("ld");
+        // AR_ERSTE_VA in kern_adressraum.moos. Text getrennt von R/O und R/W.
+        ld.args([
+            "-m", "elf_x86_64", "-static", "--gc-sections", "--fatal-warnings",
+            "-z", "separate-code", "-z", "noexecstack", "-z", "max-page-size=0x1000",
+            "-Ttext-segment=0x8000000000",
+            "-e", entry_point.unwrap_or("_start"),
+        ]);
+        if let Some(skript) = linker_script {
+            ld.arg("-T").arg(skript);
+        }
+        ld.arg("-o").arg(&elf).arg(&object);
+        if compiler.hat_sektion(crate::runtime_provider::SECTION) {
+            if !compiler.hat_sektion(".data.moo_benutzer_laufzeit") {
+                return Err("MoOS-Threadlaufzeit benötigt den Benutzer-Träger moos_laufzeit.moos".into());
+            }
+            let runtime = kernel_source_root().ok_or("MoOS-Wertlaufzeit: Compiler-Quellen fehlen")?.join("runtime");
+            std::fs::create_dir_all(&temporary).map_err(|e| format!("MoOS-Wertlaufzeit: {e}"))?;
+            // Dieselben freestanding Wertkerne wie im Kernel; Thread-, Kanal-,
+            // Fehler- und Besitzlogik kommt aus der gemeinsamen Moo-Laufzeit.
+            let user_sources = ["moo_bare.c", "moo_bare_alloc.c", "moo_freestanding_mem.c",
+                "moo_native_math.c", "moo_surface.c", "moo_surface_core.c"];
+            for src in user_sources.iter().chain(NATIVE_VALUE_SOURCES) {
+                let obj = temporary.join(format!("{}.o", src.replace('/', "_")));
+                let mut cc = Command::new("cc");
+                cc.args(["-c", "-std=c11", "-O2", "-ffreestanding", "-fPIC",
+                    "-fno-stack-protector", "-mno-red-zone", "-ffunction-sections", "-fdata-sections",
+                    "-DMOO_BARE", "-DMOO_BARE_THREADS", "-DMOO_UEFI_COLLECTIONS",
+                    "-DMOO_HAS_SURFACE", "-D_GNU_SOURCE"]);
+                if *src == "boot/uefi_rt.c" { cc.arg("-DMOO_UEFI_USE_BARE_RUNTIME"); }
+                let built = cc.arg("-I").arg(&runtime).arg(runtime.join(src)).arg("-o").arg(&obj)
+                    .output().map_err(|e| format!("MoOS-Wertlaufzeit {src}: {e}"))?;
+                if !built.status.success() {
+                    return Err(format!("MoOS-Wertlaufzeit {src}: {}", String::from_utf8_lossy(&built.stderr)));
+                }
+                ld.arg(obj);
+            }
+        }
+        for pfad in lib_paths {
+            ld.arg("-L").arg(pfad);
+        }
+        for name in libraries {
+            ld.arg(format!("-l{name}"));
+        }
+        let ausgabe = ld.output().map_err(|e| format!("MoOS-Benutzer-ELF: GNU ld benötigt ({e})"))?;
+        if !ausgabe.status.success() {
+            return Err(format!("MoOS-Benutzer-ELF: {}", String::from_utf8_lossy(&ausgabe.stderr)));
+        }
+        Ok(())
+    })();
+    let _ = std::fs::remove_file(&object);
+    let _ = std::fs::remove_dir_all(&temporary);
+    ergebnis?;
+    println!("✓ MoOS-Benutzer-ELF gelinkt: {}", elf.display());
+    Ok(())
+}
+
 fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, target: Option<&str>, no_stdlib: bool, linker_script: Option<&std::path::Path>, entry_point: Option<&str>, profile: bool, erlaube_kern: bool, kernel: bool, emit: &str, board: Option<&str>, lib_paths: &[PathBuf]) -> Result<(), String> {
+    let moos_benutzer = target == Some(codegen::MOOS_USER_TARGET);
+    if moos_benutzer && (kernel || emit != "elf") {
+        return Err("x86_64-moos erzeugt ein Benutzer-ELF, --kernel und --emit flat|sector sind Kernel-Optionen".into());
+    }
     // P011-C1: --emit frueh validieren (vor jeder Kompilierung).
     if !matches!(emit, "elf" | "flat" | "sector") {
         return Err(format!("--emit '{emit}' unbekannt — erlaubt: elf | flat | sector"));
@@ -2198,7 +2279,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     // das Minimalprofil für Loader und Kernel.
     let uefi_runtime = link_triple == "x86_64-unknown-uefi" && !no_stdlib && !kernel;
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
-    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern || uefi_runtime);
+    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern || uefi_runtime || moos_benutzer);
     compiler.set_bare_runtime_refcounts(uefi_runtime || kernel_runtime);
     compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)?;
@@ -2212,6 +2293,10 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         compiler.write_ir(&ir_path)?;
         println!("✓ LLVM IR geschrieben: {}", ir_path.display());
         return Ok(());
+    }
+
+    if moos_benutzer {
+        return build_moos_benutzer(file, &compiler, output, linker_script, entry_point, &libraries, lib_paths);
     }
 
     let target_str = target.unwrap_or("native");
@@ -2648,7 +2733,7 @@ fn pruefe(file: &PathBuf, target: Option<&str>, lib_paths: &[PathBuf], no_stdlib
     let mut compiler = codegen::CodeGen::new(&context, module_name, target.unwrap_or("native"))?;
     compiler.set_quelldatei(&file.display().to_string());
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
-    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern);
+    compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern || target == Some(codegen::MOOS_USER_TARGET));
     compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)
 }

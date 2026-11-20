@@ -25,6 +25,7 @@ extern "C" funktion moo_laufzeit_programm() -> i32
 aus "kern_syscall_abi" importiere syscall_gdt_schreiben
 aus "kern_syscall" importiere syscall_initialisieren, syscall_benutzer_fehler, syscall_fatal_gs
 aus "kern_syscall_probe" importiere ring3_probe_starten
+aus "kern_elf_probe" importiere elf_probe_starten
 aus "kern_smp" importiere smp_madt_lesen, smp_ressourcen, smp_planer, smp_faden_stapel, smp_melden, smp_nummer
 aus "kern_smp_planer" importiere IPI_NEUPLAN, IPI_TLB, IPI_HALT, smp_planer_initialisieren, smp_tlb_lokal, smp_tlb_abgleich, smp_alle_halten
 aus "kern_ap" importiere ap_starten, ap_bericht, ap_halt_quittieren
@@ -37,7 +38,7 @@ aus "kern_faden" importiere FadenPlaner, FADEN_ANZAHL, FADEN_STACK_SEITEN, faden
 aus "kern_kanal" importiere kanal_pruefen
 aus "kern_adressraum" importiere ar_cpu_einrichten, adressraum_initialisieren, AR_ERSTE_VA
 aus "kern_adressraum_probe" importiere ar_probe_starten, ar_probe_schutz
-aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe, moo_bare_font_mono
+aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe, moo_bare_font_mono, moo_bare_font_fett
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar, usb_braucht_poll
 aus "kern_tastatur" importiere tastatur_codepunkt
 aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
@@ -171,6 +172,12 @@ konstante T_RING3_OK: [u8; _] auf "MOO-RING3-OK\n"
 @nativ
 konstante T_RING3_PROBE_FEHLER: [u8; _] auf "MOO-RING3-FEHLER\n"
 
+extern "C" konstante __moo_benutzer_elf_anfang: u8
+extern "C" konstante __moo_benutzer_elf_ende: u8
+@nativ
+konstante T_ELF_OK: [u8; _] auf "MOO-ELF-BENUTZER-OK\n"
+@nativ
+konstante T_ELF_FEHLER: [u8; _] auf "MOO-ELF-BENUTZER-FEHLER\n"
 @nativ
 konstante T_SMP_TLB_OK: [u8; _] auf "MOO-SMP-TLB-OK\n"
 @nativ
@@ -2999,8 +3006,9 @@ funktion kern_haupt(bi: u64) -> void:
             wenn ok != 0:
                 kern_raster_clear(kern, rgba(32, 96, 128))
                 kern_raster_rect(kern, 40, 40, i32(breite) - 80, 140, rgba(255, 196, 64))
-                kern_raster_text(kern, 64, 60, 12, adresse_von(T_SCHIRM), 13, rgba(20, 20, 20))
-                kern_raster_text(kern, 64, 220, 6, adresse_von(T_SCHIRM2), 30, rgba(240, 240, 240))
+                setze titel_schrift: u64 auf adresse_von(moo_bare_font_fett)
+                kern_raster_schrift_text(kern, titel_schrift, 64, 60, 4, adresse_von(T_SCHIRM), 13, rgba(20, 20, 20))
+                kern_raster_schrift_text(kern, titel_schrift, 64, 220, 2, adresse_von(T_SCHIRM2), 30, rgba(240, 240, 240))
                 setze t0 auf takt()
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0
@@ -3158,6 +3166,13 @@ funktion kern_haupt(bi: u64) -> void:
             pfa_gib(ring3_rahmen + 4096)
             pfa_gib(ring3_rahmen + 8192)
             kern_text(adresse_von(T_RING3_OK))
+        setze benutzer_elf: u64 auf adresse_von(__moo_benutzer_elf_anfang)
+        setze benutzer_ende: u64 auf adresse_von(__moo_benutzer_elf_ende)
+        wenn benutzer_ende > benutzer_elf:
+            wenn nicht elf_probe_starten(benutzer_elf, benutzer_ende - benutzer_elf, tsc, adresse_von(pfa_wert), adresse_von(meldung)):
+                kern_text(adresse_von(T_ELF_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_ELF_OK))
         setze KERN_DIENSTE.kd_ps2 auf tastatur_ok
         setze KERN_DIENSTE.kd_timer auf timer_start != 0
         setze KERN_DIENSTE.kd_tsc_pro_us auf tsc

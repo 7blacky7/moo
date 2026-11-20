@@ -1,17 +1,11 @@
-# P10-T14: Planerbindung des gemeinsamen fadenlokalen Laufzeitzustands.
-# T13 hält laufende Kontexte auf ihrer CPU, unbegonnene dürfen wechseln.
-aus "kern_smp" importiere smp_planer, smp_nummer
-aus "kern_faden" importiere FADEN_ANZAHL, faden_abgeben
-aus "kern_laufzeit_kontext" importiere LaufzeitWert, LaufzeitFehler, LaufzeitCpu, laufzeit_kontext_fuer, laufzeit_kontext_starten_fuer
+# Plattformbindung des gemeinsamen fadenlokalen Laufzeitzustands.
+aus "kern_laufzeit_typen" importiere LaufzeitWert, LaufzeitFehler, laufzeit_kontext_starten_fuer
+aus "kern_laufzeit_plattform" importiere kern_c_moo_backend_kontext, kern_c_moo_backend_abgeben
 
 @nativ
 funktion laufzeit_kontext() -> ptr[LaufzeitFehler]:
     unsicher:
-        setze slot: u32 auf smp_planer().fp_aktiv
-        wenn u64(FADEN_ANZAHL) * groesse_von(LaufzeitFehler) > groesse_von(LaufzeitCpu) oder slot >= FADEN_ANZAHL:
-            solange wahr:
-                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
-        gib_zurück laufzeit_kontext_fuer(smp_nummer(), slot)
+        gib_zurück kern_c_moo_backend_kontext()
 
 @nativ
 funktion laufzeit_kontext_starten(worker: u8) -> bool:
@@ -58,4 +52,4 @@ funktion moo_kern_worker_flag() -> ptr[u8]:
 @einstieg
 funktion moo_kern_faden_abgeben() -> void:
     unsicher:
-        faden_abgeben(smp_planer())
+        kern_c_moo_backend_abgeben()

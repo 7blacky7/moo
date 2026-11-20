@@ -1,0 +1,316 @@
+# Abnahme des echten Compiler-ELF. Der Standardlink enthält kein Probe-ELF.
+aus "kern_elf" importiere ElfProzess, ELF_STACK_UNTEN, ELF_STACK_OBEN, ELF_STACK_WAECHTER, elf_laden, prozess_starten, prozess_freigeben
+aus "moo_elf64" importiere Elf64Bild, ELF64_PT_LOAD, ELF64_PF_W, ELF64_PF_X, elf64_oeffnen, elf64_programmkopf
+aus "kern_adressraum" importiere Adressraum, ar_pte_lesen, ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "kern_faden" importiere FadenPlaner, Faden, FADEN_ANZAHL, FADEN_FREI, FADEN_SCHLAEFT, faden_ort, faden_sperre, faden_einreihen, faden_signal, faden_abgeben
+aus "kern_smp" importiere smp_anzahl, smp_planer, smp_planer_auf
+aus "kern_smp_planer" importiere smp_online_maske
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch ELF_PROBE_PROZESSE: [ElfProzess; 4] auf 0
+@nativ
+konstante T_ELF_NEGATIV: [u8; _] auf "MOO-ELF ABGELEHNT "
+@nativ
+konstante T_ELF_PARALLEL: [u8; _] auf "MOO-ELF PARALLEL "
+@nativ
+konstante T_ELF_CPU: [u8; _] auf "MOO-ELF CPU "
+@nativ
+konstante T_ELF_ENDE: [u8; _] auf "MOO-ELF EXIT "
+@nativ
+konstante T_ELF_VOR: [u8; _] auf "MOO-ELF PFA VOR "
+@nativ
+konstante T_ELF_NACH: [u8; _] auf "MOO-ELF PFA NACH "
+
+@nativ
+funktion elf_probe_slot(cpu: u32) -> ptr[ElfProzess]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(ELF_PROBE_PROZESSE) + u64(cpu) * groesse_von(ElfProzess))
+
+@nativ
+funktion elf_probe_leer(daten: u64) -> void:
+    unsicher:
+        gib_zurück
+
+# Fadenstapel sind nach erster Belegung am Platz fest für Folgefäden
+# reserviert. Vor der PFA-Messung je CPU genau diesen Platz bereitstellen.
+@nativ
+funktion elf_probe_stapel(cpu: u32, frist: u64) -> bool:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf smp_planer_auf(cpu)
+        setze platz: u32 auf faden_einreihen(planer, adresse_von(elf_probe_leer), 0, 0, 0x200)
+        wenn platz == 0:
+            gib_zurück falsch
+        faden_signal(planer)
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze faden: ptr[Faden] auf faden_ort(planer, platz)
+        solange takt() < frist:
+            setze irq: u64 auf spin_nimm(sperre)
+            setze frei: bool auf faden.f_zustand == FADEN_FREI
+            spin_gib(sperre, irq)
+            wenn frei:
+                gib_zurück wahr
+            faden_abgeben(smp_planer())
+        gib_zurück falsch
+
+@nativ
+funktion elf_probe_defekt(elf: u64, laenge: u64, wort: u64, wert: u64) -> bool:
+    unsicher:
+        setze alt: u64 auf speicher_lesen(wort, 8)
+        speicher_schreiben(wort, wert, 8)
+        setze prozess: ptr[ElfProzess] auf elf_probe_slot(0)
+        setze geladen: bool auf elf_laden(prozess, elf, laenge)
+        speicher_schreiben(wort, alt, 8)
+        wenn geladen:
+            prozess_freigeben(prozess)
+        gib_zurück nicht geladen
+
+@nativ
+funktion elf_probe_negativ(elf: u64, laenge: u64) -> u64:
+    unsicher:
+        setze bild: Elf64Bild auf Elf64Bild(0, 0, 0, 0, 0)
+        setze eb: ptr[Elf64Bild] auf zeiger(adresse_von(bild))
+        wenn nicht elf64_oeffnen(elf, laenge, eb):
+            gib_zurück 0
+        setze textkopf: u64 auf 0
+        setze datenkopf: u64 auf 0
+        setze vorgaenger: u64 auf 0
+        setze letzter: u64 auf 0
+        setze i: u64 auf 0
+        solange i < bild.eb_phanzahl:
+            setze kopf: u64 auf elf64_programmkopf(eb, i)
+            wenn speicher_lesen(kopf, 4) == ELF64_PT_LOAD:
+                setze flags: u64 auf u64(speicher_lesen(kopf + 4, 4))
+                wenn (flags & ELF64_PF_X) != 0:
+                    setze textkopf auf kopf
+                wenn (flags & ELF64_PF_W) != 0 und datenkopf == 0:
+                    setze datenkopf auf kopf
+                    setze vorgaenger auf letzter
+                setze letzter auf kopf
+            setze i auf i + 1
+        wenn textkopf == 0 oder datenkopf == 0 oder vorgaenger == 0:
+            gib_zurück 0
+        # 1: Kopf abgeschnitten. 2: PT_LOAD-Dateiversatz außerhalb der Datei.
+        # 4: filesz > memsz. 8: W+X. 16: PT_LOAD teilen dieselbe virtuelle Seite.
+        setze maske: u64 auf 0
+        wenn nicht elf_laden(elf_probe_slot(0), elf, 63):
+            setze maske auf maske | 1
+        wenn elf_probe_defekt(elf, laenge, textkopf + 8, 0xFFFFFFFFFFFFFFF8):
+            setze maske auf maske | 2
+        wenn elf_probe_defekt(elf, laenge, textkopf + 40, speicher_lesen(textkopf + 32, 8) - 1):
+            setze maske auf maske | 4
+        wenn elf_probe_defekt(elf, laenge, textkopf, speicher_lesen(textkopf, 8) | (ELF64_PF_W << 32)):
+            setze maske auf maske | 8
+        # Seitenspanne des unmittelbar vorangehenden PT_LOAD teilen, bei
+        # weiterhin aufsteigenden Adressen und unverändertem p_align-Versatz.
+        setze letzte_seite: u64 auf (speicher_lesen(vorgaenger + 16, 8) + speicher_lesen(vorgaenger + 40, 8) - 1) & 0xFFFFFFFFFFFFF000
+        setze ueberlappt: u64 auf letzte_seite | (speicher_lesen(datenkopf + 8, 8) & 4095)
+        wenn elf_probe_defekt(elf, laenge, datenkopf + 16, ueberlappt):
+            setze maske auf maske | 16
+        gib_zurück maske
+
+@nativ
+funktion elf_probe_rechte(prozess: ptr[ElfProzess]) -> bool:
+    unsicher:
+        setze raum: ptr[Adressraum] auf zeiger(adresse_von(prozess.ep_raum))
+        gib_zurück ar_pte_lesen(raum, ELF_STACK_WAECHTER) == 0 und (ar_pte_lesen(raum, ELF_STACK_UNTEN) & 0x8000000000000007) == 0x8000000000000007 und (ar_pte_lesen(raum, ELF_STACK_OBEN - 1) & 0x8000000000000007) == 0x8000000000000007 und (ar_pte_lesen(raum, prozess.ep_einstieg) & 0x8000000000000007) == 5
+
+@nativ
+funktion elf_probe_schlafmaske() -> u64:
+    unsicher:
+        setze maske: u64 auf 0
+        setze cpu: u32 auf 0
+        solange cpu < 4:
+            setze prozess: ptr[ElfProzess] auf elf_probe_slot(cpu)
+            setze benutzer: u64 auf adresse_von(prozess.ep_benutzer)
+            setze planer: ptr[FadenPlaner] auf smp_planer_auf(cpu)
+            setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+            setze irq: u64 auf spin_nimm(sperre)
+            setze i: u32 auf 2
+            solange i < FADEN_ANZAHL:
+                setze faden: ptr[Faden] auf faden_ort(planer, i)
+                wenn faden.f_benutzer == benutzer und faden.f_zustand == FADEN_SCHLAEFT:
+                    setze maske auf maske | (u64(1) << cpu)
+                    stopp
+                setze i auf i + 1
+            spin_gib(sperre, irq)
+            setze cpu auf cpu + 1
+        gib_zurück maske
+
+@nativ
+funktion elf_probe_lauf(elf: u64, laenge: u64, tsc: u64, pfa_adr: u64, log_adr: u64) -> bool:
+    unsicher:
+        wenn smp_anzahl() != 4 oder smp_online_maske() != 15 oder tsc == 0 oder laenge < 64:
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze pfa: ptr[fn[sysv64](u64) -> u64] auf zeiger(pfa_adr)
+        setze frist: u64 auf takt() + tsc * 6000000
+        setze cpu: u32 auf 0
+        solange cpu < 4:
+            wenn nicht elf_probe_stapel(cpu, frist):
+                gib_zurück falsch
+            setze cpu auf cpu + 1
+        setze vorher: u64 auf pfa(1)
+        log(adresse_von(T_ELF_VOR), vorher)
+        setze seiten: u64 auf (laenge + 4095) / 4096
+        setze kopie: u64 auf ar_rahmen_nehmen(seiten)
+        wenn kopie == 0:
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < laenge:
+            speicher_schreiben(kopie + i, speicher_lesen(elf + i, 1), 1)
+            setze i auf i + 1
+        setze abgelehnt: u64 auf elf_probe_negativ(kopie, laenge)
+        setze i auf 0
+        solange i < seiten:
+            ar_rahmen_freigeben(kopie + i * 4096)
+            setze i auf i + 1
+        log(adresse_von(T_ELF_NEGATIV), abgelehnt)
+        wenn abgelehnt != 31 oder pfa(1) != vorher:
+            gib_zurück falsch
+
+        setze cpu auf 0
+        setze prozess: ptr[ElfProzess] auf elf_probe_slot(0)
+        solange cpu < 4:
+            setze prozess auf elf_probe_slot(cpu)
+            wenn nicht elf_laden(prozess, elf, laenge) oder nicht elf_probe_rechte(prozess):
+                gib_zurück falsch
+            setze cpu auf cpu + 1
+        setze cpu auf 0
+        solange cpu < 4:
+            wenn nicht prozess_starten(elf_probe_slot(cpu), cpu):
+                gib_zurück falsch
+            setze cpu auf cpu + 1
+
+        # Das Beispiel schläft genau einmal. Zwei vollständige Beobachtungen
+        # ergeben einen gemeinsamen Zeitpunkt mit vier schlafenden Ring-3-Fäden.
+        setze schlafende: u64 auf 0
+        solange takt() < frist:
+            wenn elf_probe_schlafmaske() == 15 und elf_probe_schlafmaske() == 15:
+                setze schlafende auf 15
+                stopp
+            faden_abgeben(smp_planer())
+        log(adresse_von(T_ELF_PARALLEL), schlafende)
+        wenn schlafende != 15:
+            gib_zurück falsch
+
+        setze cpu auf 0
+        solange cpu < 4:
+            setze prozess auf elf_probe_slot(cpu)
+            solange atom_laden(prozess.ep_benutzer.bp_status, ordnung=erwerben) != 2 und takt() < frist:
+                faden_abgeben(smp_planer())
+            wenn atom_laden(prozess.ep_benutzer.bp_status, ordnung=erwerben) != 2:
+                gib_zurück falsch
+            log(adresse_von(T_ELF_CPU), u64(cpu))
+            log(adresse_von(T_ELF_ENDE), prozess.ep_benutzer.bp_kode)
+            wenn prozess.ep_benutzer.bp_kode != 23 oder prozess.ep_benutzer.bp_grund != 0:
+                gib_zurück falsch
+            solange nicht prozess_freigeben(prozess):
+                wenn takt() >= frist:
+                    gib_zurück falsch
+                faden_abgeben(smp_planer())
+            setze cpu auf cpu + 1
+        setze nachher: u64 auf pfa(1)
+        log(adresse_von(T_ELF_NACH), nachher)
+        gib_zurück vorher == nachher
+
+@nativ
+funktion elf_probe_starten(elf: u64, laenge: u64, tsc: u64, pfa_adr: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze profil: ptr[u64] auf zeiger(adresse_von(ELF_LAUFZEIT_PROFIL))
+        setze gut: bool auf falsch
+        wenn volatile_lesen(profil, 1) == 1:
+            setze gut auf elf_laufzeit_lauf(elf, laenge, tsc, pfa_adr, log_adr)
+        sonst:
+            setze gut auf elf_probe_lauf(elf, laenge, tsc, pfa_adr, log_adr)
+        irq_wiederherstellen(irq)
+        gib_zurück gut
+
+# Eigener Testmodus: genau ein ELF, echte Standardlaufzeit, keine Ausgabe-Mocks.
+@nativ
+statisch ELF_LAUFZEIT_PROFIL: [u64; 2] auf [0x3154524C454F4F4D, 0]
+@nativ
+statisch ELF_STAPEL_FREIGABE: atom[u32] auf 0
+@nativ
+konstante T_ELF_LAUFZEIT: [u8; _] auf "MOO-ELF LAUFZEIT "
+
+@nativ
+funktion elf_laufzeit_stapel_arbeiter(daten: u64) -> void:
+    unsicher:
+        solange atom_laden(ELF_STAPEL_FREIGABE, ordnung=erwerben) == 0:
+            faden_abgeben(smp_planer())
+
+# Der T13-Planer hält einmal zugewiesene Kernelstapel im Vorrat.
+# Alle Plätze vor der PFA-Messung belegen; jeder Worker wartet auf die Freigabe.
+@nativ
+funktion elf_laufzeit_stapel(frist: u64) -> bool:
+    unsicher:
+        atom_speichern(ELF_STAPEL_FREIGABE, 0, ordnung=locker)
+        setze cpu: u32 auf 0
+        solange cpu < smp_anzahl():
+            setze planer: ptr[FadenPlaner] auf smp_planer_auf(cpu)
+            setze i: u32 auf 2
+            solange i < FADEN_ANZAHL:
+                wenn faden_einreihen(planer, adresse_von(elf_laufzeit_stapel_arbeiter), 0, 0, 0x200) == 0:
+                    atom_speichern(ELF_STAPEL_FREIGABE, 1, ordnung=freigeben)
+                    gib_zurück falsch
+                setze i auf i + 1
+            faden_signal(planer)
+            setze cpu auf cpu + 1
+        atom_speichern(ELF_STAPEL_FREIGABE, 1, ordnung=freigeben)
+        setze cpu auf 0
+        solange cpu < smp_anzahl():
+            setze warteplaner: ptr[FadenPlaner] auf smp_planer_auf(cpu)
+            setze sperre: ptr[KernSperre] auf faden_sperre(warteplaner)
+            solange takt() < frist:
+                setze irq: u64 auf spin_nimm(sperre)
+                setze frei: bool auf wahr
+                setze warteplatz: u32 auf 2
+                solange warteplatz < FADEN_ANZAHL:
+                    wenn faden_ort(warteplaner, warteplatz).f_zustand != FADEN_FREI:
+                        setze frei auf falsch
+                    setze warteplatz auf warteplatz + 1
+                spin_gib(sperre, irq)
+                wenn frei:
+                    stopp
+                faden_abgeben(smp_planer())
+            wenn takt() >= frist:
+                gib_zurück falsch
+            setze cpu auf cpu + 1
+        gib_zurück wahr
+
+@nativ
+funktion elf_laufzeit_lauf(elf: u64, laenge: u64, tsc: u64, pfa_adr: u64, log_adr: u64) -> bool:
+    unsicher:
+        wenn (smp_anzahl() != 1 und smp_anzahl() != 4) oder tsc == 0 oder laenge < 64:
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze pfa: ptr[fn[sysv64](u64) -> u64] auf zeiger(pfa_adr)
+        setze frist: u64 auf takt() + tsc * 60000000
+        wenn nicht elf_laufzeit_stapel(frist):
+            gib_zurück falsch
+        setze vorher: u64 auf pfa(1)
+        log(adresse_von(T_ELF_VOR), vorher)
+        setze prozess: ptr[ElfProzess] auf elf_probe_slot(0)
+        wenn nicht elf_laden(prozess, elf, laenge) oder nicht elf_probe_rechte(prozess) oder nicht prozess_starten(prozess, 0):
+            gib_zurück falsch
+        solange atom_laden(prozess.ep_benutzer.bp_status, ordnung=erwerben) != 2 und takt() < frist:
+            faden_abgeben(smp_planer())
+        wenn atom_laden(prozess.ep_benutzer.bp_status, ordnung=erwerben) != 2:
+            gib_zurück falsch
+        log(adresse_von(T_ELF_ENDE), prozess.ep_benutzer.bp_kode)
+        wenn prozess.ep_benutzer.bp_kode != 0 oder prozess.ep_benutzer.bp_grund != 0:
+            gib_zurück falsch
+        solange nicht prozess_freigeben(prozess):
+            wenn takt() >= frist:
+                gib_zurück falsch
+            faden_abgeben(smp_planer())
+        setze nachher: u64 auf pfa(1)
+        log(adresse_von(T_ELF_NACH), nachher)
+        wenn vorher != nachher:
+            gib_zurück falsch
+        log(adresse_von(T_ELF_LAUFZEIT), 1)
+        gib_zurück wahr

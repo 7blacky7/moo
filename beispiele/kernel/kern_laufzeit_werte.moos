@@ -1,5 +1,5 @@
 # P10-T14: gemeinsame Werte/Diagnosen für den nativen Thread-Träger.
-aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_typen" importiere LaufzeitWert
 
 extern "C" funktion kern_c_moo_alloc(groesse: u64) -> ptr[u8]
 extern "C" funktion kern_c_moo_retain(wert: LaufzeitWert) -> void
