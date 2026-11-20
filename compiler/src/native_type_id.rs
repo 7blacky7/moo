@@ -23,6 +23,8 @@ pub(crate) enum NativeTypeId {
     /// Anhaengen bewahrt die Reihenfolge/Hash-Diskriminanten des Bestands.
     /// Verwalteter Registrierungs-Griff; keine C-Wert-/Zeigerkonvertierung.
     Registration { signature: Box<NativeTypeId> },
+    /// Ganzzahlspeicher, der nur atomar gelesen oder geaendert wird.
+    Atom(ScalarType),
 }
 
 /// Moo-Quellschreibweise fuer Diagnosen (P2-T21/T57: Rueckruf-Signaturvergleich).
@@ -40,6 +42,7 @@ impl std::fmt::Display for NativeTypeId {
             NativeTypeId::Pointer { pointee, .. } => write!(f, "ptr[{pointee}]"),
             NativeTypeId::Buffer { element } => write!(f, "puffer[{element}]"),
             NativeTypeId::Registration { signature } => write!(f, "rueckruf[{signature}]"),
+            NativeTypeId::Atom(ty) => write!(f, "atom[{}]", NativeTypeId::Scalar(*ty)),
             NativeTypeId::Nominal { name, .. } => f.write_str(name),
             NativeTypeId::Function { params, result, variadic, convention } => {
                 f.write_str("fn")?;
@@ -94,6 +97,26 @@ pub(crate) fn registration_id(name: &str) -> Option<u64> {
     Some(hash | (1u64 << 63))
 }
 
+pub(crate) fn ist_atom_typ(name: &str) -> bool {
+    matches!(name, "atom" | "atomic")
+}
+
+/// Liefert den festen Ganzzahltyp eines atomaren Speicherorts.
+pub(crate) fn atom_element(ty: &TypeRef) -> Result<&TypeRef, String> {
+    if let TypeKind::Generic { name, args } = &ty.kind {
+        if ist_atom_typ(name) {
+            if let [element] = args.as_slice() {
+                if matches!(&element.kind, TypeKind::Name(name)
+                    if matches!(name.as_str(), "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"))
+                {
+                    return Ok(element);
+                }
+            }
+        }
+    }
+    Err("atom[T] erwartet genau einen festen Ganzzahltyp (i8 bis u64)".into())
+}
+
 pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<NativeTypeId, String> {
     match &ty.kind {
         TypeKind::Name(name) => {
@@ -115,6 +138,12 @@ pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<Nativ
                 return Err(format!("Typ '{name}' hat keine kanonische Modulidentität"));
             }
             Ok(NativeTypeId::Nominal { module: module.clone(), name: declaration.clone() })
+        }
+        TypeKind::Generic { name, .. } if ist_atom_typ(name) => {
+            match resolve_type(atom_element(ty)?, nominal)? {
+                NativeTypeId::Scalar(t) => Ok(NativeTypeId::Atom(t)),
+                _ => Err("atom[T] erwartet einen festen Ganzzahltyp".into()),
+            }
         }
         TypeKind::Generic { name, args } if name == "ptr" || name == "zeiger" => {
             if args.len() != 1 { return Err("Zeiger benötigt genau einen Zieltyp".into()); }

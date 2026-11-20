@@ -315,6 +315,9 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
             (Query::Offset, [Expr::Identifier(ty), Expr::Identifier(field)]) => {
                 let layout = self.registry.layout(ty)
                     .ok_or_else(|| format!("{name}: '{ty}' ist keine native Struktur"))?;
+                if !layout.bitfelder.is_empty() {
+                    return Err(format!("{name}: '{ty}.{field}' ist ein Bitbereich ohne eigene Byteadresse"));
+                }
                 let index = layout.fields.iter().position(|(candidate, _)| candidate == field)
                     .ok_or_else(|| format!("{name}: Struktur '{ty}' hat kein Feld '{field}'"))?;
                 layout.offsets.get(index).copied()
@@ -459,9 +462,11 @@ pub(crate) fn fold_program<'ctx>(
             if !names.insert(name.clone()) {
                 return Err(format!("Native Konstante '{name}' ist doppelt definiert"));
             }
+            let Some(value) = value else { continue; };
             if decorators_statisch(stmt) {
                 // P7-T6: beschreibbar, also nie falten; Zugriff ueber adresse_von.
-                if integer_type(ty).is_some() || float_oder_bool(ty).is_some() {
+                if !matches!(stmt, Stmt::NativeConst { decorators, .. } if decorators.iter().any(|d| d.name == "pro_kern"))
+                    && (integer_type(ty).is_some() || float_oder_bool(ty).is_some()) {
                     return Err(format!("Statischer Speicher '{name}': braucht einen Array- oder Strukturtyp (Zugriff ueber adresse_von/speicher_*)"));
                 }
                 continue;
@@ -495,10 +500,10 @@ pub(crate) fn fold_program<'ctx>(
                 decorators: decorators.clone(),
             }
         }
-        Stmt::NativeConst { zeile, name, ty, value, decorators } => Stmt::NativeConst {
+        Stmt::NativeConst { zeile, name, ty, value: Some(value), decorators } => Stmt::NativeConst {
             zeile: *zeile,
             name: name.clone(), ty: text_length(ty, value),
-            value: folder.expr(value, &empty).map_err(|e| format!("Native Konstante '{name}': {e}"))?,
+            value: Some(folder.expr(value, &empty).map_err(|e| format!("Native Konstante '{name}': {e}"))?),
             decorators: decorators.clone(),
         },
         other => other.clone(),
@@ -527,6 +532,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn value(&self, ty: &TypeRef, expr: &Expr) -> Result<BasicValueEnum<'ctx>, String> {
+        if matches!(&ty.kind, TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name)) {
+            return self.value(crate::native_type_id::atom_element(ty)?, expr);
+        }
         let llvm = self.registry.field_type(self.context, self.target, ty)?;
         // P2-T48 B1: f32/f64/bool als Skalar, Array- oder Strukturfeld.
         if let Some(scalar) = float_oder_bool(ty) {
@@ -552,6 +560,24 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     .ok_or_else(|| format!("'{name}' ist keine native Struktur"))?;
                 if args.is_empty() {
                     return Ok(layout.llvm_type.const_zero().into());
+                }
+                if !layout.bitfelder.is_empty() {
+                    if args.len() != layout.bitfelder.len() {
+                        return Err(format!("Bitfeld '{name}' erwartet {} Bereiche, bekommen {}", layout.bitfelder.len(), args.len()));
+                    }
+                    let basis = integer_type(&layout.fields[0].1).ok_or("Bitfeld-Basistyp fehlt")?;
+                    let mut wort = 0u64;
+                    for (feld, arg) in layout.bitfelder.iter().zip(args) {
+                        let wert = literal_value(self.context, arg, basis)? as u64;
+                        if wert > feld.maximum() {
+                            return Err(format!("Bitfeld '{name}.{}': Wert {wert} passt nicht in {} Bit", feld.name, feld.breite));
+                        }
+                        wort |= wert << feld.anfang;
+                    }
+                    let wert = layout.llvm_type.get_field_types()[0].into_int_type().const_int(wort, false);
+                    let mut values = vec![wert.into()];
+                    values.extend(layout.llvm_type.get_field_types().iter().skip(1).map(|t| t.const_zero()));
+                    return Ok(layout.llvm_type.const_named_struct(&values).into());
                 }
                 if args.len() != layout.fields.len() {
                     return Err(format!("Struktur '{name}' erwartet {} Felder, bekommen {}", layout.fields.len(), args.len()));
@@ -628,8 +654,8 @@ fn const_array<'ctx>(element: BasicTypeEnum<'ctx>, values: &[BasicValueEnum<'ctx
     })
 }
 
-/// Legt alle nativen Konstanten als konstante Globals an (erst Deklaration,
-/// dann Initialisierer, damit sich Konstanten gegenseitig referenzieren koennen).
+/// Legt native Datensymbole vor den Initialisierern an, damit sie einander
+/// referenzieren koennen. Externe C-Konstanten bleiben reine Deklarationen.
 pub(crate) fn emit_constants<'ctx>(
     program: &Program,
     context: &'ctx Context,
@@ -638,9 +664,9 @@ pub(crate) fn emit_constants<'ctx>(
     registry: &NativeStructRegistry<'ctx>,
     native_functions: &HashMap<String, FunctionValue<'ctx>>,
 ) -> Result<(), String> {
-    let constants: Vec<(&String, &TypeRef, &Expr, &Vec<Decorator>)> = program.statements.iter()
+    let constants: Vec<_> = program.statements.iter()
         .filter_map(|stmt| match stmt {
-            Stmt::NativeConst { name, ty, value, decorators, .. } => Some((name, ty, value, decorators)),
+            Stmt::NativeConst { name, ty, value, decorators, .. } => Some((name, ty, value.as_ref(), decorators)),
             _ => None,
         })
         .collect();
@@ -650,11 +676,18 @@ pub(crate) fn emit_constants<'ctx>(
     let target = target.ok_or("Ziel-Datenlayout fuer native Konstanten fehlt")?;
     let emitter = Emitter { context, module, target, registry, native_functions };
     let mut globals = Vec::with_capacity(constants.len());
-    for (name, ty, _, decorators) in &constants {
+    let mut pro_kern = Vec::new();
+    let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+    let bare = triple.ends_with("-none") || triple.ends_with("-uefi");
+    for (name, ty, value, decorators) in &constants {
         for decorator in decorators.iter() {
-            // Layout-Decorators (2A) wertet codegen::apply_native_layout_decorators aus.
-            let known = (matches!(decorator.name.as_str(), "nativ" | "native" | "statisch") && decorator.args.is_empty())
-                || matches!(decorator.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "benutzt" | "used");
+            let known = if value.is_none() {
+                matches!(decorator.name.as_str(), "bibliothek" | "library")
+            } else {
+                // Layout-Decorators (2A) wertet codegen::apply_native_layout_decorators aus.
+                (matches!(decorator.name.as_str(), "nativ" | "native" | "statisch" | "pro_kern") && decorator.args.is_empty())
+                    || matches!(decorator.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "benutzt" | "used")
+            };
             if !known {
                 return Err(format!("Native Konstante '{name}': Decorator @{} nicht unterstuetzt", decorator.name));
             }
@@ -667,12 +700,31 @@ pub(crate) fn emit_constants<'ctx>(
         let llvm = registry.field_type(context, target, ty)
             .map_err(|e| format!("Native Konstante '{name}': {e}"))?;
         let statisch = decorators.iter().any(|d| d.name == "statisch");
+        if decorators.iter().any(|d| d.name == "pro_kern") {
+            if !statisch || value.is_none() || decorators.iter().filter(|d| d.name == "pro_kern").count() != 1 {
+                return Err(format!("@pro_kern '{name}' verlangt genau einen argumentlosen Decorator an statisch"));
+            }
+            if !module.get_triple().as_str().to_string_lossy().starts_with("x86_64") {
+                return Err("@pro_kern ist derzeit nur fuer x86_64 implementiert".into());
+            }
+            if decorators.iter().any(|d| matches!(d.name.as_str(), "sektion" | "section" | "ausrichten" | "align")) {
+                return Err(format!("@pro_kern '{name}': Sektion und Ausrichtung ergeben sich aus dem gemeinsamen CPU-lokalen ABI-Layout"));
+            }
+            pro_kern.push((llvm, *ty, value.unwrap(), *name));
+            globals.push(None);
+            continue;
+        }
         let global = module.add_global(llvm, None, name);
         // P7-T6: @nativ statisch ist beschreibbar (.data/.bss), Konstanten nicht.
         global.set_constant(!statisch);
-        globals.push((global, llvm, statisch));
+        if value.is_none() {
+            global.set_alignment(target.get_abi_alignment(&llvm));
+        }
+        globals.push(Some((global, llvm, statisch)));
     }
-    for ((name, ty, value, _), (global, llvm, statisch)) in constants.iter().zip(globals) {
+    for ((name, ty, value, _), global) in constants.iter().zip(globals) {
+        let Some((global, llvm, statisch)) = global else { continue; };
+        let Some(value) = value else { continue; };
         // P7-T6: `auf 0` nullt statischen Speicher jeden Typs (landet in .bss).
         let null = statisch && match value {
             Expr::NativeNumber { text, .. } => text.trim_start_matches("0x").trim_start_matches('0').is_empty(),
@@ -685,6 +737,26 @@ pub(crate) fn emit_constants<'ctx>(
         }
         let init = emitter.value(ty, value).map_err(|e| format!("Native Konstante '{name}': {e}"))?;
         global.set_initializer(&init);
+    }
+    if !pro_kern.is_empty() {
+        let types: Vec<_> = pro_kern.iter().map(|(llvm, ..)| *llvm).collect();
+        let layout = context.struct_type(&types, false);
+        let values = pro_kern.iter().map(|(llvm, ty, value, name)| {
+            let zero = matches!(value, Expr::Number(n) if *n == 0.0)
+                || matches!(value, Expr::NativeNumber { text, .. } if text == "0");
+            if zero { Ok(llvm.const_zero()) }
+            else { emitter.value(ty, value).map_err(|e| format!("@pro_kern '{name}': {e}")) }
+        }).collect::<Result<Vec<_>, String>>()?;
+        if module.get_global("__moo_prokern_vorlage").is_some() {
+            return Err("Reserviertes Symbol __moo_prokern_vorlage ist bereits belegt".into());
+        }
+        // Ein ABI-Aggregat haelt Reihenfolge, Padding und alle Offsets zusammen.
+        // Keine Annahme ueber die Reihenfolge einzelner Linker-Inputsektionen.
+        let template = module.add_global(layout, None, "__moo_prokern_vorlage");
+        template.set_initializer(&layout.const_named_struct(&values));
+        template.set_alignment(target.get_abi_alignment(&layout));
+        if bare { template.set_section(Some(".moo_prokern")); }
+        else { template.set_thread_local_mode(Some(inkwell::ThreadLocalMode::GeneralDynamicTLSModel)); }
     }
     Ok(())
 }

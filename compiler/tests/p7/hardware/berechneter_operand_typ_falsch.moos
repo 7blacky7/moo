@@ -1,0 +1,5 @@
+# P2-T128: Der Zielkontext darf einen typisierten u64-Operanden nicht abschneiden.
+@nativ
+funktion hardware_typ_falsch(wert: u64) -> void:
+    unsicher:
+        port_schreibe32(0xCF8, (wert << 8) | 1)

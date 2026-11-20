@@ -1,0 +1,19 @@
+# P10-T1: Nur assemblieren. movl braucht in .code16 das 0x66-Praefix.
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_trampolin")
+@einstieg
+funktion probe_assembler_modus() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code16\nmovl %eax, %ebx\n.code32\nmovl %eax, %ebx\n.code64\nretq", clobber=[])
+
+@nativ
+funktion probe_trampolin_anfang() -> u64:
+    unsicher:
+        gib_zurück sektion_anfang(".moo_ap_trampolin")
+
+@nativ
+funktion probe_trampolin_ende() -> u64:
+    unsicher:
+        gib_zurück sektion_ende(".moo_ap_trampolin")

@@ -1,0 +1,7 @@
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_absolut")
+funktion tramp_absolut() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code16\nmovl $$fremdes_symbol, %eax\n.code64\nretq", clobber=[])

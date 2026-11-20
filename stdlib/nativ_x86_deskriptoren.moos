@@ -1,0 +1,56 @@
+# P10-T5: explizite x86-Deskriptorworte, kein C-Bitfeldlayout.
+bitfeld X86GdtWort: u64:
+    grenze: 0..15
+    basis_niedrig: 16..39
+    zugriff: 40..47
+    grenze_hoch: 48..51
+    flags: 52..55
+    basis_hoch: 56..63
+
+bitfeld X86TssAdresse: u64:
+    niedrig: 0..23
+    mittel: 24..31
+    hoch: 32..63
+
+bitfeld X86IdtWort: u64:
+    ziel_niedrig: 0..15
+    selektor: 16..31
+    ist: 32..34
+    zugriff: 40..47
+    ziel_mittel: 48..63
+
+bitfeld X86TorAdresse: u64:
+    niedrig: 0..15
+    mittel: 16..31
+    hoch: 32..63
+
+bitfeld X86IstIndex: u64:
+    index: 0..2
+
+@nativ
+konstante X86_GDT_CODE: X86GdtWort auf X86GdtWort(65535, 0, 0x9A, 15, 10, 0)
+@nativ
+konstante X86_GDT_DATEN: X86GdtWort auf X86GdtWort(65535, 0, 0x92, 15, 12, 0)
+
+@nativ
+funktion x86_tss_unterwort(basis: u64) -> u64:
+    setze adr: X86TssAdresse auf bitfeld_aus(X86TssAdresse, basis)
+    setze tss: X86GdtWort auf X86GdtWort(103, adr.niedrig, 0x89, 0, 0, adr.mittel)
+    gib_zurück bitfeld_wert(tss)
+
+@nativ
+funktion x86_tss_oberwort(basis: u64) -> u64:
+    setze adr: X86TssAdresse auf bitfeld_aus(X86TssAdresse, basis)
+    gib_zurück adr.hoch
+
+@nativ
+funktion x86_idt_unterwort(ziel: u64, ist: u64) -> u64:
+    setze adr: X86TorAdresse auf bitfeld_aus(X86TorAdresse, ziel)
+    setze stapel: X86IstIndex auf bitfeld_aus(X86IstIndex, ist)
+    setze tor: X86IdtWort auf X86IdtWort(adr.niedrig, 8, stapel.index, 0x8E, adr.mittel)
+    gib_zurück bitfeld_wert(tor)
+
+@nativ
+funktion x86_idt_oberwort(ziel: u64) -> u64:
+    setze adr: X86TorAdresse auf bitfeld_aus(X86TorAdresse, ziel)
+    gib_zurück adr.hoch

@@ -1219,7 +1219,10 @@ impl QualiLaeufer<'_> {
                 self.typ(result)?;
             }
             S::RawDataU32 { ty, value, .. } => { self.typ_opt(ty)?; self.expr(value)?; }
-            S::NativeConst { ty, value, .. } => { self.typ(ty)?; self.expr(value)?; }
+            S::NativeConst { ty, value, .. } => {
+                self.typ(ty)?;
+                if let Some(value) = value { self.expr(value)?; }
+            }
             S::Return(value, _) => { if let Some(v) = value { self.expr(v)?; } }
             S::Break(_) | S::Continue(_) | S::Import { .. } | S::Global(_, _) => {}
             S::StructDef { fields, .. } => { for (_, t) in fields { self.typ(t)?; } }

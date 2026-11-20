@@ -8,19 +8,16 @@ _Static_assert(offsetof(MooFontAaFace, width) == 24 &&
                offsetof(MooFontAaFace, extra_count) == 40 &&
                sizeof(MooFontAaFace) == 48, "KernAaSchrift ABI");
 
-uint64_t moo_bare_font_mono(void) {
-    static const MooFontAaFace mono = {
-        moo_font_aa_monospace,
-        moo_font_aa_monospace_adv,
-        moo_font_aa_extra_cp,
-        MOO_FONT_AA_MONOSPACE_W,
-        MOO_FONT_AA_MONOSPACE_H,
-        MOO_FONT_AA_MONOSPACE_FIRST,
-        MOO_FONT_AA_MONOSPACE_TOTAL_COUNT,
-        MOO_FONT_AA_MONOSPACE_EXTRA_COUNT,
-    };
-    return (uint64_t)(uintptr_t)&mono;
-}
+const MooFontAaFace moo_bare_font_mono = {
+    moo_font_aa_monospace,
+    moo_font_aa_monospace_adv,
+    moo_font_aa_extra_cp,
+    MOO_FONT_AA_MONOSPACE_W,
+    MOO_FONT_AA_MONOSPACE_H,
+    MOO_FONT_AA_MONOSPACE_FIRST,
+    MOO_FONT_AA_MONOSPACE_TOTAL_COUNT,
+    MOO_FONT_AA_MONOSPACE_EXTRA_COUNT,
+};
 
 #else
 

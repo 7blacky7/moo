@@ -677,6 +677,7 @@ impl<'ctx> CodeGen<'ctx> {
                 "ausrichten" | "align" => "ausrichten",
                 "benutzt" | "used" => "benutzt",
                 "einstieg" | "entry" => "einstieg",
+                "verschiebbar" | "relocatable" if executable => { used = true; continue; }
                 _ => continue,
             };
             if !seen.insert(kind) {
@@ -806,6 +807,11 @@ impl<'ctx> CodeGen<'ctx> {
             let target = self.target_data.as_ref()
                 .ok_or_else(|| "Ziel-Datenlayout für Struktur fehlt".to_string())?;
             self.native_structs.register_all(self.context, target, &definitions)?;
+            for stmt in &program.statements {
+                if let Stmt::StructDef { name, bitfelder, .. } = stmt {
+                    self.native_structs.register_bitfelder(name, bitfelder)?;
+                }
+            }
         }
         for (name, _) in &eingebaute {
             self.native_structs.markiere_eingebaut(name);
@@ -924,10 +930,19 @@ impl<'ctx> CodeGen<'ctx> {
         self.forward_declare(program)?;
         for stmt in &program.statements {
             if let Stmt::NativeConst { name, decorators, .. } = stmt {
+                if decorators.iter().any(|d| d.name == "pro_kern") { continue; }
                 let global = self.module.get_global(name).ok_or("Native Konstante fehlt im Modul")?;
                 let alignment = self.target_data.as_ref()
                     .map(|target| target.get_abi_alignment(&global.get_value_type())).unwrap_or(1);
                 self.apply_native_layout_decorators(global, decorators, false, alignment, &format!("Native Konstante '{name}'"))?;
+            }
+        }
+        for fun in self.module.get_functions() {
+            if let Some(attr) = fun.get_string_attribute(inkwell::attributes::AttributeLoc::Function, crate::native_hardware::TRAMPOLIN_ATTR) {
+                let section = attr.get_string_value().to_str().map_err(|e| e.to_string())?;
+                if self.sektionen.iter().filter(|(s, _)| s == section).count() != 1 {
+                    return Err(format!("Verschiebbare Sektion '{section}' verlangt genau einen eigenen Koerper und keine weiteren Daten/Funktionen"));
+                }
             }
         }
         self.prepare_runtime_defer_graph(program)?;
@@ -1227,7 +1242,7 @@ impl<'ctx> CodeGen<'ctx> {
                     // P7-T4 (7A): neben @nativ ist nur @aufrufkonvention zulaessig.
                     || decorators.iter().filter(|d| d.name == "nativ" || d.name == "native").count() != 1
                     || !decorators.iter().all(|d| (matches!(d.name.as_str(), "nativ" | "native" | "nackt" | "naked"
-                            | "benutzt" | "used" | "einstieg" | "entry") && d.args.is_empty())
+                            | "benutzt" | "used" | "einstieg" | "entry" | "verschiebbar" | "relocatable") && d.args.is_empty())
                         || matches!(d.name.as_str(), "sektion" | "section" | "ausrichten" | "align" | "unterbrechung" | "interrupt")
                         // P2-T21/T57: @rückruf(fehlerwert?) - Pruefung in rueckruf_thunks.
                         || matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback")
@@ -1250,6 +1265,9 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 // P7-T4 (3A): @nackt nur fuer reine Assemblerkoerper (Pruefung im Emitter).
                 let naked = decorators.iter().any(|d| d.name == "nackt" || d.name == "naked");
+                if !naked && decorators.iter().any(|d| matches!(d.name.as_str(), "verschiebbar" | "relocatable")) {
+                    return Err(format!("Native Funktion '{name}': @verschiebbar verlangt @nackt und eine eigene @sektion"));
+                }
                 if naked && !matches!(crate::native_hardware::classify_body(body), crate::native_hardware::BodyKind::Hardware) {
                     return Err(format!("Native Funktion '{name}': @nackt verlangt einen Körper aus unsicher: assembler(...)"));
                 }
@@ -1304,6 +1322,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     self.context.create_enum_attribute(kind, 0));
                             }
                         }
+                        crate::native_hardware::deklariere_trampolin(self.context, &self.module, fun, decorators)?;
                         self.native_functions.insert(name.clone(), fun);
                         // P7-T22: reine Hardwarekoerper (nur Intrinsics) mit skalarer
                         // Signatur sind wie Bare-Systemkoerper aus dynamischem Moo
@@ -1720,7 +1739,13 @@ impl<'ctx> CodeGen<'ctx> {
                     }),
                 _ => None,
             }).collect();
-            let mut fehlbar = crate::native_system::fehlbare_funktionen(&defs, &std::collections::HashSet::new());
+            let bitfelder: std::collections::HashMap<String, std::collections::HashSet<String>> = program.statements.iter()
+                .filter_map(|s| match s {
+                    Stmt::StructDef { name, bitfelder, .. } if !bitfelder.is_empty() =>
+                        Some((name.clone(), bitfelder.iter().map(|f| f.name.clone()).collect())),
+                    _ => None,
+                }).collect();
+            let mut fehlbar = crate::native_system::fehlbare_funktionen(&defs, &std::collections::HashSet::new(), &bitfelder);
             // P2-T21/T57 C3: gibt es fehlbare hosted Rueckrufe, kann jeder Fremdaufruf
             // mit anstehendem Moo-Fehler zurueckkehren -> Fremdaufrufe gelten als fehlbar.
             let fehlbarer_rueckruf = program.statements.iter().any(|stmt| matches!(stmt,
@@ -1730,7 +1755,7 @@ impl<'ctx> CodeGen<'ctx> {
             if fehlbarer_rueckruf && !self.bare_mode {
                 fremd_fehlbar = true;
                 let fremd: std::collections::HashSet<String> = self.extern_c_names.iter().cloned().collect();
-                fehlbar = crate::native_system::fehlbare_funktionen(&defs, &fremd);
+                fehlbar = crate::native_system::fehlbare_funktionen(&defs, &fremd, &bitfelder);
             }
             for (name, callee) in native_callees.iter_mut() {
                 callee.fehlbar = fehlbar.contains(name);

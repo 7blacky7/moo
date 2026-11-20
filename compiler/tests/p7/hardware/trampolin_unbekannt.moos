@@ -1,0 +1,4 @@
+@nativ
+funktion tramp_unbekannt() -> u64:
+    unsicher:
+        gib_zurück sektion_anfang(".nicht_deklariert")

@@ -1,0 +1,16 @@
+# P2-T129: zwei C-Datensymbole mit unveraendertem Linknamen.
+struktur P2FontInfo:
+    glyphen: ptr[u8]
+    breite: u32
+
+extern "C" konstante p2_font_daten: [u8; 2]
+extern "C" konstante p2_font_info: P2FontInfo
+
+@nativ
+@einstieg
+funktion p2_t129_leseprobe() -> u32:
+    unsicher:
+        setze maske: u8 auf speicher_lesen(adresse_von(p2_font_daten) + 1, 1)
+        setze glyphen: u64 auf speicher_lesen(adresse_von(p2_font_info) + versatz_von(P2FontInfo, glyphen), 8)
+        setze glyphe: u8 auf speicher_lesen(glyphen, 1)
+        gib_zurück p2_font_info.breite + als(u32, maske) + als(u32, glyphe)

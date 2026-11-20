@@ -1,0 +1,7 @@
+bitfeld Klein: u8:
+    a: 0..2
+@nativ
+funktion bf_adresse_unzulaessig() -> void:
+    unsicher:
+        setze wert: Klein auf Klein(1)
+        adresse_von(wert.a)

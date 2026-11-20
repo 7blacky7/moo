@@ -1,0 +1,7 @@
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_abs_lokal")
+funktion tramp_abs_lokal() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code64\n.Ltramp_abs:\nmovabs $$.Ltramp_abs, %rax\nretq", clobber=[])

@@ -281,7 +281,7 @@ impl Bedarf {
             }
             Stmt::NativeConst { ty, value, .. } => {
                 self.typ(ty);
-                self.expr(value);
+                self.optional(value);
             }
             Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _) | Stmt::Throw(value, _)
             | Stmt::Expression(value, _) | Stmt::Defer(value, _) | Stmt::Expect(value, _)

@@ -1,0 +1,7 @@
+@nativ
+statisch ATOM_STAND: atom[u64] auf 0
+
+@nativ
+funktion verboten() -> u64:
+    unsicher:
+        gib_zurück ATOM_STAND

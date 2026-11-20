@@ -1,5 +1,4 @@
-//! Kontextuelle extern-C-Deklaration. Dieses Modul wird erst gemeinsam mit
-//! Stmt::ExternC und den Codegen-Diagnosen eingebunden.
+//! Kontextuelle extern-C-Deklarationen fuer Funktionen und konstante Daten.
 
 use super::*;
 
@@ -12,6 +11,9 @@ impl Parser {
                 message: "extern erwartet die ABI-Bezeichnung \"C\"".to_string(),
                 ..ParseError::bei(self.current())
             }),
+        }
+        if matches!(self.current_type(), TokenType::Const) {
+            return self.parse_extern_c_const(decorators);
         }
         self.eat(&TokenType::Func)?;
         let name = self.eat_identifier()?;
@@ -43,5 +45,29 @@ impl Parser {
         self.eat(&TokenType::ThinArrow)?;
         let result = self.parse_type()?;
         Ok(Stmt::ExternC { zeile: 0, name, params, result, decorators })
+    }
+
+    fn parse_extern_c_const(&mut self, decorators: Vec<Decorator>) -> Result<Stmt, ParseError> {
+        self.pos += 1; // konstante/const
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::Colon)?;
+        let previous_native = self.native_context;
+        self.native_context = true;
+        let ty = self.parse_type();
+        self.native_context = previous_native;
+        let ty = ty?;
+        if matches!(self.current_type(), TokenType::To | TokenType::Assign) {
+            return Err(ParseError {
+                message: format!("Externe C-Konstante '{name}' darf keinen Initialisierer haben"),
+                ..ParseError::bei(self.current())
+            });
+        }
+        if !matches!(self.current_type(), TokenType::Newline | TokenType::Dedent | TokenType::Eof) {
+            return Err(ParseError {
+                message: "Zeilenende nach externer C-Konstante erwartet".to_string(),
+                ..ParseError::bei(self.current())
+            });
+        }
+        Ok(Stmt::NativeConst { zeile: 0, name, ty, value: None, decorators })
     }
 }

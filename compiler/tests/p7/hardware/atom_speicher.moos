@@ -1,0 +1,25 @@
+# P10-T3: Statics, eingebettete Felder und typisierter Zeiger.
+struktur Ticketstand:
+    naechster: atom[u32]
+    dran: atom[u32]
+
+@nativ
+statisch ATOM_STAND: atom[u64] auf 41
+@nativ
+statisch TICKETS: Ticketstand auf Ticketstand(0, 0)
+
+@nativ
+funktion atom_speicher_laden() -> u64:
+    unsicher:
+        gib_zurück atom_laden(ATOM_STAND, ordnung=erwerben)
+
+@nativ
+funktion atom_speicher_ptr(ziel: ptr[atom[u64]]) -> u64:
+    unsicher:
+        gib_zurück atom_addieren(ziel, 1, ordnung=locker)
+
+@nativ
+funktion atom_speicher_felder(ziel: ptr[Ticketstand]) -> u32:
+    unsicher:
+        atom_speichern(ziel.dran, 1, ordnung=freigeben)
+        gib_zurück atom_addieren(TICKETS.naechster, 1, ordnung=locker)

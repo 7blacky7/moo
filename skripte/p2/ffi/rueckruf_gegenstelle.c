@@ -5,6 +5,7 @@
  * nicht von Moo gestarteten Thread. user_data ist fuer C opak (void*). */
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -134,6 +135,9 @@ static int32_t rr_reg_thread_adapter(int32_t x, void* raw) {
     return context->cb(context->ud, x);
 }
 int32_t rr_reg_fremdthread(RrRegistriert cb, void* ud, int32_t x) {
+    /* Der absichtliche abort() leert gepufferte Ausgabe nicht: Startmarker
+       vor dem Erzeugen des Fremdthreads als Testinstrumentierung sichern. */
+    fflush(stdout);
     RrRegistriertThread context = { cb, ud };
     return rr_auf_thread(rr_reg_thread_adapter, &context, x);
 }

@@ -1,0 +1,7 @@
+struktur Ticketstand:
+    dran: atom[u32]
+
+@nativ
+funktion verboten(ziel: ptr[Ticketstand]) -> void:
+    unsicher:
+        ziel.dran = 1

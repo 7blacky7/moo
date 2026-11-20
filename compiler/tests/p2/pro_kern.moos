@@ -1,0 +1,18 @@
+importiere pro_kern_lib
+
+funktion pro_arbeiter(wert):
+    unsicher:
+        setze vorher auf pro_lesen()
+        setze nachher auf pro_schreiben(wert)
+        gib_zurück [vorher, nachher, pro_lesen(), pro_adresse(), pro_kopie()]
+
+# Bewusster Selftest: ein unerwarteter nativer Fehler soll den Lauf abbrechen.
+unsicher:
+    zeige pro_schreiben(99)
+setze links auf starte(pro_arbeiter, 111)
+setze rechts auf starte(pro_arbeiter, 222)
+zeige links.warten()
+zeige rechts.warten()
+unsicher:
+    zeige pro_lesen()
+    zeige pro_adresse()

@@ -531,11 +531,14 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
     builder: &Builder<'ctx>,
     expr: &Expr,
     expected: NType,
-    slots: &HashMap<String, NSlot<'ctx>>,
+    slots: &impl ScalarBindings<'ctx>,
     failure: BasicBlock<'ctx>,
     fehler: NativeFehler<'_, 'ctx>,
     pure_functions: &HashMap<String, (FunctionValue<'ctx>, NSignature)>,
 ) -> Result<NValue<'ctx>, String> {
+    if slots.integer_only() && matches!(expected, NType::F32 | NType::F64) {
+        return Err(format!("Hardwarezugriff: {expected:?} ist kein Ganzzahltyp"));
+    }
     match expr {
         Expr::NativeNumber { text, .. } if matches!(expected, NType::F32 | NType::F64) => {
             let (value, underflow) = expected.float_literal(context, text, false)?;
@@ -545,18 +548,29 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             Ok(value)
         },
         Expr::NativeNumber { text, .. } => expected.integer_literal(context, text, false),
+        Expr::Boolean(_) if slots.integer_only() && expected != NType::Bool => {
+            Err(format!("Hardwarezugriff: Boolliteral hat Typ Bool, erwartet {expected:?}"))
+        }
         Expr::Boolean(value) if expected == NType::Bool => NValue::checked(
             context,
             expected,
             context.bool_type().const_int(u64::from(*value), false).into(),
         ),
         Expr::Identifier(name) => {
-            let slot = slots.get(name).copied()
+            let binding = slots.scalar_binding(name)
                 .ok_or_else(|| format!("Nativer Name '{name}' nicht gefunden"))?;
-            if slot.ty != expected {
-                return Err(format!("Nativer Name '{name}' hat Typ {:?}, erwartet {expected:?}", slot.ty));
+            let actual = binding.ty();
+            if actual != expected {
+                let message = match binding {
+                    ScalarBinding::Slot(_) => format!("Nativer Name '{name}' hat Typ {actual:?}, erwartet {expected:?}"),
+                    ScalarBinding::Argument(_) => format!("Hardwarezugriff: '{name}' hat nicht den Typ {expected:?}, erhalten {actual:?}"),
+                };
+                return Err(message);
             }
-            slot.load(context, builder, name)
+            match binding {
+                ScalarBinding::Slot(slot) => slot.load(context, builder, name),
+                ScalarBinding::Argument(arg) => NValue::checked(context, actual, arg.value),
+            }
         }
         // P2-T34: nicht liefert bool.
         Expr::UnaryOp { op: UnaryOpKind::Not, operand } => {
@@ -740,6 +754,17 @@ pub(crate) fn lower_nontrapping_expr<'ctx>(
             let rhs = lower_nontrapping_expr(context, builder, right, right_ty, slots, failure, fehler, pure_functions)?;
             crate::native_arithmetic::pruefung(context, builder, op, lhs, rhs)
         }
+        // P7-T22: Bei Hardwareoperanden gibt T(x) wie bisher den Ganzzahltyp vor.
+        Expr::FunctionCall { name, args, .. } if slots.integer_constructor(name).is_some() => {
+            let ty = slots.integer_constructor(name).ok_or("Hardwaretyp fehlt")?;
+            if ty != expected {
+                return Err(format!("Hardwarezugriff: {name}(...) liefert {ty:?}, erwartet ist {expected:?}"));
+            }
+            let [operand] = args.as_slice() else {
+                return Err(format!("Hardwarezugriff: {name}(...) erwartet genau ein Argument"));
+            };
+            lower_nontrapping_expr(context, builder, operand, ty, slots, failure, fehler, pure_functions)
+        }
         // P2-T34 / ADR §4: als(T, x) gepruefter Standardcast, als_wrap(T, x),
         // als_saettigend(T, x). Der Operand wird mit seinem eigenen Typ gesenkt.
         Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
@@ -836,7 +861,7 @@ fn is_literal(expr: &Expr) -> bool {
 fn operand_type<'ctx>(
     left: &Expr,
     right: &Expr,
-    slots: &HashMap<String, NSlot<'ctx>>,
+    slots: &impl ScalarBindings<'ctx>,
     pure_functions: &HashMap<String, (FunctionValue<'ctx>, NSignature)>,
 ) -> Option<NType> {
     match (pure_infer(left, slots, pure_functions), pure_infer(right, slots, pure_functions)) {
@@ -861,13 +886,13 @@ pub(crate) fn literal_paar_typ(l: NType, r: NType) -> NType {
 /// Ein Literal neben einem typisierten Operanden nimmt dessen Typ an.
 fn pure_infer<'ctx>(
     expr: &Expr,
-    slots: &HashMap<String, NSlot<'ctx>>,
+    slots: &impl ScalarBindings<'ctx>,
     pure_functions: &HashMap<String, (FunctionValue<'ctx>, NSignature)>,
 ) -> Option<NType> {
     match expr {
         Expr::NativeNumber { text, .. } => Some(literal_default_type(text)),
         Expr::Boolean(_) => Some(NType::Bool),
-        Expr::Identifier(name) => slots.get(name).map(|slot| slot.ty),
+        Expr::Identifier(name) => slots.scalar_binding(name).map(|binding| binding.ty()),
         Expr::UnaryOp { op: UnaryOpKind::Not, .. } => Some(NType::Bool),
         Expr::UnaryOp { operand, .. } => pure_infer(operand, slots, pure_functions),
         Expr::BinaryOp { op, left, right } => match op {
@@ -896,9 +921,43 @@ fn pure_infer<'ctx>(
                 return args.first().and_then(|a| pure_infer(a, slots, pure_functions))
                     .filter(|ty| matches!(ty, NType::F32 | NType::F64));
             }
-            pure_functions.get(name).and_then(|(_, signature)| signature.result)
+            slots.integer_constructor(name)
+                .or_else(|| pure_functions.get(name).and_then(|(_, signature)| signature.result))
         }
         _ => None,
+    }
+}
+
+pub(crate) enum ScalarBinding<'ctx> {
+    Slot(NSlot<'ctx>),
+    Argument(NValue<'ctx>),
+}
+
+impl ScalarBinding<'_> {
+    fn ty(&self) -> NType {
+        match self {
+            Self::Slot(slot) => slot.ty,
+            Self::Argument(arg) => arg.ty,
+        }
+    }
+}
+
+/// Der Skalarpfad liest lokale Slots oder direkt uebergebene SSA-Argumente.
+pub(crate) trait ScalarBindings<'ctx> {
+    fn scalar_binding(&self, name: &str) -> Option<ScalarBinding<'ctx>>;
+
+    fn integer_constructor(&self, _name: &str) -> Option<NType> {
+        None
+    }
+
+    fn integer_only(&self) -> bool {
+        false
+    }
+}
+
+impl<'ctx> ScalarBindings<'ctx> for HashMap<String, NSlot<'ctx>> {
+    fn scalar_binding(&self, name: &str) -> Option<ScalarBinding<'ctx>> {
+        self.get(name).copied().map(ScalarBinding::Slot)
     }
 }
 
@@ -1018,7 +1077,7 @@ pub(crate) fn zyklische_native_funktionen(statements: &[Stmt]) -> std::collectio
             match stmt {
                 Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
                 | Stmt::CompoundAssignment { value, .. } | Stmt::RawDataU32 { value, .. }
-                | Stmt::NativeConst { value, .. } | Stmt::Show(value, _) | Stmt::Throw(value, _)
+                | Stmt::NativeConst { value: Some(value), .. } | Stmt::Show(value, _) | Stmt::Throw(value, _)
                 | Stmt::Expression(value, _) | Stmt::Defer(value, _) | Stmt::Expect(value, _)
                 | Stmt::Return(Some(value), _)
                 | Stmt::Precondition { condition: value, .. } | Stmt::Postcondition { condition: value, .. } =>
@@ -1069,7 +1128,7 @@ pub(crate) fn zyklische_native_funktionen(statements: &[Stmt]) -> std::collectio
                     stmt_aufrufe(body, aufrufe),
                 Stmt::Export(inner, _) => stmt_aufrufe(std::slice::from_ref(inner.as_ref()), aufrufe),
                 Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) | Stmt::ExternC { .. }
-                | Stmt::StructDef { .. } | Stmt::InterfaceDef { .. } | Stmt::Import { .. }
+                | Stmt::NativeConst { value: None, .. } | Stmt::StructDef { .. } | Stmt::InterfaceDef { .. } | Stmt::Import { .. }
                 | Stmt::Global(..) | Stmt::DataClassDef { .. } => {}
             }
         }

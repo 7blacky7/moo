@@ -1,0 +1,15 @@
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_doppelt")
+funktion tramp_eins() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="retq", clobber=[])
+
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_doppelt")
+funktion tramp_zwei() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="retq", clobber=[])

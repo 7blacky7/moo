@@ -52,6 +52,7 @@ pub(crate) struct NativeStructLayout<'ctx> {
     pub offsets: Vec<u64>,
     /// Original fields are retained; canonical identities are resolved later.
     pub fields: Vec<(String, TypeRef)>,
+    pub bitfelder: Vec<crate::ast::BitfeldBereich>,
 }
 
 /// Layout wird ausschließlich aus den Daten der Ziel-TargetMachine ermittelt.
@@ -113,7 +114,7 @@ pub(crate) fn native_struct_layout<'ctx>(
         }
         offsets.push(offset);
     }
-    Ok(NativeStructLayout { llvm_type, size, alignment, offsets, fields: Vec::new() })
+    Ok(NativeStructLayout { llvm_type, size, alignment, offsets, fields: Vec::new(), bitfelder: Vec::new() })
 }
 
 /// Registry owned by one compiler/module. A name becomes usable only after its
@@ -253,6 +254,8 @@ fn validate_pointer_target(ty: &TypeRef, names: &HashSet<String>) -> Result<(), 
         TypeKind::Name(name) if name == "bool" => Err(crate::native_type_id::BOOL_ZEIGERZIEL.into()),
         TypeKind::Name(name) if name == "void" || NType::from_name(name).is_some() || names.contains(name) => Ok(()),
         TypeKind::Name(name) => Err(format!("Unbekannter Pointer-Zieltyp '{name}'")),
+        TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
+            crate::native_type_id::atom_element(ty).map(|_| ()),
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
             validate_pointer_target(&args[0], names),
         TypeKind::Function { params, return_type, .. } => {
@@ -288,6 +291,8 @@ fn collect_value_dependencies(
         TypeKind::Name(name) if names.contains(name) => { dependencies.insert(name.clone()); Ok(()) },
         TypeKind::Name(name) => Err(format!("Unbekannter Strukturfeldtyp '{name}'")),
         TypeKind::Array { element, .. } => collect_value_dependencies(element, names, dependencies),
+        TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
+            crate::native_type_id::atom_element(ty).map(|_| ()),
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
             validate_pointer_target(&args[0], names),
         _ => Err("Strukturfeldtyp wird noch nicht unterstützt".into()),
@@ -407,6 +412,23 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         Ok(result)
     }
 
+    /// Prueft eingebetteten Speicher. Zeiger sind keine eingebetteten Werte.
+    pub(crate) fn hat_atom_speicher(&self, ty: &TypeRef) -> bool {
+        self.findet_atom_element(ty, &|_| true)
+    }
+
+    fn findet_atom_element(&self, ty: &TypeRef, pruefe: &impl Fn(&TypeRef) -> bool) -> bool {
+        match &ty.kind {
+            TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
+                crate::native_type_id::atom_element(ty).is_ok_and(pruefe),
+            TypeKind::Name(name) if NType::from_name(name).is_none() =>
+                self.layout(name).is_some_and(|layout| layout.fields.iter()
+                    .any(|(_, field)| self.findet_atom_element(field, pruefe))),
+            TypeKind::Array { element, .. } => self.findet_atom_element(element, pruefe),
+            _ => false,
+        }
+    }
+
     pub(crate) fn field_type(
         &self, context: &'ctx Context, target: &TargetData, ty: &TypeRef,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
@@ -418,6 +440,8 @@ impl<'ctx> NativeStructRegistry<'ctx> {
                 self.layouts.get(name).map(|layout| layout.llvm_type.into())
                     .ok_or_else(|| format!("Unbekannter Strukturfeldtyp '{name}'"))
             }
+            TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
+                self.field_type(context, target, crate::native_type_id::atom_element(ty)?),
             TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 => {
                 validate_pointer_target(&args[0], &self.visible_names)?;
                 Ok(context.ptr_type(AddressSpace::default()).into())
@@ -493,6 +517,34 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         Ok(())
     }
 
+    pub(crate) fn register_bitfelder(&mut self, name: &str, bereiche: &[crate::ast::BitfeldBereich]) -> Result<(), String> {
+        if bereiche.is_empty() { return Ok(()); }
+        let layout = self.layouts.get_mut(name).ok_or("Bitfeld-Strukturlayout fehlt")?;
+        if layout.fields.len() != 1 || layout.fields[0].0 != "__bits" {
+            return Err(format!("Bitfeld '{name}': internes Basiswort fehlt"));
+        }
+        let bits = layout.llvm_type.get_field_types()[0].into_int_type().get_bit_width();
+        let mut belegt = 0u64;
+        let mut namen = HashSet::new();
+        for feld in bereiche {
+            if feld.breite == 0 || feld.breite > 64 || feld.anfang + feld.breite > bits {
+                return Err(crate::diagnose::vormerken("M-C000", feld.zeile,
+                    format!("Bitfeld '{name}.{}': Bereich ueberschreitet die Basisbreite {bits}", feld.name)));
+            }
+            if !namen.insert(&feld.name) {
+                return Err(format!("Bitfeld '{name}': Feld '{}' ist doppelt", feld.name));
+            }
+            let maske = feld.maximum() << feld.anfang;
+            if belegt & maske != 0 {
+                return Err(crate::diagnose::vormerken("M-C000", feld.zeile,
+                    format!("Bitfeld '{name}.{}': Bereich ueberlappt einen anderen Bereich", feld.name)));
+            }
+            belegt |= maske;
+        }
+        layout.bitfelder = bereiche.to_vec();
+        Ok(())
+    }
+
     pub(crate) fn register(
         &mut self,
         context: &'ctx Context,
@@ -525,6 +577,11 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         for (field_name, ty) in fields {
             if !seen.insert(field_name.as_str()) {
                 return Err(format!("Struktur '{name}': Feld '{field_name}' ist doppelt"));
+            }
+            if packed && self.findet_atom_element(ty, &|element| {
+                NType::from_type_ref(element).is_ok_and(|t| target.get_abi_alignment(&t.llvm_type(context)) > 1)
+            }) {
+                return Err(format!("Struktur '{name}.{field_name}': atom[T] braucht natuerliche Ausrichtung; @gepackt ist hier unzulaessig"));
             }
             let field = self.field_type(context, target, ty)?;
             let align = if packed { 1 } else { u64::from(target.get_abi_alignment(&field)) };

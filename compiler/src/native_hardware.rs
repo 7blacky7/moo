@@ -5,7 +5,7 @@
 //! - `volatile_lesen(p)` / `volatile_lesen(p, index)` (EN `volatile_read`):
 //!   volatiler Load mit exakt dem Zeigerzieltyp von `p: ptr[T]`, T ein
 //!   Integer-Registertyp (u8..u64, i8..i64). Index wie beim Zeigerlesen:
-//!   nichtnegatives Literal oder u32-Parameter (64-Bit-Ziel).
+//!   nichtnegatives Literal oder u32-Ausdruck (64-Bit-Ziel).
 //! - `volatile_schreiben(p, wert)` / `volatile_schreiben(p, index, wert)`
 //!   (EN `volatile_write`): `wert` muss exakt den Typ T haben.
 //!   Vertrag des Aufrufers: Adresse natuerlich ausgerichtet (ABI-Alignment
@@ -18,6 +18,7 @@
 //!   `port_lese`/`port_in` (u8), `port_lese16`/`port_in16`, `port_lese32`/
 //!   `port_in32`, `port_schreibe`/`port_out`, `port_schreibe16`/`port_out16`,
 //!   `port_schreibe32`/`port_out32`; Port ist u16, Wert exakt u8/u16/u32.
+//!   Skalare Operanden koennen im erforderten Typ berechnet werden.
 //! Volatile ersetzt weder Barriere noch Atomics: die Reihenfolge zwischen
 //! Geraeteregistern und DMA-Speicher legt der Aufrufer mit Barrieren fest.
 //! - P7-T4 (5A) Inline-Assembler, nur mit benannten Argumenten:
@@ -30,6 +31,8 @@
 //!   ein woertliches `$` als `$$`. Immer sideeffect (volatile).
 //!   Freie Strings ohne Constraints/Clobber sind ein Compilefehler.
 
+use std::collections::HashMap;
+
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::targets::TargetData;
@@ -37,7 +40,10 @@ use inkwell::types::{BasicMetadataTypeEnum, BasicType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, PointerValue};
 
 use crate::ast::{Expr, Stmt, TypeKind, TypeRef};
-use crate::codegen_native::{NType, NValue, NativeParameter, NativePointerSignature};
+use crate::codegen_native::{
+    lower_nontrapping_expr, NType, NValue, NativeFehler, NativeParameter, NativePointerSignature,
+    ScalarBinding, ScalarBindings,
+};
 
 /// Registerwrites lesen das Geraet nie implizit: W1C schreibt die Maske,
 /// Write0 verwendet einen ausdruecklich uebergebenen Snapshot.
@@ -230,6 +236,110 @@ pub(crate) fn check_operands(code: &str, count: usize) -> Result<(), String> {
     Ok(())
 }
 
+
+pub(crate) const TRAMPOLIN_ATTR: &str = "moo-trampoline-section";
+
+pub(crate) fn sektion_symbol(name: &str, ende: bool) -> String {
+    let hex: String = name.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+    format!("__moo_sektion_{hex}_{}", if ende { "ende" } else { "anfang" })
+}
+
+pub(crate) fn deklariere_trampolin<'ctx>(
+    context: &'ctx Context, module: &inkwell::module::Module<'ctx>,
+    function: FunctionValue<'ctx>, decorators: &[crate::ast::Decorator],
+) -> Result<(), String> {
+    use inkwell::attributes::AttributeLoc;
+    let marker: Vec<_> = decorators.iter().filter(|d| matches!(d.name.as_str(), "verschiebbar" | "relocatable")).collect();
+    if marker.is_empty() { return Ok(()); }
+    if marker.len() != 1 || !marker[0].args.is_empty()
+        || !decorators.iter().any(|d| matches!(d.name.as_str(), "nackt" | "naked"))
+    {
+        return Err("@verschiebbar verlangt genau einen argumentlosen Decorator an @nativ @nackt".into());
+    }
+    let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+    if !matches!(triple.as_str(), "x86_64-unknown-none" | "x86_64-unknown-uefi") {
+        return Err("@verschiebbar ist derzeit nur fuer x86_64 Bare/UEFI implementiert".into());
+    }
+    let sections: Vec<_> = decorators.iter().filter(|d| matches!(d.name.as_str(), "sektion" | "section")).collect();
+    let section = match sections.as_slice() {
+        [d] => match d.args.as_slice() {
+            [crate::ast::DecoratorArg::Text(s)] if !s.is_empty() => s,
+            _ => return Err("@verschiebbar verlangt @sektion mit einem nichtleeren Textliteral".into()),
+        },
+        _ => return Err("@verschiebbar verlangt genau eine eigene @sektion".into()),
+    };
+    for ende in [false, true] {
+        let symbol = sektion_symbol(section, ende);
+        if module.get_global(&symbol).is_some() || module.get_function(&symbol).is_some() {
+            return Err(format!("Verschiebbare Sektion '{section}' ist bereits belegt (genau ein Trampolin je Sektion)"));
+        }
+        module.add_global(context.i8_type(), None, &symbol);
+    }
+    function.add_attribute(AttributeLoc::Function, context.create_string_attribute(TRAMPOLIN_ATTR, section));
+    Ok(())
+}
+
+/// Begrenzte AT&T-Oberflaeche: Symbolfixups duerfen keine alte Linkadresse in
+/// den kopierten Bytes hinterlassen. Keine Makro-/Alias-/Sektionsumgehungen.
+fn pruefe_trampolin(code: &str) -> Result<(), String> {
+    let mut zeilen = Vec::new();
+    let mut lokal = std::collections::HashSet::new();
+    for line in code.lines().map(|l| l.split('#').next().unwrap_or("")).flat_map(|l| l.split(';')) {
+        if line.bytes().any(|b| b == 34 || b == 39) {
+            return Err("Verschiebbarer Assembler: zitierte Symbole/Zeichenketten nicht erlaubt; numerische Bytes verwenden".into());
+        }
+        let mut line = line.split('#').next().unwrap_or("").trim();
+        while let Some((label, rest)) = line.split_once(':') {
+            let label = label.trim();
+            if label.is_empty() || label.contains(char::is_whitespace) || label.contains('%') { break; }
+            if !(label.starts_with(".L") || label.bytes().all(|b| b.is_ascii_digit())) {
+                return Err(format!("Verschiebbarer Assembler: nur lokale Marken, nicht '{label}:'"));
+            }
+            lokal.insert(label.to_string());
+            line = rest.trim();
+        }
+        if !line.is_empty() { zeilen.push(line.to_string()); }
+    }
+    for line in zeilen {
+        let mut words = line.splitn(2, char::is_whitespace);
+        let opcode = words.next().unwrap_or("");
+        let operand = words.next().unwrap_or("").trim();
+        if opcode.starts_with('.') && !matches!(opcode,
+            ".code16" | ".code32" | ".code64" | ".byte" | ".word" | ".short" | ".long" | ".quad"
+            | ".p2align" | ".balign" | ".align" | ".zero" | ".space" | ".fill")
+        {
+            return Err(format!("Verschiebbarer Assembler: Direktive '{opcode}' nicht erlaubt (keine Sektionswechsel, Makros, Includes oder Symbolaliase)"));
+        }
+        let bytes = operand.as_bytes();
+        let mut symbols = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i].is_ascii_digit() {
+                i += 1;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') { i += 1; }
+            } else if bytes[i].is_ascii_alphabetic() || matches!(bytes[i], b'.' | b'_') {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'.' | b'_')) { i += 1; }
+                if start == 0 || bytes[start - 1] != b'%' { symbols.push(&operand[start..i]); }
+            } else if bytes[i] >= 128 {
+                return Err("Verschiebbarer Assembler: nur ASCII-Bezeichner innerhalb des Assemblertexts".into());
+            } else { i += 1; }
+        }
+        if symbols.is_empty() { continue; }
+        let first: String = operand.split(',').next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
+        let relative = symbols.len() == 1 && lokal.contains(symbols[0])
+            && ((opcode.starts_with('j') || opcode.starts_with("call") || opcode.starts_with("loop")) && first == symbols[0]
+                || first == format!("{}(%rip)", symbols[0]) || first == format!("{}(%eip)", symbols[0]));
+        let difference = symbols.len() == 2 && symbols.iter().all(|s| lokal.contains(*s))
+            && first.trim_start_matches("$$") == format!("{}-{}", symbols[0], symbols[1]);
+        if !relative && !difference {
+            return Err(format!("Verschiebbarer Assembler: absoluter oder externer Symbolbezug '{}' ist nicht erlaubt; lokale relative Sprungmarken, RIP-relative Zugriffe oder die Differenz zweier lokaler Marken verwenden", symbols[0]));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct AsmSpec<'e> {
     pub(crate) target: String,
     pub(crate) code: String,
@@ -293,6 +403,25 @@ struct Emitter<'a, 'ctx> {
     builder: inkwell::builder::Builder<'ctx>,
 }
 
+impl<'ctx> ScalarBindings<'ctx> for Emitter<'_, 'ctx> {
+    fn scalar_binding(&self, name: &str) -> Option<ScalarBinding<'ctx>> {
+        let (index, param) = self.param(name).ok()?;
+        let NativeParameter::Scalar(ty) = param else {
+            return None;
+        };
+        let value = self.argument(index).ok()?;
+        Some(ScalarBinding::Argument(NValue { ty: *ty, value }))
+    }
+
+    fn integer_constructor(&self, name: &str) -> Option<NType> {
+        NType::from_name(name).filter(|ty| is_integer(*ty))
+    }
+
+    fn integer_only(&self) -> bool {
+        true
+    }
+}
+
 impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn param(&self, name: &str) -> Result<(usize, &'a NativeParameter), String> {
         let index = self.param_names.iter().position(|candidate| candidate == name)
@@ -304,110 +433,19 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         self.function.get_nth_param(index as u32).ok_or_else(|| "Nativer Parameter fehlt".to_string())
     }
 
-    /// Skalarer Operand mit exakt erwartetem Typ: Parameter oder Literal.
+    /// Port, Wert oder Maske mit exakt erfordertem Ganzzahltyp.
     fn scalar(&self, expr: &Expr, expected: NType) -> Result<IntValue<'ctx>, String> {
-        match expr {
-            Expr::Identifier(name) => {
-                let (index, param) = self.param(name)?;
-                if !matches!(param, NativeParameter::Scalar(ty) if *ty == expected) {
-                    return Err(format!("Hardwarezugriff: '{name}' hat nicht den Typ {expected:?}"));
-                }
-                match self.argument(index)? {
-                    BasicValueEnum::IntValue(value) => Ok(value),
-                    _ => Err("Hardwarezugriff: Parameter ist keine Ganzzahl".into()),
-                }
-            }
-            Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, false)?.value.into_int_value()),
-            Expr::UnaryOp { op: crate::ast::UnaryOpKind::Neg, operand } => match operand.as_ref() {
-                Expr::NativeNumber { text, .. } => Ok(expected.integer_literal(self.context, text, true)?.value.into_int_value()),
-                _ => Err("Hardwarezugriff: negatives Operand muss ein Integerliteral sein".into()),
-            },
-            Expr::Boolean(value) if expected == NType::Bool =>
-                Ok(self.context.bool_type().const_int(u64::from(*value), false)),
-            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::bit_art(name).is_some() => {
-                use crate::native_arithmetic::BitArt;
-                let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
-                if args.len() != art.aritaet() {
-                    return Err(format!("{name}(...) erwartet {} Argumente", art.aritaet()));
-                }
-                let ty = if art.liefert_bool() {
-                    if expected != NType::Bool { return Err(format!("{name}(...) liefert bool")); }
-                    self.scalar_type(&args[0])?
-                } else { expected };
-                let mut values = Vec::with_capacity(args.len());
-                for (i, arg) in args.iter().enumerate() {
-                    let target = if art == BitArt::Auswahl && i == 0 { NType::Bool }
-                        else if matches!(art, BitArt::Links | BitArt::Rechts) && i == 1 {
-                            self.scalar_type(arg)?
-                        } else { ty };
-                    values.push(NValue::checked(self.context, target, self.scalar(arg, target)?.into())?);
-                }
-                Ok(crate::native_arithmetic::bit_operation(self.context, &self.builder, self.module, art, &values)?
-                    .value.into_int_value())
-            }
-            // P7-T22: Typumwandlung wie im ADR, z. B. port_lese32(u16(0xCFC)).
-            Expr::FunctionCall { name, args, .. } if NType::from_name(name).is_some_and(is_integer) => {
-                let ty = NType::from_name(name).ok_or("Typname fehlt")?;
-                if ty != expected {
-                    return Err(format!("Hardwarezugriff: {name}(...) liefert {ty:?}, erwartet ist {expected:?}"));
-                }
-                match args.as_slice() {
-                    [inner] => self.scalar(inner, expected),
-                    _ => Err(format!("Hardwarezugriff: {name}(...) erwartet genau ein Argument")),
-                }
-            }
-            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::cast_art(name).is_some() => {
-                let [Expr::Identifier(ziel), operand] = args.as_slice() else {
-                    return Err(format!("{name}(Typ, Wert) erwartet Typname und Wert"));
-                };
-                let target = NType::from_name(ziel).filter(|ty| is_integer(*ty))
-                    .ok_or_else(|| format!("Hardwarezugriff: '{ziel}' ist kein Ganzzahltyp"))?;
-                if target != expected {
-                    return Err(format!("Hardwarezugriff: {name}({ziel}, ...) liefert {target:?}, erwartet ist {expected:?}"));
-                }
-                let source = self.scalar_type(operand)?;
-                let value = NValue { ty: source, value: self.scalar(operand, source)?.into() };
-                let art = crate::native_arithmetic::cast_art(name).ok_or("Cast-Art fehlt")?;
-                crate::native_arithmetic::pruefe_konstanten_cast(art, &value, target)?;
-                let current = self.builder.get_insert_block().ok_or("Hardwareblock fehlt")?;
-                let failure = if crate::native_arithmetic::cast_kann_fehlen(art, source, target) {
-                    let block = self.context.append_basic_block(self.function, "hw.cast.fehler");
-                    self.builder.position_at_end(block);
-                    crate::native_cleanup::before_abort(self.context, &self.builder, self.module)?;
-                    let trap = self.module.get_function("llvm.trap").unwrap_or_else(||
-                        self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None));
-                    self.builder.build_call(trap, &[], "").map_err(|e| e.to_string())?;
-                    self.builder.build_unreachable().map_err(|e| e.to_string())?;
-                    self.builder.position_at_end(current);
-                    block
-                } else { current };
-                Ok(crate::native_arithmetic::cast(self.context, &self.builder, self.module, art, value, target, failure)?
-                    .value.into_int_value())
-            }
-            _ => Err(format!("Hardwarezugriff: Operand muss ein Parameter vom Typ {expected:?}, ein Integerliteral oder eine Umwandlung wie {}(0x10) sein", format!("{expected:?}").to_lowercase())),
-        }
-    }
-
-    fn scalar_type(&self, expr: &Expr) -> Result<NType, String> {
-        match expr {
-            Expr::Identifier(name) => match self.param(name)?.1 {
-                NativeParameter::Scalar(ty) if is_integer(*ty) => Ok(*ty),
-                _ => Err("Hardwarecast verlangt einen Ganzzahloperanden".into()),
-            },
-            Expr::NativeNumber { text, .. } => Ok(crate::codegen_native::literal_default_type(text)),
-            Expr::UnaryOp { operand, .. } => self.scalar_type(operand),
-            Expr::FunctionCall { name, args, .. } if crate::native_arithmetic::bit_art(name).is_some() => {
-                let art = crate::native_arithmetic::bit_art(name).ok_or("Bitoperationsart fehlt")?;
-                if art.liefert_bool() { Ok(NType::Bool) }
-                else { self.scalar_type(args.get(art.daten_index()).ok_or("Bitoperation: Operand fehlt")?) }
-            }
-            Expr::FunctionCall { name, args, .. } => NType::from_name(name)
-                .or_else(|| if crate::native_arithmetic::cast_art(name).is_some() {
-                    match args.first() { Some(Expr::Identifier(ty)) => NType::from_name(ty), _ => None }
-                } else { None })
-                .ok_or_else(|| "Hardwarecast: Quelltyp nicht bestimmbar".into()),
-            _ => Err("Hardwarecast: Quelltyp nicht bestimmbar".into()),
-        }
+        let failure = self.builder.get_insert_block().ok_or("Hardwareblock fehlt")?;
+        let fehler = NativeFehler {
+            module: self.module,
+            funktion: self.function.get_name().to_str().map_err(|e| e.to_string())?,
+            trap: true,
+            abbruch: false,
+        };
+        let operand = lower_nontrapping_expr(
+            self.context, &self.builder, expr, expected, self, failure, fehler, &HashMap::new(),
+        )?;
+        Ok(operand.value.into_int_value())
     }
 
     /// Zeiger plus optionaler Index -> (Elementzeiger, Zieltyp, Quelltyp).
@@ -450,14 +488,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 value
             }
-            Expr::Identifier(_) => {
+            _ => {
                 if index_type.get_bit_width() != 64 {
                     return Err("Variabler Hardwareindex benötigt ein 64-Bit-Ziel".into());
                 }
                 let value = self.scalar(index, NType::U32)?;
                 self.builder.build_int_z_extend(value, index_type, "hw.index").map_err(|e| e.to_string())?
             }
-            _ => return Err("Hardwareindex benötigt ein nichtnegatives Integerliteral oder einen u32-Parameter".into()),
         };
         // Nicht inbounds: Gueltigkeit und Bereich liegen beim unsicheren Aufrufer.
         let element = unsafe {
@@ -767,6 +804,21 @@ pub(crate) fn emit_hardware_function<'ctx>(
     // kein ret: Ruecksprung bzw. Nichtrueckkehr liegt beim Assemblercode.
     let naked_kind = inkwell::attributes::Attribute::get_named_enum_kind_id("naked");
     if function.get_enum_attribute(inkwell::attributes::AttributeLoc::Function, naked_kind).is_some() {
+        let sektion = function.get_string_attribute(inkwell::attributes::AttributeLoc::Function, TRAMPOLIN_ATTR)
+            .map(|a| a.get_string_value().to_string_lossy().into_owned());
+        if let Some(section) = &sektion {
+            let mut code = String::new();
+            for stmt in inner {
+                let Some((Intrinsic::Asm, args, false)) = intrinsic_stmt(stmt) else {
+                    return Err("@verschiebbar erlaubt nur assembler(...)-Anweisungen".into());
+                };
+                code.push_str(&AsmSpec::parse(args)?.code);
+                code.push('\n');
+            }
+            pruefe_trampolin(&code)?;
+            let symbol = sektion_symbol(section, false);
+            emitter.asm_call(&format!(".code64\n.globl {symbol}\n{symbol}:"), "", None, &[])?;
+        }
         for stmt in inner {
             match intrinsic_stmt(stmt) {
                 Some((Intrinsic::Asm, args, false)) => {
@@ -778,6 +830,10 @@ pub(crate) fn emit_hardware_function<'ctx>(
                 }
                 _ => return Err("@nackt erlaubt nur assembler(...)-Anweisungen (kein gib_zurück, keine anderen Intrinsics)".into()),
             }
+        }
+        if let Some(section) = sektion {
+            let symbol = sektion_symbol(&section, true);
+            emitter.asm_call(&format!(".code64\n.globl {symbol}\n{symbol}:"), "", None, &[])?;
         }
         emitter.builder.build_unreachable().map_err(|e| e.to_string())?;
         return Ok(());

@@ -540,11 +540,15 @@ impl Parser {
                             Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
                             Some(TokenType::Colon)) => self.parse_struct_def(vec![]),
+            TokenType::Identifier(kw) if kw == "bitfeld"
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
+                && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type), Some(TokenType::Colon)) =>
+                    self.parse_bitfeld(vec![]),
             TokenType::Identifier(kw) if kw == "extern"
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::String(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
-                            Some(TokenType::Func)) => self.parse_extern_c(vec![]),
+                            Some(TokenType::Func | TokenType::Const)) => self.parse_extern_c(vec![]),
             // P2-T114 Phase C: Soft-Keyword `geteilt` (P2-T119: EN `shared`) nur
             // direkt vor `konstante`/`setze`; sonst bleibt es ein normaler Name.
             TokenType::Identifier(kw) if (kw == "geteilt" || kw == "shared")
@@ -1075,6 +1079,9 @@ impl Parser {
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "struktur" || name == "struct") {
             return self.parse_struct_def(decorators);
         }
+        if matches!(self.current_type(), TokenType::Identifier(name) if name == "bitfeld") {
+            return self.parse_bitfeld(decorators);
+        }
         // P011-A3: @rohdaten_u32/@rawdata_u32 + konstante -> reines Daten-Global
         if matches!(self.current_type(), TokenType::Const)
             && decorators.iter().any(|d| d.name == "rohdaten_u32" || d.name == "rawdata_u32")
@@ -1107,14 +1114,14 @@ impl Parser {
             })();
             self.native_context = previous_native;
             let (ty, value) = parsed?;
-            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value, decorators });
+            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value: Some(value), decorators });
         }
         // P7-T6: @nativ statisch NAME: T auf wert — beschreibbarer statischer
         // Speicher (.data/.bss) fuer Kernel-Stack, GDT, Seitentabellen, Puffer.
         // Gleiche Form wie die native Konstante; das Merkmal traegt ein
         // internes Decorator "statisch" (Auswertung in native_const.rs).
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "statisch" || name == "static")
-            && decorators.iter().any(|d| d.name == "nativ" || d.name == "native")
+            && decorators.iter().any(|d| matches!(d.name.as_str(), "nativ" | "native" | "pro_kern"))
             && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
         {
             self.pos += 1; // statisch/static
@@ -1135,7 +1142,7 @@ impl Parser {
             let (ty, value) = parsed?;
             let mut decorators = decorators;
             decorators.push(crate::ast::Decorator { name: "statisch".to_string(), args: Vec::new() });
-            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value, decorators });
+            return Ok(Stmt::NativeConst { zeile: 0, name, ty, value: Some(value), decorators });
         }
         if matches!(self.current_type(), TokenType::Identifier(name) if name == "extern") {
             return self.parse_extern_c(decorators);
@@ -1186,6 +1193,59 @@ impl Parser {
         result
     }
 
+    fn parse_bitfeld(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
+        self.pos += 1;
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::Colon)?;
+        let basis = self.parse_type()?;
+        if !matches!(&basis.kind, crate::ast::TypeKind::Name(n) if matches!(n.as_str(), "u8" | "u16" | "u32" | "u64")) {
+            return Err(ParseError { message: "bitfeld braucht u8, u16, u32 oder u64 als Basis".into(),
+                ..ParseError::bei(self.current()) });
+        }
+        self.eat(&TokenType::Colon)?;
+        self.skip_newlines();
+        self.eat(&TokenType::Indent)?;
+        let mut bitfelder = Vec::new();
+        loop {
+            self.skip_newlines();
+            if matches!(self.current_type(), TokenType::Dedent) { self.pos += 1; break; }
+            let zeile = self.current().line;
+            let feld = self.eat_identifier()?;
+            self.eat(&TokenType::Colon)?;
+            let anfang = self.parse_bitposition()?;
+            let ende = if matches!(self.current_type(), TokenType::Range) {
+                self.pos += 1;
+                self.parse_bitposition()?
+            } else { anfang };
+            if ende < anfang {
+                return Err(ParseError { message: format!("Bitbereich {feld}: Ende liegt vor Anfang"),
+                    ..ParseError::bei(self.current()) });
+            }
+            bitfelder.push(crate::ast::BitfeldBereich { name: feld, anfang, breite: ende - anfang + 1, zeile });
+            if !matches!(self.current_type(), TokenType::Newline | TokenType::Dedent | TokenType::Eof) {
+                return Err(ParseError { message: "Zeilenende nach Bitbereich erwartet".into(),
+                    ..ParseError::bei(self.current()) });
+            }
+        }
+        if bitfelder.is_empty() {
+            return Err(ParseError { message: "bitfeld braucht mindestens einen benannten Bereich".into(),
+                ..ParseError::bei(self.current()) });
+        }
+        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder })
+    }
+
+    fn parse_bitposition(&mut self) -> Result<u32, ParseError> {
+        match self.current_type() {
+            TokenType::Number(n) if n.is_finite() && *n >= 0.0 && *n <= 63.0 && n.fract() == 0.0 => {
+                let value = *n as u32;
+                self.pos += 1;
+                Ok(value)
+            }
+            _ => Err(ParseError { message: "Bitposition muss eine ganze Zahl von 0 bis 63 sein".into(),
+                ..ParseError::bei(self.current()) }),
+        }
+    }
+
     fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
         self.pos += 1; // kontextuelles struktur/struct
         let name = self.eat_identifier()?;
@@ -1194,7 +1254,7 @@ impl Parser {
         if decorators.iter().any(|d| d.name == "opak" || d.name == "opaque")
             && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
         {
-            return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators });
+            return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators, bitfelder: Vec::new() });
         }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
@@ -1225,7 +1285,7 @@ impl Parser {
                     }
                 }
             }
-            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators })
+            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new() })
         })();
         self.native_context = previous_native;
         result
@@ -1921,13 +1981,38 @@ impl Parser {
     }
 
     fn parse_args_list(&mut self) -> Result<Vec<Expr>, ParseError> {
+        self.parse_call_args(false)
+    }
+
+    fn parse_call_args(&mut self, named_tail: bool) -> Result<Vec<Expr>, ParseError> {
         let mut args = Vec::new();
-        if !matches!(self.current_type(), TokenType::RParen) {
-            args.push(self.parse_expression()?);
-            while matches!(self.current_type(), TokenType::Comma) {
-                self.pos += 1;
-                args.push(self.parse_expression()?);
+        if matches!(self.current_type(), TokenType::RParen) {
+            return Ok(args);
+        }
+        loop {
+            if named_tail && matches!(self.current_type(), TokenType::Identifier(_) | TokenType::Order)
+                && self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.token_type, TokenType::Assign))
+            {
+                let mut pairs = Vec::new();
+                loop {
+                    // Das Query-Schluesselwort ist hier der englische Optionsname.
+                    let key = if matches!(self.current_type(), TokenType::Order) {
+                        self.pos += 1;
+                        "order".to_string()
+                    } else {
+                        self.eat_identifier()?
+                    };
+                    self.eat(&TokenType::Assign)?;
+                    pairs.push((Expr::String(key), self.parse_expression()?));
+                    if !matches!(self.current_type(), TokenType::Comma) { break; }
+                    self.pos += 1;
+                }
+                args.push(Expr::Dict(pairs));
+                break;
             }
+            args.push(self.parse_expression()?);
+            if !matches!(self.current_type(), TokenType::Comma) { break; }
+            self.pos += 1;
         }
         Ok(args)
     }
@@ -2124,23 +2209,10 @@ impl Parser {
                 }
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
-                    // P7-T4 (5A): assembler(schluessel=wert, ...) in @nativ als ein Dict-Argument.
-                    let named_asm = name == "assembler" && self.native_context
-                        && matches!(self.current_type(), TokenType::Identifier(_))
-                        && self.tokens.get(self.pos + 1).is_some_and(|t| matches!(t.token_type, TokenType::Assign));
-                    let args = if named_asm {
-                        let mut pairs = Vec::new();
-                        loop {
-                            let key = self.eat_identifier()?;
-                            self.eat(&TokenType::Assign)?;
-                            pairs.push((Expr::String(key), self.parse_expression()?));
-                            if !matches!(self.current_type(), TokenType::Comma) { break; }
-                            self.pos += 1;
-                        }
-                        vec![Expr::Dict(pairs)]
-                    } else {
-                        self.parse_args_list()?
-                    };
+                    // Native Optionen: assembler und Atomics erhalten die benannten Argumente als Dict.
+                    let named_tail = self.native_context
+                        && (name == "assembler" || crate::native_system::atom_art(&name).is_some());
+                    let args = self.parse_call_args(named_tail)?;
                     self.eat(&TokenType::RParen)?;
                     Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {

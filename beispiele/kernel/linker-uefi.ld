@@ -45,6 +45,15 @@ SECTIONS
         *(.data .data.*)
     }
 
+    /* P10-T4: Initialisierungsbild je CPU kopieren und IA32_GS_BASE setzen.
+     * Die erste Nutzvariable liegt an GS+0, kein reservierter Header. */
+    .moo_prokern ALIGN(64) :
+    {
+        __moo_prokern_anfang = .;
+        KEEP(*(.moo_prokern))
+        __moo_prokern_ende = .;
+    }
+
     .bss ALIGN(4K) :
     {
         *(COMMON)

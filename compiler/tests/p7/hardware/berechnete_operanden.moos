@@ -1,0 +1,11 @@
+# P2-T128: Ausschließlich Hardwarezugriffe im unsicher-Block.
+@nativ
+funktion hw_berechnete_ports(bdf: u32, off: u32, wert: u16) -> void:
+    unsicher:
+        port_schreibe32(0xCF8, 0x80000000 | (bdf << 8) | (off & 0xFC))
+        port_schreibe16(als(u16, 0xCFC + (off & 2)), wert | 1)
+
+@nativ
+funktion hw_berechnetes_mmio(reg: ptr[u32], index: u32, wert: u32) -> void:
+    unsicher:
+        volatile_schreiben(reg, index + 1, wert & u32(0xFF))

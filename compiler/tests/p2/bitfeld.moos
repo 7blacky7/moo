@@ -1,0 +1,69 @@
+importiere nativ_x86_deskriptoren
+
+bitfeld ProbeBits: u8:
+    klein: 0..2
+    flag: 7
+
+@nativ
+statisch BF_ZUSTAND: ProbeBits auf ProbeBits(3, 1)
+
+@nativ
+funktion bf_gdt() -> bool:
+    unsicher:
+        gib_zurück bitfeld_wert(X86_GDT_CODE) == 0x00AF9A000000FFFF und bitfeld_wert(X86_GDT_DATEN) == 0x00CF92000000FFFF
+
+@nativ
+funktion bf_masken() -> u8:
+    setze wert: ProbeBits auf bitfeld_aus(ProbeBits, 255)
+    wert.klein = 2
+    gib_zurück bitfeld_wert(wert)
+
+@nativ
+funktion bf_setzen(wert: u8) -> u8:
+    unsicher:
+        BF_ZUSTAND.klein = wert
+        gib_zurück bitfeld_wert(BF_ZUSTAND)
+
+@nativ
+funktion bf_lesen() -> u8:
+    unsicher:
+        gib_zurück bitfeld_wert(BF_ZUSTAND)
+
+@nativ
+funktion bf_felder() -> bool:
+    setze wert: ProbeBits auf ProbeBits(4, 1)
+    gib_zurück wert.klein == 4 und wert.flag == 1 und groesse_von(ProbeBits) == 1
+
+bitfeld GanzesWort: u64:
+    alle: 0..63
+bitfeld HalbesWort: u16:
+    alle: 0..15
+bitfeld DoppeltWort: u32:
+    alle: 0..31
+
+@nativ
+konstante BF_ALLE: GanzesWort auf GanzesWort(0xFFFFFFFFFFFFFFFF)
+
+@nativ
+funktion bf_grenzen() -> bool:
+    setze a: HalbesWort auf HalbesWort(65535)
+    setze b: DoppeltWort auf DoppeltWort(0xFFFFFFFF)
+    setze c: GanzesWort auf BF_ALLE
+    setze d: ProbeBits auf ProbeBits()
+    c.alle = 0x8000000000000000
+    gib_zurück a.alle == 65535 und b.alle == 0xFFFFFFFF und c.alle == 0x8000000000000000 und bitfeld_wert(d) == 0
+
+# Bewusster Selftest: unerwartete native Fehler sollen den Lauf abbrechen.
+unsicher:
+    zeige bf_gdt()
+    zeige bf_masken()
+    zeige bf_felder()
+    zeige bf_grenzen()
+versuche:
+    unsicher:
+        zeige bf_setzen(8)
+fange fehler:
+    zeige "bereich"
+unsicher:
+    zeige bf_lesen()
+    zeige bf_setzen(5)

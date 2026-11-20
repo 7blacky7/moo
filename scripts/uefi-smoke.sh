@@ -574,7 +574,9 @@ PY
   : >"$OUT/serial.log"; : >"$OUT/debug.log"; rm -f "$OUT/monitor.in" "$OUT/screenshot.png"
   mkfifo "$OUT/monitor.in" || fail "FIFO fuer QEMU-Monitor nicht anlegbar"
   exec 3<>"$OUT/monitor.in"
-  KERN_QEMU=()
+  KERN_CPUS="${MOO_UEFI_SMP:-1}"
+  [[ "$KERN_CPUS" =~ ^[1-9][0-9]*$ ]] || fail "MOO_UEFI_SMP: positive CPU-Zahl erwartet"
+  KERN_QEMU=(-smp "$KERN_CPUS")
   case "$KERN_ECAM" in
     1) KERN_QEMU+=(-M q35) ;;
     cf8) KERN_QEMU+=(-M pc) ;;
@@ -600,6 +602,15 @@ PY
   if [ "$KERN_TASTATUR" = 1 ] && [ "$USB" != 1 ]; then
     fail "Tastaturprobe braucht MOO_UEFI_USB=1"
   fi
+  USB_MSI="${MOO_UEFI_USB_MSI:-auto}"
+  case "$USB_MSI" in
+    auto) ;;
+    on|off)
+      [ "$USB" = 1 ] || fail "USB_MSI braucht USB=1"
+      KERN_QEMU+=(-global "qemu-xhci.msi=$USB_MSI" -global qemu-xhci.msix=off)
+      ;;
+    *) fail "USB_MSI: auto, on oder off" ;;
+  esac
   USB_VERSION="${MOO_UEFI_USB_VERSION:-2}"
   case "$USB_VERSION" in 1|2) ;; *) fail "USB_VERSION: nur 1 (Full-Speed) oder 2 (High-Speed)";; esac
   if [ "$USB" = 1 ]; then
@@ -826,6 +837,19 @@ PY
     USB_SPEED=3; [ "$USB_VERSION" != 1 ] || USB_SPEED=1
     grep -aqF "MOO-KERNEL USB SPEED 000000000000000$USB_SPEED" "$OUT/serial.log" || fail "Erwarteter USB-Speed $USB_SPEED fehlt"
     echo "      OK: USB-Version $USB_VERSION, Port-Speed $USB_SPEED, $USB_C/140 Tastendruecke"
+    case "$USB_MSI" in
+      on)
+        grep -aqF 'MOO-KERNEL USB MSI BDF ' "$OUT/serial.log" || fail "xHCI MSI fehlt"
+        IRQ_STAENDE="$(awk '/MOO-KERNEL USB MSI IRQ / {gsub(/\r/, "", $NF); if ($NF ~ /^[0-9A-F]+$/ && $NF !~ /^0+$/) print $NF}' "$OUT/serial.log" | sort -u | wc -l)"
+        [ "$IRQ_STAENDE" -ge 2 ] || fail "Kein IRQ-Fortschritt bei HID-Reports"
+        echo "      OK: HID mit LAPIC-MSI, $IRQ_STAENDE verschiedene IRQ-Zaehlerstaende"
+        ;;
+      off)
+        grep -aqF 'MOO-KERNEL USB POLL BDF ' "$OUT/serial.log" || fail "xHCI Polling-Rueckfall fehlt"
+        grep -aqF 'MOO-KERNEL USB MSI IRQ ' "$OUT/serial.log" && fail "IRQ trotz abgeschaltetem MSI"
+        echo "      OK: HID-Polling bei deaktiviertem MSI und MSI-X"
+        ;;
+    esac
   elif [ "$USB" = 0 ]; then
     grep -aqF "MOO-KERNEL TASTATUR SCAN 000000000000001E" "$OUT/serial.log" || fail "PS/2 Scan 0x1E fehlt"
   elif [ "$USB" = hub ]; then

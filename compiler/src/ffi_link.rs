@@ -45,7 +45,8 @@ pub(crate) fn libraries(stmts: &[Stmt], triple: &str) -> Result<Vec<String>, Str
     fn visit(stmt: &Stmt, names: &mut Vec<String>, triple: &str) -> Result<(), String> {
         match stmt {
             Stmt::Export(inner, _) => visit(inner, names, triple)?,
-            Stmt::ExternC { decorators, .. } => {
+            Stmt::ExternC { decorators, .. }
+            | Stmt::NativeConst { value: None, decorators, .. } => {
                 for decorator in decorators {
                     match decorator.name.as_str() {
                         "bibliothek" | "library" => {

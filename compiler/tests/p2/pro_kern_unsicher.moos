@@ -1,0 +1,5 @@
+importiere pro_kern_lib
+
+@nativ
+funktion pro_ohne_unsicher() -> u64:
+    gib_zurück kern_wert

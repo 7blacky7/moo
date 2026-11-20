@@ -1,0 +1,28 @@
+# P10-T2: Ordnungen, Bit-RMWs und Prozessortipp im nativen Emitter.
+@nativ
+funktion atom_ord_laden(p: ptr[u32]) -> u32:
+    unsicher:
+        kern_pause()
+        gib_zurück atom_laden(p, ordnung=erwerben)
+
+@nativ
+funktion atom_ord_speichern(p: ptr[u32], wert: u32) -> void:
+    unsicher:
+        atom_speichern(p, wert, ordnung=freigeben)
+
+@nativ
+funktion atom_ord_bits(p: ptr[u32], bits: u32) -> u32:
+    unsicher:
+        setze alt: u32 auf atom_und(p, bits, ordnung=locker)
+        setze alt auf alt + atomic_or(p, bits, order=acq_rel)
+        gib_zurück alt + atom_xoder(p, bits, order=release)
+
+@nativ
+funktion atom_ord_cas(p: ptr[u32], alt: u32, wert: u32) -> bool:
+    unsicher:
+        gib_zurück atom_vergleichen_und_tauschen(p, alt, wert, erfolgsordnung=erwerben_freigeben, fehlordnung=erwerben)
+
+@nativ
+funktion atom_ord_cas_standard(p: ptr[u32], alt: u32, wert: u32) -> bool:
+    unsicher:
+        gib_zurück atomic_compare_exchange(p, alt, wert, order=release)

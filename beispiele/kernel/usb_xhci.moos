@@ -1,9 +1,10 @@
 # P7-T23: eigener xHCI-Hosttreiber, Hardware-Syntax A.
 # xHCI 1.2: Register/Contexts/TRBs; USB 2.0 Kap.9; HID 1.11 Boot Keyboard.
-# Polling fuer Boot-Tastaturen direkt an xHCI-Rootports.
+# Boot-Tastaturen direkt an xHCI-Rootports. MSI weckt die Kernschleife.
 # Pro Host eigener Kommando-/Eventring, pro Slot eigener Device Context,
 # Control-/Interrupt-Ring und vorheriger Report. MSC bleibt synchron.
-# Keine Hubs, Maus, Hotplug, MSI/INTx. Kein Firmwaredienst nach ExitBootServices.
+# Timer-Polling bleibt der Rückfall. Hub, Maus und Hotplug sind weitere Stufen.
+# Kein Firmwaredienst nach ExitBootServices.
 # Die DMA-Seiten bleiben beim PFA reserviert.
 aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt, nt_null
 
@@ -11,7 +12,7 @@ aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmi
 # 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
 # 14/15 Arbeitsindex/Cycle fuer IN,16 Anzahl HID-Slots,18 TSC/us,
 # 19 Fehlerstufe,22 Completion-Slot,23 physische BAR.
-# 17,20/21,24/25 sind frei.
+# 17 MSI aktiv; 20/21,24/25 sind frei.
 # 26 Meldungs-Callback,27 PPC,28 MaxPorts,29 BDF,
 # 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
 # 36/37/38 letztes passendes Event Status/Steuer/TRB; 39/40/41 aktive EP0-TRBs,
@@ -358,6 +359,13 @@ funktion xh_trb(seite: u64, indexfeld: u64, parameter: u64, status: u32, steuer:
         xh_setze(indexfeld + 1, cycle)
         gib_zurück p
 
+# Der Event Ring Dequeue Pointer folgt dem Consumer. Bit 3 (EHB) ist W1C,
+# xHCI 1.2b §5.5.2.3.3.
+@nativ
+funktion xh_eventring_freigeben() -> void:
+    unsicher:
+        xh_reg64(xh(3) + 0x38, (xh(4) + 8192 + xh(8) * 16) | 8)
+
 # xHCI 1.2b 6.4.2: jede Command-/Transfer-Completion vor dem Filtern protokollieren.
 # Command PARAM24 ist keine Restlaenge (6.4.2.2); Transfer REST bleibt unveraendert.
 @nativ
@@ -374,12 +382,13 @@ funktion xh_event_holen() -> bool:
         setze parameter auf speicher_lesen(p, 8)
         setze status auf u32(speicher_lesen(p + 8, 4))
         setze ereignis auf (steuer >> 10) & 63
-        # Alle Daten lokal sichern, dann ERDP freigeben, bevor die Log-Senke arbeitet.
+        # Alle Daten lokal sichern. Der MSI-Pfad quittiert EHB für den ganzen Batch.
         xh_setze(8, xh(8) + 1)
         wenn xh(8) == 256:
             xh_setze(8, 0)
             xh_setze(9, xh(9) ^ 1)
-        xh_reg64(xh(3) + 0x38, (xh(4) + 8192 + xh(8) * 16) | 8)
+        wenn xh(17) == 0:
+            xh_eventring_freigeben()
         wenn ereignis == 32 oder ereignis == 33:
             xh_log(adresse_von(XH_T_EVT_TYP), u64(ereignis))
             xh_log(adresse_von(XH_T_EVT_TRB), parameter)
@@ -539,6 +548,110 @@ funktion xh_control(setup: u64, daten: u64, laenge: u32) -> bool:
 funktion xh_pci(bdf: u32, off: u32) -> u32:
     unsicher:
         gib_zurück nt_cfg_lese32(0x80000000 | (bdf << 8) | off)
+
+# MSI-Capability und Message-Control liegen im herkömmlichen PCI-Raum.
+# PCI_CAPABILITY_LIST wie bei NVMe, maximal 48 ausgerichtete Einträge.
+@nativ
+funktion xh_msi_cap(bdf: u32) -> u32:
+    unsicher:
+        wenn (xh_pci(bdf, 4) & (1 << 20)) == 0:
+            gib_zurück 0
+        setze cap: u32 auf xh_pci(bdf, 0x34) & 0xFC
+        setze msi: u32 auf 0
+        setze anzahl: u64 auf 0
+        solange cap != 0 und anzahl < 48:
+            wenn cap < 0x40:
+                gib_zurück 0
+            setze kopf: u32 auf xh_pci(bdf, cap)
+            setze art: u32 auf kopf & 255
+            wenn art == 5:
+                wenn msi != 0:
+                    gib_zurück 0
+                setze msi auf cap
+            wenn art == 0x11 und (kopf & 0x80000000) != 0:
+                # Bei aktivem MSI-X bleibt der HID-Pfad im Polling.
+                gib_zurück 0
+            setze cap auf (kopf >> 8) & 0xFC
+            setze anzahl auf anzahl + 1
+        wenn cap != 0:
+            gib_zurück 0
+        gib_zurück msi
+
+@nativ
+funktion xh_cfg_schreibe16(bdf: u32, off: u32, wert: u16) -> void:
+    unsicher:
+        port_schreibe32(0xCF8, 0x80000000 | (bdf << 8) | (off & 0xFC))
+        port_schreibe16(als(u16, 0xCFC + (off & 2)), wert)
+
+# USBSTS.EINT vor dem Eventring quittieren. Bei MSI wird IMAN.IP bei
+# der Zustellung geloescht (Linux v6.12 xhci-ring.c:3017–3026,3104–3127).
+@nativ
+funktion xh_msi_status_quittieren() -> bool:
+    unsicher:
+        setze status: u64 auf xh(1) + 4
+        wenn (nt_mmio_lese32(status) & 8) == 0:
+            gib_zurück falsch
+        nt_mmio_schreibe32(status, 8)
+        gib_zurück wahr
+
+# PCI MSI: 32-/64-Bit-Nachricht, genau ein Vektor. Linux v6.12
+# pci_regs.h:306–321, drivers/pci/msi/msi.c:190–206,278–282,303–314.
+@nativ
+funktion xh_msi_starten(adresse: u32, datenwort: u16) -> bool:
+    unsicher:
+        wenn adresse == 0:
+            gib_zurück falsch
+        setze bdf: u32 auf als(u32, xh(29))
+        setze cap: u32 auf xh_msi_cap(bdf)
+        wenn cap == 0:
+            gib_zurück falsch
+        setze kontrolle: u16 auf als(u16, xh_pci(bdf, cap) >> 16)
+        setze lang: bool auf (kontrolle & 0x80) != 0
+        setze maskierbar: bool auf (kontrolle & 0x100) != 0
+        setze daten_off: u32 auf cap + 8
+        wenn lang:
+            setze daten_off auf daten_off + 4
+        wenn daten_off > 0xFC oder (maskierbar und daten_off + 8 > 0xFC):
+            gib_zurück falsch
+        setze cfg: u32 auf 0x80000000 | (bdf << 8)
+        # Kontrolle liegt in der oberen Hälfte, Message Data in der unteren.
+        # MSI Enable und Multiple Message Enable aus, dann Adresse/Daten setzen.
+        setze kontrolle auf kontrolle & 0xFF8E
+        xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
+        wenn (xh_pci(bdf, cap) & 0x10000) != 0:
+            gib_zurück falsch
+        nt_cfg_schreibe32(cfg | (cap + 4), adresse)
+        wenn lang:
+            nt_cfg_schreibe32(cfg | (cap + 8), 0)
+        xh_cfg_schreibe16(bdf, daten_off, datenwort)
+        wenn maskierbar:
+            setze maske: u32 auf xh_pci(bdf, daten_off + 4) & 0xFFFFFFFE
+            nt_cfg_schreibe32(cfg | (daten_off + 4), maske)
+            wenn (xh_pci(bdf, daten_off + 4) & 1) != 0:
+                gib_zurück falsch
+        wenn xh_pci(bdf, cap + 4) != adresse oder als(u16, xh_pci(bdf, daten_off) & 0xFFFF) != datenwort:
+            gib_zurück falsch
+        wenn lang und xh_pci(bdf, cap + 8) != 0:
+            gib_zurück falsch
+        xh_cfg_schreibe16(bdf, cap + 2, kontrolle | 1)
+        wenn ((xh_pci(bdf, cap) >> 16) & 0x71) != 1:
+            xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
+            gib_zurück falsch
+        xh_msi_status_quittieren()
+        xh_eventring_freigeben()
+        setze iman: u64 auf xh(3) + 0x20
+        setze cmd: u32 auf nt_mmio_lese32(xh(1))
+        # Altes IP im ausgeschalteten Interrupter quittieren. Dann IE und INTE
+        # setzen (xHCI §5.5.2.1, §5.4.1).
+        nt_mmio_schreibe32(iman, 1)
+        nt_mmio_schreibe32(iman, 2)
+        nt_mmio_schreibe32(xh(1), cmd | 4)
+        wenn (nt_mmio_lese32(iman) & 2) != 0 und (nt_mmio_lese32(xh(1)) & 4) != 0:
+            gib_zurück wahr
+        nt_mmio_schreibe32(xh(1), cmd & 0xFFFFFFFB)
+        nt_mmio_schreibe32(iman, 1)
+        xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
+        gib_zurück falsch
 
 @nativ
 funktion xh_stop() -> bool:
@@ -1297,7 +1410,12 @@ funktion usb_inventar(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartun
         gib_zurück xh_durchlaufen(dma, tsc_us, bi, map, log, 65536, adresse_von(xh_inventar_geraet), wartung, 0, falsch)
 
 @nativ
-funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64, report: bool) -> bool:
+konstante XH_T_MSI: [u8; _] auf "MOO-KERNEL USB MSI BDF "
+@nativ
+konstante XH_T_POLL: [u8; _] auf "MOO-KERNEL USB POLL BDF "
+
+@nativ
+funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64, report: bool, msi_adresse: u32, msi_daten: u16) -> bool:
     unsicher:
         speicher_schreiben(adresse_von(XH_HID_HOST_ANZAHL), 0, 8)
         wenn allokieren == 0 oder nicht xh_durchlaufen(0, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet), wartung, allokieren, report):
@@ -1305,6 +1423,11 @@ funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, 
         setze host: u64 auf 0
         solange host < speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8):
             xh_waehle(adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8)
+            wenn xh_msi_starten(msi_adresse, msi_daten):
+                xh_setze(17, 1)
+                xh_log(adresse_von(XH_T_MSI), xh(29))
+            sonst:
+                xh_log(adresse_von(XH_T_POLL), xh(29))
             setze slot: u64 auf 1
             solange slot <= xh(46):
                 setze zustand: u64 auf xh_hid_slot(slot) + 3072
@@ -1323,9 +1446,14 @@ funktion usb_poll_berichte(callback: u64) -> void:
         solange host < anzahl:
             xh_waehle(adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8)
             setze budget: u64 auf 32
+            setze quittiert: bool auf falsch
+            wenn xh(17) != 0:
+                setze quittiert auf xh_msi_status_quittieren()
             solange budget > 0 und xh_event_holen():
                 xh_hid_ereignis(callback)
                 setze budget auf budget - 1
+            wenn xh(17) != 0 und (quittiert oder budget < 32):
+                xh_eventring_freigeben()
             setze host auf host + 1
         wenn anzahl > 0:
             xh_waehle(adresse_von(XH_HID_HOSTS))

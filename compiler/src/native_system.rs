@@ -64,7 +64,7 @@ use inkwell::targets::TargetData;
 use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue, VectorValue};
-use inkwell::{AddressSpace, IntPredicate};
+use inkwell::{AddressSpace, AtomicOrdering, AtomicRMWBinOp, IntPredicate};
 
 use crate::ast::{BinOp, Expr, Stmt, TypeKind, TypeRef, UnaryOpKind};
 use crate::codegen_native::{NType, NValue, NativeParameter, NativePointerSignature};
@@ -76,6 +76,7 @@ use crate::native_type_id::{resolve_type, NativeTypeId, NominalTypes, ScalarType
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum STy {
     Int(NType),
+    Atom(NType),
     Float(NType),
     Bool,
     Ptr(NativeTypeId),
@@ -104,6 +105,8 @@ impl STy {
             }
             TypeKind::Name(name) if nominal.contains_key(name) =>
                 Ok(STy::Struct(resolve_type(ty, nominal)?)),
+            TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
+                Self::from_identity(&resolve_type(ty, nominal)?)?.ok_or("atom[T]-Typ fehlt".into()),
             TypeKind::Generic { name, .. } if name == "puffer" || name == "buffer" => match resolve_type(ty, nominal)? {
                 NativeTypeId::Buffer { element } => Self::puffer_element(&element),
                 _ => Err("Systemkoerper: puffer[T] ist nicht aufloesbar".into()),
@@ -145,6 +148,10 @@ impl STy {
             NativeTypeId::Registration { .. } => STy::Registration(identity.clone()),
             NativeTypeId::Nominal { .. } => STy::Struct(identity.clone()),
             NativeTypeId::Buffer { element } => Self::puffer_element(element)?,
+            NativeTypeId::Atom(ty) => match Self::from_identity(&NativeTypeId::Scalar(*ty))? {
+                Some(STy::Int(ty)) => STy::Atom(ty),
+                _ => return Err("atom[T] erwartet einen festen Ganzzahltyp".into()),
+            },
             NativeTypeId::Scalar(scalar) => match scalar {
                 ScalarType::I8 => STy::Int(NType::I8), ScalarType::I16 => STy::Int(NType::I16),
                 ScalarType::I32 => STy::Int(NType::I32), ScalarType::I64 => STy::Int(NType::I64),
@@ -156,6 +163,19 @@ impl STy {
             },
             _ => return Err("Systemkoerper: Typ nicht freigegeben".into()),
         }))
+    }
+
+    fn atom_element(&self) -> Option<NType> {
+        match self {
+            STy::Atom(ty) => Some(*ty),
+            STy::Ptr(NativeTypeId::Pointer { pointee, .. }) => {
+                match Self::from_identity(pointee).ok().flatten()? {
+                    STy::Int(ty) | STy::Atom(ty) => Some(ty),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// P2-T48: Werte, die im Speicher kopiert werden (Struktur, festes Array).
@@ -190,12 +210,19 @@ impl STy {
             STy::Float(NType::F32) => NativeTypeId::Scalar(ScalarType::F32),
             STy::Float(NType::F64) => NativeTypeId::Scalar(ScalarType::F64),
             STy::Float(_) => unreachable!("Float-STy darf nur f32/f64 tragen"),
-            STy::Int(ty) => NativeTypeId::Scalar(match ty {
-                NType::I8 => ScalarType::I8, NType::I16 => ScalarType::I16,
-                NType::I32 => ScalarType::I32, NType::I64 => ScalarType::I64,
-                NType::U8 => ScalarType::U8, NType::U16 => ScalarType::U16,
-                NType::U32 => ScalarType::U32, _ => ScalarType::U64,
-            }),
+            STy::Int(ty) | STy::Atom(ty) => {
+                let scalar = match ty {
+                    NType::I8 => ScalarType::I8, NType::I16 => ScalarType::I16,
+                    NType::I32 => ScalarType::I32, NType::I64 => ScalarType::I64,
+                    NType::U8 => ScalarType::U8, NType::U16 => ScalarType::U16,
+                    NType::U32 => ScalarType::U32, _ => ScalarType::U64,
+                };
+                if matches!(self, STy::Atom(_)) {
+                    NativeTypeId::Atom(scalar)
+                } else {
+                    NativeTypeId::Scalar(scalar)
+                }
+            }
         }
     }
 
@@ -203,7 +230,7 @@ impl STy {
         &self, context: &'ctx Context, layouts: &NativeStructRegistry<'ctx>,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
         match self {
-            STy::Int(ty) | STy::Float(ty) => Ok(ty.llvm_type(context)),
+            STy::Int(ty) | STy::Float(ty) | STy::Atom(ty) => Ok(ty.llvm_type(context)),
             STy::Bool => Ok(context.bool_type().into()),
             STy::Ptr(_) | STy::Registration(_) => Ok(context.ptr_type(AddressSpace::default()).into()),
             STy::Buffer(_) | STy::StrukturPuffer(_) => Ok(context.struct_type(
@@ -220,6 +247,7 @@ impl STy {
     fn name(&self) -> String {
         match self {
             STy::Int(ty) | STy::Float(ty) => format!("{ty:?}").to_lowercase(),
+            STy::Atom(_) => self.identity().to_string(),
             STy::Bool => "bool".into(),
             STy::Ptr(identity) => format!("{identity:?}"),
             STy::Registration(identity) => identity.to_string(),
@@ -343,7 +371,7 @@ impl<'ctx> NativeCallee<'ctx> {
 /// P2-T21/T57 C3: `fremd` = Namen, deren Aufruf als fehlbar gilt (extern C in
 /// Modulen mit fehlbaren Rueckrufen); dann auch Aufrufe ueber Funktionszeiger-
 /// Locals/-Parameter. Leer = bisherige Analyse.
-pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>], fremd: &HashSet<String>) -> HashSet<String> {
+pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>], fremd: &HashSet<String>, bitfelder: &HashMap<String, HashSet<String>>) -> HashSet<String> {
     let namen: HashSet<&str> = defs.iter().map(|d| d.name.as_str()).collect();
     let ergebnisse: HashMap<&str, Zahlart> = defs.iter()
         .map(|d| (d.name.as_str(), d.ergebnis.map(zahlart).unwrap_or(Zahlart::Sonst)))
@@ -362,7 +390,7 @@ pub(crate) fn fehlbare_funktionen(defs: &[FehlbarDef<'_>], fremd: &HashSet<Strin
         for (index, def) in defs.iter().enumerate() {
             if fehlbar.contains(&def.name) { continue; }
             let ist_fehlbar = {
-                let kontext = FehlbarKontext { namen: &namen, fehlbar: &fehlbar, typen: &typen[index], ergebnisse: &ergebnisse, fremd };
+                let kontext = FehlbarKontext { namen: &namen, fehlbar: &fehlbar, typen: &typen[index], ergebnisse: &ergebnisse, fremd, bitfelder };
                 // `-> void` hat kein Ergebnis, das am Koerperende fehlen koennte.
                 let hat_ergebnis = def.ergebnis
                     .is_some_and(|ty| !matches!(&ty.kind, TypeKind::Name(n) if n == "void"));
@@ -1157,6 +1185,7 @@ struct FehlbarKontext<'k, 'a> {
     typen: &'k HashMap<&'a str, Zahlart>,
     ergebnisse: &'k HashMap<&'a str, Zahlart>,
     fremd: &'k HashSet<String>,
+    bitfelder: &'k HashMap<String, HashSet<String>>,
 }
 
 /// Zahlart eines Ausdrucks aus Annotationen; None = nicht bestimmbar (z. B.
@@ -1214,7 +1243,10 @@ fn stmts_fehlbar(stmts: &[Stmt], k: &FehlbarKontext<'_, '_>) -> bool {
         | Stmt::Show(value, _) | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => ex(value),
         Stmt::CompoundAssignment { op, value, .. } =>
             op.contains('/') || op.contains('%') || op.contains('<') || op.contains('>') || ex(value),
-        Stmt::PropertyAssignment { object, value, .. } => ex(object) || ex(value),
+        // Bitbereichsschreibzugriffe koennen vor der Mutation fehlschlagen;
+        // bei gleichnamigen normalen Feldern konservativ ebenfalls fehlbar.
+        Stmt::PropertyAssignment { object, property, value, .. } =>
+            k.bitfelder.values().any(|f| f.contains(property)) || ex(object) || ex(value),
         Stmt::IndexAssignment { .. } => true,
         Stmt::Return(None, _) | Stmt::Break(_) | Stmt::Continue(_) => false,
         Stmt::If { condition, body, else_body, .. } =>
@@ -1250,7 +1282,7 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::FunctionCall { name, args, .. } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
-            cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view")
+            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view")
                 || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
                 || k.fremd.contains(name.as_str())
                 || (!k.fremd.is_empty() && k.typen.contains_key(name.as_str()))
@@ -1587,20 +1619,82 @@ pub(crate) fn ist_unsicheres_builtin(name: &str) -> bool {
         | "volatile_lesen" | "volatile_read" | "volatile_schreiben" | "volatile_write"
         | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
         | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write"
-        | "assembler")
+        | "assembler" | "kern_pause")
 }
 
-/// P2-T114 Phase B: Atom-Intrinsics (DE kanonisch, EN-Alias). 0 laden,
-/// 1 speichern, 2 addieren, 3 tauschen, 4 vergleichen_und_tauschen.
-pub(crate) fn atom_art(name: &str) -> Option<u8> {
+#[derive(Clone, Copy)]
+pub(crate) enum AtomArt {
+    Laden,
+    Speichern,
+    Rmw(AtomicRMWBinOp),
+    Vergleichen,
+}
+
+/// DE kanonisch, EN-Alias. RMW liefert den alten Wert und CAS den Erfolg.
+pub(crate) fn atom_art(name: &str) -> Option<AtomArt> {
+    use AtomArt::*;
+    use AtomicRMWBinOp as RmwOp;
     Some(match name {
-        "atom_laden" | "atomic_load" => 0,
-        "atom_speichern" | "atomic_store" => 1,
-        "atom_addieren" | "atomic_add" => 2,
-        "atom_tauschen" | "atomic_swap" => 3,
-        "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => 4,
+        "atom_laden" | "atomic_load" => Laden,
+        "atom_speichern" | "atomic_store" => Speichern,
+        "atom_addieren" | "atomic_add" => Rmw(RmwOp::Add),
+        "atom_tauschen" | "atomic_swap" => Rmw(RmwOp::Xchg),
+        "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => Vergleichen,
+        "atom_und" | "atomic_and" => Rmw(RmwOp::And),
+        "atom_oder" | "atomic_or" => Rmw(RmwOp::Or),
+        "atom_xoder" | "atomic_xor" => Rmw(RmwOp::Xor),
         _ => return None,
     })
+}
+
+fn atom_ordnungen(op: AtomArt, optionen: &[(Expr, Expr)]) -> Result<(AtomicOrdering, AtomicOrdering), String> {
+    use AtomicOrdering::{Acquire, AcquireRelease, Monotonic, Release, SequentiallyConsistent as SeqCst};
+    let mut ordnung = None;
+    let mut fehlordnung = None;
+    for (key, value) in optionen {
+        let Expr::String(key) = key else { return Err("Name der Atomic-Option fehlt".into()); };
+        let ziel = match key.as_str() {
+            "ordnung" | "order" => &mut ordnung,
+            "erfolgsordnung" | "success_order" if matches!(op, AtomArt::Vergleichen) => &mut ordnung,
+            "fehlordnung" | "failure_order" if matches!(op, AtomArt::Vergleichen) => &mut fehlordnung,
+            _ => return Err(format!("Ungueltige Atomic-Option '{key}'")),
+        };
+        if ziel.is_some() {
+            return Err(format!("Atomic-Option '{key}' doppelt angegeben"));
+        }
+        let Expr::Identifier(wert) = value else {
+            return Err(format!("{key}= erwartet einen Namen der Speicherordnung"));
+        };
+        *ziel = Some(match wert.as_str() {
+            "locker" | "relaxed" => Monotonic,
+            "erwerben" | "acquire" => Acquire,
+            "freigeben" | "release" => Release,
+            "erwerben_freigeben" | "acq_rel" => AcquireRelease,
+            "folgerichtig" | "seq_cst" => SeqCst,
+            _ => return Err(format!("Unbekannte Speicherordnung '{wert}'")),
+        });
+    }
+    let ordnung = ordnung.unwrap_or(SeqCst);
+    match op {
+        AtomArt::Laden if matches!(ordnung, Release | AcquireRelease) =>
+            return Err("Atomisches Laden erlaubt locker, erwerben oder folgerichtig".into()),
+        AtomArt::Speichern if matches!(ordnung, Acquire | AcquireRelease) =>
+            return Err("Atomisches Speichern erlaubt locker, freigeben oder folgerichtig".into()),
+        _ => {}
+    }
+    // Standard beim CAS-Fehlschlag: Erfolgsordnung ohne Freigabeanteil.
+    let fehlordnung = fehlordnung.unwrap_or(match ordnung {
+        Release => Monotonic,
+        AcquireRelease => Acquire,
+        andere => andere,
+    });
+    if matches!(op, AtomArt::Vergleichen)
+        && !matches!((ordnung, fehlordnung),
+            (_, Monotonic) | (Acquire | AcquireRelease | SeqCst, Acquire) | (SeqCst, SeqCst))
+    {
+        return Err("Fehlordnung muss locker, erwerben oder folgerichtig sein und zur Erfolgsordnung passen".into());
+    }
+    Ok((ordnung, fehlordnung))
 }
 
 fn barrier(name: &str) -> Option<u8> {
@@ -1955,7 +2049,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn zero(&self, ty: &STy) -> Result<BasicValueEnum<'ctx>, String> {
         Ok(match ty {
-            STy::Int(t) => t.llvm_type(self.context).into_int_type().const_zero().into(),
+            STy::Int(t) | STy::Atom(t) => t.llvm_type(self.context).into_int_type().const_zero().into(),
             STy::Float(t) => t.llvm_type(self.context).into_float_type().const_zero().into(),
             STy::Bool => self.context.bool_type().const_zero().into(),
             STy::Ptr(_) | STy::Registration(_) => self.ptrt().const_null().into(),
@@ -1975,6 +2069,45 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // nominellen Feldtyp allein keine staerkere Adresseigenschaft ableiten.
         if !self.slots.contains_key(name) && self.globals.contains_key(name) { Ok(1) }
         else { Ok(self.struct_size_align(ty)?.1) }
+    }
+
+    fn hat_atom_speicher(&self, ty: &STy) -> bool {
+        match ty {
+            STy::Atom(_) => true,
+            STy::Array { element, .. } => self.hat_atom_speicher(element),
+            STy::Struct(NativeTypeId::Nominal { name, .. }) =>
+                self.layouts.layout(name).is_some_and(|layout| layout.fields.iter()
+                    .any(|(_, field)| self.layouts.hat_atom_speicher(field))),
+            _ => false,
+        }
+    }
+
+    fn normaler_speicherzugriff(&self, ty: &STy) -> Result<(), String> {
+        if self.hat_atom_speicher(ty) {
+            return Err(crate::diagnose::vormerken("M-M007", self.zeile, format!(
+                "Systemkoerper: {} enthaelt atomaren Speicher; einzelne atom[T]-Felder nur mit atom_*-Operationen lesen oder aendern", ty.name()
+            )));
+        }
+        Ok(())
+    }
+
+    fn atom_ort(&mut self, expr: &Expr, name: &str, schreiben: bool) -> Result<(PointerValue<'ctx>, NType), String> {
+        let ty = self.infer(expr).ok_or_else(||
+            format!("{name}: erster Operand muss ein atom[T]-Speicherort oder ptr[T]-Ausdruck sein"))?;
+        let element = ty.atom_element().ok_or_else(||
+            format!("{name}: Atomics erfordern einen Ganzzahl-Zieltyp (u8..u64, i8..i64)"))?;
+        let ptr = if matches!(ty, STy::Atom(_)) {
+            self.global_access(expr, schreiben)?;
+            match expr {
+                Expr::Identifier(name) => self.slot(name).ok_or("Nativer Atom-Speicherort fehlt")?.ptr,
+                Expr::PropertyAccess { object, property } => self.pointer_property(object, property)?.0,
+                Expr::IndexAccess { object, index } => self.pointer_index(object, index)?.0,
+                _ => return Err(format!("{name}: atom[T] erwartet einen adressierbaren Speicherort")),
+            }
+        } else {
+            self.expr(expr, Some(&ty))?.value.into_pointer_value()
+        };
+        Ok((ptr, element))
     }
 
     fn global_access(&self, expr: &Expr, schreiben: bool) -> Result<(), String> {
@@ -2163,6 +2296,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             Some(slot) => (slot.ty.clone(), slot.ptr, slot.constant),
             None => return Err(format!("Systemkoerper: '{name}' ist nicht deklariert; Native lokale Variable braucht eine Typannotation (setze {name}: TYP auf ...)")),
         };
+        self.normaler_speicherzugriff(&ty)?;
         if constant && !declaring {
             return Err(format!("Systemkoerper: Konstante '{name}' kann nicht neu gesetzt werden"));
         }
@@ -2245,6 +2379,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let place = Place { ptr, alignment, origin: Origin::Fresh };
                 self.construct_struct_into(name, args, &place)?;
                 Ok(place)
+            }
+            Expr::FunctionCall { name, .. } if name == "bitfeld_aus" && !self.callees.contains_key(name) => {
+                let value = self.expr(expr, Some(ty))?;
+                self.expect(&value, ty, what)?;
+                let (ptr, alignment) = self.entry_alloca(ty, "sys.bitfeld.kopie")?;
+                self.builder.build_store(ptr, value.value).map_err(e)?.set_alignment(alignment).map_err(e)?;
+                Ok(Place { ptr, alignment, origin: Origin::Fresh })
             }
             // P2-T48 A4 (Plan a71947f7 E2): Arrayliteral [a, b, ...] fuer ein
             // arraytypisiertes Ziel, direkt in einen frischen Zwischenspeicher.
@@ -2333,6 +2474,22 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             return Ok(());
         }
+        if !layout.bitfelder.is_empty() {
+            let bereiche = layout.bitfelder.clone();
+            let basis = self.bitfeld_basis(name).ok_or("Bitfeld-Basis fehlt")?;
+            if bereiche.len() != args.len() {
+                return Err(format!("Bitfeld '{name}' erwartet {} Bereiche, bekommen {}", bereiche.len(), args.len()));
+            }
+            let ty = basis.llvm_type(self.context).into_int_type();
+            let mut wort = ty.const_zero();
+            for (feld, arg) in bereiche.iter().zip(args) {
+                let wert = self.bitfeld_bereichswert(feld, arg, basis)?;
+                let teil = self.builder.build_left_shift(wert, ty.const_int(u64::from(feld.anfang), false), "sys.bitfeld.packen").map_err(e)?;
+                wort = self.builder.build_or(wort, teil, "sys.bitfeld.konstruktor").map_err(e)?;
+            }
+            self.builder.build_store(target.ptr, wort).map_err(e)?.set_alignment(target.alignment).map_err(e)?;
+            return Ok(());
+        }
         if fields.len() != args.len() {
             return Err(format!(
                 "Systemkoerper: Struktur '{name}' erwartet {} Felder, bekommen {}",
@@ -2372,6 +2529,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// Kopie ueber einen frischen Zwischenspeicher, denn llvm.memcpy verlangt
     /// disjunkte Bereiche und memmove waere im Bare-Profil ein Libcall.
     fn copy_struct(&mut self, ty: &STy, to: Place<'ctx>, from: Place<'ctx>) -> Result<(), String> {
+        self.normaler_speicherzugriff(ty)?;
         let (size, _) = self.struct_size_align(ty)?;
         if size == 0 { return Ok(()); }
         let length = self.i64t().const_int(size, false);
@@ -2392,9 +2550,76 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     /// Liefert Offset und statischen Feldtyp, ohne eingebettete Strukturen
     /// vorzeitig zu laden oder in einen dynamischen MooValue zu wandeln.
+    fn bitfeld_basis(&self, name: &str) -> Option<NType> {
+        let layout = self.layouts.layout(name)?;
+        if layout.bitfelder.is_empty() { return None; }
+        NType::from_type_ref(&layout.fields[0].1).ok()
+    }
+
+    fn bitfeld_info(&self, object: &Expr, property: &str) -> Option<(String, NType, crate::ast::BitfeldBereich)> {
+        let name = self.struct_name_from_expr(object)?;
+        let basis = self.bitfeld_basis(&name)?;
+        let feld = self.layouts.layout(&name)?.bitfelder.iter().find(|f| f.name == property)?.clone();
+        Some((name, basis, feld))
+    }
+
+    fn bitfeld_wort(&mut self, object: &Expr) -> Result<(NType, inkwell::values::IntValue<'ctx>), String> {
+        self.global_access(object, false)?;
+        let name = self.struct_name_from_expr(object).ok_or("bitfeld_wert erwartet einen Bitfeldwert")?;
+        let basis = self.bitfeld_basis(&name).ok_or("bitfeld_wert erwartet einen Bitfeldwert")?;
+        let value = if matches!(self.infer(object), Some(STy::Struct(_))) {
+            let value = self.expr(object, Some(&self.struct_ty(&name)?))?;
+            self.builder.build_extract_value(value.value.into_struct_value(), 0, "sys.bitfeld.wort").map_err(e)?
+        } else {
+            let (ptr, _) = self.struct_pointer(object)?;
+            let value = self.builder.build_load(basis.llvm_type(self.context), ptr, "sys.bitfeld.wort").map_err(e)?;
+            value.as_instruction_value().ok_or("Bitfeld-Load fehlt")?.set_alignment(1).map_err(e)?;
+            value
+        };
+        Ok((basis, value.into_int_value()))
+    }
+
+    fn bitfeld_bereichswert(&mut self, feld: &crate::ast::BitfeldBereich, expr: &Expr, basis: NType) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        let value = self.expr(expr, Some(&STy::Int(basis)))?;
+        self.expect(&value, &STy::Int(basis), &format!("Bitfeld {}", feld.name))?;
+        let value = value.value.into_int_value();
+        if let Some(wert) = value.get_zero_extended_constant() {
+            if wert > feld.maximum() {
+                return Err(format!("Bitfeld '{}': Wert {wert} passt nicht in {} Bit", feld.name, feld.breite));
+            }
+        } else {
+            let zu_gross = self.builder.build_int_compare(IntPredicate::UGT, value,
+                value.get_type().const_int(feld.maximum(), false), "sys.bitfeld.bereich").map_err(e)?;
+            let failure = self.trap_block()?;
+            let good = self.context.append_basic_block(self.function, "sys.bitfeld.gueltig");
+            self.builder.build_conditional_branch(zu_gross, failure, good).map_err(e)?;
+            self.builder.position_at_end(good);
+        }
+        Ok(value)
+    }
+
+    fn bitfeld_schreiben(&mut self, object: &Expr, property: &str, expr: &Expr) -> Result<(), String> {
+        let (_, basis, feld) = self.bitfeld_info(object, property).ok_or("Bitbereich fehlt")?;
+        let (ptr, _) = self.struct_pointer(object)?;
+        let value = self.bitfeld_bereichswert(&feld, expr, basis)?;
+        let ty = value.get_type();
+        // Erst nach erfolgreicher Wertepruefung laden und schreiben.
+        let vorher = self.builder.build_load(ty, ptr, "sys.bitfeld.vorher").map_err(e)?;
+        vorher.as_instruction_value().ok_or("Bitfeld-Load fehlt")?.set_alignment(1).map_err(e)?;
+        let rest = self.builder.build_and(vorher.into_int_value(),
+            ty.const_int(!(feld.maximum() << feld.anfang), false), "sys.bitfeld.rest").map_err(e)?;
+        let teil = self.builder.build_left_shift(value, ty.const_int(u64::from(feld.anfang), false), "sys.bitfeld.teil").map_err(e)?;
+        let neu = self.builder.build_or(rest, teil, "sys.bitfeld.neu").map_err(e)?;
+        self.builder.build_store(ptr, neu).map_err(e)?.set_alignment(1).map_err(e)?;
+        Ok(())
+    }
+
     fn feld_info(&self, struktur: &str, feld: &str) -> Result<(u64, FieldKind), String> {
         let layout = self.layouts.layout(struktur)
             .ok_or_else(|| format!("Systemkoerper: Struktur '{struktur}' nicht gefunden"))?;
+        if !layout.bitfelder.is_empty() {
+            return Err(format!("Bitfeld '{struktur}.{feld}' ist ein Bitbereich ohne eigene Byteadresse; bitfeld_wert/bitfeld_aus oder direkten Feldzugriff verwenden"));
+        }
         let position = layout.fields.iter().position(|(name, _)| name == feld)
             .ok_or_else(|| format!("Systemkoerper: Strukturfeld '{struktur}.{feld}' nicht gefunden"))?;
         let field = &layout.fields[position].1;
@@ -3176,8 +3401,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             Stmt::PropertyAssignment { object, property, value, .. } => {
                 self.global_access(object, true)?;
+                if self.bitfeld_info(object, property).is_some() {
+                    return self.bitfeld_schreiben(object, property, value);
+                }
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;
+                self.normaler_speicherzugriff(&ty)?;
                 if ty.ist_aggregat() {
                     let from = self.struct_place(value, &ty, property)?;
                     return self.copy_struct(&ty, Place { ptr, alignment, origin: Origin::Memory }, from);
@@ -3194,6 +3423,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 self.global_access(object, true)?;
                 let alignment = self.local_array_alignment(object);
                 let (ptr, ty) = self.pointer_index(object, index)?;
+                self.normaler_speicherzugriff(&ty)?;
                 if ty.ist_aggregat() {
                     let from = self.struct_place(value, &ty, "Zeiger-Element")?;
                     return self.copy_struct(&ty, Place { ptr, alignment, origin: Origin::Memory }, from);
@@ -3396,6 +3626,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         match expr {
             Expr::Identifier(name) => self.slot(name).map(|slot| slot.ty.clone()),
             Expr::PropertyAccess { object, property } => {
+                if let Some((_, ty, _)) = self.bitfeld_info(object, property) { return Some(STy::Int(ty)); }
                 let name = self.struct_name_from_expr(object)?;
                 match self.feld_info(&name, property).ok()?.1 {
                     FieldKind::Value(ty) => Some(ty),
@@ -3464,6 +3695,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     return args.first().and_then(|arg| self.infer(arg))
                         .and_then(|ty| registration_component(&ty, name == "rueckruf_zeiger"));
                 }
+                if !self.callees.contains_key(name) {
+                    if name == "bitfeld_wert" {
+                        return args.first().and_then(|a| self.struct_name_from_expr(a))
+                            .and_then(|n| self.bitfeld_basis(&n)).map(STy::Int);
+                    }
+                    if name == "bitfeld_aus" {
+                        return match args.first() {
+                            Some(Expr::Identifier(n)) if self.bitfeld_basis(n).is_some() => self.struct_ty(n).ok(),
+                            _ => None,
+                        };
+                    }
+                }
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
                 if !self.callees.contains_key(name) {
                     if crate::native_crypto::rng_name(name).is_some() { return Some(STy::Bool); }
@@ -3492,14 +3735,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     };
                 }
                 match name.as_str() {
-                    "adresse_von" | "address_of" => return Some(STy::Int(NType::U64)),
+                    "adresse_von" | "address_of" | "pro_kern_basis" | "sektion_anfang" | "sektion_ende" => return Some(STy::Int(NType::U64)),
                     "speicher_lesen" | "mem_read" => return args.get(1).and_then(|w| width_type(w).ok()).map(STy::Int),
-                    "atom_vergleichen_und_tauschen" | "atomic_compare_exchange" => return Some(STy::Bool),
-                    "atom_laden" | "atomic_load" | "atom_addieren" | "atomic_add" | "atom_tauschen" | "atomic_swap"
-                    | "volatile_lesen" | "volatile_read" => return args.first().and_then(|p| match self.infer(p) {
-                        Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. })) => STy::from_identity(&pointee).ok().flatten(),
-                        _ => None,
-                    }),
+                    _ if matches!(atom_art(name), Some(AtomArt::Vergleichen)) => return Some(STy::Bool),
+                    _ if matches!(atom_art(name), Some(AtomArt::Laden | AtomArt::Rmw(_))) => {
+                        return args.first().and_then(|p| self.infer(p)?.atom_element().map(STy::Int));
+                    }
+                    "volatile_lesen" | "volatile_read" => {
+                        return args.first().and_then(|p| match self.infer(p) {
+                            Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. })) => STy::from_identity(&pointee).ok().flatten(),
+                            _ => None,
+                        });
+                    }
                     _ => {}
                 }
                 if let Some((true, bits)) = port_bits(name) { return Some(STy::Int(port_type(bits))); }
@@ -3564,6 +3811,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let slot = self.slot(name)
                     .ok_or_else(|| format!("Systemkoerper: Name '{name}' nicht gefunden"))?;
                 let (ty, ptr) = (slot.ty.clone(), slot.ptr);
+                self.normaler_speicherzugriff(&ty)?;
                 let value = self.builder.build_load(ty.llvm(self.context, self.layouts)?, ptr, name).map_err(e)?;
                 if !self.slots.contains_key(name) {
                     value.as_instruction_value().ok_or("Global-Load fehlt")?.set_alignment(1).map_err(e)?;
@@ -3621,8 +3869,15 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             },
             Expr::BinaryOp { left, op, right } => self.binary(left, op, right, expected),
             Expr::PropertyAccess { object, property } => {
+                if let Some((_, basis, feld)) = self.bitfeld_info(object, property) {
+                    let (_, wort) = self.bitfeld_wort(object)?;
+                    let value = self.builder.build_right_shift(wort, wort.get_type().const_int(u64::from(feld.anfang), false), false, "sys.bitfeld.schieben").map_err(e)?;
+                    let value = self.builder.build_and(value, wort.get_type().const_int(feld.maximum(), false), "sys.bitfeld.lesen").map_err(e)?;
+                    return Ok(SVal { ty: STy::Int(basis), value: value.into() });
+                }
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;
+                self.normaler_speicherzugriff(&ty)?;
                 let value = self.builder.build_load(
                     ty.llvm(self.context, self.layouts)?, ptr, "sys.property.load",
                 ).map_err(e)?;
@@ -3633,6 +3888,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             Expr::IndexAccess { object, index } => {
                 let alignment = self.local_array_alignment(object);
                 let (ptr, ty) = self.pointer_index(object, index)?;
+                self.normaler_speicherzugriff(&ty)?;
                 let value = self.builder.build_load(
                     ty.llvm(self.context, self.layouts)?, ptr, "sys.pointer.load",
                 ).map_err(e)?;
@@ -3691,7 +3947,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // P2-T48 A4: Nullkonstruktor und Arrayfelder ueber den Speicherpfad
         // (construct_struct_into); reine Skalar-/Strukturfelder behalten ihr IR.
         let hat_array = fields.iter().any(|(_, field)| matches!(field.kind, TypeKind::Array { .. }));
-        if args.is_empty() || hat_array {
+        if args.is_empty() || hat_array || !layout.bitfelder.is_empty() {
             let (ptr, alignment) = self.entry_alloca(&ty, "sys.struct.neu")?;
             let place = Place { ptr, alignment, origin: Origin::Fresh };
             self.construct_struct_into(name, args, &place)?;
@@ -4267,6 +4523,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         self.builder.build_int_to_ptr(value.value.into_int_value(), self.ptrt(), "sys.adr").map_err(e)
     }
 
+    // GS-Basis ist auf x86_64 auch ohne optionales FSGSBASE lesbar (Ring 0).
+    fn pro_kern_basis(&self) -> Result<inkwell::values::IntValue<'ctx>, String> {
+        if self.hosted {
+            let global = self.module.get_global("__moo_prokern_vorlage")
+                .ok_or("pro_kern_basis(): mindestens eine @pro_kern statisch-Deklaration erforderlich")?;
+            return self.builder.build_ptr_to_int(global.as_pointer_value(), self.i64t(), "sys.prokern.basis").map_err(e);
+        }
+        if !self.module.get_triple().as_str().to_string_lossy().starts_with("x86_64") {
+            return Err("pro_kern_basis() ist derzeit nur fuer x86_64 implementiert".into());
+        }
+        self.asm("movl $$0xc0000101, %ecx; rdmsr; shlq $$32, %rdx; orq %rdx, %rax",
+            "={ax},~{cx},~{dx},~{memory}", Some(self.i64t().into()), &[])?
+            .map(|v| v.into_int_value()).ok_or("GS-Basis fehlt".into())
+    }
+
     fn asm(&self, code: &str, constraints: &str, result: Option<BasicTypeEnum<'ctx>>, args: &[BasicMetadataValueEnum<'ctx>]) -> Result<Option<BasicValueEnum<'ctx>>, String> {
         let types: Vec<BasicMetadataTypeEnum<'ctx>> = args.iter().map(|arg| match arg {
             BasicMetadataValueEnum::IntValue(v) => Ok(v.get_type().into()),
@@ -4510,6 +4781,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 || crate::native_arithmetic::cast_art(name).is_some()
                 || self.callees.contains_key(name) || eigener
                 || self.layouts.layout(name).is_some()
+                || matches!(name, "bitfeld_wert" | "bitfeld_aus")
                 || self.puffer_builtin_typ(name, args).is_some()
                 || byte_zugriff(name).is_some()
                 || (matches!(name, "byteansicht" | "byte_view") && args.len() == 1);
@@ -4517,6 +4789,38 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 // P2-T98 S3: M-M005 mit Zeile.
                 return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)")));
             }
+        }
+        if !self.callees.contains_key(name) && name == "bitfeld_wert" {
+            let [arg] = args else { return Err("bitfeld_wert(bitfeld) erwartet genau einen Wert".into()); };
+            let (basis, value) = self.bitfeld_wort(arg)?;
+            return Ok(Some(SVal { ty: STy::Int(basis), value: value.into() }));
+        }
+        if !self.callees.contains_key(name) && name == "bitfeld_aus" {
+            let [Expr::Identifier(typ), arg] = args else { return Err("bitfeld_aus(Bitfeldtyp, wort) erwartet Typ und Basiswort".into()); };
+            let basis = self.bitfeld_basis(typ).ok_or("bitfeld_aus erwartet einen Bitfeldtyp")?;
+            let value = self.expr(arg, Some(&STy::Int(basis)))?;
+            self.expect(&value, &STy::Int(basis), "bitfeld_aus Basiswort")?;
+            let layout = self.layouts.layout(typ).ok_or("Bitfeld-Layout fehlt")?;
+            let value = self.builder.build_insert_value(layout.llvm_type.const_zero(), value.value, 0, "sys.bitfeld.aus").map_err(e)?.into_struct_value();
+            return Ok(Some(SVal { ty: self.struct_ty(typ)?, value: value.into() }));
+        }
+        if matches!(name, "sektion_anfang" | "sektion_ende") && !self.callees.contains_key(name) {
+            let [Expr::String(section)] = args else { return Err(format!("{name} erwartet genau einen Sektionsnamen als Textliteral")); };
+            let bekannt = self.module.get_functions().any(|f|
+                f.get_string_attribute(inkwell::attributes::AttributeLoc::Function, crate::native_hardware::TRAMPOLIN_ATTR)
+                    .is_some_and(|a| a.get_string_value().to_bytes() == section.as_bytes()));
+            if !bekannt {
+                return Err(format!("{name}: Sektion '{section}' ist keine deklarierte @verschiebbar @nackt-Sektion"));
+            }
+            let symbol = crate::native_hardware::sektion_symbol(section, name == "sektion_ende");
+            let global = self.module.get_global(&symbol).ok_or("Trampolin-Sektionssymbol fehlt")?;
+            let value = self.builder.build_ptr_to_int(global.as_pointer_value(), self.i64t(), "sys.sektion.grenze").map_err(e)?;
+            return Ok(Some(SVal { ty: STy::Int(NType::U64), value: value.into() }));
+        }
+        if name == "pro_kern_basis" && !self.callees.contains_key(name) {
+            if !args.is_empty() { return Err("pro_kern_basis() erwartet keine Argumente".into()); }
+            let value = self.pro_kern_basis()?;
+            return Ok(Some(SVal { ty: STy::Int(NType::U64), value: value.into() }));
         }
         if matches!(name, "rueckruf_zeiger" | "rueckruf_daten") {
             if !self.hosted { return Err("Registrierte dynamische Rueckrufe brauchen die hosted Moo-Laufzeit".into()); }
@@ -4614,7 +4918,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     self.builder.build_int_cast_sign_flag(raw, llvm, false, "sys.konv").map_err(e)?
                 }
                 STy::Bool => self.builder.build_int_z_extend(value.value.into_int_value(), llvm, "sys.konv").map_err(e)?,
-                STy::Registration(_) | STy::Struct(_) | STy::Float(_) | STy::Buffer(_) | STy::StrukturPuffer(_) | STy::Array { .. } => return Err(format!(
+                STy::Atom(_) | STy::Registration(_) | STy::Struct(_) | STy::Float(_) | STy::Buffer(_)
+                | STy::StrukturPuffer(_) | STy::Array { .. } => return Err(format!(
                     "Systemkoerper: {name}(x) konvertiert nur Ganzzahlen, Zeiger und bool; fuer Floatwerte als({name}, x) (geprueft) oder als_saettigend({name}, x) verwenden, Strukturen per Feldzugriff"
                 )),
                 STy::Int(source) => {
@@ -4639,6 +4944,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 return Err(format!("Systemkoerper: {name} erwartet Struktur- und Feldnamen"));
             };
             let (offset, ty) = self.strukturfeld_info(struktur, feld)?;
+            self.normaler_speicherzugriff(&ty)?;
             let basis = self.address(&args[2])?;
             let adresse = unsafe {
                 self.builder.build_gep(
@@ -4738,7 +5044,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         "adresse_von: erwartet Variable, Strukturfeld oder typisierten Index".into()
                     ),
                 };
-                let value = self.builder.build_ptr_to_int(pointer, self.i64t(), "sys.adresse").map_err(e)?;
+                let offset = self.builder.build_ptr_to_int(pointer, self.i64t(), "sys.adresse").map_err(e)?;
+                // addrspace(256) ist ein GS-Offset, kein linearer C-Zeiger.
+                let value = if pointer.get_type().get_address_space() == AddressSpace::from(256u16) {
+                    self.builder.build_int_add(self.pro_kern_basis()?, offset, "sys.prokern.adresse").map_err(e)?
+                } else { offset };
                 return Ok(Some(SVal { ty: STy::Int(NType::U64), value: value.into() }));
             }
             "speicher_lesen" | "mem_read" => {
@@ -4811,25 +5121,19 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             "assembler" => return self.inline_asm(args, expected, statement),
             _ => {}
         }
-        // P2-T114 Phase B: Atomics als LLVM-Instruktionen (seq_cst), hosted und
-        // Bare. Zeiger ptr[T] mit Integer-Zieltyp, natuerlich ausgerichtet
-        // (Vertrag des unsicheren Aufrufers). addieren/tauschen liefern den
-        // alten Wert, vergleichen_und_tauschen liefert bool (getauscht).
+        // Atomics fuer atom[T]-Speicher und natuerlich ausgerichtete Zeiger.
         if let Some(op) = atom_art(name) {
-            use inkwell::AtomicOrdering::SequentiallyConsistent as SeqCst;
-            let arity = match op { 0 => 1, 4 => 3, _ => 2 };
+            let (args, optionen) = match args.split_last() {
+                Some((Expr::Dict(pairs), positional)) => (positional, pairs.as_slice()),
+                _ => (args, &[][..]),
+            };
+            let arity = match op { AtomArt::Laden => 1, AtomArt::Vergleichen => 3, _ => 2 };
             if args.len() != arity {
                 return Err(format!("Systemkoerper: {name} erwartet {arity} Argument(e) (Zeiger zuerst)"));
             }
-            let pty = self.infer(&args[0]).ok_or_else(|| format!("{name}: erster Operand muss ein ptr[T]-Ausdruck sein"))?;
-            let element = match &pty {
-                STy::Ptr(NativeTypeId::Pointer { pointee, .. }) => match STy::from_identity(pointee)? {
-                    Some(STy::Int(t)) => t,
-                    _ => return Err(format!("{name}: Atomics erfordern einen Integer-Zieltyp (u8..u64, i8..i64)")),
-                },
-                _ => return Err(format!("{name}: erster Operand muss ein ptr[T]-Ausdruck sein")),
-            };
-            let ptr = self.expr(&args[0], Some(&pty))?.value.into_pointer_value();
+            let (ordnung, fehlordnung) = atom_ordnungen(op, optionen)
+                .map_err(|text| crate::diagnose::vormerken("M-M006", self.zeile, format!("{name}: {text}")))?;
+            let (ptr, element) = self.atom_ort(&args[0], name, !matches!(op, AtomArt::Laden))?;
             let llvm = element.llvm_type(self.context);
             let alignment = self.target.get_abi_alignment(&llvm);
             let mut operand = |this: &mut Self, i: usize| -> Result<IntValue<'ctx>, String> {
@@ -4838,30 +5142,29 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Ok(v.value.into_int_value())
             };
             match op {
-                0 => {
+                AtomArt::Laden => {
                     let value = self.builder.build_load(llvm, ptr, "sys.atom.laden").map_err(e)?;
                     let ins = value.as_instruction_value().ok_or("Load fehlt")?;
                     ins.set_alignment(alignment).map_err(e)?;
-                    ins.set_atomic_ordering(SeqCst).map_err(e)?;
+                    ins.set_atomic_ordering(ordnung).map_err(e)?;
                     return Ok(Some(SVal { ty: STy::Int(element), value }));
                 }
-                1 => {
+                AtomArt::Speichern => {
                     let v = operand(self, 1)?;
                     let store = self.builder.build_store(ptr, v).map_err(e)?;
                     store.set_alignment(alignment).map_err(e)?;
-                    store.set_atomic_ordering(SeqCst).map_err(e)?;
+                    store.set_atomic_ordering(ordnung).map_err(e)?;
                     return Ok(None);
                 }
-                2 | 3 => {
+                AtomArt::Rmw(bin) => {
                     let v = operand(self, 1)?;
-                    let bin = if op == 2 { inkwell::AtomicRMWBinOp::Add } else { inkwell::AtomicRMWBinOp::Xchg };
-                    let old = self.builder.build_atomicrmw(bin, ptr, v, SeqCst).map_err(e)?;
+                    let old = self.builder.build_atomicrmw(bin, ptr, v, ordnung).map_err(e)?;
                     return Ok(Some(SVal { ty: STy::Int(element), value: old.into() }));
                 }
-                _ => {
+                AtomArt::Vergleichen => {
                     let cmp = operand(self, 1)?;
                     let new = operand(self, 2)?;
-                    let pair = self.builder.build_cmpxchg(ptr, cmp, new, SeqCst, SeqCst).map_err(e)?;
+                    let pair = self.builder.build_cmpxchg(ptr, cmp, new, ordnung, fehlordnung).map_err(e)?;
                     let ok = self.builder.build_extract_value(pair, 1, "sys.atom.ok").map_err(e)?;
                     return Ok(Some(SVal { ty: STy::Bool, value: ok }));
                 }
@@ -4904,6 +5207,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 _ => ("outl $0, $1", "{eax},{dx},~{memory}"),
             };
             self.asm(code, constraints, None, &[value.into(), port.value.into()])?;
+            return Ok(None);
+        }
+        if name == "kern_pause" {
+            if !args.is_empty() { return Err("kern_pause erwartet keine Argumente".into()); }
+            self.asm(if self.x86 { "pause" } else { "yield" }, "", None, &[])?;
             return Ok(None);
         }
         if let Some(kind) = barrier(name) {
@@ -5181,6 +5489,9 @@ pub(crate) fn emit_system_function<'ctx>(
         }
         emitter.sret = Some(function.get_nth_param(0).ok_or("sret-Parameter fehlt")?.into_pointer_value());
     }
+    for ty in me.params.iter().chain(me.result.iter()) {
+        emitter.normaler_speicherzugriff(ty)?;
+    }
     for (index, (name, ty)) in param_names.iter().zip(&me.params).enumerate() {
         let position = index as u32 + offset;
         let llvm = ty.llvm(context, layouts)?;
@@ -5204,8 +5515,22 @@ pub(crate) fn emit_system_function<'ctx>(
         emitter.slots.insert(name.clone(), Slot { ty: ty.clone(), ptr, constant: false });
     }
     emitter.declare_locals(body, &entry_builder)?;
+    let mut pro_kern_index = 0u32;
     for stmt in global_declarations {
-        if let Stmt::NativeConst { name, ty, .. } = stmt {
+        if let Stmt::NativeConst { name, ty, decorators, .. } = stmt {
+            if decorators.iter().any(|d| d.name == "pro_kern") {
+                let global = module.get_global("__moo_prokern_vorlage").ok_or("CPU-lokale Vorlage fehlt")?;
+                let layout = global.get_value_type().into_struct_type();
+                let ptr = if emitter.hosted {
+                    entry_builder.build_struct_gep(layout, global.as_pointer_value(), pro_kern_index, "sys.prokern.tls").map_err(e)?
+                } else {
+                    let offset = target.offset_of_element(&layout, pro_kern_index).ok_or("CPU-lokaler Feldoffset fehlt")?;
+                    context.i64_type().const_int(offset, false).const_to_pointer(context.ptr_type(AddressSpace::from(256u16)))
+                };
+                pro_kern_index += 1;
+                emitter.globals.insert(name.clone(), Slot { ty: STy::from_type_ref(ty, nominals)?, ptr, constant: false });
+                continue;
+            }
             // Source-Typ bewahrt Nominalitaet und Signedness; LLVM-Pointer sind opaque.
             if let (Ok(ty), Some(global)) = (STy::from_type_ref(ty, nominals), module.get_global(name)) {
                 emitter.globals.insert(name.clone(), Slot {

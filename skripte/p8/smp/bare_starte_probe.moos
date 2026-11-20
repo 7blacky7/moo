@@ -1,0 +1,6 @@
+# P10-T1: Hosted-Thread-Vertrag, fuer Bare-IR und Linknachweis kompiliert.
+funktion arbeite(n):
+    gib_zurück n + 1
+
+setze faden auf starte(arbeite, 41)
+zeige faden.warten()

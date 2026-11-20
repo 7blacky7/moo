@@ -1,0 +1,10 @@
+struktur P2FontInfo:
+    glyphen: ptr[u8]
+    breite: u32
+
+extern "C" konstante p2_font_info: P2FontInfo
+
+@nativ
+funktion verboten() -> void:
+    unsicher:
+        p2_font_info.breite = 20

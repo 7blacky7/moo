@@ -17,11 +17,12 @@
 # Bau:  moo compile beispiele/kernel/uefi_kern.moos --no-stdlib --target x86_64-bare \
 #           --kernel --linker-script beispiele/kernel/linker-uefi.ld -o kern.elf
 
+# P10-T5: benannte x86-Bitbereiche statt Handmasken in GDT/IDT.
+importiere nativ_x86_deskriptoren
+
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
-aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe
-
-extern "C" funktion moo_bare_font_mono() -> u64
+aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe, moo_bare_font_mono
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar
 aus "kern_tastatur" importiere tastatur_codepunkt
 aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
@@ -182,6 +183,12 @@ statisch AUSNAHME_ZUSTAND: [u64; 3] auf [0, 0, 0]
 # 10 Timer-Ticks, 11 erster Make-Scancode, 15 Timerquelle (1 PM, 2 TSC).
 @nativ
 statisch HARDWARE_ZUSTAND: [u64; 16] auf 0
+@nativ
+konstante USB_MSI_VEKTOR: u16 auf 66
+@nativ
+statisch USB_MSI_IRQS: [u64; 1] auf 0
+@nativ
+konstante T_USB_MSI_IRQ: [u8; _] auf "MOO-KERNEL USB MSI IRQ "
 
 # Seitentabellen: Identitaet bis 64 GiB (2-MiB-Seiten), 2 GiB Framebuffer-Fenster
 # fuer FB oberhalb davon, Kern bis 64 MiB (4-KiB-Seiten).
@@ -742,13 +749,13 @@ funktion gdt_einrichten() -> u64:
     unsicher:
         setze z: u64 auf adresse_von(GDT_ZEIGER)
         setze basis: u64 auf adresse_von(TSS)
-        setze niedrig: u64 auf 103 | ((basis & 0xFFFFFF) << 16) | (0x89 << 40) | (((basis >> 24) & 0xFF) << 56)
+        setze niedrig: u64 auf x86_tss_unterwort(basis)
         # RSP0 und IST1; I/O-Bitmap beginnt hinter dem 104-Byte-TSS.
         speicher_schreiben(basis + 4, adresse_von(KERN_STAPEL) + 65536, 8)
         speicher_schreiben(basis + 36, adresse_von(IST_DOPPELFEHLER) + 16384, 8)
         speicher_schreiben(basis + 102, 104, 2)
         speicher_schreiben(adresse_von(GDT) + 24, niedrig, 8)
-        speicher_schreiben(adresse_von(GDT) + 32, basis >> 32, 8)
+        speicher_schreiben(adresse_von(GDT) + 32, x86_tss_oberwort(basis), 8)
         speicher_schreiben(z, u16(5 * 8 - 1), 2)
         speicher_schreiben(z + 2, adresse_von(GDT), 8)
         gdt_laden(z)
@@ -770,13 +777,8 @@ funktion idt_laden(zeiger_adr: u64) -> void:
 funktion idt_tor(vektor: u64, ziel: u64, ist: u64) -> void:
     unsicher:
         setze tor: u64 auf adresse_von(IDT) + vektor * 16
-        speicher_schreiben(tor, u16(ziel & 0xFFFF), 2)
-        speicher_schreiben(tor + 2, u16(0x08), 2)
-        speicher_schreiben(tor + 4, u8(ist & 7), 1)
-        speicher_schreiben(tor + 5, u8(0x8E), 1)
-        speicher_schreiben(tor + 6, u16((ziel >> 16) & 0xFFFF), 2)
-        speicher_schreiben(tor + 8, u32((ziel >> 32) & 0xFFFFFFFF), 4)
-        speicher_schreiben(tor + 12, 0, 4)
+        speicher_schreiben(tor, x86_idt_unterwort(ziel, ist), 8)
+        speicher_schreiben(tor + 8, x86_idt_oberwort(ziel), 8)
 
 @nativ
 funktion ausnahme_melden(vektor: u64, fehler: u64, rip: u64) -> void:
@@ -1018,6 +1020,7 @@ funktion idt_einrichten() -> bool:
         idt_tor(29, adresse_von(ausnahme_29), 0)
         idt_tor(30, adresse_von(ausnahme_30), 0)
         idt_tor(31, adresse_von(ausnahme_31), 0)
+        idt_tor(als(u64, USB_MSI_VEKTOR), adresse_von(usb_msi_irq), 0)
         speicher_schreiben(z, u16(256 * 16 - 1), 2)
         speicher_schreiben(z + 2, adresse_von(IDT), 8)
         idt_laden(z)
@@ -1231,6 +1234,16 @@ funktion tastatur_irq(rahmen: ptr[u64]) -> void:
             setze scan: u8 auf ein8(0x60)
             wenn (scan & 0x80) == 0 und hw(11) == 0:
                 hw_setze(11, u64(scan))
+        apic_eoi()
+
+# Alle HID-Controller wecken dieselbe Kernschleife. Die ISR greift auf
+# keinen wechselnden xHCI-Slot zu. Der Hauptpfad leert die Eventringe.
+@nativ
+@unterbrechung(66)
+funktion usb_msi_irq(rahmen: ptr[u64]) -> void:
+    unsicher:
+        setze zaehler: u64 auf adresse_von(USB_MSI_IRQS)
+        speicher_schreiben(zaehler, speicher_lesen(zaehler, 8) + 1, 8)
         apic_eoi()
 
 @nativ
@@ -1785,7 +1798,7 @@ funktion schrift_wechseln() -> void:
         setze schrift: u64 auf 0
         setze marker: u64 auf adresse_von(T_SCHRIFT_KOMPAKT)
         wenn kon(versatz_von(Konsole, k_schrift)) == 0:
-            setze schrift auf moo_bare_font_mono()
+            setze schrift auf adresse_von(moo_bare_font_mono)
             setze marker auf adresse_von(T_SCHRIFT_MONO)
         setze links: u64 auf kon(versatz_von(Konsole, k_links))
         setze oben: u64 auf kon(versatz_von(Konsole, k_oben))
@@ -1821,6 +1834,8 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
                 meldung(adresse_von(T_USB_TASTE_BDF), xh(29))
                 meldung(adresse_von(T_USB_TASTE_PORT), port)
                 meldung(adresse_von(T_USB_TASTE_SLOT), slot)
+                wenn xh(17) != 0:
+                    meldung(adresse_von(T_USB_MSI_IRQ), speicher_lesen(adresse_von(USB_MSI_IRQS), 8))
                 meldung(adresse_von(T_USB_HID), usage)
                 speicher_schreiben(adresse_von(USB_TASTEN), speicher_lesen(adresse_von(USB_TASTEN), 8) + 1, 8)
                 wenn usage == 57:
@@ -1845,7 +1860,7 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
             setze i auf i + 1
         speicher_schreiben(zuletzt, report, 8)
 
-# LAPIC-Ticks wecken den Polling-Loop. xHCI-Interrupts bleiben aus.
+# LAPIC-Ticks und xHCI-MSI wecken dieselbe Ereignisschleife.
 @nativ
 funktion usb_poll() -> void:
     unsicher:
@@ -2575,7 +2590,7 @@ funktion kern_haupt(bi: u64) -> void:
                 setze t0 auf takt()
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0
-                konsole_starten(40, 300, breite - 40, hoehe - 100, moo_bare_font_mono(), u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                konsole_starten(40, 300, breite - 40, hoehe - 100, adresse_von(moo_bare_font_mono), u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
                 text(adresse_von(T_SCHRIFT_MONO))
                 eingabe_zeigen()
                 setze t0 auf takt()
@@ -2597,7 +2612,7 @@ funktion kern_haupt(bi: u64) -> void:
                     meldung(adresse_von(T_NEU_US), t_neu / tsc)
                     meldung(adresse_von(T_ZEILE_US), t_zeile / tsc)
         meldung(adresse_von(T_AUS_TEST), u64(ausnahme_pruefen()))
-        # Legacy-PIC bleibt vollstaendig maskiert; externe IRQs laufen ueber IOAPIC.
+        # Legacy-PIC bleibt maskiert. PS/2 nutzt IOAPIC, xHCI den MSI-Pfad.
         aus8(0x21, 0xFF)
         aus8(0xA1, 0xFF)
         setze timer_start auf timer_starten(tsc)
@@ -2618,7 +2633,12 @@ funktion kern_haupt(bi: u64) -> void:
         wenn sammeln:
             meldung(adresse_von(SAM_T_HID_START), 1)
             sammel_wartung(adresse_von(meldung))
-        setze usb_ok auf usb_starten(adresse_von(usb_dma_nehmen), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung), sammeln)
+        setze usb_msi_adresse: u32 auf 0
+        wenn timer_start != 0 und hw(5) <= 255:
+            # Physische APIC-Ziel-ID und feste Edge-Nachricht. Linux v6.12
+            # arch/x86/include/asm/msi.h:15–41,52.
+            setze usb_msi_adresse auf 0xFEE00000 | (als(u32, hw(5)) << 12)
+        setze usb_ok auf usb_starten(adresse_von(usb_dma_nehmen), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung), sammeln, usb_msi_adresse, USB_MSI_VEKTOR)
         meldung(adresse_von(T_USB_BAR), xh(23))
         meldung(adresse_von(T_USB_CAP), xh(0))
         meldung(adresse_von(T_USB_DMA), xh(4))

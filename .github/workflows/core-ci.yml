@@ -23,6 +23,9 @@ on:
       # run_all.sh und die zusaetzlichen Core-Gates verwenden diese Eingaben.
       - "scripts/game-test-runner.sh"
       - "skripte/p2/ffi/klein_roundtrip.sh"
+      - "skripte/p2/ffi/rueckruf*"
+      - "skripte/p2/native_pointer/**"
+      - "skripte/p8/smp/assembler_modus_probe.moos"
       - "skripte/p2/abi/aarch64_struct_slice.sh"
       - "skripte/p2/abi/struct_by_value.c"
       - "skripte/p2/abi/struct_by_value.h"
@@ -293,6 +296,26 @@ jobs:
             mise run -C skripte/p2/frontend "$task" 2>&1 | tee -a p2-native-defer-linux.log
           done
 
+      - name: Check CPU-local data, bitfields and relocatable trampolines
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          export MOO_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler"
+          for task in pro-kern bitfeld trampolin; do
+            mise -C skripte/p2/native_pointer run "$task" 2>&1 | tee -a p10-native-linux.log
+          done
+
+      - name: Check registered and static C callbacks
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          export P2_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler"
+          mise -C skripte/p2/ffi run rueckruf 2>&1 | tee p2-rueckruf-linux.log
+
       - name: Check Linux native C ABI and verify LLVM IR
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -374,6 +397,13 @@ jobs:
             p2-native-platform-${{ runner.os }}.log
             p2-native-abi-linux.log
             p2-native-defer-linux.log
+            p10-native-linux.log
+            p2-rueckruf-linux.log
+            build/p10-t4/
+            build/p10-t5/
+            build/p10-t6/
+            build/p2-ffi/rueckruf/*.err
+            build/p2-ffi/rueckruf/*.compile.log
             build/p2-frontend/defer_vertrag/*.compile.log
             build/p2-frontend/defer_vertrag/*.lsan.err
             build/p2-frontend/struktur_array_dyn/*.compile.log

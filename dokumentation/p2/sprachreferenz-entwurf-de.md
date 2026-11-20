@@ -125,6 +125,117 @@ Verschachtelte, gepackte Strukturen mit festem Array-Feld kompilieren bereits (`
 `@gepackt`/`@packed` bedeutet im ersten Inkrement Alignment 1 ohne implizite Feldpolsterung. Widersprüchliche Kombinationen mit expliziter höherer Ausrichtung werden abgelehnt. Nicht ausgerichtete Felder benötigen geeignete Zugriffe; eine normal ausgerichtete Referenz darf daraus nicht vorgetäuscht werden. Padding ist weder Vergleichsinhalt noch ungeprüft zu serialisierender Nutzinhalt.
 
 
+### Verschiebbare Assemblersektionen (P10-T6)
+
+```moos
+@nativ
+@nackt
+@verschiebbar
+@sektion(".ap_trampolin")
+funktion ap_trampolin() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code16\nmovl %eax, %ebx\n.code32\nmovl %eax, %ebx\n.code64\nretq", clobber=[])
+
+@nativ
+funktion trampolin_groesse() -> u64:
+    unsicher:
+        gib_zurück sektion_ende(".ap_trampolin") - sektion_anfang(".ap_trampolin")
+```
+
+Die Modusdirektiven `.code16`, `.code32`, `.code64` waren bereits erlaubt.
+Neu markiert `@verschiebbar` (Alias `@relocatable`) eine eigene x86_64-
+Bare-/UEFI-Sektion mit genau einem `@nackt`-Assemblerkörper. Der Compiler
+hält diesen Körper benutzt und setzt echte globale Anfangs-/Endlabels um seine
+expliziten Assemblerbytes. `sektion_anfang("name")` und
+`sektion_ende("name")` liefern innerhalb `unsicher:` deren lineare
+Linkadressen als `u64`. Nach dem letzten Assemblerblock restauriert der
+Compiler `.code64`; ein möglicher Backend-Trap hinter dem Körper gehört
+nicht zum kopierten Bereich. Andere Funktionen/Daten in dieser Sektion und
+Anfragen nach unbekannten Sektionen werden abgewiesen.
+
+Die zusätzliche Prüfung gilt ausschließlich markierten Körpern. Sie erlaubt
+AT&T-Instruktionen mit numerischen Operanden/Registern, lokale numerische
+Marken sowie `.L...`-Marken, relative lokale Sprünge/Calls,
+RIP-relative lokale Zugriffe und die explizite Differenz zweier lokaler Marken.
+Modus-, numerische Daten- und Ausrichtungsdirektiven sind erlaubt. Absolute
+lokale oder externe symbolische Operanden und Dateneinträge werden vor der
+IR-Ausgabe diagnostiziert, ebenso Sektionswechsel, Includes, Makros,
+Symbolaliase und zitierte Symbole. Eine lokale Marke allein ist keine
+verschiebbare absolute Adresse; für einen Offset beispielsweise
+`$$.Lziel-.Lanfang` verwenden. Die beiden Marken müssen im Körper definiert
+sein.
+
+Numerische physische Adressen und rohe Bytes bleiben bewusste Verantwortung
+des `unsicher`-Aufrufers. Die Prüfung ist kein vollständiger Beweis der
+Positionsunabhängigkeit beliebiger Maschinencodes und stellt weder CPU-Modus,
+GDT noch Seitentabellen selbst ein. Bestehende unmarkierte Assemblerkörper
+behalten ihren bisherigen Vertrag.
+
+### Benannte Bitbereiche (P10-T5)
+
+```moos
+bitfeld Steuerwort: u64:
+    modus: 0..2
+    bereit: 7
+
+@nativ
+funktion setzen(roh: u64, modus: u64) -> u64:
+    setze wort: Steuerwort auf bitfeld_aus(Steuerwort, roh)
+    wort.modus = modus
+    gib_zurück bitfeld_wert(wort)
+```
+
+Die Basis ist `u8`, `u16`, `u32` oder `u64`. Beide Grenzen sind inklusiv;
+`bereit: 7` benennt ein einzelnes Bit. Namen und Bereiche müssen eindeutig,
+überschneidungsfrei und innerhalb der Basisbreite liegen. Ein Bitfeld ist ein
+nomineller nativer Strukturtyp mit genau einem Basiswort, kein C-Bitfeldlayout.
+
+`Steuerwort(modus, bereit)` packt Werte in Deklarationsreihenfolge,
+`Steuerwort()` initialisiert mit null. Solche Konstruktoren sind auch in
+`@nativ konstante` erlaubt; ungültige konstante Werte werden beim Kompilieren
+abgewiesen. Feldlesezugriffe liefern den vorzeichenlosen Basistyp. Ein
+Feldschreibzugriff prüft den Wertebereich vor dem Schreiben und bewahrt die
+anderen und unbenannten Bits. Dynamischer Überlauf verwendet die bestehenden
+nativen Fehler-/Cleanup-Pfade (hosted fangbar). Er schneidet den Wert nicht ab.
+
+`bitfeld_aus(Steuerwort, roh)` übernimmt ein Basiswort einschließlich
+unbenannter Bits, `bitfeld_wert(wort)` liest es vollständig aus. Ein Bitbereich
+hat keine eigene Byteadresse: `adresse_von(wort.modus)` und
+`versatz_von(Steuerwort, modus)` werden mit Erklärung abgewiesen. Direkte
+Feldzugriffe sind normale RAM-Zugriffe; MMIO und W1C/Write-0 verwenden weiterhin
+die expliziten Registeroperationen.
+
+`nativ_x86_deskriptoren` beschreibt GDT-, TSS- und IDT-Worte in Moo und
+liefert deren Unter-/Oberworte ohne manuelle Masken an den Aufrufstellen.
+Diese Sprachebene verändert weder `T(x)` noch `als(T,x)`.
+
+### CPU-lokaler statischer Speicher (P10-T4)
+
+`@pro_kern statisch NAME: T auf wert` legt einen eigenen Wert je CPU (Bare)
+beziehungsweise je Moo-Thread (hosted x86_64) an. `@nativ` darf zusätzlich
+angegeben werden. Skalare, Strukturen und feste Arrays verwenden die vorhandenen
+nativen Initialisierer und das Ziel-ABI einschließlich Padding. Ein neuer
+Hosted-Thread beginnt mit den deklarierten Anfangswerten; Änderungen des
+erzeugenden Threads werden nicht übernommen. Zugriff verlangt `unsicher:`.
+
+Bare erzeugt ein gemeinsames Initialisierungsbild in `.moo_prokern`.
+`linker-uefi.ld` liefert `__moo_prokern_anfang` und `__moo_prokern_ende`;
+die Differenz ist die Bildgröße. Der Kernel kopiert dieses Bild für jede CPU
+in ABI-ausgerichteten Speicher und setzt vor dem ersten Zugriff IA32_GS_BASE
+auf die Kopie. Offset 0 gehört der ersten Nutzvariable, es gibt keinen
+versteckten Header. Direkte Zugriffe verwenden LLVM-Adressraum 256 (GS).
+`pro_kern_basis() -> u64` liest Bare die aktive GS-Basis per RDMSR (Ring 0)
+und liefert hosted den Anfang des eigenen TLS-Aggregats.
+`adresse_von(NAME.feld)` liefert auch hier eine lineare Adresse, keinen
+GS-Offset. Übertragene Zeiger bleiben an den ursprünglichen CPU-/Threadspeicher
+gebunden; Migration, Präemption und die Lebensdauer solcher Zeiger kontrolliert
+der Aufrufer. Das Feature richtet weder GS noch einen Scheduler selbst ein.
+
+Die Deklarationsreihenfolge legt das gemeinsame Layout fest. Eigene
+`@sektion`/`@ausrichten` an CPU-lokalen Variablen werden diagnostiziert;
+das Aggregat übernimmt seine ABI-Ausrichtung. Andere Bare-Architekturen
+werden derzeit mit einer klaren Diagnose abgewiesen.
+
 ### Statische native Strukturwerte (P2-T124)
 
 `@nativ statisch NAME: Struktur auf Struktur(...)` legt beschreibbaren Speicher

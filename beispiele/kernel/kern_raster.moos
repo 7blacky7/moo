@@ -9,17 +9,18 @@ struktur KernRaster:
     kr_hoehe: u64
     kr_stride: u64
 
-# Read-only MooFontAaFace aus moo_surface.c. Drei 64-Bit-Adressen,
-# gefolgt von den fünf u32-Metriken des eingebetteten Faces.
+# Schreibgeschuetztes MooFontAaFace aus moo_surface.c.
 struktur KernAaSchrift:
-    ks_glyphen: u64
-    ks_vorschuebe: u64
-    ks_extras: u64
+    ks_glyphen: ptr[u8]
+    ks_vorschuebe: ptr[u8]
+    ks_extras: ptr[u32]
     ks_breite: u32
     ks_hoehe: u32
     ks_erstes: u32
     ks_anzahl: u32
     ks_extra_anzahl: u32
+
+extern "C" konstante moo_bare_font_mono: KernAaSchrift
 
 @nativ
 funktion raster_puffer_ok(pixel: u64, bytes: u64, breite: u64, hoehe: u64, stride: u64) -> bool:

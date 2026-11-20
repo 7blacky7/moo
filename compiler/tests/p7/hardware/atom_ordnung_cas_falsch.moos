@@ -1,0 +1,4 @@
+@nativ
+funktion atom_cas_falsch(p: ptr[u32]) -> bool:
+    unsicher:
+        gib_zurück atom_vergleichen_und_tauschen(p, 1, 2, ordnung=locker, fehlordnung=erwerben)

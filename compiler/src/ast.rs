@@ -134,6 +134,19 @@ pub enum UnaryOpKind {
     BitNot,
 }
 
+/// Benannter, inklusiver Bitbereich eines nativen Ein-Wort-Strukturtyps.
+#[derive(Debug, Clone)]
+pub struct BitfeldBereich {
+    pub name: std::string::String,
+    pub anfang: u32,
+    pub breite: u32,
+    pub zeile: usize,
+}
+
+impl BitfeldBereich {
+    pub fn maximum(&self) -> u64 { u64::MAX >> (64 - self.breite) }
+}
+
 /// Decorator mit optionalen Literal-Argumenten: @name oder @name(arg, ...)
 /// P011-A1: getrennter Typ statt blossem String — "weniger Magie an den tiefsten Stellen".
 #[derive(Debug, Clone)]
@@ -354,13 +367,13 @@ pub enum Stmt {
         value: Expr,
         decorators: Vec<Decorator>,
     },
-    /// P7-T4 (1A): `@nativ konstante NAME: T = wert` als konstantes Datenglobal
-    /// mit exaktem Ziel-ABI-Layout (kein MooValue), siehe native_const.rs.
+    /// Native Daten im Ziel-ABI-Layout. `None` deklariert ein schreibgeschuetztes
+    /// C-Datensymbol ohne eigene Definition (siehe native_const.rs).
     NativeConst {
         zeile: usize,
         name: std::string::String,
         ty: TypeRef,
-        value: Expr,
+        value: Option<Expr>,
         decorators: Vec<Decorator>,
     },
     Return(Option<Expr>, usize),
@@ -372,6 +385,7 @@ pub enum Stmt {
         name: std::string::String,
         fields: Vec<(std::string::String, TypeRef)>,
         decorators: Vec<Decorator>,
+        bitfelder: Vec<BitfeldBereich>,
     },
     ClassDef {
         zeile: usize,

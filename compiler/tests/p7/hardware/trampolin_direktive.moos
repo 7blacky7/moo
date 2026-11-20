@@ -1,0 +1,7 @@
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_direktive")
+funktion tramp_direktive() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".section .andere\nretq", clobber=[])

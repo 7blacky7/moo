@@ -1,0 +1,4 @@
+bitfeld Klein: u8:
+    a: 0..2
+@nativ
+konstante FALSCH: Klein auf Klein(8)

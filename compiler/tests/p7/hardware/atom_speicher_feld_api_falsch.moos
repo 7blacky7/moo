@@ -1,0 +1,7 @@
+struktur Ticketstand:
+    dran: atom[u32]
+
+@nativ
+funktion verboten(adresse: u64) -> void:
+    unsicher:
+        strukturfeld_lesen(Ticketstand, dran, adresse)

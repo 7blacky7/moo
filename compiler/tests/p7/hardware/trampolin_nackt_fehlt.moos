@@ -1,0 +1,5 @@
+@nativ
+@verschiebbar
+@sektion(".moo_ap_rahmen")
+funktion tramp_rahmen() -> u64:
+    gib_zurück 1

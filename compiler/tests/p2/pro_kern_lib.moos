@@ -1,0 +1,34 @@
+# P10-T4: Ziel-ABI, Padding, skalare und aggregierte CPU-lokale Werte.
+struktur KernProbe:
+    klein: u8
+    werte: [u64; 2]
+
+@pro_kern
+statisch kern_marke: u8 auf 3
+@pro_kern
+statisch kern_wert: u64 auf 9
+@pro_kern
+statisch kern_probe: KernProbe auf KernProbe(5, [17, 23])
+
+@nativ
+funktion pro_lesen() -> u64:
+    unsicher:
+        gib_zurück kern_wert
+
+@nativ
+funktion pro_schreiben(wert: u64) -> u64:
+    unsicher:
+        setze kern_wert auf wert
+        kern_probe.werte[1] = wert
+        gib_zurück kern_probe.werte[1] + als(u64, kern_marke) + als(u64, kern_probe.klein)
+
+@nativ
+funktion pro_adresse() -> bool:
+    unsicher:
+        gib_zurück adresse_von(kern_wert) == pro_kern_basis() + 8
+
+@nativ
+funktion pro_kopie() -> u64:
+    unsicher:
+        setze kopie: KernProbe auf kern_probe
+        gib_zurück kopie.werte[0] + kopie.werte[1]

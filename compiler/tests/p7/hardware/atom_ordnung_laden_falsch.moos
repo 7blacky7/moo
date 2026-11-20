@@ -1,0 +1,4 @@
+@nativ
+funktion atom_laden_falsch(p: ptr[u32]) -> u32:
+    unsicher:
+        gib_zurück atom_laden(p, ordnung=freigeben)

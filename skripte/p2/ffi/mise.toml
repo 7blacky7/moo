@@ -3,6 +3,37 @@ description = "P2-T19/T56: Struktur-ABI-Matrix (Moo<->C hosted Linux) + Clang-Si
 dir = "{{config_root}}/../../.."
 run = "bash skripte/p2/ffi/abi_matrix.sh"
 
+[tasks.extern-konstanten]
+description = "P2-T129: schreibgeschuetzte C-Datensymbole (Bare/Hosted x86-64, C-Gegenprobe)"
+dir = "{{config_root}}/../../.."
+run = '''
+set -eu
+out=build/p2-t129/ffi
+mkdir -p "$out"
+compiler=${P2_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p2
+for target in x86_64-bare native; do
+    "$compiler" compile "$src/extern_konstanten.moos" --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    rg -q '^@p2_font_daten = external constant \[2 x i8\], align 1$' "$out/$target.ll"
+    rg -q '^@p2_font_info = external constant .+, align 8$' "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=p2_t129_leseprobe --recursive "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -relocation-model=pic -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+    ${CC:-cc} -std=c11 -Wall -Wextra -Werror "$src/extern_konstanten_probe.c" "$out/$target.o" -o "$out/$target.probe"
+    "$out/$target.probe"
+done
+expect_fail() {
+    if "$compiler" compile "$src/$1.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/falsch.ll" >"$out/$1.log" 2>&1; then
+        echo "Unerwartet akzeptiert: $1" >&2
+        exit 1
+    fi
+    rg -q -F "$2" "$out/$1.log" || { cat "$out/$1.log" >&2; exit 1; }
+}
+expect_fail extern_konstante_initialisierer 'darf keinen Initialisierer haben'
+expect_fail extern_konstante_schreiben 'ist nicht beschreibbar'
+echo 'PASS P2-T129: Bare und Hosted mit C-Datensymbolen, Initialisierer und Schreibzugriff abgelehnt'
+'''
+
 
 [tasks.pointer-rekursion]
 alias = "pointer-rekursion-zukunft"

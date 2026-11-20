@@ -50,6 +50,69 @@ rg -q -F 'noch nicht freigegeben' "$out/i686.log"
 echo 'PASS Pointer-Scope, Indexgrenzen, Typidentität und Zielguard'
 '''
 
+[tasks.atom-speicher]
+description = "P10-T3: atom[T] in Statics, Feldern und typisierten Zeigern"
+run = '''
+set -eu
+cd ../../..
+out=build/p10-t3/ir
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+for target in x86_64-bare x86_64-unknown-uefi; do
+    ir="$out/$target.ll"
+    "$compiler" compile "$src/atom_speicher.moos" --no-stdlib --target "$target" --emit-ir -o "$ir"
+    mise exec -- opt -passes=verify -disable-output "$ir"
+    rg -q '^@ATOM_STAND = global i64 41' "$ir"
+    rg -q 'load atomic i64, ptr @ATOM_STAND acquire' "$ir"
+    rg -q 'atomicrmw add ptr .* i64 1 monotonic' "$ir"
+    rg -q 'store atomic i32 1, ptr .* release' "$ir"
+    rg -q 'atomicrmw add ptr .* i32 1 monotonic' "$ir"
+    for fall in lesen schreiben kopie feld_api; do
+        log="$out/$target.$fall.log"
+        if "$compiler" compile "$src/atom_speicher_${fall}_falsch.moos" --no-stdlib --target "$target" --emit-ir -o "$out/falsch.ll" >"$log" 2>&1; then
+            echo "Atom-Speicherzugriff für $fall auf $target akzeptiert" >&2
+            exit 1
+        fi
+        rg -q ':7(:[0-9]+)?: Fehler M-M007: .*atomaren Speicher' "$log" || { cat "$log" >&2; exit 1; }
+    done
+done
+echo 'PASS P10-T3: Bare/UEFI atom[T], normale Lese-/Schreib-/Kopierzugriffe abgelehnt'
+'''
+
+[tasks.atom-ordnung]
+description = "P10-T2: Speicherordnungen, Bit-RMW, CAS und kern_pause im Bare-IR"
+run = '''
+set -eu
+cd ../../..
+out=build/p10-t2/ir
+mkdir -p "$out"
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
+src=compiler/tests/p7/hardware
+for target in x86_64-bare x86_64-unknown-uefi; do
+    ir="$out/$target.ll"
+    "$compiler" compile "$src/atom_ordnung.moos" --no-stdlib --target "$target" --emit-ir -o "$ir"
+    mise exec -- opt -passes=verify -disable-output "$ir"
+    rg -q 'load atomic i32, ptr .* acquire' "$ir"
+    rg -q 'store atomic i32 .* release' "$ir"
+    rg -q 'atomicrmw and .* monotonic' "$ir"
+    rg -q 'atomicrmw or .* acq_rel' "$ir"
+    rg -q 'atomicrmw xor .* release' "$ir"
+    rg -q 'cmpxchg .* acq_rel acquire' "$ir"
+    rg -q 'cmpxchg .* release monotonic' "$ir"
+    rg -qF 'asm sideeffect "pause"' "$ir"
+    for fall in laden cas; do
+        log="$out/$target.$fall.log"
+        if "$compiler" compile "$src/atom_ordnung_${fall}_falsch.moos" --no-stdlib --target "$target" --emit-ir -o "$out/falsch.ll" >"$log" 2>&1; then
+            echo "Ungültige Speicherordnung für $fall auf $target akzeptiert" >&2
+            exit 1
+        fi
+        rg -q 'M-M006.*(Laden erlaubt|Fehlordnung muss)' "$log" || { cat "$log" >&2; exit 1; }
+    done
+done
+echo 'PASS P10-T2: Bare/UEFI-Ordnungen, Bit-RMW, CAS und kern_pause'
+'''
+
 [tasks.hardware]
 description = "P7-T4: volatile_lesen/schreiben, Barrieren und Port-I/O in @nativ (IR, Disassembly, C++-Probe, Negativfälle)"
 run = '''
@@ -57,7 +120,7 @@ set -eu
 cd ../../..
 out=build/p7-t4-hardware
 mkdir -p "$out"
-compiler=compiler/target/release/moo-compiler
+compiler=${MOO_COMPILER:-compiler/target/release/moo-compiler}
 src=compiler/tests/p7/hardware
 funcs="--func=__moo_native.hw_reg_lesen --func=__moo_native.hw_reg_lesen_index --func=__moo_native.hw_reg_schreiben --func=__moo_native.hw_klingel --func=__moo_native.hw_quittieren"
 for target in x86_64-bare x86_64-unknown-uefi aarch64-bare; do
@@ -96,6 +159,20 @@ expect_fail "$src/port_typ_falsch.moos" x86_64-bare 'hat nicht den Typ U16' --no
 expect_fail "$src/port_io.moos" aarch64-bare 'Port-I/O gibt es nur auf x86_64' --no-stdlib
 expect_fail "$src/volatile_mmio.moos" i686-bare 'noch nicht freigegeben' --no-stdlib
 expect_fail "$src/volatile_mmio.moos" native 'nur im Bare-Profil' ''
+"$compiler" compile "$src/berechnete_operanden.moos" --no-stdlib --emit-ir --target x86_64-bare -o "$out/berechnet.ll"
+mise exec -- opt -passes=verify -disable-output "$out/berechnet.ll"
+mise exec -- llvm-extract -S --func=__moo_native.hw_berechnete_ports --func=__moo_native.hw_berechnetes_mmio "$out/berechnet.ll" -o "$out/berechnet.extract.ll"
+mise exec -- opt -O2 -S "$out/berechnet.extract.ll" -o "$out/berechnet.o2.ll"
+mise exec -- llc -O2 -filetype=obj "$out/berechnet.o2.ll" -o "$out/berechnet.o"
+mise exec -- llvm-objdump -d "$out/berechnet.o" > "$out/berechnet.dis"
+[ "$(rg -c '\boutl\b' "$out/berechnet.dis")" = 1 ]
+[ "$(rg -c '\boutw\b' "$out/berechnet.dis")" = 1 ]
+[ "$(rg -c 'store volatile i32' "$out/berechnet.o2.ll")" = 1 ]
+if rg -q 'load volatile' "$out/berechnet.o2.ll"; then
+    echo 'Berechneter Registerwrite liest das Register implizit' >&2
+    exit 1
+fi
+expect_fail "$src/berechneter_operand_typ_falsch.moos" x86_64-bare 'hat nicht den Typ U32, erhalten U64' --no-stdlib
 echo 'PASS volatile_*, Barrieren, Port-I/O, Negativfaelle'
 '''
 
@@ -517,4 +594,132 @@ if "$compiler" compile "$src/registeroperationen_speicher.moos" --target native 
 fi
 rg -q 'nur im Bare-Profil' "$out/hosted.log"
 echo 'PASS Registerwrites: C++-Orakel, drei Ziele, Portfolge und Negativfaelle'
+'''
+
+[tasks.pro-kern]
+description = "P10-T4: CPU-lokales ABI-Bild, GS/UEFI-IR und getrennte Hosted-Threads"
+run = '''
+set -eu
+cd ../../..
+out=build/p10-t4
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+mkdir -p "$out"
+"$compiler" compile compiler/tests/p2/pro_kern.moos -o "$out/pro_kern"
+"$out/pro_kern" > "$out/hosted.out"
+diff -u compiler/tests/p2/pro_kern.expected "$out/hosted.out"
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile compiler/tests/p2/pro_kern_lib.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    rg -q 'addrspace\(256\)' "$out/$target.ll"
+    rg -q 'section ".moo_prokern"' "$out/$target.ll"
+    if rg -q '@__moo_prokern_vorlage = thread_local' "$out/$target.ll"; then
+        echo 'FAIL Bare/UEFI-Vorlage als hosted TLS'; exit 1
+    fi
+    mise exec -- llc -filetype=obj "$out/$target.ll" -o "$out/$target.o"
+done
+mise exec -- llvm-objdump -d "$out/x86_64-bare.o" > "$out/bare.asm"
+rg -q '%gs:0x8' "$out/bare.asm"
+rg -q '%gs:0x20' "$out/bare.asm"
+rg -q 'rdmsr' "$out/bare.asm"
+mise exec -- llvm-extract -S --glob=__moo_prokern_vorlage --func=__moo_native.pro_lesen "$out/x86_64-bare.ll" -o "$out/bild.ll"
+mise exec -- llc -filetype=obj "$out/bild.ll" -o "$out/bild.o"
+mise exec -- ld.lld -T beispiele/kernel/linker-uefi.ld --entry=__moo_native.pro_lesen --gc-sections "$out/bild.o" -o "$out/bild.elf"
+mise exec -- llvm-nm -n --defined-only "$out/bild.elf" > "$out/bild.sym"
+anfang="$(awk '$3 == "__moo_prokern_anfang" {print $1}' "$out/bild.sym")"
+ende="$(awk '$3 == "__moo_prokern_ende" {print $1}' "$out/bild.sym")"
+[ -n "$anfang" ] && [ -n "$ende" ]
+[ "$((0x$ende - 0x$anfang))" = 40 ]
+[ "$((0x$anfang % 64))" = 0 ]
+for name in unsicher konstante; do
+    if "$compiler" compile "compiler/tests/p2/pro_kern_$name.moos" --emit-ir -o "$out/neg.ll" > "$out/$name.log" 2>&1; then
+        echo "FAIL pro_kern $name akzeptiert"; exit 1
+    fi
+done
+rg -q 'unsicher' "$out/unsicher.log"
+rg -q 'verlangt.*statisch' "$out/konstante.log"
+if "$compiler" compile compiler/tests/p2/pro_kern_lib.moos --no-stdlib --target aarch64-bare --emit-ir -o "$out/arm.ll" > "$out/arm.log" 2>&1; then
+    echo 'FAIL nicht implementiertes CPU-lokales ARM-Backend akzeptiert'; exit 1
+fi
+rg -q '@pro_kern ist derzeit nur fuer x86_64' "$out/arm.log"
+echo 'PASS pro_kern: getrennte Hosted-Threads, GS-Offsets, UEFI und Diagnosegrenzen'
+'''
+
+[tasks.bitfeld]
+description = "P10-T5: Bitbereichsregeln, GDT-Konstante, fangbarer Overflow und Deskriptororakel"
+run = '''
+set -eu
+cd ../../..
+out=build/p10-t5
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+mkdir -p "$out"
+"$compiler" compile compiler/tests/p2/bitfeld.moos -o "$out/bitfeld"
+"$out/bitfeld" > "$out/hosted.out"
+diff -u compiler/tests/p2/bitfeld.expected "$out/hosted.out"
+for name in ueberlappung basis wert_falsch adresse; do
+    if "$compiler" compile "compiler/tests/p2/bitfeld_$name.moos" --emit-ir -o "$out/neg.ll" > "$out/$name.log" 2>&1; then
+        echo "FAIL bitfeld $name akzeptiert"; exit 1
+    fi
+done
+rg -q 'ueberlappt' "$out/ueberlappung.log"
+rg -q 'Basisbreite' "$out/basis.log"
+rg -q 'passt nicht in 3 Bit' "$out/wert_falsch.log"
+rg -q 'Bitbereich ohne eigene Byteadresse' "$out/adresse.log"
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile stdlib/nativ_x86_deskriptoren.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    rg -q '@X86_GDT_CODE = constant.*49427445715107839' "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=__moo_native.x86_tss_unterwort --func=__moo_native.x86_tss_oberwort --func=__moo_native.x86_idt_unterwort --func=__moo_native.x86_idt_oberwort "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -O2 -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror compiler/tests/p2/bitfeld_probe.cpp "$out/x86_64-bare.o" -o "$out/orakel"
+"$out/orakel"
+echo 'PASS bitfeld: GDT/Native/Hosted, Bereichsdiagnosen und TSS/IDT-Wortvergleich'
+'''
+
+[tasks.trampolin]
+description = "P10-T6: verschiebbare ASM-Sektionen, echte Grenzen, i8086-Bytes und Relokationsdiagnosen"
+run = '''
+set -eu
+cd ../../..
+out=build/p10-t6
+compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
+mkdir -p "$out"
+for target in x86_64-bare x86_64-unknown-uefi; do
+    "$compiler" compile skripte/p8/smp/assembler_modus_probe.moos --no-stdlib --target "$target" --emit-ir -o "$out/$target.ll"
+    mise exec -- opt -passes=verify -disable-output "$out/$target.ll"
+    mise exec -- llvm-extract -S --func=probe_assembler_modus --func=__moo_native.probe_trampolin_anfang --func=__moo_native.probe_trampolin_ende "$out/$target.ll" -o "$out/$target.extract.ll"
+    mise exec -- llc -filetype=obj "$out/$target.extract.ll" -o "$out/$target.o"
+done
+mise exec -- llvm-readelf -rW "$out/x86_64-bare.o" > "$out/relokationen.txt"
+if rg -q '\.rela\.moo_ap_trampolin' "$out/relokationen.txt"; then
+    echo 'FAIL Symbolfixup im kopierten Modusabschnitt'; exit 1
+fi
+${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -no-pie compiler/tests/p7/hardware/trampolin_probe.cpp "$out/x86_64-bare.o" -o "$out/orakel"
+"$out/orakel" "$out/kopie.bin"
+objdump -D -b binary -m i8086 "$out/kopie.bin" > "$out/i8086.asm"
+rg -q '66 89 c3' "$out/i8086.asm"
+"$compiler" compile compiler/tests/p7/hardware/trampolin_lokal.moos --no-stdlib --target x86_64-bare --emit-ir -o "$out/lokal.ll"
+mise exec -- opt -passes=verify -disable-output "$out/lokal.ll"
+mise exec -- llvm-extract -S --func=__moo_native.tramp_lokal "$out/lokal.ll" -o "$out/lokal.extract.ll"
+mise exec -- llc -filetype=obj "$out/lokal.extract.ll" -o "$out/lokal.o"
+mise exec -- llvm-readelf -rW "$out/lokal.o" > "$out/lokal-relokationen.txt"
+if rg -q '\.rela\.moo_ap_lokal' "$out/lokal-relokationen.txt"; then
+    echo 'FAIL lokale Differenz erzeugt Symbolfixup'; exit 1
+fi
+mise exec -- llvm-objcopy --dump-section=".moo_ap_lokal=$out/lokal.bin" "$out/lokal.o"
+hex="$(od -An -tx1 -N5 "$out/lokal.bin" | tr -d '[:space:]')"
+[ "$hex" = eb020400c3 ]
+for name in absolut absolut_lokal direktive zitiert doppelt unbekannt nackt_fehlt; do
+    if "$compiler" compile "compiler/tests/p7/hardware/trampolin_$name.moos" --no-stdlib --target x86_64-bare --emit-ir -o "$out/neg.ll" > "$out/$name.log" 2>&1; then
+        echo "FAIL Trampolin $name akzeptiert"; exit 1
+    fi
+done
+rg -q 'absoluter oder externer Symbolbezug' "$out/absolut.log"
+rg -q 'absoluter oder externer Symbolbezug' "$out/absolut_lokal.log"
+rg -q 'Direktive.*nicht erlaubt' "$out/direktive.log"
+rg -q 'zitierte Symbole' "$out/zitiert.log"
+rg -q 'bereits belegt' "$out/doppelt.log"
+rg -q 'keine deklarierte.*Sektion' "$out/unbekannt.log"
+rg -q '@verschiebbar verlangt @nackt' "$out/nackt_fehlt.log"
+echo 'PASS Trampolin: Bare/UEFI, sechs kopierte Bytes, lokale Relativmarken, sieben Diagnosen'
 '''

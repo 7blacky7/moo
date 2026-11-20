@@ -1,0 +1,7 @@
+@nativ
+@nackt
+@verschiebbar
+@sektion(".moo_ap_zitiert")
+funktion tramp_zitiert() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code64\nmovabs $$\"1extern\", %rax\nretq", clobber=[])
