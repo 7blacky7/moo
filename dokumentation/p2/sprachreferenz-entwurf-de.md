@@ -245,6 +245,13 @@ verschachtelter Strukturen und Arrays mit ihrem Nullwert. Die bestehende Form
 `auf 0` nullt ebenfalls statische Aggregate. Skalare statische Variablen sind
 weiterhin nicht freigegeben.
 
+Eine lokale native Struktur kann mit `setze wert: Struktur auf 0` vollständig
+nullinitialisiert werden, einschließlich verschachtelter Strukturen, Arrays,
+Zeiger und atomarer Felder. In einer Schleife geschieht dies bei jeder Ausführung
+der Deklaration. Nur das ganzzahlige Literal `0` ist hier zulässig; dies führt
+keine allgemeine Zahl-zu-Struktur-Konversion ein. Bereits initialisierte atomare
+Felder werden weiterhin ausschließlich mit den `atom_*`-Operationen verändert.
+
 ```moos
 struktur Verbindung:
     zustand: u64

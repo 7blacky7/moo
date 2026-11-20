@@ -1,0 +1,21 @@
+# Interne Providerbindung; keine Veränderung der allgemeinen C-Exportregeln.
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante LAUFZEIT_PROFIL: [u64; 1] auf [1]
+
+struktur LaufzeitWert:
+    tag: u64
+    daten: u64
+
+extern "C" funktion kern_c_moo_number(zahl: f64) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_8(f: LaufzeitWert, a: LaufzeitWert, b: LaufzeitWert, c: LaufzeitWert, d: LaufzeitWert, e: LaufzeitWert, g: LaufzeitWert, h: LaufzeitWert, i: LaufzeitWert) -> LaufzeitWert
+
+@nativ
+funktion kern_rt_moo_thread_done(wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        gib_zurück kern_c_moo_number(als(f64, wert.daten))
+
+@nativ
+funktion kern_rt_moo_thread_spawn(f: LaufzeitWert, arg: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        gib_zurück kern_c_moo_func_call_8(f, arg, LaufzeitWert(31, 0xFEDCBA9876543210), LaufzeitWert(1, 2), LaufzeitWert(2, 3), LaufzeitWert(3, 4), LaufzeitWert(4, 5), LaufzeitWert(5, 6), LaufzeitWert(6, 7))

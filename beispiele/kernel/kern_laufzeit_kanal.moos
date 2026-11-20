@@ -1,0 +1,176 @@
+# P10-T14: gepufferte Kanäle mit den vorhandenen FIFO-Bedingungen.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_nullspeicher, laufzeit_werfen, kern_c_moo_teilen, kern_c_moo_release, free
+aus "kern_laufzeit_atom" importiere laufzeit_atom_zahl
+aus "kern_laufzeit_speicher" importiere laufzeit_text
+aus "kern_laufzeit_thread" importiere LaufzeitWertPlatz
+aus "kern_smp" importiere smp_planer
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_bedingung" importiere KernBedingung, bedingung_warten, bedingung_wecken
+aus "kern_faden" importiere faden_wartenden_holen, faden_wartenden_wecken
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+
+extern "C" funktion kern_c_moo_buffer_alleinbesitz(wert: LaufzeitWert) -> bool
+
+struktur LaufzeitKanal:
+    refcount: i32
+    reserve: i32
+    puffer: u64
+    kapazitaet: u64
+    anzahl: u64
+    lesen: u64
+    schreiben: u64
+    geschlossen: bool
+    mutex: KernMutex
+    nicht_leer: KernBedingung
+    nicht_voll: KernBedingung
+
+@nativ
+konstante LWK_SEND: [u8; 38] auf [115, 101, 110, 100, 101, 110, 58, 32, 100, 101, 114, 32, 69, 109, 112, 102, 97, 101, 110, 103, 101, 114, 32, 105, 115, 116, 32, 107, 101, 105, 110, 32, 75, 97, 110, 97, 108, 0]
+
+@nativ
+konstante LWK_RECV: [u8; 35] auf [101, 109, 112, 102, 97, 110, 103, 101, 110, 58, 32, 100, 101, 114, 32, 87, 101, 114, 116, 32, 105, 115, 116, 32, 107, 101, 105, 110, 32, 75, 97, 110, 97, 108, 0]
+
+@nativ
+konstante LWK_CLOSED: [u8; 40] auf [70, 101, 104, 108, 101, 114, 58, 32, 83, 101, 110, 100, 101, 110, 32, 97, 117, 102, 32, 103, 101, 115, 99, 104, 108, 111, 115, 115, 101, 110, 101, 110, 32, 75, 97, 110, 97, 108, 10, 0]
+
+@nativ
+konstante LWK_MOVE_CH: [u8; 52] auf [115, 101, 110, 100, 101, 110, 40, 195, 188, 98, 101, 114, 103, 105, 98, 32, 46, 46, 46, 41, 58, 32, 100, 101, 114, 32, 69, 109, 112, 102, 97, 101, 110, 103, 101, 114, 32, 105, 115, 116, 32, 107, 101, 105, 110, 32, 75, 97, 110, 97, 108, 0]
+
+@nativ
+konstante LWK_MOVE_TYPE: [u8; 58] auf [195, 188, 98, 101, 114, 103, 105, 98, 58, 32, 110, 117, 114, 32, 80, 117, 102, 102, 101, 114, 32, 107, 111, 101, 110, 110, 101, 110, 32, 111, 104, 110, 101, 32, 75, 111, 112, 105, 101, 32, 117, 101, 98, 101, 114, 103, 101, 98, 101, 110, 32, 119, 101, 114, 100, 101, 110, 0]
+
+@nativ
+konstante LWK_MOVE_ALIAS: [u8; 114] auf [195, 188, 98, 101, 114, 103, 105, 98, 58, 32, 100, 101, 114, 32, 80, 117, 102, 102, 101, 114, 32, 105, 115, 116, 32, 110, 105, 99, 104, 116, 32, 105, 109, 32, 65, 108, 108, 101, 105, 110, 98, 101, 115, 105, 116, 122, 32, 40, 119, 101, 105, 116, 101, 114, 101, 32, 82, 101, 102, 101, 114, 101, 110, 122, 44, 32, 83, 105, 99, 104, 116, 44, 32, 80, 105, 110, 32, 111, 100, 101, 114, 32, 103, 101, 116, 101, 105, 108, 116, 41, 59, 32, 101, 114, 32, 98, 108, 101, 105, 98, 116, 32, 98, 101, 105, 109, 32, 83, 101, 110, 100, 101, 114, 0]
+
+@nativ
+konstante LWK_MOVE_CLOSED: [u8; 44] auf [115, 101, 110, 100, 101, 110, 40, 195, 188, 98, 101, 114, 103, 105, 98, 32, 46, 46, 46, 41, 58, 32, 75, 97, 110, 97, 108, 32, 105, 115, 116, 32, 103, 101, 115, 99, 104, 108, 111, 115, 115, 101, 110, 0]
+
+@nativ
+funktion laufzeit_kanal_platz(k: ptr[LaufzeitKanal], index: u64) -> ptr[LaufzeitWertPlatz]:
+    unsicher:
+        gib_zurück zeiger(k.puffer + index * groesse_von(LaufzeitWert))
+
+# Broadcast unter der Bedingungssperre; dieselbe Queue wie bedingung_wecken.
+@nativ
+funktion laufzeit_alle_wecken(b: ptr[KernBedingung]) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(b.kb_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze adresse: u64 auf faden_wartenden_holen(zeiger(adresse_von(b.kb_warte)))
+        solange adresse != 0:
+            faden_wartenden_wecken(adresse)
+            setze adresse auf faden_wartenden_holen(zeiger(adresse_von(b.kb_warte)))
+        spin_gib(sperre, irq)
+
+@nativ
+funktion kern_rt_moo_channel_new(kapazitaet: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze cap: u64 auf 16
+        wenn kapazitaet.tag == 0:
+            setze zahl: f64 auf laufzeit_atom_zahl(kapazitaet.daten)
+            wenn zahl < 1.0:
+                setze cap auf 1
+            sonst:
+                setze cap auf u64(als(i32, zahl))
+        setze k: ptr[LaufzeitKanal] auf zeiger(laufzeit_nullspeicher(groesse_von(LaufzeitKanal)))
+        k.refcount = 1
+        k.kapazitaet = cap
+        k.puffer = u64(laufzeit_nullspeicher(cap * groesse_von(LaufzeitWert)))
+        gib_zurück LaufzeitWert(10, u64(k))
+
+@nativ
+funktion laufzeit_kanal_einlegen(k: ptr[LaufzeitKanal], wert: LaufzeitWert) -> void:
+    unsicher:
+        laufzeit_kanal_platz(k, k.schreiben).wert = wert
+        k.schreiben = (k.schreiben + 1) % k.kapazitaet
+        k.anzahl = k.anzahl + 1
+        bedingung_wecken(smp_planer(), zeiger(adresse_von(k.nicht_leer)))
+
+@nativ
+funktion kern_rt_moo_channel_send(kanal: LaufzeitWert, wert: LaufzeitWert) -> void:
+    unsicher:
+        wenn kanal.tag != 10 oder kanal.daten == 0:
+            laufzeit_werfen(zeiger(adresse_von(LWK_SEND)))
+            gib_zurück
+        setze k: ptr[LaufzeitKanal] auf zeiger(kanal.daten)
+        kern_c_moo_teilen(wert)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(k.mutex)))
+        solange k.anzahl == k.kapazitaet und nicht k.geschlossen:
+            bedingung_warten(smp_planer(), zeiger(adresse_von(k.nicht_voll)), zeiger(adresse_von(k.mutex)))
+        wenn k.geschlossen:
+            mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+            # Wie hosted: Diagnose, dann Rückkehr ohne Einlegen.
+            laufzeit_text(zeiger(adresse_von(LWK_CLOSED)))
+            gib_zurück
+        laufzeit_kanal_einlegen(k, wert)
+        mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+
+@nativ
+funktion kern_rt_moo_channel_recv(kanal: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn kanal.tag != 10 oder kanal.daten == 0:
+            laufzeit_werfen(zeiger(adresse_von(LWK_RECV)))
+            gib_zurück laufzeit_nichts()
+        setze k: ptr[LaufzeitKanal] auf zeiger(kanal.daten)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(k.mutex)))
+        solange k.anzahl == 0 und nicht k.geschlossen:
+            bedingung_warten(smp_planer(), zeiger(adresse_von(k.nicht_leer)), zeiger(adresse_von(k.mutex)))
+        wenn k.anzahl == 0:
+            mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+            gib_zurück laufzeit_nichts()
+        setze wert: LaufzeitWert auf laufzeit_kanal_platz(k, k.lesen).wert
+        k.lesen = (k.lesen + 1) % k.kapazitaet
+        k.anzahl = k.anzahl - 1
+        bedingung_wecken(smp_planer(), zeiger(adresse_von(k.nicht_voll)))
+        mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+        gib_zurück wert
+
+@nativ
+funktion kern_rt_moo_channel_close(kanal: LaufzeitWert) -> void:
+    unsicher:
+        wenn kanal.tag != 10 oder kanal.daten == 0:
+            gib_zurück
+        setze k: ptr[LaufzeitKanal] auf zeiger(kanal.daten)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(k.mutex)))
+        k.geschlossen = wahr
+        laufzeit_alle_wecken(zeiger(adresse_von(k.nicht_leer)))
+        laufzeit_alle_wecken(zeiger(adresse_von(k.nicht_voll)))
+        mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+
+@nativ
+funktion kern_rt_moo_channel_uebergeben(kanal: LaufzeitWert, wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn kanal.tag != 10 oder kanal.daten == 0:
+            laufzeit_werfen(zeiger(adresse_von(LWK_MOVE_CH)))
+            gib_zurück wert
+        wenn wert.tag != 27:
+            laufzeit_werfen(zeiger(adresse_von(LWK_MOVE_TYPE)))
+            gib_zurück wert
+        wenn nicht kern_c_moo_buffer_alleinbesitz(wert):
+            laufzeit_werfen(zeiger(adresse_von(LWK_MOVE_ALIAS)))
+            gib_zurück wert
+        setze k: ptr[LaufzeitKanal] auf zeiger(kanal.daten)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(k.mutex)))
+        solange k.anzahl == k.kapazitaet und nicht k.geschlossen:
+            bedingung_warten(smp_planer(), zeiger(adresse_von(k.nicht_voll)), zeiger(adresse_von(k.mutex)))
+        wenn k.geschlossen:
+            mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+            laufzeit_werfen(zeiger(adresse_von(LWK_MOVE_CLOSED)))
+            gib_zurück wert
+        laufzeit_kanal_einlegen(k, wert)
+        mutex_gib(smp_planer(), zeiger(adresse_von(k.mutex)))
+        gib_zurück laufzeit_nichts()
+
+@nativ
+funktion kern_rt_moo_channel_free(p: ptr[u8]) -> void:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück
+        setze k: ptr[LaufzeitKanal] auf zeiger(u64(p))
+        solange k.anzahl > 0:
+            kern_c_moo_release(laufzeit_kanal_platz(k, k.lesen).wert)
+            k.lesen = (k.lesen + 1) % k.kapazitaet
+            k.anzahl = k.anzahl - 1
+        free(zeiger(k.puffer))
+        free(p)

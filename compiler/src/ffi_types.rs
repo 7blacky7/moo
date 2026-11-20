@@ -867,16 +867,62 @@ pub(crate) fn emit_abi_export<'ctx>(
     linkage: inkwell::module::Linkage,
     rueckruf: Option<RueckrufVertrag<'ctx>>,
 ) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    emit_abi_export_impl(context,module,target,name,internal,inputs,result,layouts,convention,linkage,rueckruf,None)
+}
+
+pub(crate) fn emit_abi_export_for_declaration<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &inkwell::module::Module<'ctx>,
+    target: &inkwell::targets::TargetData,
+    name: &str,
+    internal: inkwell::values::FunctionValue<'ctx>,
+    inputs: &[TypeRef],
+    result: &TypeRef,
+    layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    convention: u32,
+    linkage: inkwell::module::Linkage,
+    rueckruf: Option<RueckrufVertrag<'ctx>>,
+    declaration: inkwell::values::FunctionValue<'ctx>,
+) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
+    emit_abi_export_impl(context,module,target,name,internal,inputs,result,layouts,convention,linkage,rueckruf,Some(declaration))
+}
+
+fn emit_abi_export_impl<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    module: &inkwell::module::Module<'ctx>,
+    target: &inkwell::targets::TargetData,
+    name: &str,
+    internal: inkwell::values::FunctionValue<'ctx>,
+    inputs: &[TypeRef],
+    result: &TypeRef,
+    layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    convention: u32,
+    linkage: inkwell::module::Linkage,
+    rueckruf: Option<RueckrufVertrag<'ctx>>,
+    declaration: Option<inkwell::values::FunctionValue<'ctx>>,
+) -> Result<inkwell::values::FunctionValue<'ctx>, String> {
     use crate::ffi_abi::Uebergabe;
     use inkwell::attributes::{Attribute, AttributeLoc};
     use inkwell::values::{BasicMetadataValueEnum, BasicValue};
     let e = |err: inkwell::builder::BuilderError| err.to_string();
     let ea = |err: inkwell::values::InstructionValueError| err.to_string();
-    if module.get_function(name).is_some() || module.get_global(name).is_some() {
+    if module.get_global(name).is_some() || match declaration {
+        Some(f) => module.get_function(name) != Some(f) || f.count_basic_blocks() != 0,
+        None => module.get_function(name).is_some(),
+    } {
         return Err(format!("Native Funktion '{name}': @einstieg-Symbolkollision"));
     }
     let form = abi_form(context, module, target, name, inputs, result, layouts, convention)?;
-    let thunk = module.add_function(name, form.function_type, Some(linkage));
+    let thunk = match declaration {
+        Some(f) => {
+            if f.get_type() != form.function_type || f.get_call_conventions() != convention {
+                return Err(format!("Native Funktion '{name}': Provider-Deklaration hat eine andere ABI"));
+            }
+            f.set_linkage(linkage);
+            f
+        }
+        None => module.add_function(name, form.function_type, Some(linkage)),
+    };
     if convention != CC_C {
         thunk.set_call_conventions(convention);
     }

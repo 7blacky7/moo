@@ -1,0 +1,48 @@
+# Gemeinsamer Speichervertrag; Hosted nutzt TLS, Bare das GS-Bild je CPU.
+struktur LaufzeitWert:
+    tag: u64
+    daten: u64
+
+struktur LaufzeitFehler:
+    flag: i32
+    tiefe: i32
+    letzter: LaufzeitWert
+    wurfort: u64
+    gemeldet: i32
+    nativer_faden: i32
+    worker: u8
+    postfach: u64
+    bereit: bool
+
+struktur LaufzeitCpu:
+    kontexte: [LaufzeitFehler; 24]
+
+@pro_kern
+statisch LAUFZEIT_CPU: LaufzeitCpu auf 0
+
+@nativ
+funktion laufzeit_kontext_fuer(cpu: u32, slot: u32) -> ptr[LaufzeitFehler]:
+    unsicher:
+        wenn u64(slot) >= groesse_von(LaufzeitCpu) / groesse_von(LaufzeitFehler):
+            gib_zurück zeiger(0)
+        setze p: ptr[LaufzeitFehler] auf zeiger(adresse_von(LAUFZEIT_CPU) + versatz_von(LaufzeitCpu, kontexte) + u64(slot) * groesse_von(LaufzeitFehler))
+        wenn nicht p.bereit:
+            p.letzter.tag = 3
+            p.letzter.daten = 0
+            p.worker = u8(cpu != 0 oder slot != 0)
+            p.bereit = wahr
+        gib_zurück p
+
+# Der Caller hat owning Fehler-/Postfachwerte vor Wiederverwendung abgegeben.
+@nativ
+funktion laufzeit_kontext_starten_fuer(p: ptr[LaufzeitFehler], worker: u8) -> bool:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück falsch
+        wenn p.flag != 0 oder p.tiefe != 0 oder p.letzter.tag != 3 oder p.postfach != 0:
+            gib_zurück falsch
+        p.wurfort = 0
+        p.gemeldet = 0
+        p.nativer_faden = 1
+        p.worker = worker
+        gib_zurück wahr

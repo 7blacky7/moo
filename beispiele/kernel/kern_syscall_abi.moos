@@ -1,0 +1,34 @@
+# Gemeinsamer GDT- und Syscall-Datenvertrag für Start-CPU, APs und Planer.
+aus "nativ_x86_deskriptoren" importiere X86GdtWort, X86_GDT_CODE, X86_GDT_DATEN, x86_tss_unterwort, x86_tss_oberwort
+
+bitfeld X86SyscallStar: u64:
+    reserviert: 0..31
+    kern_cs: 32..47
+    benutzer_cs: 48..63
+
+@nativ
+konstante X86_GDT_USER32: X86GdtWort auf X86GdtWort(65535, 0, 0xFA, 15, 12, 0)
+@nativ
+konstante X86_GDT_USERDATEN: X86GdtWort auf X86GdtWort(65535, 0, 0xF2, 15, 12, 0)
+@nativ
+konstante X86_GDT_USER64: X86GdtWort auf X86GdtWort(65535, 0, 0xFA, 15, 10, 0)
+
+# Die nackten Einsprünge verwenden die Offsets 0, 8, 16 und 24.
+struktur SyscallLokal:
+    sl_kernrsp: u64
+    sl_userrsp: u64
+    sl_prozess: u64
+    sl_xzustand: u64
+    sl_bereit: atom[u32]
+
+@nativ
+funktion syscall_gdt_schreiben(gdt: u64, tss: u64) -> void:
+    unsicher:
+        speicher_schreiben(gdt, 0, 8)
+        speicher_schreiben(gdt + 8, bitfeld_wert(X86_GDT_CODE), 8)
+        speicher_schreiben(gdt + 16, bitfeld_wert(X86_GDT_DATEN), 8)
+        speicher_schreiben(gdt + 24, bitfeld_wert(X86_GDT_USER32), 8)
+        speicher_schreiben(gdt + 32, bitfeld_wert(X86_GDT_USERDATEN), 8)
+        speicher_schreiben(gdt + 40, bitfeld_wert(X86_GDT_USER64), 8)
+        speicher_schreiben(gdt + 48, x86_tss_unterwort(tss), 8)
+        speicher_schreiben(gdt + 56, x86_tss_oberwort(tss), 8)

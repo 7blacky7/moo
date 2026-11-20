@@ -1431,6 +1431,29 @@ Hinweis `M-H008` und entfallen später. `speicher_lesen`/`speicher_schreiben` bl
 
 ---
 
+## Moo-Threads im nativen Kernel
+
+Für x86-64 wählt `--kernel` mit Standardruntime den nativen Thread-Träger.
+Dieselben Aufrufe für `starte`, `warten`, Kanäle, `atom` und `sperre`
+verwenden dann den Moo-Kernelplaner, seine Mutexe und Bedingungen:
+
+```bash
+moo compile compiler/tests/p2/rc_geteilt/atom_zaehler.moos \
+    --target x86_64-bare --kernel -o atom-kern.elf
+```
+
+Das ELF wird hinter dem Moo-UEFI-Loader gestartet. Der Programmeinstieg erfolgt
+nach dem Start von GS-Zustand und Planer. `--no-stdlib` wählt weiterhin das
+Minimalprofil für Loader und reine Hardwareprogramme; dort stehen die
+typisierten nativen Atom-Intrinsics zur Verfügung.
+
+Fehlerzustand und `versuche` gehören jeweils zum aktuellen Faden. Der erste
+Wartende erhält das Thread-Ergebnis und darf erneut darauf warten; ein anderer
+Faden erhält einen fangbaren Fehler. Auch die Freigabe eines Ergebnisses aus
+einem fremden Faden wird an dessen Besitzer übergeben. Der Laufzeitheap umfasst
+16 MiB; die verfügbaren Fadenplätze bestimmt der Kernelplaner. Sind seine Plätze
+belegt, meldet `starte` einen fangbaren Fehler.
+
 ## Funktionen als Werte (First-Class)
 
 Funktionsnamen sind in moo gewöhnliche Werte. Du kannst sie einer Variable

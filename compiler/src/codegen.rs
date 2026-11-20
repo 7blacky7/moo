@@ -218,6 +218,8 @@ pub struct CodeGen<'ctx> {
     bare_mode: bool,
     // UEFI mit Container-Runtime verwaltet dynamische Werte per Refcount.
     bare_runtime_refcounts: bool,
+    // P10-T14: explizit gekennzeichneter nativer Thread-Träger.
+    native_thread_runtime: bool,
     // P011-A1/A3: Funktionen UND Daten-Globals mit @benutzt/@einstieg bzw.
     // @rohdaten_u32 — werden am Ende von compile_program in das
     // llvm.used-Global geschrieben (DCE-Schutz).
@@ -323,6 +325,7 @@ impl<'ctx> CodeGen<'ctx> {
             profiling: false,
             bare_mode: false,
             bare_runtime_refcounts: false,
+            native_thread_runtime: false,
             used_globals: Vec::new(),
             sektionen: Vec::new(),
             global_pruefplan: Default::default(),
@@ -917,6 +920,8 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_program_kern(&mut self, program: &Program) -> Result<(), String> {
+        self.native_thread_runtime = crate::runtime_provider::enabled(program);
+        if self.native_thread_runtime { self.bare_runtime_refcounts = true; }
         self.funktion_quellen = program.funktion_quellen.clone();
         self.register_native_structs(program)?;
         // P7-T4 (1A): Layoutabfragen und skalare native Konstanten falten.
@@ -1074,6 +1079,8 @@ impl<'ctx> CodeGen<'ctx> {
             g.set_section(Some("llvm.metadata"));
             g.set_initializer(&arr);
         }
+
+        if self.native_thread_runtime { crate::runtime_provider::entry(self.context, &self.module)?; }
 
         // P7-T4 (7A): direkte Aufrufe erben @aufrufkonvention ihres Ziels.
         crate::ffi_types::sync_direct_call_conventions(&self.module)?;
@@ -1900,6 +1907,10 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 _ => {}
             }
+        }
+        if crate::runtime_provider::enabled(program) {
+            let target = self.target_data.as_ref().ok_or("Ziel-Datenlayout für Runtime-Provider fehlt")?;
+            crate::runtime_provider::bind(self.context, &self.module, target, program, &self.native_functions, &self.native_structs)?;
         }
         Ok(())
     }
@@ -2810,10 +2821,10 @@ impl<'ctx> CodeGen<'ctx> {
         self.global_pruefplan = plan;
     }
 
-    /// P2-T114 Phase C: gehostet (nicht bare, nicht wasm) - nur dort gibt es
-    /// Moo-Threads und die Runtime-Funktionen moo_teilen/moo_global_pruefen.
+    /// Geteilte Werte und Globale: Hosted oder der explizite native Thread-
+    /// Träger stellen moo_teilen/moo_global_pruefen bereit; wasm weiterhin nicht.
     fn rc_gehostet(&self) -> bool {
-        !self.bare_mode && !self.module.get_triple().as_str().to_str()
+        (!self.bare_mode || self.native_thread_runtime) && !self.module.get_triple().as_str().to_str()
             .map(|t| t.starts_with("wasm")).unwrap_or(true)
     }
 
@@ -6239,7 +6250,8 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn guard_local_expr_error(&mut self, values: &[StructValue<'ctx>]) -> Result<(), String> {
-        if self.bare_mode { return Ok(()); }
+        // Der native Thread-Träger besitzt denselben fangbaren Fehlerkanal.
+        if self.bare_mode && !self.native_thread_runtime { return Ok(()); }
         let function = self.current_function.unwrap();
         // Erst binden, dann verzweigen: der Iterator-Borrow auf try_stack darf
         // nicht in den &mut-Arm (native_guard_exit_block) hineinreichen.

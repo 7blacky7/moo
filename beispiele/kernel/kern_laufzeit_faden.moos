@@ -1,0 +1,61 @@
+# P10-T14: Planerbindung des gemeinsamen fadenlokalen Laufzeitzustands.
+# T13 hält laufende Kontexte auf ihrer CPU, unbegonnene dürfen wechseln.
+aus "kern_smp" importiere smp_planer, smp_nummer
+aus "kern_faden" importiere FADEN_ANZAHL, faden_abgeben
+aus "kern_laufzeit_kontext" importiere LaufzeitWert, LaufzeitFehler, LaufzeitCpu, laufzeit_kontext_fuer, laufzeit_kontext_starten_fuer
+
+@nativ
+funktion laufzeit_kontext() -> ptr[LaufzeitFehler]:
+    unsicher:
+        setze slot: u32 auf smp_planer().fp_aktiv
+        wenn u64(FADEN_ANZAHL) * groesse_von(LaufzeitFehler) > groesse_von(LaufzeitCpu) oder slot >= FADEN_ANZAHL:
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+        gib_zurück laufzeit_kontext_fuer(smp_nummer(), slot)
+
+@nativ
+funktion laufzeit_kontext_starten(worker: u8) -> bool:
+    unsicher:
+        gib_zurück laufzeit_kontext_starten_fuer(laufzeit_kontext(), worker)
+
+@nativ
+@einstieg
+funktion moo_kern_error_flag() -> ptr[i32]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().flag))
+
+@nativ
+@einstieg
+funktion moo_kern_last_error() -> ptr[LaufzeitWert]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().letzter))
+
+@nativ
+@einstieg
+funktion moo_kern_try_depth() -> ptr[i32]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().tiefe))
+
+@nativ
+@einstieg
+funktion moo_kern_fehler_ort() -> ptr[u64]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().wurfort))
+
+@nativ
+@einstieg
+funktion moo_kern_fehler_gemeldet() -> ptr[i32]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().gemeldet))
+
+@nativ
+@einstieg
+funktion moo_kern_worker_flag() -> ptr[u8]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(laufzeit_kontext().worker))
+
+@nativ
+@einstieg
+funktion moo_kern_faden_abgeben() -> void:
+    unsicher:
+        faden_abgeben(smp_planer())

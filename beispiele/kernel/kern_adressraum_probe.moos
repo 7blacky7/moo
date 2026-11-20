@@ -1,0 +1,179 @@
+# Adressraum-Abnahme des privaten QEMU-Profils.
+aus "kern_adressraum" importiere Adressraum, AR_ERSTE_VA, AR_SCHREIBEN, AR_AUSFUEHREN, AR_CPU_PCID, AR_CPU_SMAP, AR_CPU_SMEP, AR_RAHMEN_MASKE, adressraum_neu, adressraum_freigeben, ar_abbilden, ar_pte_lesen, ar_cr3_lesen, ar_cr4_lesen, ar_merkmale, ar_benutzer_lesen64, ar_benutzer_schreiben64
+aus "kern_faden" importiere FadenPlaner, faden_erzeugen_im_adressraum, faden_abgeben
+aus "kern_smp" importiere smp_planer, smp_planer_auf, smp_nummer, smp_anzahl
+aus "kern_ap" importiere ap_ist_online
+aus "kern_sperre" importiere irq_zustand
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch AR_PROBE_A: Adressraum auf 0
+@nativ
+statisch AR_PROBE_B: Adressraum auf 0
+@nativ
+statisch AR_PROBE_ENDE: atom[u64] auf 0
+@nativ
+statisch AR_PROBE_OK: atom[u64] auf 0
+@nativ
+statisch AR_PROBE_CR3: [u64; 2] auf 0
+@nativ
+statisch AR_PROBE_SCHUTZ_STAND: atom[u64] auf 0
+@nativ
+statisch AR_PROBE_SCHUTZ_REG: [u64; 3] auf 0
+@nativ
+konstante T_AR_SCHUTZ_STAND: [u8; _] auf "MOO-AR SCHUTZ STAND "
+@nativ
+konstante T_AR_SCHUTZ_CR4: [u8; _] auf "MOO-AR SCHUTZ CR4 "
+@nativ
+konstante T_AR_SCHUTZ_RFLAGS: [u8; _] auf "MOO-AR SCHUTZ RFLAGS "
+@nativ
+konstante T_AR_SCHUTZ_PTE: [u8; _] auf "MOO-AR SCHUTZ PTE "
+
+@nativ
+konstante T_AR_MERKMALE: [u8; _] auf "MOO-AR MERKMALE "
+@nativ
+konstante T_AR_CR3_A: [u8; _] auf "MOO-AR CR3 A "
+@nativ
+konstante T_AR_CR3_B: [u8; _] auf "MOO-AR CR3 B "
+@nativ
+konstante T_AR_CPU_B: [u8; _] auf "MOO-AR CPU B "
+
+@nativ
+funktion ar_probe_arbeiter(adr: u64, andere_adr: u64, wert: u64, schreibbar: bool, cpu: u32, index: u64) -> void:
+    unsicher:
+        setze raum: ptr[Adressraum] auf zeiger(adr)
+        setze andere: ptr[Adressraum] auf zeiger(andere_adr)
+        setze speicher: [u64; 1] auf [0]
+        setze ergebnis: ptr[u64] auf zeiger(adresse_von(speicher))
+        setze regs: ptr[u64] auf zeiger(adresse_von(AR_PROBE_CR3))
+        setze cr3: u64 auf ar_cr3_lesen()
+        setze cr4: u64 auf ar_cr4_lesen()
+        volatile_schreiben(regs, index, cr3)
+        setze erwartet_pcid: u64 auf 0
+        wenn (cr4 & 0x20000) != 0:
+            setze erwartet_pcid auf raum.ar_pcid
+        setze korrekt: bool auf (cr3 & AR_RAHMEN_MASKE) == raum.ar_pml4 und (cr3 & 4095) == erwartet_pcid und smp_nummer() == cpu
+        wenn (ar_merkmale() & AR_CPU_SMAP) != 0:
+            setze korrekt auf korrekt und (cr4 & 0x200000) != 0
+        wenn (ar_merkmale() & AR_CPU_SMEP) != 0:
+            setze korrekt auf korrekt und (cr4 & 0x100000) != 0
+        setze korrekt auf korrekt und ar_benutzer_lesen64(raum, AR_ERSTE_VA, ergebnis) und volatile_lesen(ergebnis, 0) == wert
+        setze korrekt auf korrekt und nicht ar_benutzer_lesen64(andere, AR_ERSTE_VA, ergebnis)
+        setze korrekt auf korrekt und ar_benutzer_schreiben64(raum, AR_ERSTE_VA, wert + 1) == schreibbar
+        wenn schreibbar:
+            setze wert auf wert + 1
+        faden_abgeben(smp_planer())
+        setze korrekt auf korrekt und ar_cr3_lesen() == cr3 und ar_benutzer_lesen64(raum, AR_ERSTE_VA, ergebnis) und volatile_lesen(ergebnis, 0) == wert
+        setze bit: u64 auf u64(1) << index
+        wenn korrekt:
+            atom_oder(AR_PROBE_OK, bit, ordnung=locker)
+        atom_oder(AR_PROBE_ENDE, bit, ordnung=freigeben)
+
+@nativ
+funktion ar_probe_a(daten: u64) -> void:
+    unsicher:
+        ar_probe_arbeiter(adresse_von(AR_PROBE_A), adresse_von(AR_PROBE_B), 0x1122, falsch, 0, 0)
+
+@nativ
+funktion ar_probe_b(daten: u64) -> void:
+    unsicher:
+        ar_probe_arbeiter(adresse_von(AR_PROBE_B), adresse_von(AR_PROBE_A), 0x3344, wahr, u32(daten), 1)
+
+@nativ
+funktion ar_probe_starten(phys: u64, tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        setze a: ptr[Adressraum] auf zeiger(adresse_von(AR_PROBE_A))
+        setze b: ptr[Adressraum] auf zeiger(adresse_von(AR_PROBE_B))
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze kern_cr3: u64 auf ar_cr3_lesen()
+        setze merkmale: u64 auf ar_merkmale()
+        log(adresse_von(T_AR_MERKMALE), merkmale)
+        wenn tsc == 0 oder phys == 0 oder nicht adressraum_neu(a) oder nicht adressraum_neu(b):
+            gib_zurück falsch
+        setze pcid: u64 auf a.ar_pcid
+        wenn a.ar_pml4 == b.ar_pml4 oder ((merkmale & AR_CPU_PCID) != 0 und (pcid == 0 oder b.ar_pcid == 0 oder pcid == b.ar_pcid)):
+            gib_zurück falsch
+        speicher_schreiben(phys, 0x1122, 8)
+        speicher_schreiben(phys + 4096, 0x3344, 8)
+        wenn nicht ar_abbilden(a, AR_ERSTE_VA, phys, 0) oder nicht ar_abbilden(b, AR_ERSTE_VA, phys + 4096, AR_SCHREIBEN):
+            gib_zurück falsch
+        wenn nicht ar_abbilden(a, AR_ERSTE_VA, phys, 0) oder nicht ar_abbilden(a, AR_ERSTE_VA + 4096, phys, AR_AUSFUEHREN):
+            gib_zurück falsch
+        wenn ar_abbilden(a, AR_ERSTE_VA, phys, AR_SCHREIBEN) oder ar_abbilden(a, 0x400000, phys, 0) oder ar_abbilden(a, 0xFFFFFFFF80000000, phys, 0):
+            gib_zurück falsch
+        wenn (ar_pte_lesen(a, AR_ERSTE_VA) & 0x8000000000000007) != 0x8000000000000005 oder (ar_pte_lesen(b, AR_ERSTE_VA) & 0x8000000000000007) != 0x8000000000000007 oder (ar_pte_lesen(a, AR_ERSTE_VA + 4096) & 0x8000000000000007) != 5:
+            gib_zurück falsch
+        wenn faden_erzeugen_im_adressraum(planer, a, adresse_von(ar_probe_a), 0) == 0:
+            gib_zurück falsch
+        wenn adressraum_freigeben(a) oder ar_abbilden(a, AR_ERSTE_VA + 8192, phys, 0):
+            gib_zurück falsch
+        setze cpu: u32 auf smp_anzahl() - 1
+        wenn nicht ap_ist_online(cpu) oder faden_erzeugen_im_adressraum(smp_planer_auf(cpu), b, adresse_von(ar_probe_b), u64(cpu)) == 0:
+            gib_zurück falsch
+        setze start: u64 auf takt()
+        setze frist: u64 auf tsc * 3000000
+        solange atom_laden(AR_PROBE_ENDE, ordnung=erwerben) != 3 und takt() - start < frist:
+            faden_abgeben(planer)
+        setze regs: ptr[u64] auf zeiger(adresse_von(AR_PROBE_CR3))
+        log(adresse_von(T_AR_CR3_A), volatile_lesen(regs, 0))
+        log(adresse_von(T_AR_CR3_B), volatile_lesen(regs, 1))
+        log(adresse_von(T_AR_CPU_B), u64(cpu))
+        wenn atom_laden(AR_PROBE_OK, ordnung=locker) != 3 oder ar_cr3_lesen() != kern_cr3:
+            gib_zurück falsch
+        setze a_frei: bool auf falsch
+        setze b_frei: bool auf falsch
+        solange (nicht a_frei oder nicht b_frei) und takt() - start < frist:
+            wenn nicht a_frei:
+                setze a_frei auf adressraum_freigeben(a)
+            wenn nicht b_frei:
+                setze b_frei auf adressraum_freigeben(b)
+            faden_abgeben(planer)
+        wenn nicht a_frei oder nicht b_frei oder speicher_lesen(phys, 8) != 0x1122 oder speicher_lesen(phys + 4096, 8) != 0x3345:
+            gib_zurück falsch
+        wenn nicht adressraum_neu(a):
+            gib_zurück falsch
+        setze pcid_frei: bool auf a.ar_pcid == pcid
+        gib_zurück adressraum_freigeben(a) und pcid_frei
+
+@nativ
+funktion ar_probe_unfreigegeben(daten: u64) -> void:
+    unsicher:
+        setze a: ptr[Adressraum] auf zeiger(adresse_von(AR_PROBE_A))
+        setze regs: ptr[u64] auf zeiger(adresse_von(AR_PROBE_SCHUTZ_REG))
+        volatile_schreiben(regs, 0, ar_cr4_lesen())
+        volatile_schreiben(regs, 1, irq_zustand())
+        volatile_schreiben(regs, 2, ar_pte_lesen(a, daten))
+        atom_speichern(AR_PROBE_SCHUTZ_STAND, 5, ordnung=locker)
+        assembler(ziel="x86_64", code="clac", clobber=["cc", "memory"])
+        setze userseite: ptr[u64] auf zeiger(daten)
+        setze wert: u64 auf volatile_lesen(userseite, 0)
+        atom_speichern(AR_PROBE_SCHUTZ_STAND, 6, ordnung=locker)
+
+@nativ
+funktion ar_probe_schutz(phys: u64, tsc: u64, protokoll: u64) -> void:
+    unsicher:
+        setze a: ptr[Adressraum] auf zeiger(adresse_von(AR_PROBE_A))
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        wenn (ar_cr4_lesen() & 0x200000) == 0:
+            log(adresse_von(T_AR_SCHUTZ_STAND), 1)
+            gib_zurück
+        wenn nicht adressraum_neu(a):
+            log(adresse_von(T_AR_SCHUTZ_STAND), 2)
+            gib_zurück
+        wenn nicht ar_abbilden(a, AR_ERSTE_VA, phys, 0):
+            log(adresse_von(T_AR_SCHUTZ_STAND), 3)
+            gib_zurück
+        wenn faden_erzeugen_im_adressraum(planer, a, adresse_von(ar_probe_unfreigegeben), AR_ERSTE_VA) == 0:
+            log(adresse_von(T_AR_SCHUTZ_STAND), 4)
+            gib_zurück
+        setze start: u64 auf takt()
+        # Der Timer kann den Faden schon vor seiner ersten Anweisung abgeben.
+        solange atom_laden(AR_PROBE_SCHUTZ_STAND, ordnung=locker) < 6 und takt() - start < tsc * 1000000:
+            faden_abgeben(planer)
+        setze regs: ptr[u64] auf zeiger(adresse_von(AR_PROBE_SCHUTZ_REG))
+        log(adresse_von(T_AR_SCHUTZ_STAND), atom_laden(AR_PROBE_SCHUTZ_STAND, ordnung=locker))
+        log(adresse_von(T_AR_SCHUTZ_CR4), volatile_lesen(regs, 0))
+        log(adresse_von(T_AR_SCHUTZ_RFLAGS), volatile_lesen(regs, 1))
+        log(adresse_von(T_AR_SCHUTZ_PTE), volatile_lesen(regs, 2))

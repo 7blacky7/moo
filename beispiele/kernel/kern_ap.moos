@@ -1,0 +1,314 @@
+# P10-T12: serieller INIT/SIPI-Start. Ein AP bestätigt erst nach eigenem GS/GDT/TSS.
+importiere nativ_x86_deskriptoren
+aus "moo_bootvertrag" importiere MooBootInfo
+aus "kern_smp" importiere KernLokal, smp_kern, smp_lokal, smp_anzahl, smp_nummer, smp_planer, smp_bsp_id
+aus "kern_faden" importiere faden_abgeben
+aus "kern_adressraum" importiere ar_cpu_einrichten, ar_cpu_vertraeglich
+aus "kern_syscall" importiere syscall_cpu_einrichten
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen
+aus "../uefi/hardware_pci" importiere takt
+
+# Festes Lowmem-ABI innerhalb einer reservierten, identisch gemappten Seite.
+struktur ApUebergabe:
+    cr3: u64
+    stapel: u64
+    einstieg: u64
+    nummer: u64
+    basis: u64
+    gdtr: u64
+    idtr: u64
+
+struktur ApStatus:
+    online: atom[u32]
+
+struktur ApZustand:
+    tsc: u64
+    timer: u64
+    x2: u64
+    lese: u64
+    schreibe: u64
+    msr_lese: u64
+    msr_schreibe: u64
+    phase: u32
+    ziel: u32
+
+@nativ
+statisch AP_STATUS: [ApStatus; 64] auf 0
+@nativ
+statisch AP_ZUSTAND: ApZustand auf 0
+
+@nativ
+@nackt
+@verschiebbar
+@sektion(".text.ap_tramp")
+@einstieg
+funktion ap_trampolin() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".code16\n.Lap_start:\ncli\ncld\nxorw %ax, %ax\nmovw %ax, %ds\nmovw %ax, %es\nmovw %ax, %ss\nmovw $$0x8D00, %sp\nlgdtl 0x8E20\nmovl $$0x8000, %eax\naddl $$.Lap_protected-.Lap_start, %eax\nmovl %eax, 0x8E30\nmovl %cr0, %eax\norl $$1, %eax\nmovl %eax, %cr0\nljmpl *0x8E30\n.code32\n.Lap_protected:\nmovw $$0x10, %ax\nmovw %ax, %ds\nmovw %ax, %es\nmovw %ax, %ss\nmovl $$0x8D00, %esp\nmovl $$0x620, %eax\nmovl %eax, %cr4\nmovl 0x8F00, %eax\nmovl %eax, %cr3\nmovl $$0xC0000080, %ecx\nrdmsr\norl $$0x100, %eax\nwrmsr\nmovl $$0x8000, %eax\naddl $$.Lap_long-.Lap_start, %eax\nmovl %eax, 0x8E38\nmovl %cr0, %eax\nandl $$0x9FFFFFF3, %eax\norl $$0x80010023, %eax\nmovl %eax, %cr0\nljmpl *0x8E38\n.code64\n.Lap_long:\nmovw $$0x10, %ax\nmovw %ax, %ds\nmovw %ax, %es\nmovw %ax, %ss\nxorw %ax, %ax\nmovw %ax, %fs\nmovw %ax, %gs\nmovq 0x8F08, %rsp\nandq $$-16, %rsp\nxorq %rbp, %rbp\nmovq 0x8F20, %rax\nmovq %rax, %rdx\nshrq $$32, %rdx\nmovl $$0xC0000101, %ecx\nwrmsr\nmovq 0x8F28, %rax\nlgdt (%rax)\nmovq 0x8F30, %rax\nlidt (%rax)\nmovw $$0x30, %ax\nltr %ax\nfninit\nldmxcsr 0x8E40\nmovq 0x8F18, %rdi\nmovq 0x8F10, %rax\ncallq *%rax\n.Lap_halt:\ncli\nhlt\njmp .Lap_halt", clobber=[])
+
+@nativ
+funktion ap_status(cpu: u32) -> ptr[ApStatus]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(AP_STATUS) + u64(cpu) * groesse_von(ApStatus))
+
+@nativ
+funktion ap_speicher_erlaubt(bi: u64) -> bool:
+    unsicher:
+        setze info: ptr[MooBootInfo] auf zeiger(bi)
+        setze schritt: u64 auf info.deskriptor_groesse
+        wenn schritt < 40:
+            gib_zurück falsch
+        # UEFI EFI_MEMORY_DESCRIPTOR: Type0, PhysicalStart8, NumberOfPages24.
+        setze i: u64 auf 0
+        solange i + schritt <= info.karte_groesse:
+            setze d: u64 auf info.karte + i
+            setze typ: u32 auf speicher_lesen(d, 4)
+            setze basis: u64 auf speicher_lesen(d + 8, 8)
+            setze seiten: u64 auf speicher_lesen(d + 24, 8)
+            wenn basis <= 0x8000 und seiten != 0 und seiten <= 0xFFFFFFFFFFFFF:
+                wenn 0x8000 - basis <= seiten * 4096 - 4096:
+                    gib_zurück typ == 7 oder (typ >= 1 und typ <= 4)
+            setze i auf i + schritt
+        gib_zurück falsch
+
+@nativ
+funktion ap_lowmem_belegt(basis: u64, bytes: u64) -> bool:
+    wenn bytes == 0:
+        gib_zurück falsch
+    wenn basis >= 0x9000:
+        gib_zurück falsch
+    gib_zurück bytes > 0x8000 oder basis > 0x8000 - bytes
+
+@nativ
+funktion ap_tramp_vorbereiten(bi: u64) -> bool:
+    unsicher:
+        wenn nicht ap_speicher_erlaubt(bi):
+            gib_zurück falsch
+        setze info: ptr[MooBootInfo] auf zeiger(bi)
+        wenn ap_lowmem_belegt(bi, groesse_von(MooBootInfo)) oder ap_lowmem_belegt(info.karte, info.karte_groesse) oder ap_lowmem_belegt(info.arbeit, info.arbeit_groesse) oder ap_lowmem_belegt(info.kern_basis, info.kern_ende - info.kern_basis):
+            gib_zurück falsch
+        setze quelle: u64 auf sektion_anfang(".text.ap_tramp")
+        setze bytes: u64 auf sektion_ende(".text.ap_tramp") - quelle
+        wenn bytes == 0 oder bytes > 0xD00 oder versatz_von(ApUebergabe, idtr) != 48:
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < 4096:
+            speicher_schreiben(0x8000 + i, u8(0), 1)
+            setze i auf i + 1
+        setze i auf 0
+        solange i < bytes:
+            speicher_schreiben(0x8000 + i, speicher_lesen(quelle + i, 1), 1)
+            setze i auf i + 1
+        speicher_schreiben(0x8E08, bitfeld_wert(X86_GDT_CODE), 8)
+        speicher_schreiben(0x8E10, bitfeld_wert(X86_GDT_DATEN), 8)
+        setze code32: X86GdtWort auf X86GdtWort(65535, 0, 0x9A, 15, 12, 0)
+        speicher_schreiben(0x8E18, bitfeld_wert(code32), 8)
+        speicher_schreiben(0x8E20, u16(31), 2)
+        speicher_schreiben(0x8E22, u32(0x8E00), 4)
+        speicher_schreiben(0x8E34, u16(0x18), 2)
+        speicher_schreiben(0x8E3C, u16(0x08), 2)
+        speicher_schreiben(0x8E40, u32(0x1F80), 4)
+        gib_zurück wahr
+
+@nativ
+funktion ap_warten_us(us: u64) -> void:
+    unsicher:
+        setze start: u64 auf takt()
+        solange takt() - start < AP_ZUSTAND.tsc * us:
+            kern_pause()
+
+@nativ
+funktion ap_icr_frei() -> bool:
+    unsicher:
+        wenn AP_ZUSTAND.x2 != 0:
+            gib_zurück wahr
+        setze lese: ptr[fn[sysv64](u64) -> u64] auf zeiger(AP_ZUSTAND.lese)
+        setze start: u64 auf takt()
+        solange (lese(0x300) & 0x1000) != 0:
+            wenn takt() - start >= AP_ZUSTAND.tsc * 10000:
+                gib_zurück falsch
+            kern_pause()
+        gib_zurück wahr
+
+@nativ
+funktion ap_sende(id: u32, befehl: u32) -> bool:
+    unsicher:
+        setze schreibe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(AP_ZUSTAND.schreibe)
+        wenn nicht ap_icr_frei():
+            gib_zurück falsch
+        wenn AP_ZUSTAND.x2 != 0:
+            # Übergabedaten vor dem x2APIC-ICR vollständig veröffentlichen.
+            assembler(ziel="x86_64", code="mfence; lfence", clobber=["memory"])
+            schreibe(0x300, (u64(id) << 32) | u64(befehl))
+        sonst:
+            wenn id > 255:
+                gib_zurück falsch
+            schreibe(0x310, u64(id) << 24)
+            schreibe(0x300, u64(befehl))
+        gib_zurück ap_icr_frei()
+
+@nativ
+funktion ap_ist_online(cpu: u32) -> bool:
+    unsicher:
+        wenn cpu >= smp_anzahl():
+            gib_zurück falsch
+        setze status: ptr[ApStatus] auf ap_status(cpu)
+        setze online: u32 auf atom_laden(status.online, ordnung=erwerben)
+        gib_zurück online == 1 oder (cpu == 0 und online == 0)
+
+@nativ
+funktion ap_halt_quittieren() -> void:
+    unsicher:
+        setze status: ptr[ApStatus] auf ap_status(smp_nummer())
+        atom_speichern(status.online, 3, ordnung=freigeben)
+
+@nativ
+funktion ap_ipi(id: u32, vektor: u32) -> bool:
+    unsicher:
+        # xAPIC schreibt Ziel und Vektor in zwei lokale Register.
+        setze irq: u64 auf irq_sichern()
+        setze gesendet: bool auf ap_sende(id, vektor)
+        irq_wiederherstellen(irq)
+        gib_zurück gesendet
+
+@nativ
+@einstieg
+funktion ap_haupt(cpu: u64) -> void:
+    unsicher:
+        wenn cpu >= u64(smp_anzahl()):
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+        setze status: ptr[ApStatus] auf ap_status(u32(cpu))
+        wenn smp_nummer() != u32(cpu) oder pro_kern_basis() != smp_kern(u32(cpu)).basis oder smp_bsp_id() != smp_kern(u32(cpu)).apic_id:
+            atom_speichern(status.online, 2, ordnung=freigeben)
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+        wenn nicht ar_cpu_vertraeglich(ar_cpu_einrichten(AP_ZUSTAND.msr_lese, AP_ZUSTAND.msr_schreibe)):
+            atom_speichern(status.online, 2, ordnung=freigeben)
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+        syscall_cpu_einrichten(AP_ZUSTAND.msr_lese, AP_ZUSTAND.msr_schreibe)
+        setze lese_msr: ptr[fn[sysv64](u32) -> u64] auf zeiger(AP_ZUSTAND.msr_lese)
+        setze schreibe_msr: ptr[fn[sysv64](u32, u64) -> void] auf zeiger(AP_ZUSTAND.msr_schreibe)
+        setze schreibe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(AP_ZUSTAND.schreibe)
+        setze modus: u64 auf lese_msr(0x1B)
+        wenn (modus & 0x400) != 0 und AP_ZUSTAND.x2 == 0:
+            schreibe_msr(0x1B, modus & 0xFFFFFFFFFFFFF3FF)
+        setze modus auf (modus & 0xFFFFFFFFFFFFF3FF) | 0x800
+        wenn AP_ZUSTAND.x2 != 0:
+            setze modus auf modus | 0x400
+        schreibe_msr(0x1B, modus)
+        schreibe(0x320, 0x10000 | 64)
+        schreibe(0x350, 0x10000)
+        schreibe(0x360, 0x10000)
+        schreibe(0xF0, 0x1FF)
+        wenn AP_ZUSTAND.timer != 0:
+            schreibe(0x3E0, 3)
+            schreibe(0x320, 0x20000 | 64)
+            schreibe(0x380, AP_ZUSTAND.timer)
+        # Auch der eigene Leerlauf-Faden muss vor der Freigabe einmal laufen.
+        faden_abgeben(smp_planer())
+        atom_speichern(status.online, 1, ordnung=freigeben)
+        solange wahr:
+            irq_sichern()
+            faden_abgeben(smp_planer())
+            assembler(ziel="x86_64", code="sti; hlt", clobber=["memory"])
+
+@nativ
+funktion ap_starten(bi: u64, cr3: u64, tsc: u64, timer: u64, idtr: u64, x2: u64, lese: u64, schreibe: u64, msr_lese: u64, msr_schreibe: u64) -> bool:
+    unsicher:
+        setze AP_ZUSTAND.phase auf 1
+        wenn smp_anzahl() == 0 oder tsc == 0 oder cr3 == 0 oder cr3 > 0xFFFFFFFF:
+            gib_zurück falsch
+        setze AP_ZUSTAND.tsc auf tsc
+        setze AP_ZUSTAND.timer auf timer
+        setze AP_ZUSTAND.x2 auf x2
+        setze AP_ZUSTAND.lese auf lese
+        setze AP_ZUSTAND.schreibe auf schreibe
+        setze AP_ZUSTAND.msr_lese auf msr_lese
+        setze AP_ZUSTAND.msr_schreibe auf msr_schreibe
+        wenn smp_anzahl() == 1:
+            setze AP_ZUSTAND.phase auf 0
+            gib_zurück wahr
+        setze pruefe_msr: ptr[fn[sysv64](u32) -> u64] auf zeiger(msr_lese)
+        wenn (pruefe_msr(0x1B) & 0x800) == 0:
+            gib_zurück falsch
+        setze AP_ZUSTAND.phase auf 2
+        wenn nicht ap_tramp_vorbereiten(bi):
+            gib_zurück falsch
+        setze cpu: u32 auf 1
+        solange cpu < smp_anzahl():
+            setze AP_ZUSTAND.ziel auf cpu
+            setze status: ptr[ApStatus] auf ap_status(cpu)
+            atom_speichern(status.online, 0, ordnung=locker)
+            wenn nicht smp_kern(cpu).bereit:
+                gib_zurück falsch
+            setze lokal: ptr[KernLokal] auf smp_lokal(cpu)
+            setze block: ptr[ApUebergabe] auf zeiger(0x8F00)
+            block.cr3 = cr3
+            block.stapel = smp_kern(cpu).stapel
+            block.einstieg = adresse_von(ap_haupt)
+            block.nummer = u64(cpu)
+            block.basis = smp_kern(cpu).basis
+            block.gdtr = u64(lokal) + versatz_von(KernLokal, gdtr)
+            block.idtr = idtr
+            assembler(ziel="x86_64", code="", clobber=["memory"])
+            setze id: u32 auf smp_kern(cpu).apic_id
+            setze AP_ZUSTAND.phase auf 3
+            wenn nicht ap_sende(id, 0xC500):
+                gib_zurück falsch
+            ap_warten_us(10000)
+            wenn nicht ap_sende(id, 0x8500):
+                gib_zurück falsch
+            ap_warten_us(200)
+            wenn nicht ap_sende(id, 0x608):
+                gib_zurück falsch
+            ap_warten_us(200)
+            wenn nicht ap_sende(id, 0x608):
+                gib_zurück falsch
+            setze AP_ZUSTAND.phase auf 4
+            setze start: u64 auf takt()
+            solange atom_laden(status.online, ordnung=erwerben) == 0:
+                wenn takt() - start >= tsc * 2000000:
+                    gib_zurück falsch
+                kern_pause()
+            wenn atom_laden(status.online, ordnung=erwerben) != 1:
+                setze AP_ZUSTAND.phase auf 5
+                gib_zurück falsch
+            setze cpu auf cpu + 1
+        setze AP_ZUSTAND.phase auf 0
+        gib_zurück wahr
+
+@nativ
+konstante AP_MARKE: [u8; _] auf "MOO-AP-ONLINE "
+@nativ
+konstante AP_FEHLER: [u8; _] auf "MOO-AP-FEHLER PHASE "
+@nativ
+konstante AP_ZIEL: [u8; _] auf "MOO-AP-FEHLER CPU "
+
+@nativ
+funktion ap_bericht(ausgabe_adr: u64, log_adr: u64, ok: bool) -> void:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64) -> void] auf zeiger(ausgabe_adr)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze n: u32 auf 0
+        setze i: u32 auf 1
+        solange i < smp_anzahl():
+            wenn atom_laden(ap_status(i).online, ordnung=erwerben) == 1:
+                setze n auf n + 1
+            setze i auf i + 1
+        setze puffer: [u8; 4] auf [0, 0, 0, 0]
+        wenn n >= 10:
+            puffer[0] = u8(48 + n / 10)
+            puffer[1] = u8(48 + n % 10)
+            puffer[2] = 10
+        sonst:
+            puffer[0] = u8(48 + n)
+            puffer[1] = 10
+        ausgabe(adresse_von(AP_MARKE))
+        ausgabe(adresse_von(puffer))
+        wenn nicht ok:
+            log(adresse_von(AP_FEHLER), u64(AP_ZUSTAND.phase))
+            log(adresse_von(AP_ZIEL), u64(AP_ZUSTAND.ziel))
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])

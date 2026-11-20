@@ -1,0 +1,85 @@
+# Begrenzter FIFO-Kanal für u64-Nachrichten desselben CPU-Planers.
+aus "kern_faden" importiere FadenPlaner, Faden, FADEN_FREI, FADEN_WARTET, faden_ort, faden_erzeugen, faden_abgeben
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_bedingung" importiere KernBedingung, bedingung_warten, bedingung_wecken
+
+@nativ
+konstante KANAL_KAPAZITAET: u64 auf 64
+
+struktur KernKanal:
+    kk_mutex: KernMutex
+    kk_lesbar: KernBedingung
+    kk_schreibbar: KernBedingung
+    kk_daten: [u64; 64]
+    kk_lesepos: u64
+    kk_schreibpos: u64
+    kk_anzahl: u64
+
+@nativ
+funktion kanal_senden(planer: ptr[FadenPlaner], kanal: ptr[KernKanal], wert: u64) -> void:
+    unsicher:
+        setze mutex: ptr[KernMutex] auf zeiger(adresse_von(kanal.kk_mutex))
+        setze schreibbar: ptr[KernBedingung] auf zeiger(adresse_von(kanal.kk_schreibbar))
+        mutex_nimm(planer, mutex)
+        solange kanal.kk_anzahl == KANAL_KAPAZITAET:
+            bedingung_warten(planer, schreibbar, mutex)
+        kanal.kk_daten[kanal.kk_schreibpos] = wert
+        setze kanal.kk_schreibpos auf (kanal.kk_schreibpos + 1) % KANAL_KAPAZITAET
+        setze kanal.kk_anzahl auf kanal.kk_anzahl + 1
+        bedingung_wecken(planer, zeiger(adresse_von(kanal.kk_lesbar)))
+        mutex_gib(planer, mutex)
+
+@nativ
+funktion kanal_empfangen(planer: ptr[FadenPlaner], kanal: ptr[KernKanal]) -> u64:
+    unsicher:
+        setze mutex: ptr[KernMutex] auf zeiger(adresse_von(kanal.kk_mutex))
+        setze lesbar: ptr[KernBedingung] auf zeiger(adresse_von(kanal.kk_lesbar))
+        mutex_nimm(planer, mutex)
+        solange kanal.kk_anzahl == 0:
+            bedingung_warten(planer, lesbar, mutex)
+        setze wert: u64 auf kanal.kk_daten[kanal.kk_lesepos]
+        setze kanal.kk_lesepos auf (kanal.kk_lesepos + 1) % KANAL_KAPAZITAET
+        setze kanal.kk_anzahl auf kanal.kk_anzahl - 1
+        bedingung_wecken(planer, zeiger(adresse_von(kanal.kk_schreibbar)))
+        mutex_gib(planer, mutex)
+        gib_zurück wert
+
+@nativ
+statisch KANAL_PROBE: KernKanal auf 0
+
+@nativ
+konstante KANAL_PROBE_ANZAHL: u64 auf 100000
+
+@nativ
+funktion kanal_probe_senden(daten: u64) -> void:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf zeiger(daten)
+        setze kanal: ptr[KernKanal] auf zeiger(adresse_von(KANAL_PROBE))
+        setze nummer: u64 auf 0
+        solange nummer < KANAL_PROBE_ANZAHL:
+            kanal_senden(planer, kanal, nummer)
+            setze nummer auf nummer + 1
+
+@nativ
+funktion kanal_pruefen(planer: ptr[FadenPlaner]) -> bool:
+    unsicher:
+        setze kanal: ptr[KernKanal] auf zeiger(adresse_von(KANAL_PROBE))
+        setze mutex: ptr[KernMutex] auf zeiger(adresse_von(kanal.kk_mutex))
+        mutex_nimm(planer, mutex)
+        setze sender: u32 auf faden_erzeugen(planer, adresse_von(kanal_probe_senden), u64(planer))
+        wenn sender == 0:
+            mutex_gib(planer, mutex)
+            gib_zurück falsch
+        # Der erste Sendeversuch muss auf den vom Empfänger gehaltenen Mutex warten.
+        faden_abgeben(planer)
+        setze faden: ptr[Faden] auf faden_ort(planer, sender)
+        setze richtig: bool auf faden.f_zustand == FADEN_WARTET
+        mutex_gib(planer, mutex)
+        faden_abgeben(planer)
+        setze nummer: u64 auf 0
+        solange nummer < KANAL_PROBE_ANZAHL:
+            wenn kanal_empfangen(planer, kanal) != nummer:
+                setze richtig auf falsch
+            setze nummer auf nummer + 1
+        faden_abgeben(planer)
+        gib_zurück richtig und kanal.kk_anzahl == 0 und faden.f_zustand == FADEN_FREI

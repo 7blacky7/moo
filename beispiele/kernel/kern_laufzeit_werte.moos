@@ -1,0 +1,73 @@
+# P10-T14: gemeinsame Werte/Diagnosen für den nativen Thread-Träger.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+
+extern "C" funktion kern_c_moo_alloc(groesse: u64) -> ptr[u8]
+extern "C" funktion kern_c_moo_retain(wert: LaufzeitWert) -> void
+extern "C" funktion kern_c_moo_release(wert: LaufzeitWert) -> void
+extern "C" funktion kern_c_moo_teilen(wert: LaufzeitWert) -> void
+extern "C" funktion kern_c_moo_string_new(text: ptr[u8]) -> LaufzeitWert
+extern "C" funktion kern_c_moo_type_name(wert: LaufzeitWert) -> ptr[u8]
+extern "C" funktion kern_c_moo_add(a: LaufzeitWert, b: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_throw(wert: LaufzeitWert) -> void
+extern "C" funktion free(p: ptr[u8]) -> void
+
+struktur LaufzeitByte:
+    wert: u8
+
+# Normale RAM-Zugriffe; auch im Hosted-Orakel gültig. LLVM darf bündeln.
+@nativ
+funktion laufzeit_nullen(p: ptr[u8], groesse: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < groesse:
+            setze byte: ptr[LaufzeitByte] auf zeiger(u64(p) + i)
+            byte.wert = 0
+            setze i auf i + 1
+
+@nativ
+funktion laufzeit_nullspeicher(groesse: u64) -> ptr[u8]:
+    unsicher:
+        setze p: ptr[u8] auf kern_c_moo_alloc(groesse)
+        laufzeit_nullen(p, groesse)
+        gib_zurück p
+
+@nativ
+funktion laufzeit_werfen(text: ptr[u8]) -> void:
+    unsicher:
+        kern_c_moo_throw(kern_c_moo_string_new(text))
+
+@nativ
+konstante LW_ERWARTET_ATOM: [u8; 31] auf [32, 101, 114, 119, 97, 114, 116, 101, 116, 32, 101, 105, 110, 32, 65, 116, 111, 109, 44, 32, 101, 114, 104, 97, 108, 116, 101, 110, 58, 32, 0]
+@nativ
+konstante LW_ERWARTET_ZAHL: [u8; 32] auf [32, 101, 114, 119, 97, 114, 116, 101, 116, 32, 101, 105, 110, 101, 32, 90, 97, 104, 108, 44, 32, 101, 114, 104, 97, 108, 116, 101, 110, 58, 32, 0]
+
+@nativ
+funktion laufzeit_nichts() -> LaufzeitWert:
+    gib_zurück LaufzeitWert(3, 0)
+
+@nativ
+funktion laufzeit_bool(wert: bool) -> LaufzeitWert:
+    gib_zurück LaufzeitWert(2, u64(wert))
+
+# Alle Argumente borrowed; nur die neue Fehlermeldung geht owning an wirf.
+@nativ
+funktion laufzeit_erwartet(wer: ptr[u8], erwartet: ptr[u8], wert: LaufzeitWert) -> void:
+    unsicher:
+        setze a: LaufzeitWert auf kern_c_moo_string_new(wer)
+        setze b: LaufzeitWert auf kern_c_moo_string_new(erwartet)
+        setze c: LaufzeitWert auf kern_c_moo_add(a, b)
+        kern_c_moo_release(a)
+        kern_c_moo_release(b)
+        setze typ: LaufzeitWert auf kern_c_moo_string_new(kern_c_moo_type_name(wert))
+        setze meldung: LaufzeitWert auf kern_c_moo_add(c, typ)
+        kern_c_moo_release(c)
+        kern_c_moo_release(typ)
+        kern_c_moo_throw(meldung)
+
+@nativ
+funktion laufzeit_zahl_pruefen(wert: LaufzeitWert, wer: ptr[u8]) -> bool:
+    unsicher:
+        wenn wert.tag != 0:
+            laufzeit_erwartet(wer, zeiger(adresse_von(LW_ERWARTET_ZAHL)), wert)
+            gib_zurück falsch
+        gib_zurück wahr

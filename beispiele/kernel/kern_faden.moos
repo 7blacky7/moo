@@ -1,0 +1,555 @@
+# Jede CPU hat eine gesperrte Bereitschaftsmaske und einen Leerlauffaden.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+aus "kern_adressraum" importiere Adressraum, ar_faden_halten, ar_faden_loesen, ar_aktivieren
+aus "kern_syscall_abi" importiere SyscallLokal
+
+@nativ
+konstante FADEN_ANZAHL: u32 auf 24
+@nativ
+konstante FADEN_STACK_SEITEN: u64 auf 16
+
+@nativ
+konstante FADEN_FREI: u8 auf 0
+@nativ
+konstante FADEN_BEREIT: u8 auf 1
+@nativ
+konstante FADEN_SCHLAEFT: u8 auf 2
+@nativ
+konstante FADEN_WARTET: u8 auf 3
+@nativ
+konstante FADEN_BEENDET: u8 auf 4
+@nativ
+konstante FADEN_RESERVIERT: u8 auf 5
+
+# Die Sperre des wartenden Objekts schützt die Zeiger und Links.
+struktur FadenWarteschlange:
+    fw_kopf: u64
+    fw_ende: u64
+
+struktur Faden:
+    f_rsp: u64
+    f_stapelende: u64
+    f_einstieg: u64
+    f_daten: u64
+    f_irq: u64
+    f_planer: u64
+    f_zustand: u8
+    f_nummer: u32
+    f_wecken_in: u64
+    f_warte_naechster: u64
+    f_affinitaet: u64
+    f_adressraum: u64
+    f_benutzer: u64
+    f_xzustand: u64
+
+struktur FadenPlaner:
+    fp_sperre: KernSperre
+    fp_aktiv: u32
+    fp_bereit: u32
+    fp_fertig: u32
+    fp_cpu: u32
+    fp_gestartet: bool
+    fp_stapel: u64
+    fp_bootinfo: u64
+    fp_rsp0: u64
+    fp_syscall: u64
+    fp_ticks: u64
+    fp_signal: u64
+    fp_ausgleich: u64
+    fp_faeden: [Faden; 24]
+
+@nativ
+funktion faden_ort(planer: ptr[FadenPlaner], nummer: u32) -> ptr[Faden]:
+    unsicher:
+        gib_zurück zeiger(u64(planer) + versatz_von(FadenPlaner, fp_faeden) + u64(nummer) * groesse_von(Faden))
+
+@nativ
+funktion faden_sperre(planer: ptr[FadenPlaner]) -> ptr[KernSperre]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(planer.fp_sperre))
+
+@nativ
+funktion faden_status_setzen(planer: ptr[FadenPlaner], nummer: u32, zustand: u8) -> void:
+    unsicher:
+        setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+        setze faden.f_zustand auf zustand
+        setze bit: u32 auf u32(1) << nummer
+        wenn zustand == FADEN_BEREIT:
+            setze planer.fp_bereit auf planer.fp_bereit | bit
+        sonst:
+            setze planer.fp_bereit auf planer.fp_bereit & (0xFFFFFFFF ^ bit)
+
+@nativ
+funktion faden_smp_binden(planer: ptr[FadenPlaner], cpu: u32, signal: u64, ausgleich: u64) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze planer.fp_cpu auf cpu
+        setze planer.fp_signal auf signal
+        setze planer.fp_ausgleich auf ausgleich
+        spin_gib(sperre, irq)
+
+@nativ
+funktion faden_signal(planer: ptr[FadenPlaner]) -> void:
+    unsicher:
+        wenn planer.fp_signal != 0:
+            setze melden: ptr[fn[sysv64](u32) -> void] auf zeiger(planer.fp_signal)
+            melden(planer.fp_cpu)
+
+# SysV: rdi zeigt auf den alten Sicherungsplatz, rsi enthält den neuen RSP.
+@nativ
+@nackt
+funktion faden_wechsel(alt: ptr[u64], neuer_rsp: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pushq %rbx; pushq %rbp; pushq %r12; pushq %r13; pushq %r14; pushq %r15; movq %rsp, (%rdi); movq %rsi, %rsp; popq %r15; popq %r14; popq %r13; popq %r12; popq %rbp; popq %rbx; retq", clobber=["memory"])
+
+@nativ
+@nackt
+funktion faden_starter() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %r12, %rdi; jmp *%r13", clobber=[])
+
+# Erst der Nachfolger läuft sicher nicht mehr auf dem beendeten Stack.
+@nativ
+funktion faden_fertigen_freigeben(planer: ptr[FadenPlaner]) -> void:
+    unsicher:
+        wenn planer.fp_fertig != 0:
+            setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+            setze irq: u64 auf spin_nimm(sperre)
+            setze nummer: u32 auf planer.fp_fertig - 1
+            setze ende: ptr[Faden] auf faden_ort(planer, nummer)
+            setze raum: u64 auf ende.f_adressraum
+            setze ende.f_adressraum auf 0
+            faden_status_setzen(planer, nummer, FADEN_FREI)
+            setze planer.fp_fertig auf 0
+            spin_gib(sperre, irq)
+            ar_faden_loesen(raum)
+
+@nativ
+funktion faden_ausfuehren(faden: ptr[Faden]) -> void:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf zeiger(faden.f_planer)
+        faden_fertigen_freigeben(planer)
+        setze einstieg: ptr[fn[sysv64](u64) -> void] auf zeiger(faden.f_einstieg)
+        irq_wiederherstellen(faden.f_irq)
+        einstieg(faden.f_daten)
+        faden_ende(planer)
+
+@nativ
+funktion faden_vorbereiten(planer: ptr[FadenPlaner], nummer: u32, einstieg: u64, daten: u64, irq: u64, affinitaet: u64, raum: u64, benutzer: u64, xzustand: u64) -> bool:
+    unsicher:
+        setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+        wenn faden.f_stapelende == 0:
+            setze stapel: ptr[fn[sysv64](u64, u32) -> u64] auf zeiger(planer.fp_stapel)
+            setze faden.f_stapelende auf stapel(planer.fp_bootinfo, nummer)
+            wenn faden.f_stapelende == 0:
+                gib_zurück falsch
+        # Sechs gesicherte Register, Startadresse und ein Rückkehrplatz.
+        # Nach ret steht RSP bei stapelende - 8 wie bei einem SysV-Aufruf.
+        setze rsp: ptr[u64] auf zeiger(faden.f_stapelende - 64)
+        volatile_schreiben(rsp, 0, 0)
+        volatile_schreiben(rsp, 1, 0)
+        volatile_schreiben(rsp, 2, adresse_von(faden_ausfuehren))
+        volatile_schreiben(rsp, 3, u64(faden))
+        volatile_schreiben(rsp, 4, 0)
+        volatile_schreiben(rsp, 5, 0)
+        volatile_schreiben(rsp, 6, adresse_von(faden_starter))
+        volatile_schreiben(rsp, 7, 0)
+        setze faden.f_rsp auf u64(rsp)
+        setze faden.f_einstieg auf einstieg
+        setze faden.f_daten auf daten
+        setze faden.f_irq auf irq
+        setze faden.f_planer auf u64(planer)
+        setze faden.f_nummer auf nummer
+        setze faden.f_wecken_in auf 0
+        setze faden.f_warte_naechster auf 0
+        setze faden.f_affinitaet auf affinitaet
+        setze faden.f_adressraum auf raum
+        setze faden.f_benutzer auf benutzer
+        setze faden.f_xzustand auf xzustand
+        faden_status_setzen(planer, nummer, FADEN_BEREIT)
+        gib_zurück wahr
+
+@nativ
+funktion faden_leerlauf(daten: u64) -> void:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf zeiger(daten)
+        unterbrechungen_an()
+        solange wahr:
+            faden_abgeben(planer)
+            kern_pause()
+
+@nativ
+funktion faden_planer_starten(planer: ptr[FadenPlaner], stapel: u64, bootinfo: u64) -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        wenn nicht planer.fp_gestartet:
+            setze planer.fp_stapel auf stapel
+            setze planer.fp_bootinfo auf bootinfo
+            wenn faden_vorbereiten(planer, 1, adresse_von(faden_leerlauf), u64(planer), irq, 0, 0, 0, 0):
+                setze haupt: ptr[Faden] auf faden_ort(planer, 0)
+                setze haupt.f_planer auf u64(planer)
+                setze haupt.f_nummer auf 0
+                faden_status_setzen(planer, 0, FADEN_BEREIT)
+                setze planer.fp_aktiv auf 0
+                setze planer.fp_gestartet auf wahr
+        setze gestartet: bool auf planer.fp_gestartet
+        spin_gib(sperre, irq)
+        gib_zurück gestartet
+
+# RSP0 liegt vier Byte nach dem Anfang der gepackten x86-64-TSS.
+@nativ
+funktion faden_tss_binden(planer: ptr[FadenPlaner], rsp0: u64, bootstapel: u64) -> void:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze haupt: ptr[Faden] auf faden_ort(planer, 0)
+        setze haupt.f_stapelende auf bootstapel
+        setze planer.fp_rsp0 auf rsp0
+        speicher_schreiben(rsp0, bootstapel, 8)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion faden_einreihen(planer: ptr[FadenPlaner], einstieg: u64, daten: u64, affinitaet: u64, faden_irq: u64) -> u32:
+    unsicher:
+        gib_zurück faden_einreihen_raum(planer, einstieg, daten, affinitaet, faden_irq, 0, 0, 0)
+
+@nativ
+funktion faden_einreihen_raum(planer: ptr[FadenPlaner], einstieg: u64, daten: u64, affinitaet: u64, faden_irq: u64, raum: u64, benutzer: u64, xzustand: u64) -> u32:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze nummer: u32 auf 2
+        setze ergebnis: u32 auf 0
+        wenn planer.fp_gestartet:
+            solange nummer < FADEN_ANZAHL:
+                setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+                wenn faden.f_zustand == FADEN_FREI:
+                    wenn faden_vorbereiten(planer, nummer, einstieg, daten, faden_irq, affinitaet, raum, benutzer, xzustand):
+                        setze ergebnis auf nummer
+                    stopp
+                setze nummer auf nummer + 1
+        spin_gib(sperre, irq)
+        gib_zurück ergebnis
+
+@nativ
+funktion faden_erzeugen(planer: ptr[FadenPlaner], einstieg: u64, daten: u64) -> u32:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze nummer: u32 auf faden_einreihen(planer, einstieg, daten, 0, irq)
+        irq_wiederherstellen(irq)
+        gib_zurück nummer
+
+@nativ
+funktion faden_erzeugen_im_adressraum(planer: ptr[FadenPlaner], raum: ptr[Adressraum], einstieg: u64, daten: u64) -> u32:
+    unsicher:
+        gib_zurück faden_benutzer_starten(planer, raum, einstieg, daten, 0, 0)
+
+@nativ
+funktion faden_benutzer_starten(planer: ptr[FadenPlaner], raum: ptr[Adressraum], einstieg: u64, daten: u64, benutzer: u64, xzustand: u64) -> u32:
+    unsicher:
+        wenn nicht ar_faden_halten(raum):
+            gib_zurück 0
+        setze nummer: u32 auf faden_einreihen_raum(planer, einstieg, daten, 0, 0x200, u64(raum), benutzer, xzustand)
+        wenn nummer == 0:
+            ar_faden_loesen(u64(raum))
+        sonst:
+            faden_signal(planer)
+        gib_zurück nummer
+
+# Nur vor dem ersten Einstieg kann der Stack am Ziel neu aufgebaut werden.
+# Die Reservierung sperrt den Quellplatz, ohne zwei Planerlocks zu verschachteln.
+@nativ
+funktion faden_stehlen(ziel: ptr[FadenPlaner], quelle: ptr[FadenPlaner]) -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf faden_sperre(quelle)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze cpu_bit: u64 auf u64(1) << ziel.fp_cpu
+        setze nummer: u32 auf 2
+        solange nummer < FADEN_ANZAHL:
+            setze faden: ptr[Faden] auf faden_ort(quelle, nummer)
+            wenn faden.f_zustand == FADEN_BEREIT und (faden.f_affinitaet & cpu_bit) != 0:
+                setze einstieg: u64 auf faden.f_einstieg
+                setze daten: u64 auf faden.f_daten
+                setze faden_irq: u64 auf faden.f_irq
+                faden_status_setzen(quelle, nummer, FADEN_RESERVIERT)
+                spin_gib(sperre, irq)
+                setze genommen: bool auf faden_einreihen(ziel, einstieg, daten, 0, faden_irq) != 0
+                setze irq auf spin_nimm(sperre)
+                wenn genommen:
+                    faden_status_setzen(quelle, nummer, FADEN_FREI)
+                sonst:
+                    faden_status_setzen(quelle, nummer, FADEN_BEREIT)
+                spin_gib(sperre, irq)
+                wenn nicht genommen:
+                    faden_signal(quelle)
+                gib_zurück genommen
+            setze nummer auf nummer + 1
+        spin_gib(sperre, irq)
+        gib_zurück falsch
+
+@nativ
+funktion faden_abgeben(planer: ptr[FadenPlaner]) -> void:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze geplant: u64 auf spin_nimm(sperre)
+        wenn (planer.fp_bereit & 0xFFFFFFFC) == 0 und planer.fp_ausgleich != 0:
+            setze ausgleichen: ptr[fn[sysv64](u64) -> void] auf zeiger(planer.fp_ausgleich)
+            spin_gib(sperre, geplant)
+            ausgleichen(u64(planer))
+            setze geplant auf spin_nimm(sperre)
+        setze aktiv: u32 auf planer.fp_aktiv
+        setze alt: ptr[Faden] auf faden_ort(planer, aktiv)
+        setze ziel: u32 auf aktiv
+        setze kandidat: u32 auf (aktiv + 1) % FADEN_ANZAHL
+        setze bereit: u32 auf planer.fp_bereit & 0xFFFFFFFD
+        solange kandidat != aktiv:
+            wenn (bereit & (u32(1) << kandidat)) != 0:
+                setze ziel auf kandidat
+                stopp
+            setze kandidat auf (kandidat + 1) % FADEN_ANZAHL
+        wenn ziel == aktiv und alt.f_zustand != FADEN_BEREIT:
+            setze ziel auf 1
+        wenn ziel != aktiv:
+            setze naechster: ptr[Faden] auf faden_ort(planer, ziel)
+            setze naechster.f_affinitaet auf 0
+            setze planer.fp_aktiv auf ziel
+            wenn planer.fp_rsp0 != 0:
+                speicher_schreiben(planer.fp_rsp0, naechster.f_stapelende, 8)
+            wenn planer.fp_syscall != 0:
+                setze lokal: ptr[SyscallLokal] auf zeiger(planer.fp_syscall)
+                setze lokal.sl_kernrsp auf naechster.f_stapelende
+                setze lokal.sl_prozess auf naechster.f_benutzer
+                setze lokal.sl_xzustand auf naechster.f_xzustand
+            setze rsp: u64 auf naechster.f_rsp
+            setze raum: u64 auf naechster.f_adressraum
+            spin_gib(sperre, geplant)
+            ar_aktivieren(raum)
+            faden_wechsel(zeiger(adresse_von(alt.f_rsp)), rsp)
+            faden_fertigen_freigeben(planer)
+        sonst:
+            spin_gib(sperre, geplant)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion faden_ende(planer: ptr[FadenPlaner]) -> void:
+    unsicher:
+        irq_sichern()
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze nummer: u32 auf planer.fp_aktiv
+        faden_status_setzen(planer, nummer, FADEN_BEENDET)
+        setze planer.fp_fertig auf nummer + 1
+        spin_gib(sperre, irq)
+        faden_abgeben(planer)
+        solange wahr:
+            assembler(ziel="x86_64", code="hlt", clobber=["memory"])
+
+# Eine Dauer von 0 wartet auf faden_wecken. Der Leerlauffaden bleibt bereit.
+@nativ
+funktion faden_schlafen(planer: ptr[FadenPlaner], ticks: u64) -> void:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze nummer: u32 auf planer.fp_aktiv
+        wenn nummer != 1:
+            setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+            setze geplant: u64 auf spin_nimm(sperre)
+            setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+            setze faden.f_wecken_in auf ticks
+            faden_status_setzen(planer, nummer, FADEN_SCHLAEFT)
+            spin_gib(sperre, geplant)
+            faden_abgeben(planer)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion faden_wecken(planer: ptr[FadenPlaner], nummer: u32) -> bool:
+    unsicher:
+        wenn nummer >= FADEN_ANZAHL:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+        setze schlaeft: bool auf faden.f_zustand == FADEN_SCHLAEFT
+        wenn schlaeft:
+            setze faden.f_wecken_in auf 0
+            faden_status_setzen(planer, nummer, FADEN_BEREIT)
+        spin_gib(sperre, irq)
+        wenn schlaeft:
+            faden_signal(planer)
+        gib_zurück schlaeft
+
+# Aufrufer halten die Objektsperre und geben sie vor der Abgabe frei.
+@nativ
+funktion faden_warte_einreihen(planer: ptr[FadenPlaner], warte: ptr[FadenWarteschlange]) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze nummer: u32 auf planer.fp_aktiv
+        setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+        setze faden.f_warte_naechster auf 0
+        wenn warte.fw_ende == 0:
+            setze warte.fw_kopf auf u64(faden)
+        sonst:
+            setze ende: ptr[Faden] auf zeiger(warte.fw_ende)
+            setze ende.f_warte_naechster auf u64(faden)
+        setze warte.fw_ende auf u64(faden)
+        faden_status_setzen(planer, nummer, FADEN_WARTET)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion faden_wartenden_holen(warte: ptr[FadenWarteschlange]) -> u64:
+    unsicher:
+        setze kopf: u64 auf warte.fw_kopf
+        wenn kopf != 0:
+            setze faden: ptr[Faden] auf zeiger(kopf)
+            setze warte.fw_kopf auf faden.f_warte_naechster
+            wenn warte.fw_kopf == 0:
+                setze warte.fw_ende auf 0
+            setze faden.f_warte_naechster auf 0
+        gib_zurück kopf
+
+@nativ
+funktion faden_wartenden_wecken(adresse: u64) -> void:
+    unsicher:
+        wenn adresse != 0:
+            setze faden: ptr[Faden] auf zeiger(adresse)
+            setze planer: ptr[FadenPlaner] auf zeiger(faden.f_planer)
+            setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+            setze irq: u64 auf spin_nimm(sperre)
+            faden_status_setzen(planer, faden.f_nummer, FADEN_BEREIT)
+            spin_gib(sperre, irq)
+            faden_signal(planer)
+
+# Aufruf mit gesperrten IRQs nach EOI. Der Rahmen bleibt auf dem Fadenstack.
+@nativ
+funktion planer_tick(planer: ptr[FadenPlaner], rahmen: ptr[u64]) -> void:
+    unsicher:
+        wenn nicht planer.fp_gestartet:
+            gib_zurück
+        setze sperre: ptr[KernSperre] auf faden_sperre(planer)
+        setze irq: u64 auf spin_nimm(sperre)
+        setze planer.fp_ticks auf planer.fp_ticks + 1
+        setze nummer: u32 auf 0
+        solange nummer < FADEN_ANZAHL:
+            setze faden: ptr[Faden] auf faden_ort(planer, nummer)
+            wenn faden.f_zustand == FADEN_SCHLAEFT und faden.f_wecken_in != 0:
+                setze faden.f_wecken_in auf faden.f_wecken_in - 1
+                wenn faden.f_wecken_in == 0:
+                    faden_status_setzen(planer, nummer, FADEN_BEREIT)
+            setze nummer auf nummer + 1
+        spin_gib(sperre, irq)
+        faden_abgeben(planer)
+
+# Einmalige Probe auf der Start-CPU. Beide Fäden geben dreimal ab und enden.
+@nativ
+statisch FADEN_PROBE_FOLGE: [u64; 1] auf 0
+
+@nativ
+funktion faden_probe(planer: ptr[FadenPlaner], ziffer: u64) -> void:
+    unsicher:
+        setze folge: ptr[u64] auf zeiger(adresse_von(FADEN_PROBE_FOLGE))
+        setze i: u32 auf 0
+        solange i < 3:
+            volatile_schreiben(folge, 0, volatile_lesen(folge, 0) * 10 + ziffer)
+            faden_abgeben(planer)
+            setze i auf i + 1
+
+@nativ
+funktion faden_ping(daten: u64) -> void:
+    unsicher:
+        faden_probe(zeiger(daten), 1)
+
+@nativ
+funktion faden_pong(daten: u64) -> void:
+    unsicher:
+        faden_probe(zeiger(daten), 2)
+
+@nativ
+funktion faden_pingpong_pruefen(planer: ptr[FadenPlaner]) -> u64:
+    unsicher:
+        setze folge: ptr[u64] auf zeiger(adresse_von(FADEN_PROBE_FOLGE))
+        volatile_schreiben(folge, 0, 0)
+        setze ping: u32 auf faden_erzeugen(planer, adresse_von(faden_ping), u64(planer))
+        setze pong: u32 auf faden_erzeugen(planer, adresse_von(faden_pong), u64(planer))
+        setze runde: u32 auf 0
+        solange runde < 4:
+            faden_abgeben(planer)
+            setze runde auf runde + 1
+        wenn ping != 0 und pong != 0 und volatile_lesen(folge, 0) == 121212:
+            setze a: ptr[Faden] auf faden_ort(planer, ping)
+            setze b: ptr[Faden] auf faden_ort(planer, pong)
+            wenn a.f_zustand == FADEN_FREI und b.f_zustand == FADEN_FREI und planer.fp_aktiv == 0:
+                gib_zurück a.f_stapelende
+        gib_zurück 0
+
+struktur FadenPraeemptProbe:
+    pr_planer: u64
+    pr_start: u64
+    pr_takte: u64
+    pr_phase: atom[u32]
+
+@nativ
+statisch PRAEEMPT_PROBE: FadenPraeemptProbe auf 0
+
+@nativ
+funktion faden_probe_frisch(probe: ptr[FadenPraeemptProbe]) -> bool:
+    unsicher:
+        gib_zurück takt() - probe.pr_start < probe.pr_takte
+
+@nativ
+funktion faden_praeempt_arbeiter(daten: u64) -> void:
+    unsicher:
+        setze probe: ptr[FadenPraeemptProbe] auf zeiger(daten)
+        setze planer: ptr[FadenPlaner] auf zeiger(probe.pr_planer)
+        setze aktiv: ptr[Faden] auf faden_ort(planer, planer.fp_aktiv)
+        wenn speicher_lesen(planer.fp_rsp0, 8) != aktiv.f_stapelende:
+            gib_zurück
+        unterbrechungen_an()
+        atom_speichern(probe.pr_phase, 1, ordnung=locker)
+        # Nur ein LAPIC-Tick kann die Hauptschleife in dieser Phase fortsetzen.
+        solange atom_laden(probe.pr_phase, ordnung=locker) == 1 und faden_probe_frisch(probe):
+            kern_pause()
+        wenn atom_laden(probe.pr_phase, ordnung=locker) != 2:
+            gib_zurück
+        setze irq: u64 auf irq_sichern()
+        setze vorher: u64 auf planer.fp_ticks
+        faden_schlafen(planer, 2)
+        wenn planer.fp_ticks - vorher >= 2:
+            atom_speichern(probe.pr_phase, 3, ordnung=locker)
+            faden_schlafen(planer, 0)
+            atom_speichern(probe.pr_phase, 4, ordnung=locker)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion faden_praeemption_pruefen(planer: ptr[FadenPlaner], tsc_pro_us: u64) -> bool:
+    unsicher:
+        wenn planer.fp_rsp0 == 0:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        setze probe: ptr[FadenPraeemptProbe] auf zeiger(adresse_von(PRAEEMPT_PROBE))
+        setze probe.pr_planer auf u64(planer)
+        setze probe.pr_start auf takt()
+        setze probe.pr_takte auf tsc_pro_us * 2000000
+        atom_speichern(probe.pr_phase, 0, ordnung=locker)
+        setze nummer: u32 auf faden_erzeugen(planer, adresse_von(faden_praeempt_arbeiter), u64(probe))
+        setze gut: bool auf falsch
+        wenn nummer != 0:
+            unterbrechungen_an()
+            faden_abgeben(planer)
+            solange atom_laden(probe.pr_phase, ordnung=locker) == 0 und faden_probe_frisch(probe):
+                kern_pause()
+            wenn atom_laden(probe.pr_phase, ordnung=locker) == 1 und faden_probe_frisch(probe):
+                atom_speichern(probe.pr_phase, 2, ordnung=locker)
+                solange atom_laden(probe.pr_phase, ordnung=locker) == 2 und faden_probe_frisch(probe):
+                    kern_pause()
+                wenn atom_laden(probe.pr_phase, ordnung=locker) == 3 und faden_wecken(planer, nummer):
+                    solange atom_laden(probe.pr_phase, ordnung=locker) == 3 und faden_probe_frisch(probe):
+                        kern_pause()
+                    faden_abgeben(planer)
+                    setze ende: ptr[Faden] auf faden_ort(planer, nummer)
+                    setze haupt: ptr[Faden] auf faden_ort(planer, 0)
+                    setze gut auf atom_laden(probe.pr_phase, ordnung=locker) == 4 und ende.f_zustand == FADEN_FREI und speicher_lesen(planer.fp_rsp0, 8) == haupt.f_stapelende
+        irq_wiederherstellen(irq)
+        gib_zurück gut

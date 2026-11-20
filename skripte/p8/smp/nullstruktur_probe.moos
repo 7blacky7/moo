@@ -1,0 +1,54 @@
+# Explizites lokales Struktur-Nullinitialisieren, wiederholt im Schleifenkörper.
+struktur NullBits:
+    bits: u64
+
+struktur NullWert:
+    wert: u64
+
+struktur NullInnen:
+    zahl: f64
+    zeigerwert: ptr[u8]
+    bereit: bool
+
+struktur NullBild:
+    innen: NullInnen
+    werte: [u64; 3]
+    atomwert: atom[u64]
+
+@nativ
+@einstieg
+funktion null_probe() -> u64:
+    unsicher:
+        setze fehler: u64 auf 0
+        setze runde: u64 auf 0
+        solange runde < 3:
+            setze bild: NullBild auf 0
+            wenn bild.innen.zahl != 0.0 oder u64(bild.innen.zeigerwert) != 0 oder bild.innen.bereit:
+                setze fehler auf fehler + 1
+            setze zp: ptr[NullBits] auf zeiger(adresse_von(bild.innen.zahl))
+            wenn zp.bits != 0:
+                setze fehler auf fehler + 1
+            wenn bild.werte[0] != 0 oder bild.werte[1] != 0 oder bild.werte[2] != 0:
+                setze fehler auf fehler + 1
+            wenn atom_laden(bild.atomwert, ordnung=folgerichtig) != 0:
+                setze fehler auf fehler + 1
+            bild.innen.zahl = 7.0
+            bild.innen.zeigerwert = zeiger(8)
+            bild.innen.bereit = wahr
+            bild.werte[1] = 99
+            atom_speichern(bild.atomwert, 42, ordnung=folgerichtig)
+            setze runde auf runde + 1
+        gib_zurück fehler
+
+@nativ
+@einstieg
+funktion null_rein() -> u64:
+    setze wert: NullWert auf 0
+    gib_zurück wert.wert
+
+@nativ
+@einstieg
+funktion null_kopie() -> u64:
+    setze a: NullWert auf NullWert(7)
+    setze b: NullWert auf a
+    gib_zurück b.wert

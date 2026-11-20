@@ -1,0 +1,31 @@
+# Der Aufrufer prüft das Prädikat unter demselben Mutex.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen
+aus "kern_faden" importiere FadenPlaner, FadenWarteschlange, faden_abgeben, faden_warte_einreihen, faden_wartenden_holen, faden_wartenden_wecken
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+
+struktur KernBedingung:
+    kb_sperre: KernSperre
+    kb_warte: FadenWarteschlange
+
+@nativ
+funktion bedingung_warten(planer: ptr[FadenPlaner], bedingung: ptr[KernBedingung], mutex: ptr[KernMutex]) -> void:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(bedingung.kb_sperre))
+        setze gesperrt: u64 auf spin_nimm(sperre)
+        setze frei: bool auf mutex_gib(planer, mutex)
+        wenn frei:
+            faden_warte_einreihen(planer, zeiger(adresse_von(bedingung.kb_warte)))
+        spin_gib(sperre, gesperrt)
+        wenn frei:
+            faden_abgeben(planer)
+            mutex_nimm(planer, mutex)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion bedingung_wecken(planer: ptr[FadenPlaner], bedingung: ptr[KernBedingung]) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(bedingung.kb_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        faden_wartenden_wecken(faden_wartenden_holen(zeiger(adresse_von(bedingung.kb_warte))))
+        spin_gib(sperre, irq)

@@ -1,0 +1,36 @@
+# Schlafender FIFO-Mutex. Die Spinsperre schützt Besitz und Warteschlange.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen
+aus "kern_faden" importiere FadenPlaner, FadenWarteschlange, faden_ort, faden_abgeben, faden_warte_einreihen, faden_wartenden_holen, faden_wartenden_wecken
+
+struktur KernMutex:
+    km_sperre: KernSperre
+    km_besitzer: u64
+    km_warte: FadenWarteschlange
+
+@nativ
+funktion mutex_nimm(planer: ptr[FadenPlaner], mutex: ptr[KernMutex]) -> void:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(mutex.km_sperre))
+        setze gesperrt: u64 auf spin_nimm(sperre)
+        wenn mutex.km_besitzer == 0:
+            setze mutex.km_besitzer auf u64(faden_ort(planer, planer.fp_aktiv))
+            spin_gib(sperre, gesperrt)
+        sonst:
+            faden_warte_einreihen(planer, zeiger(adresse_von(mutex.km_warte)))
+            spin_gib(sperre, gesperrt)
+            faden_abgeben(planer)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion mutex_gib(planer: ptr[FadenPlaner], mutex: ptr[KernMutex]) -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(mutex.km_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze besitzt: bool auf mutex.km_besitzer == u64(faden_ort(planer, planer.fp_aktiv))
+        wenn besitzt:
+            setze naechster: u64 auf faden_wartenden_holen(zeiger(adresse_von(mutex.km_warte)))
+            setze mutex.km_besitzer auf naechster
+            faden_wartenden_wecken(naechster)
+        spin_gib(sperre, irq)
+        gib_zurück besitzt

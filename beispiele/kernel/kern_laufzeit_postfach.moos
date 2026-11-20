@@ -1,0 +1,133 @@
+# P10-T14: Besitz-Handoff nach moo_thread.c:43–192.
+# Die Identität lebt auf dem Heap; CPU-/Planerslots dürfen wiederverwendet werden.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+
+aus "kern_laufzeit_werte" importiere kern_c_moo_alloc, free, kern_c_moo_release
+
+struktur LaufzeitAbgabe:
+    wert: LaufzeitWert
+    naechste: ptr[LaufzeitAbgabe]
+
+struktur LaufzeitPostfach:
+    refs: atom[i32]
+    sperre: atom[u32]
+    lebt: bool
+    erbe: ptr[LaufzeitPostfach]
+    liste: ptr[LaufzeitAbgabe]
+
+@nativ
+funktion laufzeit_post_sperren(p: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        solange atom_tauschen(p.sperre, 1, ordnung=erwerben) != 0:
+            # Kein Scheduler-/IRQ-Aufruf unter dieser kurzen Datensperre.
+            setze warten: u32 auf atom_laden(p.sperre, ordnung=locker)
+
+@nativ
+funktion laufzeit_post_entsperren(p: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        atom_speichern(p.sperre, 0, ordnung=freigeben)
+
+@nativ
+funktion laufzeit_post_neu(refs: i32) -> ptr[LaufzeitPostfach]:
+    unsicher:
+        setze p: ptr[LaufzeitPostfach] auf zeiger(kern_c_moo_alloc(groesse_von(LaufzeitPostfach)))
+        atom_speichern(p.refs, refs, ordnung=locker)
+        atom_speichern(p.sperre, 0, ordnung=locker)
+        p.lebt = wahr
+        p.erbe = zeiger(0)
+        p.liste = zeiger(0)
+        gib_zurück p
+
+@nativ
+funktion laufzeit_post_halten(p: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        atom_addieren(p.refs, 1, ordnung=locker)
+
+@nativ
+funktion laufzeit_post_liste_freigeben(liste: ptr[LaufzeitAbgabe]) -> void:
+    unsicher:
+        setze l: ptr[LaufzeitAbgabe] auf liste
+        solange u64(l) != 0:
+            setze folge: ptr[LaufzeitAbgabe] auf l.naechste
+            kern_c_moo_release(l.wert)
+            free(zeiger(u64(l)))
+            setze l auf folge
+
+@nativ
+funktion laufzeit_post_freigeben(post: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        setze p: ptr[LaufzeitPostfach] auf post
+        solange u64(p) != 0:
+            wenn atom_addieren(p.refs, -1, ordnung=erwerben_freigeben) != 1:
+                gib_zurück
+            setze erbe: ptr[LaufzeitPostfach] auf p.erbe
+            setze liste: ptr[LaufzeitAbgabe] auf p.liste
+            free(zeiger(u64(p)))
+            laufzeit_post_liste_freigeben(liste)
+            setze p auf erbe
+
+@nativ
+funktion laufzeit_post_leeren(p: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück
+        laufzeit_post_sperren(p)
+        setze liste: ptr[LaufzeitAbgabe] auf p.liste
+        p.liste = zeiger(0)
+        laufzeit_post_entsperren(p)
+        laufzeit_post_liste_freigeben(liste)
+
+# Wert owning +1, kein Retain auf dem ungeteilten Wert im fremden Thread.
+@nativ
+funktion laufzeit_post_abgeben(post: ptr[LaufzeitPostfach], ich: ptr[LaufzeitPostfach], wert: LaufzeitWert) -> void:
+    unsicher:
+        setze p: ptr[LaufzeitPostfach] auf post
+        setze a: ptr[LaufzeitAbgabe] auf zeiger(0)
+        laufzeit_post_halten(p)
+        solange wahr:
+            wenn u64(p) == u64(ich):
+                laufzeit_post_freigeben(p)
+                free(zeiger(u64(a)))
+                kern_c_moo_release(wert)
+                gib_zurück
+            wenn u64(a) == 0:
+                setze a auf zeiger(kern_c_moo_alloc(groesse_von(LaufzeitAbgabe)))
+                a.wert = wert
+            laufzeit_post_sperren(p)
+            wenn p.lebt oder u64(p.erbe) == 0:
+                a.naechste = p.liste
+                p.liste = a
+                laufzeit_post_entsperren(p)
+                laufzeit_post_freigeben(p)
+                gib_zurück
+            setze folge: ptr[LaufzeitPostfach] auf p.erbe
+            laufzeit_post_halten(folge)
+            laufzeit_post_entsperren(p)
+            laufzeit_post_freigeben(p)
+            setze p auf folge
+
+# Worker beendet: zuerst Restliste abtrennen, dann außerhalb der Sperre freigeben.
+@nativ
+funktion laufzeit_post_schliessen(p: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        laufzeit_post_sperren(p)
+        setze liste: ptr[LaufzeitAbgabe] auf p.liste
+        p.liste = zeiger(0)
+        p.lebt = falsch
+        laufzeit_post_entsperren(p)
+        laufzeit_post_liste_freigeben(liste)
+
+# Der erste Joiner übernimmt die Worker-Kette; jede Erbkante hält genau +1.
+@nativ
+funktion laufzeit_post_uebernehmen(w: ptr[LaufzeitPostfach], ich: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        wenn u64(w) == 0:
+            gib_zurück
+        laufzeit_post_sperren(w)
+        setze liste: ptr[LaufzeitAbgabe] auf w.liste
+        w.liste = zeiger(0)
+        wenn u64(w.erbe) == 0:
+            laufzeit_post_halten(ich)
+            w.erbe = ich
+        laufzeit_post_entsperren(w)
+        laufzeit_post_liste_freigeben(liste)

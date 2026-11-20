@@ -1,0 +1,12 @@
+# Testzugang zur tatsächlichen MADT-Implementierung, keine Parserkopie.
+importiere "../../../beispiele/kernel/kern_smp"
+
+@nativ
+funktion t11_anzahl() -> u32:
+    unsicher:
+        gib_zurück SMP_ZUSTAND.anzahl
+
+@nativ
+funktion t11_ok() -> bool:
+    unsicher:
+        gib_zurück SMP_ZUSTAND.madt_ok

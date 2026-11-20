@@ -1,0 +1,9 @@
+struktur NullS:
+    wert: u64
+@nativ
+funktion lese_null(s: NullS) -> u64:
+    gib_zurück s.wert
+@nativ
+funktion null_falsch() -> u64:
+    unsicher:
+        gib_zurück lese_null(0)

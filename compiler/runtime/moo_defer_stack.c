@@ -1,6 +1,6 @@
 #include "moo_defer_stack.h"
 #include <stddef.h>
-#ifdef MOO_BARE
+#if defined(MOO_BARE) && !defined(MOO_BARE_THREADS)
 #include "moo_bare_kern.h"
 _Static_assert(sizeof(size_t) <= sizeof(uint64_t), "bare allocator size width");
 static void *moo_defer_alloc(size_t size) { return kern_alloc_c((uint64_t)size); }
@@ -39,7 +39,7 @@ int moo_defer_stack_push(MooDeferStack *stack, uint32_t action_id) {
             capacity = stack->capacity > limit / 2 ? limit : stack->capacity * 2;
         }
         if (capacity > limit) capacity = limit;
-#ifdef MOO_BARE
+#if defined(MOO_BARE) && !defined(MOO_BARE_THREADS)
         uint32_t *items = moo_defer_alloc(capacity * sizeof(*items));
         if (!items) return MOO_DEFER_ALLOC;
         /* Volatile element copies avoid requiring libc memcpy in freestanding builds. */

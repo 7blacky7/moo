@@ -1,0 +1,10 @@
+aus "../../../beispiele/kernel/kern_laufzeit_thread" importiere kern_rt_moo_thread_spawn, kern_rt_moo_thread_spawn_n, kern_rt_moo_thread_wait, kern_rt_moo_thread_done, kern_rt_moo_thread_free
+aus "../../../beispiele/kernel/kern_laufzeit_atom_api" importiere kern_rt_moo_atom_neu
+aus "../../../beispiele/kernel/kern_laufzeit_sperre" importiere kern_rt_moo_sperre_neu, kern_rt_moo_sperre_betreten, kern_rt_moo_sperre_verlassen, kern_rt_moo_sperre_free
+aus "../../../beispiele/kernel/kern_laufzeit_kanal" importiere kern_rt_moo_channel_new, kern_rt_moo_channel_send, kern_rt_moo_channel_recv, kern_rt_moo_channel_close, kern_rt_moo_channel_uebergeben, kern_rt_moo_channel_free
+aus "../../../beispiele/kernel/kern_laufzeit_fehler" importiere kern_rt_moo_throw, kern_rt_moo_try_check, kern_rt_moo_try_enter, kern_rt_moo_try_leave
+
+
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante LAUFZEIT_PROFIL: [u64; 1] auf [1]

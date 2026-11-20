@@ -1,6 +1,6 @@
 # P7-T23: eigener xHCI-Hosttreiber, Hardware-Syntax A.
 # xHCI 1.2: Register/Contexts/TRBs; USB 2.0 Kap.9; HID 1.11 Boot Keyboard.
-# Boot-Tastaturen direkt an xHCI-Rootports. MSI weckt die Kernschleife.
+# Boot-Tastaturen direkt an xHCI-Rootports. MSI weckt den Eingabefaden.
 # Pro Host eigener Kommando-/Eventring, pro Slot eigener Device Context,
 # Control-/Interrupt-Ring und vorheriger Report. MSC bleibt synchron.
 # Timer-Polling bleibt der Rückfall. Hub, Maus und Hotplug sind weitere Stufen.
@@ -1439,8 +1439,22 @@ funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, 
         gib_zurück wahr
 
 @nativ
-funktion usb_poll_berichte(callback: u64) -> void:
+funktion usb_braucht_poll() -> bool:
     unsicher:
+        setze host: u64 auf 0
+        setze anzahl: u64 auf speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8)
+        solange host < anzahl:
+            setze zustand: u64 auf adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8
+            wenn speicher_lesen(zustand + 17 * 8, 8) == 0:
+                gib_zurück wahr
+            setze host auf host + 1
+        gib_zurück falsch
+
+# Volles Budget bedeutet, dass der Eingabefaden den Ring erneut prüft.
+@nativ
+funktion usb_poll_berichte(callback: u64) -> bool:
+    unsicher:
+        setze offen: bool auf falsch
         setze host: u64 auf 0
         setze anzahl: u64 auf speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8)
         solange host < anzahl:
@@ -1454,8 +1468,11 @@ funktion usb_poll_berichte(callback: u64) -> void:
                 setze budget auf budget - 1
             wenn xh(17) != 0 und (quittiert oder budget < 32):
                 xh_eventring_freigeben()
+            wenn budget == 0:
+                setze offen auf wahr
             setze host auf host + 1
         wenn anzahl > 0:
             xh_waehle(adresse_von(XH_HID_HOSTS))
+        gib_zurück offen
 
 

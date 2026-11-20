@@ -1,0 +1,48 @@
+# P10-T14: explizites Vollprofil mit dem bestehenden nativen Kernel.
+aus "uefi_kern" importiere kern_haupt
+aus "kern_laufzeit_atom_api" importiere kern_rt_moo_atom_neu
+aus "kern_laufzeit_sperre" importiere kern_rt_moo_sperre_neu
+aus "kern_laufzeit_kanal" importiere kern_rt_moo_channel_new
+aus "kern_laufzeit_thread" importiere laufzeit_post_mein
+aus "kern_laufzeit_postfach" importiere LaufzeitPostfach, laufzeit_post_leeren, laufzeit_post_schliessen, laufzeit_post_freigeben
+aus "kern_laufzeit_faden" importiere laufzeit_kontext, laufzeit_kontext_starten
+aus "kern_laufzeit_speicher" importiere laufzeit_speicher_starten, laufzeit_text, laufzeit_anhalten
+aus "kern_laufzeit_fehler" importiere laufzeit_status
+
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante LAUFZEIT_PROFIL: [u64; 1] auf [1]
+
+@nativ
+konstante LW_PROGRAMM_BEGINN: [u8; 20] auf [77, 79, 79, 45, 76, 65, 85, 70, 90, 69, 73, 84, 45, 66, 69, 71, 73, 78, 10, 0]
+@nativ
+konstante LW_PROGRAMM_ENDE: [u8; 18] auf [77, 79, 79, 45, 76, 65, 85, 70, 90, 69, 73, 84, 45, 69, 78, 68, 10, 0]
+@nativ
+konstante LW_PROGRAMM_FEHLER: [u8; 19] auf [77, 79, 79, 45, 76, 65, 85, 70, 90, 69, 73, 84, 45, 70, 65, 73, 76, 10, 0]
+
+# Keine dynamischen Werte vor GS-/Planerstart. Der Compiler erzeugt den
+# skalaren C-Adapter erst nach dem normalen Moo-main; keine ABI-Umbenennung.
+@nativ
+funktion laufzeit_programm_beginnen() -> void:
+    unsicher:
+        laufzeit_speicher_starten()
+        wenn nicht laufzeit_kontext_starten(0):
+            laufzeit_anhalten()
+        laufzeit_text(zeiger(adresse_von(LW_PROGRAMM_BEGINN)))
+        assembler(ziel="x86_64", code="sti", clobber=["memory"])
+
+@nativ
+funktion laufzeit_programm_enden() -> i32:
+    unsicher:
+        setze post: ptr[LaufzeitPostfach] auf laufzeit_post_mein()
+        laufzeit_post_leeren(post)
+        laufzeit_post_schliessen(post)
+        laufzeit_kontext().postfach = 0
+        laufzeit_post_freigeben(post)
+        assembler(ziel="x86_64", code="cli", clobber=["memory"])
+        setze status: i32 auf laufzeit_status()
+        wenn status == 0:
+            laufzeit_text(zeiger(adresse_von(LW_PROGRAMM_ENDE)))
+        sonst:
+            laufzeit_text(zeiger(adresse_von(LW_PROGRAMM_FEHLER)))
+        gib_zurück status

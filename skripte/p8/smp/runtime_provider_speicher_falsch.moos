@@ -1,0 +1,7 @@
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante LAUFZEIT_PROFIL: [u64; 1] auf [1]
+
+@nativ
+funktion kern_rt_malloc(groesse: u64) -> u64:
+    gib_zurück groesse

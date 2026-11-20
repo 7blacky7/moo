@@ -1,0 +1,100 @@
+# P10-T14: Sperren besitzen ihren Inhalt; derselbe Graphschutz wie hosted.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_faden" importiere laufzeit_kontext
+aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_nullspeicher, laufzeit_werfen, laufzeit_erwartet, kern_c_moo_retain, kern_c_moo_release, free
+aus "kern_smp" importiere smp_planer
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+
+extern "C" funktion kern_c_moo_ist_heap_wert(wert: LaufzeitWert) -> bool
+extern "C" funktion kern_c_moo_sperre_unterelemente_sichern(wert: LaufzeitWert) -> void
+
+struktur LaufzeitReferenz:
+    refcount: atom[i32]
+
+# Header und Inhalt stehen wie in MooSperre an 0 bzw.8; der Rest ist Bare-intern.
+struktur LaufzeitSperre:
+    refcount: i32
+    reserve: i32
+    inhalt: LaufzeitWert
+    besitzer: atom[u64]
+    mutex: KernMutex
+
+@nativ
+konstante LWS_WER: [u8; 12] auf [109, 105, 116, 32, 46, 46, 46, 32, 97, 108, 115, 0]
+
+@nativ
+konstante LWS_TYP: [u8; 34] auf [32, 101, 114, 119, 97, 114, 116, 101, 116, 32, 101, 105, 110, 101, 32, 83, 112, 101, 114, 114, 101, 44, 32, 101, 114, 104, 97, 108, 116, 101, 110, 58, 32, 0]
+
+@nativ
+konstante LWS_ALIAS: [u8; 169] auf [115, 112, 101, 114, 114, 101, 58, 32, 100, 101, 114, 32, 87, 101, 114, 116, 32, 105, 115, 116, 32, 110, 111, 99, 104, 32, 97, 110, 32, 97, 110, 100, 101, 114, 101, 114, 32, 83, 116, 101, 108, 108, 101, 32, 114, 101, 102, 101, 114, 101, 110, 122, 105, 101, 114, 116, 32, 117, 110, 100, 32, 107, 111, 101, 110, 110, 116, 101, 32, 111, 104, 110, 101, 32, 83, 112, 101, 114, 114, 101, 32, 118, 101, 114, 97, 101, 110, 100, 101, 114, 116, 32, 119, 101, 114, 100, 101, 110, 46, 32, 68, 101, 110, 32, 73, 110, 104, 97, 108, 116, 32, 100, 105, 114, 101, 107, 116, 32, 105, 110, 32, 100, 101, 114, 32, 83, 112, 101, 114, 114, 101, 32, 97, 110, 108, 101, 103, 101, 110, 44, 32, 122, 46, 32, 66, 46, 32, 115, 112, 101, 114, 114, 101, 40, 123, 34, 115, 116, 97, 110, 100, 34, 58, 32, 48, 125, 41, 46, 0]
+
+@nativ
+konstante LWS_NEST: [u8; 123] auf [109, 105, 116, 32, 46, 46, 46, 32, 97, 108, 115, 58, 32, 100, 105, 101, 115, 101, 32, 83, 112, 101, 114, 114, 101, 32, 104, 97, 101, 108, 116, 32, 100, 101, 114, 32, 84, 104, 114, 101, 97, 100, 32, 98, 101, 114, 101, 105, 116, 115, 32, 40, 118, 101, 114, 115, 99, 104, 97, 99, 104, 116, 101, 108, 116, 101, 115, 32, 109, 105, 116, 32, 97, 117, 102, 32, 100, 105, 101, 115, 101, 108, 98, 101, 32, 83, 112, 101, 114, 114, 101, 32, 119, 117, 101, 114, 100, 101, 32, 115, 105, 99, 104, 32, 115, 101, 108, 98, 115, 116, 32, 98, 108, 111, 99, 107, 105, 101, 114, 101, 110, 41, 0]
+
+@nativ
+konstante LWS_ESCAPE: [u8; 175] auf [109, 105, 116, 32, 46, 46, 46, 32, 97, 108, 115, 58, 32, 100, 101, 114, 32, 73, 110, 104, 97, 108, 116, 32, 100, 101, 114, 32, 83, 112, 101, 114, 114, 101, 32, 119, 105, 114, 100, 32, 110, 97, 99, 104, 32, 100, 101, 109, 32, 66, 108, 111, 99, 107, 32, 110, 111, 99, 104, 32, 97, 117, 115, 115, 101, 114, 104, 97, 108, 98, 32, 114, 101, 102, 101, 114, 101, 110, 122, 105, 101, 114, 116, 32, 40, 101, 110, 116, 107, 111, 109, 109, 101, 110, 41, 46, 32, 87, 101, 114, 116, 101, 32, 97, 117, 115, 32, 100, 101, 109, 32, 66, 108, 111, 99, 107, 32, 112, 101, 114, 32, 75, 111, 112, 105, 101, 32, 104, 101, 114, 97, 117, 115, 103, 101, 98, 101, 110, 44, 32, 110, 105, 99, 104, 116, 32, 100, 101, 110, 32, 73, 110, 104, 97, 108, 116, 32, 115, 101, 108, 98, 115, 116, 32, 115, 112, 101, 105, 99, 104, 101, 114, 110, 46, 0]
+
+@nativ
+funktion laufzeit_referenzen(wert: LaufzeitWert) -> i32:
+    unsicher:
+        wenn wert.daten == 0 oder nicht kern_c_moo_ist_heap_wert(wert):
+            gib_zurück 0
+        setze p: ptr[LaufzeitReferenz] auf zeiger(wert.daten)
+        setze r: i32 auf atom_laden(p.refcount, ordnung=locker)
+        wenn r < 0:
+            gib_zurück -r
+        gib_zurück r
+
+@nativ
+funktion kern_rt_moo_sperre_neu(wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn laufzeit_referenzen(wert) > 1:
+            kern_c_moo_release(wert)
+            laufzeit_werfen(zeiger(adresse_von(LWS_ALIAS)))
+            gib_zurück laufzeit_nichts()
+        kern_c_moo_sperre_unterelemente_sichern(wert)
+        setze s: ptr[LaufzeitSperre] auf zeiger(laufzeit_nullspeicher(groesse_von(LaufzeitSperre)))
+        s.refcount = 1
+        s.inhalt = wert
+        gib_zurück LaufzeitWert(33, u64(s))
+
+@nativ
+funktion kern_rt_moo_sperre_betreten(wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn wert.tag != 33 oder wert.daten == 0:
+            laufzeit_erwartet(zeiger(adresse_von(LWS_WER)), zeiger(adresse_von(LWS_TYP)), wert)
+            gib_zurück laufzeit_nichts()
+        setze s: ptr[LaufzeitSperre] auf zeiger(wert.daten)
+        setze ich: u64 auf u64(laufzeit_kontext())
+        wenn atom_laden(s.besitzer, ordnung=locker) == ich:
+            laufzeit_werfen(zeiger(adresse_von(LWS_NEST)))
+            gib_zurück laufzeit_nichts()
+        mutex_nimm(smp_planer(), zeiger(adresse_von(s.mutex)))
+        atom_speichern(s.besitzer, ich, ordnung=locker)
+        kern_c_moo_retain(s.inhalt)
+        gib_zurück s.inhalt
+
+@nativ
+funktion kern_rt_moo_sperre_verlassen(wert: LaufzeitWert, pruefen: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn wert.tag != 33 oder wert.daten == 0:
+            gib_zurück laufzeit_nichts()
+        setze s: ptr[LaufzeitSperre] auf zeiger(wert.daten)
+        wenn atom_laden(s.besitzer, ordnung=locker) != u64(laufzeit_kontext()):
+            gib_zurück laufzeit_nichts()
+        setze entkommen: bool auf pruefen.tag == 2 und pruefen.daten != 0 und laufzeit_referenzen(s.inhalt) > 1
+        kern_c_moo_sperre_unterelemente_sichern(s.inhalt)
+        atom_speichern(s.besitzer, 0, ordnung=locker)
+        mutex_gib(smp_planer(), zeiger(adresse_von(s.mutex)))
+        wenn entkommen:
+            laufzeit_werfen(zeiger(adresse_von(LWS_ESCAPE)))
+        gib_zurück laufzeit_nichts()
+
+@nativ
+funktion kern_rt_moo_sperre_free(p: ptr[u8]) -> void:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück
+        setze s: ptr[LaufzeitSperre] auf zeiger(u64(p))
+        kern_c_moo_release(s.inhalt)
+        free(p)

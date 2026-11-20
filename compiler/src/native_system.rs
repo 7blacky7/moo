@@ -2296,10 +2296,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             Some(slot) => (slot.ty.clone(), slot.ptr, slot.constant),
             None => return Err(format!("Systemkoerper: '{name}' ist nicht deklariert; Native lokale Variable braucht eine Typannotation (setze {name}: TYP auf ...)")),
         };
-        self.normaler_speicherzugriff(&ty)?;
         if constant && !declaring {
             return Err(format!("Systemkoerper: Konstante '{name}' kann nicht neu gesetzt werden"));
         }
+        // Ein explizites getyptes Struktur-Nullinitialisieren ist kein Cast.
+        // Im Statement speichern: Schleifendeklarationen nullen bei jedem Durchlauf.
+        // NativeNumber.text vermeidet Rundung/Unterlauf über legacy:f64.
+        if declaring && matches!(&ty, STy::Struct(_))
+            && matches!(value, Expr::NativeNumber { text, .. } if text == "0")
+        {
+            let alignment = self.storage_alignment(name, &ty)?;
+            self.builder.build_store(ptr, self.zero(&ty)?).map_err(e)?
+                .set_alignment(alignment).map_err(e)?;
+            return Ok(());
+        }
+        self.normaler_speicherzugriff(&ty)?;
         if ty.ist_aggregat() {
             // Struktur-/Arraywerte wandern als Speicherkopie, nicht als LLVM-Aggregat.
             let from = self.struct_place(value, &ty, name)?;

@@ -13,6 +13,282 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/kern_adressraum.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_adressraum_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_ap.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_bedingung.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_faden.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_kanal.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_atom_api.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_faden.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_fehler.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_kanal.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_postfach.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_speicher.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_sperre.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_thread.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_werte.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_mutex.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_smp.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_smp_planer.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_smp_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_sperre.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_syscall.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
+      "path": "beispiele/kernel/kern_syscall_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P10-Meilenstein: natives Kernel-/MoOS-Modul, explizites Zielprofil; keine Fehlerausnahme"
+    },
+    {
       "path": "beispiele/kernel/kern_tastatur.moos",
       "category": "profile",
       "args": ["--no-stdlib", "--target", "x86_64-bare"],

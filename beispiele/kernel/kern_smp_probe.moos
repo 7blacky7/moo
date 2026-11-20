@@ -1,0 +1,149 @@
+# Nur vom aktivierten QEMU-Profil aufgerufen.
+aus "kern_smp" importiere smp_anzahl, smp_nummer, smp_planer
+aus "kern_smp_planer" importiere smp_online_maske, smp_faden_anbieten, smp_faden_wecken, smp_gestohlen, smp_alle_halten
+aus "kern_faden" importiere FadenPlaner, faden_abgeben, faden_schlafen
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch SMP_PROBE_ATOM: atom[u64] auf 0
+@nativ
+statisch SMP_PROBE_KERNE: atom[u64] auf 0
+@nativ
+statisch SMP_PROBE_FERTIG: atom[u32] auf 0
+@nativ
+statisch SMP_PROBE_FEHLER: atom[u32] auf 0
+@nativ
+statisch SMP_PROBE_WACHE: atom[u32] auf 0
+@nativ
+statisch SMP_PROBE_MTX: KernMutex auf 0
+@nativ
+statisch SMP_PROBE_ZAEHLER: [u64; 1] auf 0
+@nativ
+statisch SMP_PROBE_MASKEN: [u64; 16] auf 0
+
+@nativ
+konstante T_SMP_ATOM: [u8; _] auf "MOO-SMP ATOM "
+@nativ
+konstante T_SMP_MUTEX: [u8; _] auf "MOO-SMP MUTEX "
+@nativ
+konstante T_SMP_KERNE: [u8; _] auf "MOO-SMP CPU-MASKE "
+@nativ
+konstante T_SMP_STEHLEN: [u8; _] auf "MOO-SMP GESTOHLEN "
+@nativ
+konstante T_SMP_WECKEN: [u8; _] auf "MOO-SMP WECKEN "
+@nativ
+konstante T_SMP_FERTIG: [u8; _] auf "MOO-SMP FERTIG "
+
+@nativ
+funktion smp_probe_faden(daten: u64) -> void:
+    unsicher:
+        setze maske_ref: ptr[u64] auf zeiger(daten)
+        setze bit: u64 auf u64(1) << smp_nummer()
+        wenn (volatile_lesen(maske_ref, 0) & bit) == 0:
+            atom_speichern(SMP_PROBE_FEHLER, 1, ordnung=locker)
+        atom_oder(SMP_PROBE_KERNE, bit, ordnung=locker)
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze mutex: ptr[KernMutex] auf zeiger(adresse_von(SMP_PROBE_MTX))
+        setze zaehler: ptr[u64] auf zeiger(adresse_von(SMP_PROBE_ZAEHLER))
+        setze i: u64 auf 0
+        solange i < 1000000:
+            setze ende: u64 auf i + 1024
+            wenn ende > 1000000:
+                setze ende auf 1000000
+            setze j: u64 auf i
+            solange j < ende:
+                atom_addieren(SMP_PROBE_ATOM, 1, ordnung=locker)
+                setze j auf j + 1
+            mutex_nimm(planer, mutex)
+            setze j auf i
+            solange j < ende:
+                volatile_schreiben(zaehler, 0, volatile_lesen(zaehler, 0) + 1)
+                setze j auf j + 1
+            mutex_gib(planer, mutex)
+            setze i auf ende
+            faden_abgeben(planer)
+        atom_addieren(SMP_PROBE_FERTIG, 1, ordnung=freigeben)
+
+@nativ
+funktion smp_probe_schlaefer(daten: u64) -> void:
+    unsicher:
+        wenn u64(smp_nummer()) != daten:
+            atom_speichern(SMP_PROBE_FEHLER, 1, ordnung=locker)
+        setze irq: u64 auf irq_sichern()
+        atom_speichern(SMP_PROBE_WACHE, 1, ordnung=freigeben)
+        faden_schlafen(smp_planer(), 0)
+        atom_speichern(SMP_PROBE_WACHE, 2, ordnung=freigeben)
+        irq_wiederherstellen(irq)
+
+@nativ
+funktion smp_probe_wecken(planer: ptr[FadenPlaner], cpu: u32, start: u64, dauer: u64) -> bool:
+    unsicher:
+        setze nummer: u32 auf smp_faden_anbieten(adresse_von(smp_probe_schlaefer), u64(cpu), u64(1) << cpu)
+        wenn nummer == 0:
+            gib_zurück falsch
+        solange takt() - start < dauer:
+            wenn atom_laden(SMP_PROBE_WACHE, ordnung=erwerben) == 1 und smp_faden_wecken(cpu, nummer):
+                solange atom_laden(SMP_PROBE_WACHE, ordnung=erwerben) != 2 und takt() - start < dauer:
+                    faden_abgeben(planer)
+                gib_zurück atom_laden(SMP_PROBE_WACHE, ordnung=erwerben) == 2
+            faden_abgeben(planer)
+        gib_zurück falsch
+
+@nativ
+funktion smp_probe_starten(tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        setze kernzahl: u32 auf smp_anzahl()
+        wenn kernzahl == 0 oder kernzahl > 8 oder tsc == 0:
+            gib_zurück falsch
+        setze online: u64 auf smp_online_maske()
+        wenn online != (u64(1) << kernzahl) - 1:
+            gib_zurück falsch
+        setze start: u64 auf takt()
+        setze dauer: u64 auf tsc * 45000000
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        wenn nicht smp_probe_wecken(planer, kernzahl - 1, start, dauer):
+            gib_zurück falsch
+        log(adresse_von(T_SMP_WECKEN), u64(kernzahl - 1))
+        setze masken: ptr[u64] auf zeiger(adresse_von(SMP_PROBE_MASKEN))
+        setze nr: u32 auf 0
+        setze gestohlen_vorher: u64 auf smp_gestohlen()
+        solange nr < 16:
+            setze maske: u64 auf online
+            wenn nr > 0 und nr <= kernzahl:
+                setze maske auf u64(1) << (nr - 1)
+            volatile_schreiben(masken, u64(nr), maske)
+            setze irq: u64 auf irq_sichern()
+            setze platz: u32 auf smp_faden_anbieten(adresse_von(smp_probe_faden), u64(masken) + u64(nr) * 8, maske)
+            wenn nr == 0 und kernzahl > 1:
+                # BSP bleibt hier stehen. Nur ein AP kann diese Arbeit nehmen.
+                solange smp_gestohlen() == gestohlen_vorher und takt() - start < dauer:
+                    kern_pause()
+            irq_wiederherstellen(irq)
+            wenn platz == 0 oder (nr == 0 und kernzahl > 1 und smp_gestohlen() == gestohlen_vorher):
+                gib_zurück falsch
+            setze nr auf nr + 1
+        solange atom_laden(SMP_PROBE_FERTIG, ordnung=erwerben) != 16 und takt() - start < dauer:
+            faden_abgeben(planer)
+        setze fertig: u32 auf atom_laden(SMP_PROBE_FERTIG, ordnung=erwerben)
+        setze atomar: u64 auf atom_laden(SMP_PROBE_ATOM, ordnung=locker)
+        setze zaehler: ptr[u64] auf zeiger(adresse_von(SMP_PROBE_ZAEHLER))
+        setze gesperrt: u64 auf volatile_lesen(zaehler, 0)
+        setze kerne: u64 auf atom_laden(SMP_PROBE_KERNE, ordnung=locker)
+        log(adresse_von(T_SMP_FERTIG), u64(fertig))
+        log(adresse_von(T_SMP_ATOM), atomar)
+        log(adresse_von(T_SMP_MUTEX), gesperrt)
+        log(adresse_von(T_SMP_KERNE), kerne)
+        log(adresse_von(T_SMP_STEHLEN), smp_gestohlen() - gestohlen_vorher)
+        gib_zurück fertig == 16 und atomar == 16000000 und gesperrt == 16000000 und kerne == online und atom_laden(SMP_PROBE_FEHLER, ordnung=locker) == 0
+
+@nativ
+funktion smp_probe_halten(tsc: u64) -> bool:
+    unsicher:
+        setze start: u64 auf takt()
+        smp_alle_halten()
+        solange smp_online_maske() != 1 und takt() - start < tsc * 1000000:
+            kern_pause()
+        gib_zurück smp_online_maske() == 1

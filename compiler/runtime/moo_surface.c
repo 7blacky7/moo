@@ -19,8 +19,10 @@ const MooFontAaFace moo_bare_font_mono = {
     MOO_FONT_AA_MONOSPACE_EXTRA_COUNT,
 };
 
-#else
+#endif /* MOO_BARE_FONT_MONO: Schriftansicht */
 
+/* Das Thread-Vollprofil nutzt zusätzlich die gemeinsamen Surface-Werte. */
+#if !defined(MOO_BARE_FONT_MONO) || defined(MOO_BARE_THREADS)
 #include "moo_runtime.h"
 #include "moo_surface_core.h"
 #include "moo_bare_wert.h"

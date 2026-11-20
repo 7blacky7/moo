@@ -23,4 +23,8 @@ if ! rg -aqF "MOO-KERNEL OK" "$out/serial.log"; then
     echo "Kern-Abschlussmarke fehlt in $out/serial.log" >&2
     exit 1
 fi
-echo "PASS $1 vCPU(s), debugcon: MOO-LADER SPRUNG, COM1: MOO-KERNEL OK"
+if ! tr -d '\r' < "$out/serial.log" | grep -ax "MOO-KERNE $1" > /dev/null; then
+    echo "CPU-Anzahl fehlt oder weicht ab in $out/serial.log" >&2
+    exit 1
+fi
+echo "PASS $1 vCPU(s), COM1: MOO-KERNE $1, MOO-KERNEL OK"

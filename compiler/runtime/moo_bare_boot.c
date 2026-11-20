@@ -185,6 +185,7 @@ void kern_boot_main(void) {
 /* ======================================================================
  * kern_panic — gemeinsam (von alloc/idt referenziert).
  * ====================================================================== */
+#ifndef MOO_BARE_THREADS
 void kern_panic(const char* msg) {
     kern_seriell_text("\n[KERN-PANIK] ");
     kern_seriell_text(msg ? msg : "(ohne Meldung)");
@@ -192,3 +193,4 @@ void kern_panic(const char* msg) {
     moo_cpu_cli();
     for (;;) moo_cpu_halt();
 }
+#endif /* Vollprofil: kern_panic aus kern_laufzeit_speicher.moos */

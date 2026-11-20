@@ -89,6 +89,36 @@ case "$KERN_TASTATUR" in
   1) [ "$PRUEFUNG" = kern ] || fail "Tastaturprobe braucht MOO_UEFI_PRUEFUNG=kern" ;;
   *) fail "Tastaturprobe: 0 oder 1" ;;
 esac
+FADEN_WACHT="${MOO_UEFI_FADEN_WACHT:-0}"
+case "$FADEN_WACHT" in
+  0) ;;
+  1) [ "$PRUEFUNG" = kern ] || fail "Faden-Wächterprobe braucht MOO_UEFI_PRUEFUNG=kern" ;;
+  *) fail "Faden-Wächterprobe: 0 oder 1" ;;
+esac
+SMP_STRESS="${MOO_UEFI_SMP_STRESS:-0}"
+case "$SMP_STRESS" in
+  0) ;;
+  1) [ "$PRUEFUNG" = kern ] && [ "$FADEN_WACHT" = 0 ] || fail "SMP-Lastprobe braucht Kernprofil ohne Wächterprobe" ;;
+  *) fail "SMP-Lastprobe: 0 oder 1" ;;
+esac
+AR_PROBE="${MOO_UEFI_AR:-0}"
+case "$AR_PROBE" in
+  0) ;;
+  1|schutz)
+    [ "$PRUEFUNG" = kern ] && [ "$SMP_STRESS" = 0 ] && [ "$FADEN_WACHT" = 0 ] ||
+      fail "Adressraumprobe braucht das eigene Kernprofil"
+    ;;
+  *) fail "Adressraumprobe: 0, 1 oder schutz" ;;
+esac
+RING3_PROBE="${MOO_UEFI_RING3:-0}"
+case "$RING3_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$SMP_STRESS" = 0 ] && [ "$FADEN_WACHT" = 0 ] && [ "$AR_PROBE" = 0 ] ||
+      fail "Ring-3-Probe braucht das eigene Kernprofil"
+    ;;
+  *) fail "Ring-3-Probe: 0 oder 1" ;;
+esac
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
 skip() {
   echo "      SKIP: $1"
@@ -352,10 +382,17 @@ if [ "$PRUEFUNG" = "kern" ]; then
       ;;
     *) fail "MOO_UEFI_ESP_KERN: 0 oder 1" ;;
   esac
+  KERN_STDLIB_FLAGS=(--no-stdlib)
+  KERN_IR_FLAGS=()
+  case "${MOO_UEFI_KERN_LAUFZEIT:-0}" in
+    0) ;;
+    1) KERN_STDLIB_FLAGS=(); KERN_IR_FLAGS=(--kernel) ;;
+    *) fail "MOO_UEFI_KERN_LAUFZEIT: 0 oder 1" ;;
+  esac
   phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
-  "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
+  "$BIN" compile "$KERN_SRC" "${KERN_STDLIB_FLAGS[@]}" --target x86_64-bare --kernel --linker-script "$KERN_LD" \
       -o "$OUT/KERN.ELF" >"$OUT/kern.err" 2>&1 || { sed 's/^/      | /' "$OUT/kern.err"; fail "Kern nicht gebaut"; }
-  "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --emit-ir -o "$OUT/KERN.ll" >"$OUT/kern-ir.err" 2>&1 \
+  "$BIN" compile "$KERN_SRC" "${KERN_STDLIB_FLAGS[@]}" "${KERN_IR_FLAGS[@]}" --target x86_64-bare --emit-ir -o "$OUT/KERN.ll" >"$OUT/kern-ir.err" 2>&1 \
     || { sed 's/^/      | /' "$OUT/kern-ir.err"; fail "Kern-IR nicht gebaut"; }
   uv run --no-project python - "$OUT/KERN.ll" <<'PY'
 import pathlib, re, sys
@@ -364,10 +401,11 @@ attrs = dict(re.findall(r"^attributes #(\d+) = \{(.*)\}", ir, re.M))
 functions = re.findall(r"^define [^\n]+", ir, re.M)
 assert functions
 for function in functions:
-    group = re.search(r"#(\d+)\s*\{", function)
+    group = re.search(r"#(\d+)(?:\s|$)", function)
     assert group and "noredzone" in attrs[group[1]], function
 print("      OK: %d Kernel-Funktionsdefinitionen ohne Red-Zone" % len(functions))
 PY
+  [ "$?" -eq 0 ] || fail "Kernel-IR: Red-Zone-Pruefung fehlgeschlagen"
   readelf -h "$OUT/KERN.ELF" | grep -q 'Type:.*EXEC' || fail "Kern ist kein ELF EXEC"
   readelf -h "$OUT/KERN.ELF" | grep -q 'Machine:.*X86-64' || fail "Kern ist kein x86-64"
   [ -z "$(nm -u "$OUT/KERN.ELF")" ] || fail "Kern hat undefinierte Symbole"
@@ -549,6 +587,63 @@ PY
     uv run --no-project --offline python -B "$ROOT/skripte/p7/ssh_laufprofil.py" "$OUT/KERN.ELF" "$SSH_TEST_KEY_VERZ/id.pub" ||
       fail "SSH-Auth-Vertrag in privater ELF-Kopie"
   fi
+  if [ "$FADEN_WACHT" = 1 ]; then
+    uv run --no-project --offline python - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+inhalt = elf.read_bytes()
+vertrag = b"FADENGD1" + bytes(8)
+if inhalt.count(vertrag) != 1:
+    sys.exit("Faden-Wächtervertrag nicht eindeutig")
+elf.write_bytes(inhalt.replace(vertrag, b"FADENGD1" + (1).to_bytes(8, "little")))
+PY
+      fail "Faden-Wächtervertrag in privater ELF-Kopie"
+  fi
+  if [ "$SMP_STRESS" = 1 ]; then
+    uv run --no-project --offline python - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+inhalt = elf.read_bytes()
+vertrag = b"MOOSMP01" + bytes(8)
+if inhalt.count(vertrag) != 1:
+    sys.exit("SMP-Lastvertrag nicht eindeutig")
+elf.write_bytes(inhalt.replace(vertrag, b"MOOSMP01" + (1).to_bytes(8, "little")))
+PY
+      fail "SMP-Lastvertrag in privater ELF-Kopie"
+  fi
+  if [ "$AR_PROBE" != 0 ]; then
+    uv run --no-project --offline python - "$OUT/KERN.ELF" "$AR_PROBE" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+inhalt = elf.read_bytes()
+vertrag = b"MOOAR001" + bytes(8)
+if inhalt.count(vertrag) != 1:
+    sys.exit("Adressraumvertrag nicht eindeutig")
+modus = 2 if sys.argv[2] == "schutz" else 1
+elf.write_bytes(inhalt.replace(vertrag, b"MOOAR001" + modus.to_bytes(8, "little")))
+PY
+      fail "Adressraumvertrag in privater ELF-Kopie"
+  fi
+  if [ "$RING3_PROBE" = 1 ]; then
+    uv run --no-project --offline python - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+inhalt = elf.read_bytes()
+vertrag = b"MOORING3" + bytes(8)
+if inhalt.count(vertrag) != 1:
+    sys.exit("Ring-3-Profil nicht eindeutig")
+elf.write_bytes(inhalt.replace(vertrag, b"MOORING3" + (1).to_bytes(8, "little")))
+PY
+      fail "Ring-3-Profil in privater ELF-Kopie"
+  fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
   for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd \
@@ -645,6 +740,33 @@ PY
       -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9 \
       <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
   QPID=$!
+  if [ "$FADEN_WACHT" = 1 ] || [ "$AR_PROBE" = schutz ]; then
+    for ((i = 0; i < WAIT_S; i++)); do
+      if grep -aqE 'MOO-KERNEL AUSNAHME CR2 [0-9A-F]{16}' "$OUT/serial.log" || ! kill -0 "$QPID" 2>/dev/null; then
+        break
+      fi
+      sleep 1
+    done
+    printf 'quit\n' >&3
+    wait "$QPID" || true
+    if [ "$AR_PROBE" = schutz ]; then
+      ERWARTET=$(sed -nE 's/^MOO-AR SCHUTZ ERWARTET ([0-9A-F]{16}).*/\1/p' "$OUT/serial.log")
+      grep -aqFx 'MOO-AR-OK' "$OUT/serial.log" || fail "Adressraumprüfung fehlt"
+      FEHLERCODE=0000000000000001
+      BEFUND="SMAP: Supervisor-Lesezugriff auf präsente Benutzerseite"
+    else
+      ERWARTET=$(sed -nE 's/^MOO-FADEN WAECHTER ERWARTET ([0-9A-F]{16}).*/\1/p' "$OUT/serial.log")
+      grep -aqF 'MOO-FADEN-PINGPONG-OK' "$OUT/serial.log" || fail "Faden-Pingpong fehlt"
+      FEHLERCODE=0000000000000002
+      BEFUND="Faden-Wächterseite"
+    fi
+    grep -aqF 'MOO-KERNEL AUSNAHME VEKTOR 000000000000000E' "$OUT/serial.log" || fail "$BEFUND: #PF fehlt"
+    grep -aqF "MOO-KERNEL AUSNAHME FEHLERCODE $FEHLERCODE" "$OUT/serial.log" || fail "$BEFUND: unerwarteter Fehlercode"
+    [ -n "$ERWARTET" ] && grep -aqF "MOO-KERNEL AUSNAHME CR2 $ERWARTET" "$OUT/serial.log" ||
+      fail "$BEFUND: CR2 stimmt nicht überein"
+    echo "      PASS: $BEFUND #PF/CR2 $ERWARTET"
+    exit 0
+  fi
   KEY_SENT=0
   IGB_LINK=0
   for ((i = 0; i < WAIT_S; i++)); do
@@ -1152,6 +1274,20 @@ PY
     grep -aqF 'MOO-KERNEL NETZ TCP ECHO BEREIT 0000000000000001' "$OUT/serial.log" || fail "TCP-Echo-Marker fehlt"
     [ ! -f "$OUT/tcp-fenster.log" ] || sed 's/^/      | /' "$OUT/tcp-fenster.log"
     [ "$TCP_FENSTER_OK" -eq 1 ] || fail "TCP-Fenster-/Wiederholungsprobe ueber $NETZ_PING fehlgeschlagen"
+  fi
+  if [ "$RING3_PROBE" = 1 ]; then
+    for marker in 'MOO-RING3-GP-ABGEFANGEN' 'MOO-RING3-PF-ABGEFANGEN' 'MOO-RING3 USER SCHREIBE' 'MOO-RING3-OK'; do
+      grep -aFxq "$marker" "$OUT/serial.log" || fail "Ring-3-Probenmarker fehlt: $marker"
+    done
+    echo "      OK: Ring 3, Syscalls, XSAVE, #GP und #PF pro Prozess"
+  fi
+  if [ "$AR_PROBE" = 1 ]; then
+    grep -aFxq 'MOO-AR-OK' "$OUT/serial.log" || fail "Adressraumprüfung fehlt"
+    echo "      OK: getrennte Adressräume, Rechte, zugelassene Zugriffe und Freigabe"
+  fi
+  if [ "$SMP_STRESS" = 1 ]; then
+    grep -aFxq 'MOO-SMP-OK' "$OUT/serial.log" || fail "SMP-Lastprobe fehlt"
+    echo "      OK: 16 SMP-Fäden, Atomics, Mutex, Affinität, Wecken, TLB und Halt"
   fi
   if [ "$NETZ_SSH" != 0 ]; then
     [ ! -f "$OUT/ssh-probe.log" ] || sed 's/^/      | /' "$OUT/ssh-probe.log"

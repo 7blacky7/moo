@@ -1,0 +1,102 @@
+# P10-T14: minimale Hardwarebindung; Allokationslogik bleibt kern_alloc_c.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+
+extern "C" funktion kern_alloc_c(groesse: u64) -> ptr[u8]
+extern "C" funktion kern_frei_c(p: ptr[u8]) -> void
+extern "C" funktion kern_realloc_c(p: ptr[u8], groesse: u64) -> ptr[u8]
+aus "kern_laufzeit_werte" importiere laufzeit_nullen
+extern "C" funktion kern_heap_init_c(anfang: u64, ende: u64) -> void
+aus "uefi_kern" importiere moo_kern_ausgabe
+
+@nativ
+@ausrichten(64)
+statisch LAUFZEIT_HEAP: [u8; 16777216] auf 0
+
+@nativ
+statisch LAUFZEIT_HEAP_BEREIT: [u8; 1] auf 0
+
+# Nur unter LAUFZEIT_HEAP_SPERRE; auch frühe C-Schriftpfade dürfen allokieren.
+@nativ
+funktion laufzeit_heap_vorbereiten() -> void:
+    unsicher:
+        wenn LAUFZEIT_HEAP_BEREIT[0] == 0:
+            kern_heap_init_c(adresse_von(LAUFZEIT_HEAP), adresse_von(LAUFZEIT_HEAP) + 16777216)
+            LAUFZEIT_HEAP_BEREIT[0] = 1
+
+@nativ
+funktion laufzeit_speicher_starten() -> void:
+    unsicher:
+        setze irq: u64 auf spin_nimm(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)))
+        laufzeit_heap_vorbereiten()
+        spin_gib(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)), irq)
+
+@nativ
+statisch LAUFZEIT_HEAP_SPERRE: KernSperre auf 0
+
+@nativ
+funktion kern_rt_malloc(groesse: u64) -> ptr[u8]:
+    unsicher:
+        wenn groesse == 0:
+            gib_zurück zeiger(0)
+        setze irq: u64 auf spin_nimm(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)))
+        laufzeit_heap_vorbereiten()
+        setze p: ptr[u8] auf kern_alloc_c(groesse)
+        spin_gib(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)), irq)
+        gib_zurück p
+
+@nativ
+funktion kern_rt_free(p: ptr[u8]) -> void:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück
+        setze irq: u64 auf spin_nimm(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)))
+        kern_frei_c(p)
+        spin_gib(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)), irq)
+
+@nativ
+funktion kern_rt_realloc(p: ptr[u8], groesse: u64) -> ptr[u8]:
+    unsicher:
+        setze irq: u64 auf spin_nimm(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)))
+        laufzeit_heap_vorbereiten()
+        setze ergebnis: ptr[u8] auf kern_realloc_c(p, groesse)
+        spin_gib(zeiger(adresse_von(LAUFZEIT_HEAP_SPERRE)), irq)
+        gib_zurück ergebnis
+
+@nativ
+funktion kern_rt_calloc(anzahl: u64, groesse: u64) -> ptr[u8]:
+    unsicher:
+        wenn groesse != 0 und anzahl > 18446744073709551615 / groesse:
+            gib_zurück zeiger(0)
+        setze bytes: u64 auf anzahl * groesse
+        setze p: ptr[u8] auf kern_rt_malloc(bytes)
+        wenn u64(p) != 0:
+            laufzeit_nullen(p, bytes)
+        gib_zurück p
+
+@nativ
+funktion laufzeit_text(text: ptr[u8]) -> void:
+    unsicher:
+        moo_kern_ausgabe(text, falsch)
+
+@nativ
+@einstieg
+funktion moo_uefi_print(text: ptr[u8]) -> void:
+    unsicher:
+        moo_kern_ausgabe(text, wahr)
+
+@nativ
+funktion laufzeit_anhalten() -> void:
+    unsicher:
+        solange wahr:
+            assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+
+@nativ
+konstante LW_PANIK: [u8; 15] auf [10, 91, 75, 69, 82, 78, 45, 80, 65, 78, 73, 75, 93, 32, 0]
+
+@nativ
+@einstieg
+funktion kern_panic(text: ptr[u8]) -> void:
+    unsicher:
+        laufzeit_text(zeiger(adresse_von(LW_PANIK)))
+        moo_kern_ausgabe(text, wahr)
+        laufzeit_anhalten()

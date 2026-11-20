@@ -1,0 +1,408 @@
+# Benutzerabbildungen 4 KiB. Slot 0 bleibt Supervisor-Identitätsfenster.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+
+@nativ
+konstante AR_ERSTE_VA: u64 auf 0x0000008000000000
+@nativ
+konstante AR_ENDE_VA: u64 auf 0x0000800000000000
+@nativ
+konstante AR_SCHREIBEN: u64 auf 1
+@nativ
+konstante AR_AUSFUEHREN: u64 auf 2
+@nativ
+konstante AR_CPU_NX: u64 auf 1
+@nativ
+konstante AR_CPU_PCID: u64 auf 2
+@nativ
+konstante AR_CPU_SMEP: u64 auf 4
+@nativ
+konstante AR_CPU_SMAP: u64 auf 8
+@nativ
+konstante AR_RAHMEN_MASKE: u64 auf 0x000FFFFFFFFFF000
+
+struktur Adressraum:
+    ar_sperre: KernSperre
+    ar_pml4: u64
+    ar_pcid: u64
+    ar_nutzer: u64
+
+struktur ArSystem:
+    as_kern: u64
+    as_allok: u64
+    as_frei: u64
+    as_merkmale: u64
+
+@nativ
+statisch AR_SYSTEM: ArSystem auf 0
+@nativ
+statisch AR_PCID_SPERRE: KernSperre auf 0
+@nativ
+statisch AR_PCID_BELEGT: [u64; 64] auf 0
+
+@nativ
+funktion ar_cr3_lesen() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq %cr3, $0", ausgang="=r", clobber=["memory"])
+
+@nativ
+funktion ar_cr4_lesen() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq %cr4, $0", ausgang="=r", clobber=["memory"])
+
+@nativ
+funktion ar_cpu_einrichten(msr_lese: u64, msr_schreibe: u64) -> u64:
+    unsicher:
+        setze merkmale: u64 auf 0
+        setze ext: u32 auf assembler(ziel="x86_64", code="movl $$0x80000000, %eax; cpuid; movl %eax, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn ext >= 0x80000001:
+            setze erweitert: u32 auf assembler(ziel="x86_64", code="movl $$0x80000001, %eax; cpuid; movl %edx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+            wenn (erweitert & 0x100000) != 0:
+                setze lesen: ptr[fn[sysv64](u32) -> u64] auf zeiger(msr_lese)
+                setze schreiben: ptr[fn[sysv64](u32, u64) -> void] auf zeiger(msr_schreibe)
+                schreiben(0xC0000080, lesen(0xC0000080) | 0x800)
+                setze merkmale auf merkmale | AR_CPU_NX
+        setze cr0: u64 auf assembler(ziel="x86_64", code="movq %cr0, $0", ausgang="=r", clobber=["memory"])
+        setze cr0 auf cr0 | 0x10000
+        assembler(ziel="x86_64", code="movq $0, %cr0", eingaenge={"r": cr0}, clobber=["memory"])
+        setze cr4: u64 auf ar_cr4_lesen()
+        setze grund: u32 auf assembler(ziel="x86_64", code="movl $$1, %eax; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn (grund & 0x20000) != 0 und ((ar_cr3_lesen() & 4095) == 0 oder (cr4 & 0x20000) != 0):
+            setze cr4 auf cr4 | 0x20000
+            setze merkmale auf merkmale | AR_CPU_PCID
+        setze maxblatt: u32 auf assembler(ziel="x86_64", code="xorl %eax, %eax; cpuid; movl %eax, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn maxblatt >= 7:
+            setze blatt7: u32 auf assembler(ziel="x86_64", code="movl $$7, %eax; xorl %ecx, %ecx; cpuid; movl %ebx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+            wenn (blatt7 & 0x80) != 0:
+                setze cr4 auf cr4 | 0x100000
+                setze merkmale auf merkmale | AR_CPU_SMEP
+            wenn (blatt7 & 0x100000) != 0:
+                setze cr4 auf cr4 | 0x200000
+                setze merkmale auf merkmale | AR_CPU_SMAP
+        assembler(ziel="x86_64", code="movq $0, %cr4", eingaenge={"r": cr4}, clobber=["memory"])
+        wenn (merkmale & AR_CPU_SMAP) != 0:
+            assembler(ziel="x86_64", code="clac", clobber=["cc", "memory"])
+        gib_zurück merkmale
+
+@nativ
+funktion ar_cpu_vertraeglich(merkmale: u64) -> bool:
+    unsicher:
+        setze benoetigt: u64 auf AR_SYSTEM.as_merkmale & (AR_CPU_NX | AR_CPU_SMEP | AR_CPU_SMAP)
+        gib_zurück (merkmale & benoetigt) == benoetigt
+
+@nativ
+funktion adressraum_initialisieren(kern: u64, allok: u64, frei: u64, merkmale: u64) -> void:
+    unsicher:
+        setze AR_SYSTEM.as_kern auf kern
+        setze AR_SYSTEM.as_allok auf allok
+        setze AR_SYSTEM.as_frei auf frei
+        setze AR_SYSTEM.as_merkmale auf merkmale
+
+@nativ
+funktion ar_merkmale() -> u64:
+    unsicher:
+        gib_zurück AR_SYSTEM.as_merkmale
+
+@nativ
+funktion ar_pcid_nehmen() -> u64:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(AR_PCID_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze pcid: u64 auf 1
+        setze ergebnis: u64 auf 0
+        setze bits: ptr[u64] auf zeiger(adresse_von(AR_PCID_BELEGT))
+        solange pcid < 4096:
+            setze index: u64 auf pcid / 64
+            setze bit: u64 auf u64(1) << (pcid % 64)
+            setze wert: u64 auf volatile_lesen(bits, index)
+            wenn (wert & bit) == 0:
+                volatile_schreiben(bits, index, wert | bit)
+                setze ergebnis auf pcid
+                stopp
+            setze pcid auf pcid + 1
+        spin_gib(sperre, irq)
+        gib_zurück ergebnis
+
+@nativ
+funktion ar_pcid_freigeben(pcid: u64) -> void:
+    unsicher:
+        wenn pcid != 0:
+            setze sperre: ptr[KernSperre] auf zeiger(adresse_von(AR_PCID_SPERRE))
+            setze irq: u64 auf spin_nimm(sperre)
+            setze bits: ptr[u64] auf zeiger(adresse_von(AR_PCID_BELEGT))
+            setze index: u64 auf pcid / 64
+            setze bit: u64 auf u64(1) << (pcid % 64)
+            volatile_schreiben(bits, index, volatile_lesen(bits, index) & (0xFFFFFFFFFFFFFFFF ^ bit))
+            spin_gib(sperre, irq)
+
+# Datenrahmen kommen aus demselben PFA wie die Seitentabellen.
+@nativ
+funktion ar_rahmen_nehmen(anzahl: u64) -> u64:
+    unsicher:
+        wenn AR_SYSTEM.as_allok == 0:
+            gib_zurück 0
+        setze allok: ptr[fn[sysv64](u64) -> u64] auf zeiger(AR_SYSTEM.as_allok)
+        gib_zurück allok(anzahl)
+
+@nativ
+funktion ar_rahmen_freigeben(rahmen: u64) -> void:
+    unsicher:
+        setze frei: ptr[fn[sysv64](u64) -> void] auf zeiger(AR_SYSTEM.as_frei)
+        frei(rahmen)
+
+@nativ
+funktion ar_nullseiten(basis: u64, anzahl: u64) -> void:
+    unsicher:
+        setze eintrag: ptr[u64] auf zeiger(basis)
+        setze i: u64 auf 0
+        solange i < anzahl * 512:
+            volatile_schreiben(eintrag, i, 0)
+            setze i auf i + 1
+
+@nativ
+funktion adressraum_neu(raum: ptr[Adressraum]) -> bool:
+    unsicher:
+        wenn AR_SYSTEM.as_kern == 0 oder (AR_SYSTEM.as_merkmale & AR_CPU_NX) == 0:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        wenn raum.ar_pml4 != 0:
+            spin_gib(sperre, irq)
+            gib_zurück falsch
+        setze allok: ptr[fn[sysv64](u64) -> u64] auf zeiger(AR_SYSTEM.as_allok)
+        setze pml4: u64 auf allok(1)
+        wenn pml4 == 0:
+            spin_gib(sperre, irq)
+            gib_zurück falsch
+        setze pcid: u64 auf 0
+        wenn (AR_SYSTEM.as_merkmale & AR_CPU_PCID) != 0:
+            setze pcid auf ar_pcid_nehmen()
+            wenn pcid == 0:
+                setze frei: ptr[fn[sysv64](u64) -> void] auf zeiger(AR_SYSTEM.as_frei)
+                frei(pml4)
+                spin_gib(sperre, irq)
+                gib_zurück falsch
+        ar_nullseiten(pml4, 1)
+        speicher_schreiben(pml4, speicher_lesen(AR_SYSTEM.as_kern, 8) & 0xFFFFFFFFFFFFFFFB, 8)
+        setze i: u64 auf 256
+        solange i < 512:
+            speicher_schreiben(pml4 + i * 8, speicher_lesen(AR_SYSTEM.as_kern + i * 8, 8) & 0xFFFFFFFFFFFFFFFB, 8)
+            setze i auf i + 1
+        setze raum.ar_pcid auf pcid
+        setze raum.ar_pml4 auf pml4
+        spin_gib(sperre, irq)
+        gib_zurück wahr
+
+@nativ
+funktion ar_slot(tabelle: u64, virt: u64, ebene: u64) -> u64:
+    gib_zurück tabelle + ((virt >> (12 + ebene * 9)) & 511) * 8
+
+# Datenrahmen kommen vom Aufrufer und bleiben in dessen Besitz. Ein Adressraum
+# wird vor dem Einreihen seiner Fäden aufgebaut und danach unveränderlich.
+@nativ
+funktion ar_abbilden(raum: ptr[Adressraum], virt: u64, phys: u64, rechte: u64) -> bool:
+    unsicher:
+        wenn virt < AR_ERSTE_VA oder virt >= AR_ENDE_VA oder ((virt | phys) & 4095) != 0 oder phys < 0x100000 oder phys >= 0x1000000000 oder rechte > 3:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze tabelle: u64 auf raum.ar_pml4
+        wenn tabelle == 0 oder raum.ar_nutzer != 0:
+            spin_gib(sperre, irq)
+            gib_zurück falsch
+        setze pte: u64 auf phys | 5
+        wenn (rechte & AR_SCHREIBEN) != 0:
+            setze pte auf pte | 2
+        wenn (rechte & AR_AUSFUEHREN) == 0:
+            setze pte auf pte | 0x8000000000000000
+        setze ebene: u64 auf 3
+        setze eintrag: u64 auf ar_slot(tabelle, virt, ebene)
+        solange ebene > 0:
+            setze wert: u64 auf speicher_lesen(eintrag, 8)
+            wenn (wert & 1) == 0:
+                stopp
+            setze tabelle auf wert & AR_RAHMEN_MASKE
+            setze ebene auf ebene - 1
+            setze eintrag auf ar_slot(tabelle, virt, ebene)
+        wenn ebene == 0:
+            setze alt: u64 auf speicher_lesen(eintrag, 8)
+            wenn (alt & 1) == 0:
+                speicher_schreiben(eintrag, pte, 8)
+                setze alt auf pte
+            spin_gib(sperre, irq)
+            gib_zurück (alt & 0xFFFFFFFFFFFFFF9F) == pte
+        setze allok: ptr[fn[sysv64](u64) -> u64] auf zeiger(AR_SYSTEM.as_allok)
+        setze basis: u64 auf allok(ebene)
+        wenn basis == 0:
+            spin_gib(sperre, irq)
+            gib_zurück falsch
+        ar_nullseiten(basis, ebene)
+        setze i: u64 auf 0
+        solange i + 1 < ebene:
+            speicher_schreiben(ar_slot(basis + i * 4096, virt, ebene - i - 1), (basis + (i + 1) * 4096) | 7, 8)
+            setze i auf i + 1
+        speicher_schreiben(ar_slot(basis + i * 4096, virt, 0), pte, 8)
+        speicher_schreiben(eintrag, basis | 7, 8)
+        spin_gib(sperre, irq)
+        gib_zurück wahr
+
+@nativ
+funktion ar_eintrag_lesen(pml4: u64, virt: u64) -> u64:
+    unsicher:
+        setze tabelle: u64 auf pml4
+        setze ebene: u64 auf 3
+        solange ebene > 0:
+            setze wert: u64 auf speicher_lesen(ar_slot(tabelle, virt, ebene), 8)
+            wenn (wert & 5) != 5:
+                gib_zurück 0
+            setze tabelle auf wert & AR_RAHMEN_MASKE
+            setze ebene auf ebene - 1
+        gib_zurück speicher_lesen(ar_slot(tabelle, virt, 0), 8)
+
+@nativ
+funktion ar_pte_lesen(raum: ptr[Adressraum], virt: u64) -> u64:
+    unsicher:
+        wenn virt < AR_ERSTE_VA oder virt >= AR_ENDE_VA:
+            gib_zurück 0
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze wert: u64 auf 0
+        wenn raum.ar_pml4 != 0:
+            setze wert auf ar_eintrag_lesen(raum.ar_pml4, virt)
+        spin_gib(sperre, irq)
+        gib_zurück wert
+
+@nativ
+funktion ar_faden_halten(raum: ptr[Adressraum]) -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze bereit: bool auf raum.ar_pml4 != 0
+        wenn bereit:
+            setze raum.ar_nutzer auf raum.ar_nutzer + 1
+        spin_gib(sperre, irq)
+        gib_zurück bereit
+
+@nativ
+funktion ar_faden_loesen(adr: u64) -> void:
+    unsicher:
+        wenn adr != 0:
+            setze raum: ptr[Adressraum] auf zeiger(adr)
+            setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+            setze irq: u64 auf spin_nimm(sperre)
+            setze raum.ar_nutzer auf raum.ar_nutzer - 1
+            spin_gib(sperre, irq)
+
+@nativ
+funktion ar_aktivieren(adr: u64) -> void:
+    unsicher:
+        setze cr3: u64 auf AR_SYSTEM.as_kern
+        wenn adr != 0:
+            setze raum: ptr[Adressraum] auf zeiger(adr)
+            setze cr3 auf raum.ar_pml4
+            wenn (ar_cr4_lesen() & 0x20000) != 0:
+                setze cr3 auf cr3 | raum.ar_pcid
+        # Bit 63 bleibt null. Auch ein wiedervergebener PCID wird invalidiert.
+        wenn cr3 != 0 und cr3 != ar_cr3_lesen():
+            assembler(ziel="x86_64", code="movq $0, %cr3", eingaenge={"r": cr3}, clobber=["memory"])
+
+@nativ
+funktion ar_tabellen_freigeben(basis: u64, ebene: u64) -> void:
+    unsicher:
+        wenn ebene > 1:
+            setze i: u64 auf 0
+            solange i < 512:
+                setze wert: u64 auf speicher_lesen(basis + i * 8, 8)
+                wenn (wert & 1) != 0:
+                    ar_tabellen_freigeben(wert & AR_RAHMEN_MASKE, ebene - 1)
+                setze i auf i + 1
+        setze frei: ptr[fn[sysv64](u64) -> void] auf zeiger(AR_SYSTEM.as_frei)
+        frei(basis)
+
+@nativ
+funktion adressraum_freigeben(raum: ptr[Adressraum]) -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        wenn raum.ar_pml4 == 0 oder raum.ar_nutzer != 0:
+            spin_gib(sperre, irq)
+            gib_zurück falsch
+        setze i: u64 auf 1
+        solange i < 256:
+            setze wert: u64 auf speicher_lesen(raum.ar_pml4 + i * 8, 8)
+            wenn (wert & 1) != 0:
+                ar_tabellen_freigeben(wert & AR_RAHMEN_MASKE, 3)
+            setze i auf i + 1
+        setze frei: ptr[fn[sysv64](u64) -> void] auf zeiger(AR_SYSTEM.as_frei)
+        frei(raum.ar_pml4)
+        ar_pcid_freigeben(raum.ar_pcid)
+        setze raum.ar_pml4 auf 0
+        setze raum.ar_pcid auf 0
+        spin_gib(sperre, irq)
+        gib_zurück wahr
+
+@nativ
+@nackt
+funktion ar_stac_schreiben(virt: u64, wert: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="stac; movq %rsi, (%rdi); clac; retq", clobber=["cc", "memory"])
+
+@nativ
+funktion ar_benutzer_lesen64(raum: ptr[Adressraum], virt: u64, ziel: ptr[u64]) -> bool:
+    unsicher:
+        wenn (virt & 7) != 0:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE) und virt >= AR_ERSTE_VA und virt < AR_ENDE_VA und (ar_eintrag_lesen(raum.ar_pml4, virt) & 5) == 5
+        wenn erlaubt:
+            setze wert: u64 auf 0
+            wenn (ar_cr4_lesen() & 0x200000) != 0:
+                setze wert auf assembler(ziel="x86_64", code="stac; movq ($1), $0; clac", eingaenge={"r": virt}, ausgang="=r", clobber=["cc", "memory"])
+            sonst:
+                setze wert auf speicher_lesen(virt, 8)
+            volatile_schreiben(ziel, 0, wert)
+        spin_gib(sperre, irq)
+        gib_zurück erlaubt
+
+@nativ
+funktion ar_benutzer_schreiben64(raum: ptr[Adressraum], virt: u64, wert: u64) -> bool:
+    unsicher:
+        wenn (virt & 7) != 0:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE) und virt >= AR_ERSTE_VA und virt < AR_ENDE_VA und (ar_eintrag_lesen(raum.ar_pml4, virt) & 7) == 7
+        wenn erlaubt:
+            wenn (ar_cr4_lesen() & 0x200000) != 0:
+                ar_stac_schreiben(virt, wert)
+            sonst:
+                speicher_schreiben(virt, wert, 8)
+        spin_gib(sperre, irq)
+        gib_zurück erlaubt
+
+# Aufrufer ist Kernelcode; Ziel liegt im geteilten Supervisorbereich.
+@nativ
+@nackt
+funktion ar_kopieren_asm(ziel: u64, quelle: u64, anzahl: u64, smap: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rcx, %r8; movq %rdx, %rcx; cld; testq %r8, %r8; jz 1f; stac; rep movsb; clac; retq; 1: rep movsb; retq", clobber=["cc", "memory"])
+
+@nativ
+funktion ar_benutzer_kopieren(raum: ptr[Adressraum], ziel: u64, quelle: u64, anzahl: u64) -> bool:
+    unsicher:
+        wenn anzahl == 0:
+            gib_zurück wahr
+        wenn quelle < AR_ERSTE_VA oder quelle >= AR_ENDE_VA oder anzahl > AR_ENDE_VA - quelle:
+            gib_zurück falsch
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE)
+        setze seite: u64 auf quelle & 0xFFFFFFFFFFFFF000
+        solange erlaubt und seite < quelle + anzahl:
+            setze erlaubt auf (ar_eintrag_lesen(raum.ar_pml4, seite) & 5) == 5
+            setze seite auf seite + 4096
+        wenn erlaubt:
+            ar_kopieren_asm(ziel, quelle, anzahl, ar_cr4_lesen() & 0x200000)
+        spin_gib(sperre, irq)
+        gib_zurück erlaubt
+

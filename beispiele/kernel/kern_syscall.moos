@@ -1,0 +1,250 @@
+# Ring-3-Einstieg und die vier Systemaufrufe des Bare-Kerns.
+aus "kern_syscall_abi" importiere SyscallLokal, X86SyscallStar
+aus "kern_adressraum" importiere Adressraum, AR_ERSTE_VA, AR_ENDE_VA, ar_pte_lesen, ar_cr4_lesen, ar_benutzer_kopieren
+aus "kern_faden" importiere faden_benutzer_starten, faden_abgeben, faden_schlafen, faden_ende
+aus "kern_smp" importiere smp_anzahl, smp_planer, smp_planer_auf, smp_syscall_lokal, smp_syscall_auf
+aus "kern_sperre" importiere unterbrechungen_an, unterbrechungen_aus
+
+struktur BenutzerProzess:
+    bp_raum: u64
+    bp_einstieg: u64
+    bp_stack: u64
+    bp_xzustand: u64
+    bp_status: atom[u32]
+    bp_grund: u64
+    bp_kode: u64
+
+# Offset 0 beginnt direkt über dem Ausrichtungspolster der Einsprungfunktion.
+struktur SyscallRahmen:
+    sr_rax: u64
+    sr_rdi: u64
+    sr_rsi: u64
+    sr_rdx: u64
+    sr_r8: u64
+    sr_r9: u64
+    sr_rbx: u64
+    sr_rbp: u64
+    sr_r12: u64
+    sr_r13: u64
+    sr_r14: u64
+    sr_r15: u64
+    sr_rip: u64
+    sr_flags: u64
+    sr_rsp: u64
+
+struktur SyscallSystem:
+    ss_ausgabe: u64
+    ss_meldung: u64
+
+@nativ
+statisch SYSCALL_LOKAL_VERSATZ: [u64; 1] auf 0
+@nativ
+statisch SYSCALL_SYSTEM: SyscallSystem auf 0
+@nativ
+statisch SYSCALL_TABELLE: [u64; 4] auf 0
+@nativ
+@ausrichten(64)
+statisch SYSCALL_XSTATE_NULL: [u64; 72] auf 0
+@nativ
+konstante T_RING3_VEKTOR: [u8; _] auf "MOO-RING3 AUSNAHME VEKTOR "
+@nativ
+konstante T_RING3_FEHLERCODE: [u8; _] auf "MOO-RING3 AUSNAHME FEHLERCODE "
+@nativ
+konstante T_RING3_RIP: [u8; _] auf "MOO-RING3 AUSNAHME RIP "
+
+@nativ
+funktion syscall_cpu_einrichten(lese_adr: u64, schreibe_adr: u64) -> bool:
+    unsicher:
+        setze lokal: ptr[SyscallLokal] auf smp_syscall_lokal()
+        setze xsave: u32 auf assembler(ziel="x86_64", code="movl $$1, %eax; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        setze sce: u32 auf assembler(ziel="x86_64", code="movl $$0x80000001, %eax; cpuid; movl %edx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn lokal.sl_kernrsp == 0 oder (xsave & 0x4000000) == 0 oder (sce & 0x800) == 0:
+            gib_zurück falsch
+        setze gelesen: ptr[fn[sysv64](u32) -> u64] auf zeiger(lese_adr)
+        setze geschrieben: ptr[fn[sysv64](u32, u64) -> void] auf zeiger(schreibe_adr)
+        # Benutzer-XCR0: x87 und SSE. FSGSBASE bleibt für den Benutzer aus.
+        setze cr4: u64 auf (ar_cr4_lesen() & 0xFFFFFFFFFFFEFFFF) | 0x40000
+        assembler(ziel="x86_64", code="movq $0, %cr4; movl $$3, %eax; xorl %edx, %edx; xorl %ecx, %ecx; xsetbv", eingaenge={"r": cr4}, clobber=["rax", "rcx", "rdx", "memory"])
+        geschrieben(0xC0000100, 0)
+        geschrieben(0xC0000102, 0)
+        setze star: X86SyscallStar auf X86SyscallStar(0, 8, 0x1B)
+        geschrieben(0xC0000081, bitfeld_wert(star))
+        geschrieben(0xC0000082, adresse_von(syscall_einsprung))
+        # IF, TF, DF, IOPL, NT, RF und AC während des Kernel-Einstiegs löschen.
+        geschrieben(0xC0000084, 0x57700)
+        geschrieben(0xC0000080, gelesen(0xC0000080) | 1)
+        atom_speichern(lokal.sl_bereit, 1, ordnung=freigeben)
+        gib_zurück wahr
+
+@nativ
+funktion syscall_initialisieren(lese: u64, schreibe: u64, ausgabe_adr: u64, log: u64) -> bool:
+    unsicher:
+        wenn versatz_von(SyscallLokal, sl_kernrsp) != 0 oder versatz_von(SyscallLokal, sl_userrsp) != 8 oder versatz_von(SyscallLokal, sl_prozess) != 16 oder versatz_von(SyscallLokal, sl_xzustand) != 24 oder groesse_von(SyscallRahmen) != 120:
+            gib_zurück falsch
+        setze SYSCALL_SYSTEM.ss_ausgabe auf ausgabe_adr
+        setze SYSCALL_SYSTEM.ss_meldung auf log
+        setze versatz: ptr[u64] auf zeiger(adresse_von(SYSCALL_LOKAL_VERSATZ))
+        volatile_schreiben(versatz, 0, u64(smp_syscall_lokal()) - pro_kern_basis())
+        setze tabelle: ptr[u64] auf zeiger(adresse_von(SYSCALL_TABELLE))
+        volatile_schreiben(tabelle, 0, adresse_von(syscall_ende))
+        volatile_schreiben(tabelle, 1, adresse_von(syscall_schreibe))
+        volatile_schreiben(tabelle, 2, adresse_von(syscall_abgeben))
+        volatile_schreiben(tabelle, 3, adresse_von(syscall_schlafen))
+        gib_zurück syscall_cpu_einrichten(lese, schreibe)
+
+# Der Kernel benutzt bei Benutzer-Eintritt einen sauberen x87/SSE-Zustand.
+@nativ
+@nackt
+@einstieg
+funktion syscall_xzustand_sichern() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; movl $$3, %eax; xorl %edx, %edx; xsave64 (%r11); xrstor64 SYSCALL_XSTATE_NULL(%rip); retq", clobber=["memory"])
+
+@nativ
+@nackt
+@einstieg
+funktion syscall_xzustand_laden() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; movl $$3, %eax; xorl %edx, %edx; xrstor64 (%r11); retq", clobber=["memory"])
+
+# ABI: RAX Nummer/Ergebnis, RDI/RSI Argumente, RCX/R11/R10 flüchtig.
+@nativ
+@nackt
+funktion syscall_einsprung() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="swapgs; lfence; movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %rsp, %gs:8(%r10); movq %gs:0(%r10), %rsp; pushq %gs:8(%r10); pushq %r11; pushq %rcx; pushq %r15; pushq %r14; pushq %r13; pushq %r12; pushq %rbp; pushq %rbx; pushq %r9; pushq %r8; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rax; subq $$8, %rsp; cld; call syscall_xzustand_sichern; leaq 8(%rsp), %rdi; call syscall_verteilen; call syscall_xzustand_laden; addq $$8, %rsp; popq %rax; popq %rdi; popq %rsi; popq %rdx; popq %r8; popq %r9; popq %rbx; popq %rbp; popq %r12; popq %r13; popq %r14; popq %r15; popq %rcx; popq %r11; popq %rsp; xorl %r10d, %r10d; swapgs; sysretq", clobber=["memory"])
+
+@nativ
+@nackt
+funktion syscall_iret(rip: u64, rsp_benutzer: u64, xzustand: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli; movq %rdx, %r10; movl $$3, %eax; xorl %edx, %edx; xrstor64 (%r10); pushq $$0x23; pushq %rsi; pushq $$0x202; pushq $$0x2B; pushq %rdi; xorl %eax, %eax; xorl %ebx, %ebx; xorl %ecx, %ecx; xorl %edx, %edx; xorl %ebp, %ebp; xorl %esi, %esi; xorl %edi, %edi; xorl %r8d, %r8d; xorl %r9d, %r9d; xorl %r10d, %r10d; xorl %r11d, %r11d; xorl %r12d, %r12d; xorl %r13d, %r13d; xorl %r14d, %r14d; xorl %r15d, %r15d; swapgs; iretq", clobber=["memory"])
+
+@nativ
+funktion syscall_adressen_ok(raum: ptr[Adressraum], rip: u64, stapel: u64) -> bool:
+    unsicher:
+        wenn rip < AR_ERSTE_VA oder rip >= AR_ENDE_VA oder stapel <= AR_ERSTE_VA oder stapel >= AR_ENDE_VA:
+            gib_zurück falsch
+        gib_zurück (ar_pte_lesen(raum, rip) & 0x8000000000000005) == 5 und (ar_pte_lesen(raum, stapel - 1) & 7) == 7
+
+@nativ
+funktion syscall_benutzer_einstieg(daten: u64) -> void:
+    unsicher:
+        setze prozess: ptr[BenutzerProzess] auf zeiger(daten)
+        syscall_iret(prozess.bp_einstieg, prozess.bp_stack, prozess.bp_xzustand)
+
+# Prozessdarstellung und XSTATE-Seite bleiben beim Aufrufer bis zur Freigabe des
+# Adressraums. Ein Nutzer bleibt an der CPU seines Fadens.
+@nativ
+funktion syscall_prozess_starten(cpu: u32, prozess: ptr[BenutzerProzess], raum: ptr[Adressraum], rip: u64, stapel: u64, xzustand: u64) -> bool:
+    unsicher:
+        wenn cpu >= smp_anzahl() oder xzustand == 0 oder (xzustand & 63) != 0:
+            gib_zurück falsch
+        setze lokal: ptr[SyscallLokal] auf smp_syscall_auf(cpu)
+        wenn atom_laden(lokal.sl_bereit, ordnung=erwerben) == 0 oder atom_laden(prozess.bp_status, ordnung=locker) != 0 oder nicht syscall_adressen_ok(raum, rip, stapel):
+            gib_zurück falsch
+        setze speicher: ptr[u64] auf zeiger(xzustand)
+        setze i: u64 auf 0
+        solange i < 72:
+            volatile_schreiben(speicher, i, 0)
+            setze i auf i + 1
+        setze prozess.bp_raum auf u64(raum)
+        setze prozess.bp_einstieg auf rip
+        setze prozess.bp_stack auf stapel
+        setze prozess.bp_xzustand auf xzustand
+        setze prozess.bp_grund auf 0
+        setze prozess.bp_kode auf 0
+        atom_speichern(prozess.bp_status, 1, ordnung=freigeben)
+        wenn faden_benutzer_starten(smp_planer_auf(cpu), raum, adresse_von(syscall_benutzer_einstieg), u64(prozess), u64(prozess), xzustand) == 0:
+            atom_speichern(prozess.bp_status, 0, ordnung=freigeben)
+            gib_zurück falsch
+        gib_zurück wahr
+
+@nativ
+funktion syscall_prozess_beenden(prozess: ptr[BenutzerProzess], grund: u64, kode: u64) -> void:
+    unsicher:
+        unterbrechungen_aus()
+        setze prozess.bp_grund auf grund
+        setze prozess.bp_kode auf kode
+        atom_speichern(prozess.bp_status, 2, ordnung=freigeben)
+        faden_ende(smp_planer())
+
+@nativ
+funktion syscall_ende(prozess: ptr[BenutzerProzess], a: u64, b: u64) -> u64:
+    unsicher:
+        syscall_prozess_beenden(prozess, 0, a)
+        gib_zurück 0
+
+@nativ
+funktion syscall_schreibe(prozess: ptr[BenutzerProzess], a: u64, b: u64) -> u64:
+    unsicher:
+        wenn b > 256:
+            gib_zurück 0xFFFFFFFFFFFFFFEA
+        setze puffer: [u64; 32] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze basis: u64 auf adresse_von(puffer)
+        wenn nicht ar_benutzer_kopieren(zeiger(prozess.bp_raum), basis, a, b):
+            gib_zurück 0xFFFFFFFFFFFFFFF2
+        setze ausgabe: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(SYSCALL_SYSTEM.ss_ausgabe)
+        ausgabe(basis, b)
+        gib_zurück b
+
+@nativ
+funktion syscall_abgeben(prozess: ptr[BenutzerProzess], a: u64, b: u64) -> u64:
+    unsicher:
+        faden_abgeben(smp_planer())
+        gib_zurück 0
+
+@nativ
+funktion syscall_schlafen(prozess: ptr[BenutzerProzess], a: u64, b: u64) -> u64:
+    unsicher:
+        wenn a == 0:
+            faden_abgeben(smp_planer())
+        sonst:
+            faden_schlafen(smp_planer(), a)
+        gib_zurück 0
+
+@nativ
+@einstieg
+funktion syscall_verteilen(rahmen: ptr[SyscallRahmen]) -> void:
+    unsicher:
+        setze lokal: ptr[SyscallLokal] auf smp_syscall_lokal()
+        setze prozess: ptr[BenutzerProzess] auf zeiger(lokal.sl_prozess)
+        setze raum: ptr[Adressraum] auf zeiger(prozess.bp_raum)
+        wenn nicht syscall_adressen_ok(raum, rahmen.sr_rip, rahmen.sr_rsp):
+            syscall_prozess_beenden(prozess, 14, 0)
+        unterbrechungen_an()
+        setze nr: u64 auf rahmen.sr_rax
+        setze ergebnis: u64 auf 0xFFFFFFFFFFFFFFDA
+        wenn nr < 4:
+            setze tabelle: ptr[u64] auf zeiger(adresse_von(SYSCALL_TABELLE))
+            setze aktion: ptr[fn[sysv64](ptr[BenutzerProzess], u64, u64) -> u64] auf zeiger(volatile_lesen(tabelle, nr))
+            setze ergebnis auf aktion(prozess, rahmen.sr_rdi, rahmen.sr_rsi)
+        unterbrechungen_aus()
+        setze rahmen.sr_rax auf ergebnis
+        setze rahmen.sr_flags auf (rahmen.sr_flags & 0x8D5) | 0x202
+
+# Der Fehlerrahmen darf auf einer CPU-weiten IST liegen. Nach SYSCALL-SWAPGS
+# und Stackwechsel endet nur der aktuelle Benutzerfaden.
+@nativ
+@nackt
+funktion syscall_benutzer_fehler(vektor: u64, fehler: u64, rip: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli; swapgs; lfence; movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:0(%r10), %rsp; pushfq; andq $$-262145, (%rsp); popfq; cld; movq %rdx, %r12; call syscall_xzustand_sichern; movq %r12, %rdx; call syscall_fehler_dienst; ud2", clobber=["memory"])
+
+@nativ
+@einstieg
+funktion syscall_fehler_dienst(vektor: u64, fehler: u64, rip: u64) -> void:
+    unsicher:
+        setze lokal: ptr[SyscallLokal] auf smp_syscall_lokal()
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(SYSCALL_SYSTEM.ss_meldung)
+        log(adresse_von(T_RING3_VEKTOR), vektor)
+        log(adresse_von(T_RING3_FEHLERCODE), fehler)
+        log(adresse_von(T_RING3_RIP), rip)
+        syscall_prozess_beenden(zeiger(lokal.sl_prozess), vektor + 1, fehler)
+
+# NMI/MCE können die kurze Zone nach SWAPGS und vor IRET/SYSRET treffen.
+# In diesem Kern ist GS_BASE im Benutzerzustand durchgehend null.
+@nativ
+funktion syscall_fatal_gs() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movl $$0xC0000101, %ecx; rdmsr; orl %edx, %eax; jnz 1f; swapgs; 1: lfence", clobber=["rax", "rcx", "rdx", "cc", "memory"])

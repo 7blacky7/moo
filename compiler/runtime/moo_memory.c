@@ -10,7 +10,12 @@ static inline bool is_heap_type(uint64_t tag) {
 #ifdef MOO_UEFI_COLLECTIONS
     return tag == MOO_STRING || tag == MOO_ERROR || tag == MOO_LIST ||
            tag == MOO_DICT || tag == MOO_OBJECT || tag == MOO_FUNC ||
-           tag == MOO_FRAME || tag == MOO_SURFACE;
+           tag == MOO_FRAME || tag == MOO_SURFACE
+#ifdef MOO_BARE_THREADS
+           || tag == MOO_THREAD || tag == MOO_CHANNEL || tag == MOO_ATOM ||
+           tag == MOO_SPERRE || tag == MOO_BUFFER || tag == MOO_STRUCT || tag == MOO_HANDLE
+#endif
+           ;
 #else
     /* P2-T114: Atom/Sperre liegen oberhalb der reservierten 30/31. Den
        seltenen Bereich getrennt pruefen: sonst wird aus der 32-Bit-Maske
@@ -121,6 +126,15 @@ static void moo_letzte_referenz_freigeben(MooValue v) {
             free(f);
             break;
         }
+#ifdef MOO_BARE_THREADS
+        case MOO_THREAD: moo_thread_free(moo_val_as_ptr(v)); break;
+        case MOO_CHANNEL: moo_channel_free(moo_val_as_ptr(v)); break;
+        case MOO_ATOM: moo_atom_free(moo_val_as_ptr(v)); break;
+        case MOO_SPERRE: moo_sperre_free(moo_val_as_ptr(v)); break;
+        case MOO_BUFFER: moo_buffer_free(moo_val_as_ptr(v)); break;
+        case MOO_STRUCT: moo_struct_box_free(moo_val_as_ptr(v)); break;
+        case MOO_HANDLE: free(moo_val_as_ptr(v)); break;
+#endif
 #ifndef MOO_UEFI_COLLECTIONS
         case MOO_SOCKET:
             moo_socket_free(moo_val_as_ptr(v));
@@ -264,7 +278,14 @@ static void teilen_push(MooValue** stapel, MooValue* lokal, int32_t* n, int32_t*
     if (*n == *cap) {
         int32_t neu = *cap * 2;
         MooValue* s = (MooValue*)malloc(sizeof(MooValue) * (size_t)neu);
-        if (!s) { fprintf(stderr, "moo: Speicher voll!\n"); exit(1); }
+        if (!s) {
+#ifdef MOO_UEFI_COLLECTIONS
+            extern _Noreturn void kern_panic(const char *);
+            kern_panic("moo: Speicher voll");
+#else
+            fprintf(stderr, "moo: Speicher voll!\n"); exit(1);
+#endif
+        }
         memcpy(s, *stapel, sizeof(MooValue) * (size_t)*n);
         if (*stapel != lokal) free(*stapel);
         *stapel = s;
@@ -323,11 +344,18 @@ static void moo_wert_kinder(MooValue v, MooKindBesucher besuch, void* kontext) {
             break;
         }
         case MOO_THREAD: {
+#ifdef MOO_BARE_THREADS
+            /* Native Captures/Argumente sind vor Veröffentlichung geteilt.
+             * Das Ergebnis gehört ausschließlich dem ersten Wartenden;
+             * kein Rennen auf die vom Worker geschriebene Ergebnisablage. */
+            break;
+#else
             MooThread* t = moo_val_as_ptr(v);
             besuch(t->result, kontext);
             besuch(t->halt_func, kontext);
             besuch(t->halt_arg, kontext);
             break;
+#endif
         }
         case MOO_BUFFER: {
             MooBuffer* b = moo_val_as_ptr(v);
@@ -412,8 +440,13 @@ typedef struct {
 } MooSperrGraph;
 
 static void sperrgraph_voll(void) {
+#ifdef MOO_UEFI_COLLECTIONS
+    extern _Noreturn void kern_panic(const char *);
+    kern_panic("moo: Sperren-Graph zu gross oder Speicher voll");
+#else
     fprintf(stderr, "moo: Sperren-Graph zu gross oder Speicher voll!\n");
     exit(1);
+#endif
 }
 
 static void* sperrgraph_kennung(const MooSperrKnoten* k) {

@@ -1,0 +1,72 @@
+# Numerischer Kern der gemeinsamen Atom-API, wie moo_thread.c:775–904.
+# Die Runtime-API validiert Tags und verwaltet Besitz; hier liegen nur Atomics.
+struktur LaufzeitAtom:
+    refcount: i32
+    reserve: i32
+    bits: atom[u64]
+
+struktur LaufzeitZahlBits:
+    wert: f64
+
+struktur LaufzeitGanzBits:
+    wert: u64
+
+@nativ
+funktion laufzeit_atom_zahl(bits: u64) -> f64:
+    unsicher:
+        setze kopie: u64 auf bits
+        setze p: ptr[LaufzeitZahlBits] auf zeiger(adresse_von(kopie))
+        gib_zurück p.wert
+
+@nativ
+funktion laufzeit_atom_bits(zahl: f64) -> u64:
+    unsicher:
+        setze kopie: f64 auf zahl
+        setze p: ptr[LaufzeitGanzBits] auf zeiger(adresse_von(kopie))
+        gib_zurück p.wert
+
+@nativ
+funktion laufzeit_atom_init(a: ptr[LaufzeitAtom], bits: u64) -> void:
+    unsicher:
+        a.refcount = 1
+        a.reserve = 0
+        atom_speichern(a.bits, bits, ordnung=folgerichtig)
+
+@nativ
+funktion laufzeit_atom_laden(a: ptr[LaufzeitAtom]) -> u64:
+    unsicher:
+        gib_zurück atom_laden(a.bits, ordnung=folgerichtig)
+
+@nativ
+funktion laufzeit_atom_speichern(a: ptr[LaufzeitAtom], bits: u64) -> void:
+    unsicher:
+        atom_speichern(a.bits, bits, ordnung=folgerichtig)
+
+@nativ
+funktion laufzeit_atom_tauschen(a: ptr[LaufzeitAtom], bits: u64) -> u64:
+    unsicher:
+        gib_zurück atom_tauschen(a.bits, bits, ordnung=folgerichtig)
+
+@nativ
+funktion laufzeit_atom_addieren(a: ptr[LaufzeitAtom], delta_bits: u64) -> u64:
+    unsicher:
+        setze delta: f64 auf laufzeit_atom_zahl(delta_bits)
+        setze alt: u64 auf atom_laden(a.bits, ordnung=folgerichtig)
+        solange wahr:
+            setze neue_bits: u64 auf laufzeit_atom_bits(laufzeit_atom_zahl(alt) + delta)
+            wenn atom_vergleichen_und_tauschen(a.bits, alt, neue_bits, ordnung=folgerichtig):
+                gib_zurück alt
+            setze alt auf atom_laden(a.bits, ordnung=folgerichtig)
+
+@nativ
+funktion laufzeit_atom_vergleichen(a: ptr[LaufzeitAtom], erwartet_bits: u64, neue_bits: u64) -> bool:
+    unsicher:
+        setze erwartet: f64 auf laufzeit_atom_zahl(erwartet_bits)
+        setze alt: u64 auf atom_laden(a.bits, ordnung=folgerichtig)
+        solange wahr:
+            # Zahlenvergleich: +0 == -0, NaN vergleicht auch mit sich ungleich.
+            wenn laufzeit_atom_zahl(alt) != erwartet:
+                gib_zurück falsch
+            wenn atom_vergleichen_und_tauschen(a.bits, alt, neue_bits, ordnung=folgerichtig):
+                gib_zurück wahr
+            setze alt auf atom_laden(a.bits, ordnung=folgerichtig)

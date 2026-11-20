@@ -1,0 +1,16 @@
+# Derselbe Kontextkern ohne Hardware-Scheduler: explizite aktive Slot-Auswahl.
+importiere "../../../beispiele/kernel/kern_laufzeit_kontext"
+
+@nativ
+funktion t14_kontext_slot(cpu: u32, slot: u32) -> u64:
+    unsicher:
+        gib_zurück u64(laufzeit_kontext_fuer(cpu, slot))
+
+@nativ
+funktion t14_kontext_start(p: ptr[LaufzeitFehler], worker: u8) -> bool:
+    unsicher:
+        gib_zurück laufzeit_kontext_starten_fuer(p, worker)
+
+@nativ
+funktion t14_kontext_groesse() -> u64:
+    gib_zurück groesse_von(LaufzeitFehler)

@@ -1,0 +1,7 @@
+struktur NullS:
+    wert: u64
+@nativ
+funktion null_falsch() -> u64:
+    setze s: NullS auf NullS(7)
+    setze s auf 0
+    gib_zurück s.wert

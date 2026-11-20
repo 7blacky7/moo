@@ -1,0 +1,158 @@
+# P10-T13: Platzierung, APIC-Signale und bestätigter TLB-Abgleich.
+aus "kern_smp" importiere KernLokal, smp_anzahl, smp_nummer, smp_kern, smp_lokal, smp_planer_auf
+aus "kern_ap" importiere ap_ist_online, ap_ipi
+aus "kern_faden" importiere FadenPlaner, faden_smp_binden, faden_einreihen, faden_stehlen, faden_wecken
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+konstante IPI_NEUPLAN: u32 auf 67
+@nativ
+konstante IPI_TLB: u32 auf 68
+@nativ
+konstante IPI_HALT: u32 auf 69
+
+@nativ
+statisch SMP_IPI_BEREIT: atom[u32] auf 0
+@nativ
+statisch SMP_TLB_GENERATION: atom[u64] auf 0
+@nativ
+statisch SMP_FADEN_GESTOHLEN: atom[u64] auf 0
+@nativ
+statisch SMP_IPI_FRIST: [u64; 1] auf 0
+
+@nativ
+funktion smp_planer_initialisieren(tsc_pro_us: u64) -> void:
+    unsicher:
+        wenn tsc_pro_us != 0 und smp_anzahl() != 0:
+            setze frist: ptr[u64] auf zeiger(adresse_von(SMP_IPI_FRIST))
+            volatile_schreiben(frist, 0, tsc_pro_us * 1000000)
+            setze cpu: u32 auf 0
+            solange cpu < smp_anzahl():
+                faden_smp_binden(smp_planer_auf(cpu), cpu, adresse_von(smp_neuplan_signalisieren), adresse_von(smp_ausgleichen))
+                setze cpu auf cpu + 1
+            atom_speichern(SMP_IPI_BEREIT, 1, ordnung=freigeben)
+
+@nativ
+funktion smp_online_maske() -> u64:
+    unsicher:
+        setze maske: u64 auf 0
+        setze cpu: u32 auf 0
+        solange cpu < smp_anzahl():
+            wenn ap_ist_online(cpu):
+                setze maske auf maske | (u64(1) << cpu)
+            setze cpu auf cpu + 1
+        gib_zurück maske
+
+@nativ
+funktion smp_neuplan_signalisieren(cpu: u32) -> void:
+    unsicher:
+        wenn atom_laden(SMP_IPI_BEREIT, ordnung=erwerben) != 0 und cpu != smp_nummer() und ap_ist_online(cpu):
+            ap_ipi(smp_kern(cpu).apic_id, IPI_NEUPLAN)
+
+@nativ
+funktion smp_ausgleichen(planer_adr: u64) -> void:
+    unsicher:
+        wenn atom_laden(SMP_IPI_BEREIT, ordnung=erwerben) == 0:
+            gib_zurück
+        setze planer: ptr[FadenPlaner] auf zeiger(planer_adr)
+        setze cpu: u32 auf 0
+        solange cpu < smp_anzahl():
+            wenn cpu != smp_nummer() und ap_ist_online(cpu) und faden_stehlen(planer, smp_planer_auf(cpu)):
+                atom_addieren(SMP_FADEN_GESTOHLEN, 1, ordnung=locker)
+                gib_zurück
+            setze cpu auf cpu + 1
+
+@nativ
+funktion smp_gestohlen() -> u64:
+    unsicher:
+        gib_zurück atom_laden(SMP_FADEN_GESTOHLEN, ordnung=locker)
+
+# Ein Auftrag darf vor dem ersten Einstieg innerhalb seiner Maske umziehen.
+# Eine Einzelbitmaske erlaubt Verwaltung über den zurückgegebenen Slot.
+@nativ
+funktion smp_faden_anbieten(einstieg: u64, daten: u64, affinitaet: u64) -> u32:
+    unsicher:
+        setze maske: u64 auf affinitaet & smp_online_maske()
+        setze cpu: u32 auf smp_nummer()
+        wenn (maske & (u64(1) << cpu)) == 0:
+            setze cpu auf 0
+            solange cpu < smp_anzahl() und (maske & (u64(1) << cpu)) == 0:
+                setze cpu auf cpu + 1
+        wenn cpu >= smp_anzahl():
+            gib_zurück 0
+        setze nummer: u32 auf faden_einreihen(smp_planer_auf(cpu), einstieg, daten, maske, 0x200)
+        wenn nummer != 0:
+            setze ziel: u32 auf 0
+            solange ziel < smp_anzahl():
+                wenn (maske & (u64(1) << ziel)) != 0:
+                    smp_neuplan_signalisieren(ziel)
+                setze ziel auf ziel + 1
+        gib_zurück nummer
+
+@nativ
+funktion smp_faden_wecken(cpu: u32, nummer: u32) -> bool:
+    unsicher:
+        wenn nicht ap_ist_online(cpu):
+            gib_zurück falsch
+        gib_zurück faden_wecken(smp_planer_auf(cpu), nummer)
+
+@nativ
+funktion smp_cr3_neu_laden() -> void:
+    unsicher:
+        # Gemeinsame Kernabbildungen sind gegenwärtig ohne PCID und Global-Bit.
+        assembler(ziel="x86_64", code="movq %cr3, %rax; movq %rax, %cr3", clobber=["rax", "memory"])
+
+@nativ
+funktion smp_tlb_lokal() -> void:
+    unsicher:
+        wenn atom_laden(SMP_IPI_BEREIT, ordnung=erwerben) != 0:
+            setze irq: u64 auf irq_sichern()
+            setze generation: u64 auf atom_laden(SMP_TLB_GENERATION, ordnung=erwerben)
+            setze lokal: ptr[KernLokal] auf smp_lokal(smp_nummer())
+            wenn atom_laden(lokal.tlb_quittung, ordnung=locker) < generation:
+                smp_cr3_neu_laden()
+                atom_speichern(lokal.tlb_quittung, generation, ordnung=freigeben)
+            irq_wiederherstellen(irq)
+
+@nativ
+funktion smp_tlb_abgleich() -> bool:
+    unsicher:
+        wenn atom_laden(SMP_IPI_BEREIT, ordnung=erwerben) == 0:
+            smp_cr3_neu_laden()
+            gib_zurück wahr
+        setze generation: u64 auf atom_addieren(SMP_TLB_GENERATION, 1, ordnung=freigeben) + 1
+        setze eigener_kern: u32 auf smp_nummer()
+        setze maske: u64 auf smp_online_maske()
+        smp_tlb_lokal()
+        setze cpu: u32 auf 0
+        solange cpu < smp_anzahl():
+            wenn cpu != eigener_kern und (maske & (u64(1) << cpu)) != 0:
+                wenn nicht ap_ipi(smp_kern(cpu).apic_id, IPI_TLB):
+                    gib_zurück falsch
+            setze cpu auf cpu + 1
+        setze start: u64 auf takt()
+        setze frist_ref: ptr[u64] auf zeiger(adresse_von(SMP_IPI_FRIST))
+        setze frist: u64 auf volatile_lesen(frist_ref, 0)
+        setze cpu auf 0
+        solange cpu < smp_anzahl():
+            wenn cpu != eigener_kern und (maske & (u64(1) << cpu)) != 0:
+                setze lokal: ptr[KernLokal] auf smp_lokal(cpu)
+                solange atom_laden(lokal.tlb_quittung, ordnung=erwerben) < generation:
+                    # Zwei Herausgeber können einander auch mit IF=0 quittieren.
+                    smp_tlb_lokal()
+                    wenn takt() - start >= frist:
+                        gib_zurück falsch
+                    kern_pause()
+            setze cpu auf cpu + 1
+        gib_zurück wahr
+
+@nativ
+funktion smp_alle_halten() -> void:
+    unsicher:
+        wenn atom_laden(SMP_IPI_BEREIT, ordnung=erwerben) != 0:
+            setze cpu: u32 auf 0
+            solange cpu < smp_anzahl():
+                wenn cpu != smp_nummer() und ap_ist_online(cpu):
+                    ap_ipi(smp_kern(cpu).apic_id, IPI_HALT)
+                setze cpu auf cpu + 1

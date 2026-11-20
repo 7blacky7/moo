@@ -1,0 +1,149 @@
+# P10-T14: Fehler und aufräumen-Zwischenzustand gehören dem aktuellen Faden.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_faden" importiere laufzeit_kontext
+aus "kern_laufzeit_werte" importiere laufzeit_nichts, kern_c_moo_release, kern_c_moo_retain
+aus "kern_laufzeit_thread" importiere LaufzeitWertPlatz
+aus "kern_laufzeit_speicher" importiere laufzeit_text, laufzeit_anhalten
+
+extern "C" funktion kern_c_moo_print(wert: LaufzeitWert) -> void
+
+@nativ
+statisch LAUFZEIT_UNBEHANDELT: atom[u32] auf 0
+
+@nativ
+funktion laufzeit_fehler_leeren() -> void:
+    unsicher:
+        setze alt: LaufzeitWert auf laufzeit_kontext().letzter
+        laufzeit_kontext().letzter = laufzeit_nichts()
+        laufzeit_kontext().flag = 0
+        laufzeit_kontext().wurfort = 0
+        laufzeit_kontext().gemeldet = 0
+        kern_c_moo_release(alt)
+
+@nativ
+funktion kern_rt_moo_throw_ort(wert: LaufzeitWert, ort: ptr[u8]) -> void:
+    unsicher:
+        laufzeit_fehler_leeren()
+        laufzeit_kontext().letzter = wert
+        laufzeit_kontext().flag = 1
+        laufzeit_kontext().wurfort = u64(ort)
+        wenn laufzeit_kontext().tiefe == 0:
+            kern_c_moo_print(wert)
+            atom_speichern(LAUFZEIT_UNBEHANDELT, 1, ordnung=freigeben)
+            wenn laufzeit_kontext().worker == 0:
+                laufzeit_anhalten()
+            laufzeit_fehler_leeren()
+
+@nativ
+funktion kern_rt_moo_throw(wert: LaufzeitWert) -> void:
+    unsicher:
+        kern_rt_moo_throw_ort(wert, zeiger(0))
+
+@nativ
+funktion kern_rt_moo_try_enter() -> void:
+    unsicher:
+        wenn laufzeit_kontext().tiefe == 0:
+            laufzeit_fehler_leeren()
+        laufzeit_kontext().tiefe = laufzeit_kontext().tiefe + 1
+
+@nativ
+funktion kern_rt_moo_try_check() -> i32:
+    unsicher:
+        gib_zurück laufzeit_kontext().flag
+
+@nativ
+funktion kern_rt_moo_fehler_zustand() -> i32:
+    unsicher:
+        setze flag: i32 auf i32(laufzeit_kontext().flag != 0)
+        setze tiefe: i32 auf i32(laufzeit_kontext().tiefe != 0)
+        gib_zurück flag | (tiefe << 1)
+
+@nativ
+funktion kern_rt_moo_try_leave() -> void:
+    unsicher:
+        wenn laufzeit_kontext().tiefe > 0:
+            laufzeit_kontext().tiefe = laufzeit_kontext().tiefe - 1
+        wenn laufzeit_kontext().tiefe == 0:
+            laufzeit_fehler_leeren()
+
+@nativ
+funktion kern_rt_moo_try_take_error() -> LaufzeitWert:
+    unsicher:
+        setze wert: LaufzeitWert auf laufzeit_kontext().letzter
+        laufzeit_kontext().letzter = laufzeit_nichts()
+        laufzeit_kontext().flag = 0
+        gib_zurück wert
+
+@nativ
+funktion kern_rt_moo_get_error() -> LaufzeitWert:
+    unsicher:
+        setze wert: LaufzeitWert auf laufzeit_kontext().letzter
+        kern_c_moo_retain(wert)
+        gib_zurück wert
+
+@nativ
+funktion kern_rt_moo_native_cleanup_enter(p: ptr[LaufzeitWertPlatz]) -> void:
+    unsicher:
+        p.wert = kern_rt_moo_try_take_error()
+        kern_rt_moo_try_enter()
+
+@nativ
+funktion kern_rt_moo_native_cleanup_step(p: ptr[LaufzeitWertPlatz]) -> void:
+    unsicher:
+        setze folge: LaufzeitWert auf kern_rt_moo_try_take_error()
+        wenn p.wert.tag == 3:
+            p.wert = folge
+        sonst:
+            kern_c_moo_release(folge)
+
+@nativ
+funktion kern_rt_moo_native_cleanup_leave(p: ptr[LaufzeitWertPlatz]) -> void:
+    unsicher:
+        kern_rt_moo_native_cleanup_step(p)
+        setze erster: LaufzeitWert auf p.wert
+        p.wert = laufzeit_nichts()
+        kern_rt_moo_try_leave()
+        wenn erster.tag != 3:
+            kern_rt_moo_throw(erster)
+
+@nativ
+funktion kern_rt_moo_native_thread_markieren() -> void:
+    unsicher:
+        laufzeit_kontext().nativer_faden = 1
+
+@nativ
+funktion kern_rt_moo_native_rueckruf_thread(name: ptr[u8]) -> void:
+    unsicher:
+        wenn laufzeit_kontext().nativer_faden == 0:
+            laufzeit_text(name)
+            laufzeit_anhalten()
+
+@nativ
+funktion kern_rt_moo_fehler_unbehandelt(stelle: ptr[u8]) -> void:
+    unsicher:
+        wenn laufzeit_kontext().flag != 0 und laufzeit_kontext().gemeldet == 0:
+            laufzeit_kontext().gemeldet = 1
+            kern_c_moo_print(laufzeit_kontext().letzter)
+
+@nativ
+funktion laufzeit_status() -> i32:
+    unsicher:
+        gib_zurück i32(atom_laden(LAUFZEIT_UNBEHANDELT, ordnung=erwerben))
+
+@nativ
+funktion kern_rt_moo_global_fremd() -> u8:
+    unsicher:
+        gib_zurück laufzeit_kontext().worker
+
+@nativ
+funktion kern_rt_moo_global_fremdzugriff(name: ptr[u8]) -> void:
+    unsicher:
+        laufzeit_text(name)
+        laufzeit_anhalten()
+
+@nativ
+funktion kern_rt_moo_global_pruefen(name: ptr[u8]) -> void:
+    unsicher:
+        wenn laufzeit_kontext().worker != 0:
+            kern_rt_moo_global_fremdzugriff(name)
+

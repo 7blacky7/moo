@@ -1,0 +1,287 @@
+# P10-T11: MADT-Aufzählung und Ressourcen je CPU. AP-Start folgt in T12.
+importiere nativ_x86_deskriptoren
+aus "kern_faden" importiere FadenPlaner, FADEN_ANZAHL, FADEN_STACK_SEITEN, faden_planer_starten, faden_tss_binden
+aus "kern_syscall_abi" importiere SyscallLokal, syscall_gdt_schreiben
+
+@nativ
+konstante KERN_GRENZE: u32 auf 64
+
+struktur KernEintrag:
+    apic_id: u32
+    acpi_uid: u32
+    flags: u32
+    bereit: bool
+    basis: u64
+    stapel: u64
+    ist1: u64
+    ist2: u64
+
+struktur KernLokal:
+    nummer: u32
+    eigenbasis: u64
+    gdt: [u64; 8]
+    gdtr: [u8; 16]
+    tss: [u8; 104]
+    tlb_quittung: atom[u64]
+    syscall: SyscallLokal
+    planer: FadenPlaner
+
+@nativ
+statisch KERNE: [KernEintrag; 64] auf 0
+@pro_kern
+statisch KERN_LOKAL: KernLokal auf 0
+
+extern "C" konstante __moo_prokern_anfang: u8
+extern "C" konstante __moo_prokern_ende: u8
+
+# Jede CPU besitzt eine PT; PDPT[508] enthält die Fadenstack-Fenster.
+@nativ
+@ausrichten(4096)
+statisch SMP_STACK_PD: [u64; 512] auf 0
+struktur KernStackTabelle:
+    eintraege: [u64; 512]
+@nativ
+@ausrichten(4096)
+statisch SMP_STACK_PT: [KernStackTabelle; 64] auf 0
+struktur SmpZustand:
+    anzahl: u32
+    madt_ok: bool
+    alloc: u64
+@nativ
+statisch SMP_ZUSTAND: SmpZustand auf 0
+
+@nativ
+funktion smp_kern(nummer: u32) -> ptr[KernEintrag]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(KERNE) + u64(nummer) * groesse_von(KernEintrag))
+
+@nativ
+funktion smp_eintragen(id: u32, uid: u32, flags: u32) -> bool:
+    unsicher:
+        # Nur laut Firmware aktivierte CPUs starten; Online-Capable allein reicht nicht.
+        wenn (flags & 1) == 0:
+            gib_zurück wahr
+        setze i: u32 auf 0
+        solange i < SMP_ZUSTAND.anzahl:
+            wenn smp_kern(i).apic_id == id:
+                gib_zurück wahr
+            setze i auf i + 1
+        wenn SMP_ZUSTAND.anzahl == KERN_GRENZE:
+            gib_zurück falsch
+        setze kern: ptr[KernEintrag] auf smp_kern(SMP_ZUSTAND.anzahl)
+        kern.apic_id = id
+        kern.acpi_uid = uid
+        kern.flags = flags
+        setze SMP_ZUSTAND.anzahl auf SMP_ZUSTAND.anzahl + 1
+        gib_zurück wahr
+
+@nativ
+funktion smp_madt(madt: u64, verfuegbar: u64) -> bool:
+    unsicher:
+        setze SMP_ZUSTAND.anzahl auf 0
+        setze SMP_ZUSTAND.madt_ok auf falsch
+        wenn madt == 0 oder verfuegbar < 44:
+            gib_zurück falsch
+        setze laenge: u64 auf u64(speicher_lesen(madt + 4, 4))
+        wenn laenge < 44 oder laenge > verfuegbar:
+            gib_zurück falsch
+        setze pos: u64 auf 44
+        solange pos < laenge:
+            wenn laenge - pos < 2:
+                gib_zurück falsch
+            setze typ: u8 auf speicher_lesen(madt + pos, 1)
+            setze n: u64 auf u64(speicher_lesen(madt + pos + 1, 1))
+            wenn n < 2 oder n > laenge - pos:
+                gib_zurück falsch
+            wenn typ == 0:
+                wenn n < 8:
+                    gib_zurück falsch
+                wenn nicht smp_eintragen(u32(speicher_lesen(madt + pos + 3, 1)), u32(speicher_lesen(madt + pos + 2, 1)), speicher_lesen(madt + pos + 4, 4)):
+                    gib_zurück falsch
+            sonst wenn typ == 9:
+                wenn n < 16:
+                    gib_zurück falsch
+                wenn nicht smp_eintragen(speicher_lesen(madt + pos + 4, 4), speicher_lesen(madt + pos + 12, 4), speicher_lesen(madt + pos + 8, 4)):
+                    gib_zurück falsch
+            setze pos auf pos + n
+        setze SMP_ZUSTAND.madt_ok auf SMP_ZUSTAND.anzahl != 0
+        gib_zurück SMP_ZUSTAND.madt_ok
+
+@nativ
+funktion smp_madt_lesen(madt: u64) -> void:
+    unsicher:
+        # Der Aufrufer hat ACPI-Signatur, Länge und Prüfsumme bereits geprüft.
+        smp_madt(madt, u64(speicher_lesen(madt + 4, 4)))
+
+@nativ
+funktion smp_planer() -> ptr[FadenPlaner]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(KERN_LOKAL) + versatz_von(KernLokal, planer))
+
+@nativ
+funktion smp_anzahl() -> u32:
+    unsicher:
+        gib_zurück SMP_ZUSTAND.anzahl
+
+@nativ
+funktion smp_lokal(cpu: u32) -> ptr[KernLokal]:
+    unsicher:
+        setze offset: u64 auf adresse_von(KERN_LOKAL) - pro_kern_basis()
+        gib_zurück zeiger(smp_kern(cpu).basis + offset)
+
+@nativ
+funktion smp_planer_auf(cpu: u32) -> ptr[FadenPlaner]:
+    unsicher:
+        gib_zurück zeiger(u64(smp_lokal(cpu)) + versatz_von(KernLokal, planer))
+
+@nativ
+funktion smp_syscall_lokal() -> ptr[SyscallLokal]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(KERN_LOKAL) + versatz_von(KernLokal, syscall))
+
+@nativ
+funktion smp_syscall_auf(cpu: u32) -> ptr[SyscallLokal]:
+    unsicher:
+        gib_zurück zeiger(u64(smp_lokal(cpu)) + versatz_von(KernLokal, syscall))
+
+@nativ
+funktion smp_nummer() -> u32:
+    unsicher:
+        gib_zurück KERN_LOKAL.nummer
+
+@nativ
+funktion smp_faden_stapel(cpu: u64, nummer: u32) -> u64:
+    unsicher:
+        wenn cpu >= u64(SMP_ZUSTAND.anzahl) oder nummer == 0 oder nummer >= FADEN_ANZAHL:
+            gib_zurück 0
+        setze alloc: ptr[fn[sysv64](u64) -> u64] auf zeiger(SMP_ZUSTAND.alloc)
+        setze basis: u64 auf alloc(FADEN_STACK_SEITEN)
+        wenn basis == 0:
+            gib_zurück 0
+        setze pt: u64 auf adresse_von(SMP_STACK_PT) + cpu * 4096
+        setze start: u64 auf u64(nummer) * (FADEN_STACK_SEITEN + 1)
+        speicher_schreiben(pt + start * 8, 0, 8)
+        setze i: u64 auf 0
+        solange i < FADEN_STACK_SEITEN:
+            speicher_schreiben(pt + (start + i + 1) * 8, (basis + i * 4096) | 3, 8)
+            setze i auf i + 1
+        # Die Verzeichnisse stehen vor AP-Start. Dieser Slot war nicht präsent.
+        gib_zurück 0xFFFFFFFF00000000 + cpu * 0x200000 + (start + FADEN_STACK_SEITEN + 1) * 4096
+
+@nativ
+funktion smp_bsp_id() -> u32:
+    unsicher:
+        # Topologieblatt 0Bh liefert auch x2APIC-IDs; Blatt 1 bleibt Fallback.
+        setze maxblatt: u32 auf assembler(ziel="x86_64", code="xorl %eax, %eax; cpuid; movl %eax, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn maxblatt >= 11:
+            setze zaehler: u32 auf assembler(ziel="x86_64", code="movl $$11, %eax; xorl %ecx, %ecx; cpuid; movl %ebx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+            wenn zaehler != 0:
+                gib_zurück assembler(ziel="x86_64", code="movl $$11, %eax; xorl %ecx, %ecx; cpuid; movl %edx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        gib_zurück assembler(ziel="x86_64", code="movl $$1, %eax; cpuid; shrl $$24, %ebx; movl %ebx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+
+@nativ
+funktion smp_ressourcen(alloc_adr: u64, phys_adr: u64, bi: u64, pdpt: u64, bsp_stapel: u64, gs_setzen: u64, gdt_lader: u64, tss_lader: u64) -> bool:
+    unsicher:
+        wenn nicht SMP_ZUSTAND.madt_ok:
+            gib_zurück falsch
+        setze bsp_id: u32 auf smp_bsp_id()
+        setze bsp: u32 auf SMP_ZUSTAND.anzahl
+        setze i: u32 auf 0
+        solange i < SMP_ZUSTAND.anzahl:
+            wenn smp_kern(i).apic_id == bsp_id:
+                setze bsp auf i
+            setze i auf i + 1
+        wenn bsp == SMP_ZUSTAND.anzahl:
+            gib_zurück falsch
+        # Index 0 ist immer BSP; MADT-Reihenfolge ist nicht vorgeschrieben.
+        setze tausch: KernEintrag auf KERNE[0]
+        KERNE[0] = KERNE[u64(bsp)]
+        KERNE[u64(bsp)] = tausch
+        setze SMP_ZUSTAND.alloc auf alloc_adr
+        setze alloc: ptr[fn[sysv64](u64) -> u64] auf zeiger(alloc_adr)
+        setze wrmsr: ptr[fn[sysv64](u32, u64) -> void] auf zeiger(gs_setzen)
+        setze phys: ptr[fn[sysv64](u64, u64) -> u64] auf zeiger(phys_adr)
+        # Gemeinsame Verzeichnisse nur beim Booten, vor jeder AP-Freigabe.
+        speicher_schreiben(pdpt + 508 * 8, phys(bi, adresse_von(SMP_STACK_PD)) | 3, 8)
+        setze vorlage: u64 auf adresse_von(__moo_prokern_anfang)
+        setze bytes: u64 auf adresse_von(__moo_prokern_ende) - vorlage
+        wenn bytes == 0:
+            gib_zurück falsch
+        setze i auf 0
+        solange i < SMP_ZUSTAND.anzahl:
+            setze kern: ptr[KernEintrag] auf smp_kern(i)
+            kern.bereit = falsch
+            kern.basis = alloc((bytes + 4095) / 4096)
+            kern.ist1 = alloc(4)
+            kern.ist2 = alloc(4)
+            wenn i == 0:
+                kern.stapel = bsp_stapel
+            sonst:
+                kern.stapel = alloc(16)
+                wenn kern.stapel != 0:
+                    kern.stapel = kern.stapel + 65536
+            wenn kern.basis == 0 oder kern.ist1 == 0 oder kern.ist2 == 0 oder kern.stapel == 0:
+                gib_zurück falsch
+            setze j: u64 auf 0
+            solange j < bytes:
+                speicher_schreiben(kern.basis + j, speicher_lesen(vorlage + j, 1), 1)
+                setze j auf j + 1
+            setze i auf i + 1
+        wrmsr(0xC0000101, smp_kern(0).basis)
+        setze offset: u64 auf adresse_von(KERN_LOKAL) - pro_kern_basis()
+        setze i auf 0
+        solange i < SMP_ZUSTAND.anzahl:
+            setze kern auf smp_kern(i)
+            setze lokal: ptr[KernLokal] auf zeiger(kern.basis + offset)
+            lokal.nummer = i
+            lokal.eigenbasis = kern.basis
+            setze tss: u64 auf u64(lokal) + versatz_von(KernLokal, tss)
+            setze gdtr: u64 auf u64(lokal) + versatz_von(KernLokal, gdtr)
+            setze gdt: u64 auf u64(lokal) + versatz_von(KernLokal, gdt)
+            syscall_gdt_schreiben(gdt, tss)
+            speicher_schreiben(tss + 4, kern.stapel, 8)
+            speicher_schreiben(tss + 36, kern.ist1 + 16384, 8)
+            speicher_schreiben(tss + 44, kern.ist2 + 16384, 8)
+            speicher_schreiben(tss + 102, u16(104), 2)
+            speicher_schreiben(gdtr, u16(8 * 8 - 1), 2)
+            speicher_schreiben(gdtr + 2, gdt, 8)
+            speicher_schreiben(adresse_von(SMP_STACK_PD) + u64(i) * 8, phys(bi, adresse_von(SMP_STACK_PT) + u64(i) * 4096) | 3, 8)
+            setze planer: ptr[FadenPlaner] auf zeiger(u64(lokal) + versatz_von(KernLokal, planer))
+            wenn nicht faden_planer_starten(planer, adresse_von(smp_faden_stapel), u64(i)):
+                gib_zurück falsch
+            faden_tss_binden(planer, tss + 4, kern.stapel)
+            setze syscall: ptr[SyscallLokal] auf zeiger(u64(lokal) + versatz_von(KernLokal, syscall))
+            setze syscall.sl_kernrsp auf kern.stapel
+            setze planer.fp_syscall auf u64(syscall)
+            kern.bereit = wahr
+            setze i auf i + 1
+        setze lade_gdt: ptr[fn[sysv64](u64) -> void] auf zeiger(gdt_lader)
+        setze lade_tss: ptr[fn[sysv64]() -> void] auf zeiger(tss_lader)
+        lade_gdt(adresse_von(KERN_LOKAL) + versatz_von(KernLokal, gdtr))
+        lade_tss()
+        # Segmentneuladen kann die GS-Basis ändern: erst danach erneut setzen.
+        wrmsr(0xC0000101, smp_kern(0).basis)
+        gib_zurück pro_kern_basis() == KERN_LOKAL.eigenbasis und smp_nummer() == 0
+
+@nativ
+konstante SMP_MARKE: [u8; _] auf "MOO-KERNE "
+@nativ
+funktion smp_melden(ausgabe_adr: u64, ok: bool) -> void:
+    unsicher:
+        setze ausgabe: ptr[fn[sysv64](u64) -> void] auf zeiger(ausgabe_adr)
+        setze puffer: [u8; 4] auf [0, 0, 0, 0]
+        setze n: u32 auf 0
+        wenn ok:
+            setze n auf SMP_ZUSTAND.anzahl
+        wenn n >= 10:
+            puffer[0] = u8(48 + n / 10)
+            puffer[1] = u8(48 + n % 10)
+            puffer[2] = 10
+        sonst:
+            puffer[0] = u8(48 + n)
+            puffer[1] = 10
+        ausgabe(adresse_von(SMP_MARKE))
+        ausgabe(adresse_von(puffer))
+        wenn nicht ok:
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])

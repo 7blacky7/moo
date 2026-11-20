@@ -72,10 +72,13 @@ extern void kern_frei_c(void *p);
 
 /* --- Heap-Bruecke: libc-Namen auf den Bare-Allocator. Die Arena setzt der
  *     Entry (uefi_entry.c) per kern_heap_init_c aus UEFI AllocatePages. --- */
+#ifndef MOO_BARE_THREADS
 void *malloc(size_t n) { return n ? kern_alloc_c((uint64_t)n) : (void *)0; }
 void free(void *p) { kern_frei_c(p); }
+#endif
 
 #ifdef MOO_UEFI_COLLECTIONS
+#ifndef MOO_BARE_THREADS
 void *realloc(void *p, size_t n) { return kern_realloc_c(p, (uint64_t)n); }
 
 void *calloc(size_t count, size_t size) {
@@ -84,6 +87,7 @@ void *calloc(size_t count, size_t size) {
     void *p = malloc(bytes);
     return p ? memset(p, 0, bytes) : NULL;
 }
+#endif /* !MOO_BARE_THREADS */
 #else
 /* --- String-Konstruktor fuer Moo-Literale (Codegen ruft moo_string_new);
  *     Semantik wie moo_string.c, Speicher aus der Arena, OOM -> none. --- */
@@ -110,6 +114,7 @@ MooValue moo_string_new(const char *chars) {
 #endif
 
 /* Panik des Bare-Allocators: Meldung auf COM1 und optional Debugcon, dann Halt. */
+#ifndef MOO_BARE_THREADS
 __attribute__((noreturn)) void kern_panic(const char *msg) {
     static const char kopf[] = "[KERN-PANIK] ";
     const char *p;
@@ -119,7 +124,10 @@ __attribute__((noreturn)) void kern_panic(const char *msg) {
     for (;;) { __asm__ volatile("cli; hlt"); }
 }
 
+#endif /* !MOO_BARE_THREADS */
+
 #ifdef MOO_UEFI_COLLECTIONS
+#ifndef MOO_BARE_THREADS
 MOO_TLS int moo_error_flag;
 
 /* UEFI hat keinen laufenden Moo-Fehlerhandler. Ein Runtime-Fehler
@@ -134,6 +142,8 @@ void moo_uefi_print(const char *text) {
     for (; *text; ++text) uefi_marker_byte((uint8_t)*text);
     uefi_marker_byte((uint8_t)'\n');
 }
+
+#endif /* !MOO_BARE_THREADS */
 
 /* C-Stringoperationen der gemeinsamen Runtime. In der EFI-App läuft
  * die Tokenisierung synchron auf demselben Thread. */
@@ -153,7 +163,8 @@ char *strdup(const char *text) {
     return memcpy(moo_alloc(size), text, size);
 }
 
-char *strstr(const char *text, const char *find) {
+/* Auch mit dem C11-_Generic-Makro der Host-Header eine Funktionsdefinition. */
+char *(strstr)(const char *text, const char *find) {
     if (!*find) return (char *)text;
     for (; *text; ++text) {
         const char *a = text, *b = find;

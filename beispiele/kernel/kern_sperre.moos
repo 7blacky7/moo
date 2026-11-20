@@ -1,0 +1,63 @@
+# P10-T7: FIFO-Tickets und lokaler IRQ-Zustand für kleine Kernabschnitte.
+struktur KernSperre:
+    naechstes_ticket: atom[u32]
+    bedientes_ticket: atom[u32]
+
+@nativ
+funktion unterbrechungen_an() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="sti", clobber=["memory"])
+
+@nativ
+funktion unterbrechungen_aus() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="cli", clobber=["memory"])
+
+@nativ
+funktion irq_zustand() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="pushfq\npopq $0", ausgang="=r", clobber=["memory"])
+
+@nativ
+funktion irq_sichern() -> u64:
+    unsicher:
+        setze zustand: u64 auf irq_zustand()
+        unterbrechungen_aus()
+        gib_zurück zustand
+
+@nativ
+funktion irq_wiederherstellen(zustand: u64) -> void:
+    unsicher:
+        wenn (zustand & 0x200) != 0:
+            unterbrechungen_an()
+        sonst:
+            unterbrechungen_aus()
+
+@nativ
+funktion spin_nimm(sperre: ptr[KernSperre]) -> u64:
+    unsicher:
+        setze zustand: u64 auf irq_sichern()
+        setze ticket: u32 auf atom_addieren(sperre.naechstes_ticket, 1, ordnung=locker)
+        solange atom_laden(sperre.bedientes_ticket, ordnung=erwerben) != ticket:
+            kern_pause()
+        gib_zurück zustand
+
+@nativ
+funktion spin_gib(sperre: ptr[KernSperre], zustand: u64) -> void:
+    unsicher:
+        atom_addieren(sperre.bedientes_ticket, 1, ordnung=freigeben)
+        irq_wiederherstellen(zustand)
+
+@nativ
+statisch SPERRE_PROBE: KernSperre auf 0
+
+@nativ
+funktion sperre_pruefen() -> bool:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(SPERRE_PROBE))
+        setze vorher: u64 auf irq_zustand()
+        setze alt: u32 auf atom_laden(sperre.bedientes_ticket, ordnung=locker)
+        setze zustand: u64 auf spin_nimm(sperre)
+        setze gehalten: bool auf (irq_zustand() & 0x200) == 0 und atom_laden(sperre.naechstes_ticket, ordnung=locker) == alt + 1
+        spin_gib(sperre, zustand)
+        gib_zurück gehalten und (zustand & 0x200) == (vorher & 0x200) und (irq_zustand() & 0x200) == (vorher & 0x200) und atom_laden(sperre.bedientes_ticket, ordnung=locker) == alt + 1

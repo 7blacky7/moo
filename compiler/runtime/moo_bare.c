@@ -646,3 +646,8 @@ bool moo_is_none(MooValue v) { return v.tag == MOO_NONE; }
 __attribute__((weak)) void moo_throw(MooValue v) { (void)v; /* Kein Error-Handling im Bare-Metal */ }
 __attribute__((weak)) void moo_print(MooValue v) { (void)v; /* Kein printf im Bare-Metal */ }
 #endif
+
+
+/* Optionaler Einstieg nach dem nativen CPU-/Planerstart (P10-T14).
+ * Das Vollprofil erzeugt einen starken, typisierten Adapter auf das Moo-main. */
+__attribute__((weak)) int moo_laufzeit_programm(void) { return 0; }

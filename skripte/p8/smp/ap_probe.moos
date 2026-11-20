@@ -1,0 +1,22 @@
+# Testadapter zu den produktiven ICR- und Lowmem-Prüffunktionen.
+importiere "../../../beispiele/kernel/kern_ap"
+
+@nativ
+statisch AP_TEST_INFO: MooBootInfo auf 0
+
+@nativ
+funktion t12_icr(modus: u64, lese: u64, schreibe: u64, id: u32, befehl: u32) -> bool:
+    unsicher:
+        AP_ZUSTAND.x2 = modus
+        AP_ZUSTAND.lese = lese
+        AP_ZUSTAND.schreibe = schreibe
+        AP_ZUSTAND.tsc = 1
+        gib_zurück ap_sende(id, befehl)
+
+@nativ
+funktion t12_karte(adr: u64, bytes: u64, schritt: u64) -> bool:
+    unsicher:
+        AP_TEST_INFO.karte = adr
+        AP_TEST_INFO.karte_groesse = bytes
+        AP_TEST_INFO.deskriptor_groesse = schritt
+        gib_zurück ap_speicher_erlaubt(adresse_von(AP_TEST_INFO))

@@ -818,8 +818,15 @@ void moo_channel_close(MooValue channel);
 #endif
 #define MOO_TRY_STACK_SIZE 64
 extern jmp_buf moo_try_stack[MOO_TRY_STACK_SIZE];
+#ifdef MOO_BARE_THREADS
+int *moo_kern_try_depth(void);
+MooValue *moo_kern_last_error(void);
+#define moo_try_depth (*moo_kern_try_depth())
+#define moo_last_error (*moo_kern_last_error())
+#else
 extern MOO_TLS int moo_try_depth;
 extern MOO_TLS MooValue moo_last_error;
+#endif
 
 // === Konstruktoren ===
 MooValue moo_number(double n);
@@ -1008,7 +1015,12 @@ void moo_try_leave(void);       // leave try/catch
 MooValue moo_try_take_error(void); /* transfers +1 error, clears flag, keeps try depth */
 MooValue moo_get_error(void);   // get the caught error
 int moo_fehler_zustand(void);   // Bit0 Fehler, Bit1 Handler aktiv (Codegen, je Thread)
+#ifdef MOO_BARE_THREADS
+int *moo_kern_error_flag(void);
+#define moo_error_flag (*moo_kern_error_flag())
+#else
 extern MOO_TLS int moo_error_flag;
+#endif
 
 // === Speicher ===
 void* moo_alloc(size_t size);

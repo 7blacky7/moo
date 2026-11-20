@@ -1,0 +1,10 @@
+# Die allgemeine C-Export-Kollisionsdiagnose darf nicht still gelockert werden.
+struktur LaufzeitWert:
+    tag: u64
+    daten: u64
+
+@nativ
+@einstieg
+funktion moo_thread_done(wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        gib_zurück wert

@@ -1,0 +1,251 @@
+# P10-T14: Thread-Träger auf dem bestehenden SMP-Planer.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert, LaufzeitFehler
+aus "kern_laufzeit_faden" importiere laufzeit_kontext, laufzeit_kontext_starten
+aus "kern_laufzeit_postfach" importiere LaufzeitPostfach, laufzeit_post_neu, laufzeit_post_halten, laufzeit_post_freigeben, laufzeit_post_leeren, laufzeit_post_abgeben, laufzeit_post_schliessen, laufzeit_post_uebernehmen
+aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_bool, laufzeit_nullspeicher, laufzeit_werfen, kern_c_moo_retain, kern_c_moo_release, kern_c_moo_teilen, free
+aus "kern_smp" importiere smp_planer
+aus "kern_smp_planer" importiere smp_faden_anbieten, smp_online_maske
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_bedingung" importiere KernBedingung, bedingung_warten, bedingung_wecken
+
+extern "C" funktion kern_c_moo_mt_aktivieren() -> void
+extern "C" funktion kern_c_moo_func_aritaet_ok(f: ptr[u8], anzahl: i32) -> bool
+extern "C" funktion kern_c_moo_ist_geteilt(wert: LaufzeitWert) -> bool
+extern "C" funktion kern_c_moo_func_call_0(f: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_1(f: LaufzeitWert, a0: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_2(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_3(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_4(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert, a3: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_5(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert, a3: LaufzeitWert, a4: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_6(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert, a3: LaufzeitWert, a4: LaufzeitWert, a5: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_7(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert, a3: LaufzeitWert, a4: LaufzeitWert, a5: LaufzeitWert, a6: LaufzeitWert) -> LaufzeitWert
+extern "C" funktion kern_c_moo_func_call_8(f: LaufzeitWert, a0: LaufzeitWert, a1: LaufzeitWert, a2: LaufzeitWert, a3: LaufzeitWert, a4: LaufzeitWert, a5: LaufzeitWert, a6: LaufzeitWert, a7: LaufzeitWert) -> LaufzeitWert
+
+@nativ
+konstante LWT_KEIN_FADEN: [u8; 33] auf [119, 97, 114, 116, 101, 110, 58, 32, 100, 101, 114, 32, 87, 101, 114, 116, 32, 105, 115, 116, 32, 107, 101, 105, 110, 32, 84, 104, 114, 101, 97, 100, 0]
+
+@nativ
+konstante LWT_FERTIG: [u8; 33] auf [102, 101, 114, 116, 105, 103, 58, 32, 100, 101, 114, 32, 87, 101, 114, 116, 32, 105, 115, 116, 32, 107, 101, 105, 110, 32, 84, 104, 114, 101, 97, 100, 0]
+
+@nativ
+konstante LWT_ANDERER: [u8; 136] auf [119, 97, 114, 116, 101, 110, 58, 32, 97, 117, 102, 32, 100, 105, 101, 115, 101, 110, 32, 84, 104, 114, 101, 97, 100, 32, 119, 97, 114, 116, 101, 116, 32, 98, 101, 114, 101, 105, 116, 115, 32, 101, 105, 110, 32, 97, 110, 100, 101, 114, 101, 114, 32, 84, 104, 114, 101, 97, 100, 59, 32, 100, 97, 115, 32, 69, 114, 103, 101, 98, 110, 105, 115, 32, 103, 101, 104, 111, 101, 114, 116, 32, 100, 101, 109, 32, 101, 114, 115, 116, 101, 110, 32, 87, 97, 114, 116, 101, 110, 100, 101, 110, 46, 32, 69, 114, 103, 101, 98, 110, 105, 115, 32, 112, 101, 114, 32, 75, 97, 110, 97, 108, 32, 119, 101, 105, 116, 101, 114, 103, 101, 98, 101, 110, 46, 0]
+
+@nativ
+konstante LWT_START: [u8; 72] auf [84, 104, 114, 101, 97, 100, 32, 101, 114, 115, 116, 101, 108, 108, 101, 110, 32, 102, 101, 104, 108, 103, 101, 115, 99, 104, 108, 97, 103, 101, 110, 32, 40, 115, 109, 112, 95, 102, 97, 100, 101, 110, 95, 97, 110, 98, 105, 101, 116, 101, 110, 58, 32, 107, 101, 105, 110, 32, 102, 114, 101, 105, 101, 114, 32, 70, 97, 100, 101, 110, 41, 0]
+
+@nativ
+konstante LWT_ARG: [u8; 49] auf [115, 116, 97, 114, 116, 101, 58, 32, 104, 111, 101, 99, 104, 115, 116, 101, 110, 115, 32, 56, 32, 65, 114, 103, 117, 109, 101, 110, 116, 101, 32, 102, 117, 101, 114, 32, 100, 105, 101, 32, 70, 117, 110, 107, 116, 105, 111, 110, 0]
+
+@nativ
+konstante LWT_FUNC: [u8; 36] auf [115, 116, 97, 114, 116, 101, 58, 32, 100, 101, 114, 32, 87, 101, 114, 116, 32, 105, 115, 116, 32, 107, 101, 105, 110, 101, 32, 70, 117, 110, 107, 116, 105, 111, 110, 0]
+
+struktur LaufzeitListe:
+    refcount: i32
+    eingefroren: bool
+    elemente: u64
+    anzahl: i32
+    kapazitaet: i32
+
+struktur LaufzeitWertPlatz:
+    wert: LaufzeitWert
+
+struktur LaufzeitThread:
+    refcount: i32
+    reserve: i32
+    ergebnis: LaufzeitWert
+    beendet: bool
+    gejoint: bool
+    wartender: ptr[LaufzeitPostfach]
+    postfach: ptr[LaufzeitPostfach]
+    mutex: KernMutex
+    fertig: KernBedingung
+    funktionswert: LaufzeitWert
+    argument: LaufzeitWert
+    anzahl: i32
+
+@nativ
+funktion laufzeit_post_mein() -> ptr[LaufzeitPostfach]:
+    unsicher:
+        setze k: ptr[LaufzeitFehler] auf laufzeit_kontext()
+        wenn k.postfach == 0:
+            k.postfach = u64(laufzeit_post_neu(1))
+        gib_zurück zeiger(k.postfach)
+
+@nativ
+funktion laufzeit_listenwert(liste: ptr[LaufzeitListe], index: i32) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitWertPlatz] auf zeiger(liste.elemente + u64(index) * groesse_von(LaufzeitWert))
+        gib_zurück p.wert
+
+@nativ
+funktion laufzeit_thread_aufrufen(t: ptr[LaufzeitThread]) -> LaufzeitWert:
+    unsicher:
+        wenn t.anzahl < 0:
+            kern_c_moo_retain(t.argument)
+            gib_zurück kern_c_moo_func_call_1(t.funktionswert, t.argument)
+        setze l: ptr[LaufzeitListe] auf zeiger(t.argument.daten)
+        setze i: i32 auf 0
+        solange i < t.anzahl:
+            kern_c_moo_retain(laufzeit_listenwert(l, i))
+            setze i auf i + 1
+        wenn t.anzahl == 0:
+            gib_zurück kern_c_moo_func_call_0(t.funktionswert)
+        wenn t.anzahl == 1:
+            gib_zurück kern_c_moo_func_call_1(t.funktionswert, laufzeit_listenwert(l, 0))
+        wenn t.anzahl == 2:
+            gib_zurück kern_c_moo_func_call_2(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1))
+        wenn t.anzahl == 3:
+            gib_zurück kern_c_moo_func_call_3(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2))
+        wenn t.anzahl == 4:
+            gib_zurück kern_c_moo_func_call_4(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2), laufzeit_listenwert(l, 3))
+        wenn t.anzahl == 5:
+            gib_zurück kern_c_moo_func_call_5(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2), laufzeit_listenwert(l, 3), laufzeit_listenwert(l, 4))
+        wenn t.anzahl == 6:
+            gib_zurück kern_c_moo_func_call_6(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2), laufzeit_listenwert(l, 3), laufzeit_listenwert(l, 4), laufzeit_listenwert(l, 5))
+        wenn t.anzahl == 7:
+            gib_zurück kern_c_moo_func_call_7(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2), laufzeit_listenwert(l, 3), laufzeit_listenwert(l, 4), laufzeit_listenwert(l, 5), laufzeit_listenwert(l, 6))
+        sonst:
+            gib_zurück kern_c_moo_func_call_8(t.funktionswert, laufzeit_listenwert(l, 0), laufzeit_listenwert(l, 1), laufzeit_listenwert(l, 2), laufzeit_listenwert(l, 3), laufzeit_listenwert(l, 4), laufzeit_listenwert(l, 5), laufzeit_listenwert(l, 6), laufzeit_listenwert(l, 7))
+
+@nativ
+funktion laufzeit_thread_arbeiter(daten: u64) -> void:
+    unsicher:
+        setze t: ptr[LaufzeitThread] auf zeiger(daten)
+        wenn nicht laufzeit_kontext_starten(1):
+            solange wahr:
+                assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+        laufzeit_kontext().postfach = u64(t.postfach)
+        setze ergebnis: LaufzeitWert auf laufzeit_thread_aufrufen(t)
+        laufzeit_post_schliessen(t.postfach)
+        laufzeit_post_freigeben(t.postfach)
+        laufzeit_kontext().postfach = 0
+        mutex_nimm(smp_planer(), zeiger(adresse_von(t.mutex)))
+        t.ergebnis = ergebnis
+        t.beendet = wahr
+        bedingung_wecken(smp_planer(), zeiger(adresse_von(t.fertig)))
+        mutex_gib(smp_planer(), zeiger(adresse_von(t.mutex)))
+
+@nativ
+funktion laufzeit_thread_starten(f: LaufzeitWert, arg: LaufzeitWert, anzahl: i32) -> LaufzeitWert:
+    unsicher:
+        wenn f.tag != 6 oder f.daten == 0:
+            kern_c_moo_release(f)
+            kern_c_moo_release(arg)
+            laufzeit_werfen(zeiger(adresse_von(LWT_FUNC)))
+            gib_zurück laufzeit_nichts()
+        setze aritaet: i32 auf anzahl
+        wenn aritaet < 0:
+            setze aritaet auf 1
+        wenn nicht kern_c_moo_func_aritaet_ok(zeiger(f.daten), aritaet):
+            kern_c_moo_release(f)
+            kern_c_moo_release(arg)
+            gib_zurück laufzeit_nichts()
+        kern_c_moo_mt_aktivieren()
+        kern_c_moo_teilen(f)
+        kern_c_moo_teilen(arg)
+        setze t: ptr[LaufzeitThread] auf zeiger(laufzeit_nullspeicher(groesse_von(LaufzeitThread)))
+        t.refcount = 1
+        t.ergebnis = laufzeit_nichts()
+        t.postfach = laufzeit_post_neu(2)
+        t.funktionswert = f
+        t.argument = arg
+        t.anzahl = anzahl
+        setze nummer: u32 auf smp_faden_anbieten(adresse_von(laufzeit_thread_arbeiter), u64(t), smp_online_maske())
+        wenn nummer == 0:
+            laufzeit_post_freigeben(t.postfach)
+            laufzeit_post_freigeben(t.postfach)
+            kern_c_moo_release(f)
+            kern_c_moo_release(arg)
+            free(zeiger(u64(t)))
+            laufzeit_werfen(zeiger(adresse_von(LWT_START)))
+            gib_zurück laufzeit_nichts()
+        gib_zurück LaufzeitWert(9, u64(t))
+
+@nativ
+funktion kern_rt_moo_thread_spawn(f: LaufzeitWert, arg: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        gib_zurück laufzeit_thread_starten(f, arg, -1)
+
+@nativ
+funktion kern_rt_moo_thread_spawn_n(f: LaufzeitWert, liste: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn liste.tag != 4 oder liste.daten == 0:
+            kern_c_moo_release(f)
+            kern_c_moo_release(liste)
+            laufzeit_werfen(zeiger(adresse_von(LWT_ARG)))
+            gib_zurück laufzeit_nichts()
+        setze p: ptr[LaufzeitListe] auf zeiger(liste.daten)
+        wenn p.anzahl < 0 oder p.anzahl > 8:
+            kern_c_moo_release(f)
+            kern_c_moo_release(liste)
+            laufzeit_werfen(zeiger(adresse_von(LWT_ARG)))
+            gib_zurück laufzeit_nichts()
+        gib_zurück laufzeit_thread_starten(f, liste, p.anzahl)
+
+# Caller hält den Thread-Mutex. Genau der erste Join übernimmt die Worker-Werte.
+@nativ
+funktion laufzeit_thread_join(t: ptr[LaufzeitThread], ich: ptr[LaufzeitPostfach]) -> void:
+    unsicher:
+        solange nicht t.beendet:
+            bedingung_warten(smp_planer(), zeiger(adresse_von(t.fertig)), zeiger(adresse_von(t.mutex)))
+        wenn nicht t.gejoint:
+            laufzeit_post_uebernehmen(t.postfach, ich)
+            kern_c_moo_release(t.funktionswert)
+            kern_c_moo_release(t.argument)
+            t.funktionswert = laufzeit_nichts()
+            t.argument = laufzeit_nichts()
+            t.gejoint = wahr
+
+@nativ
+funktion kern_rt_moo_thread_wait(thread: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn thread.tag != 9 oder thread.daten == 0:
+            laufzeit_werfen(zeiger(adresse_von(LWT_KEIN_FADEN)))
+            gib_zurück laufzeit_nichts()
+        setze t: ptr[LaufzeitThread] auf zeiger(thread.daten)
+        setze ich: ptr[LaufzeitPostfach] auf laufzeit_post_mein()
+        laufzeit_post_leeren(ich)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(t.mutex)))
+        wenn u64(t.wartender) == 0:
+            laufzeit_post_halten(ich)
+            t.wartender = ich
+        sonst wenn u64(t.wartender) != u64(ich):
+            mutex_gib(smp_planer(), zeiger(adresse_von(t.mutex)))
+            laufzeit_werfen(zeiger(adresse_von(LWT_ANDERER)))
+            gib_zurück laufzeit_nichts()
+        laufzeit_thread_join(t, ich)
+        setze r: LaufzeitWert auf t.ergebnis
+        kern_c_moo_retain(r)
+        mutex_gib(smp_planer(), zeiger(adresse_von(t.mutex)))
+        gib_zurück r
+
+@nativ
+funktion kern_rt_moo_thread_done(thread: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn thread.tag != 9 oder thread.daten == 0:
+            laufzeit_werfen(zeiger(adresse_von(LWT_FERTIG)))
+            gib_zurück laufzeit_nichts()
+        setze t: ptr[LaufzeitThread] auf zeiger(thread.daten)
+        mutex_nimm(smp_planer(), zeiger(adresse_von(t.mutex)))
+        setze fertig: bool auf t.gejoint
+        mutex_gib(smp_planer(), zeiger(adresse_von(t.mutex)))
+        gib_zurück laufzeit_bool(fertig)
+
+@nativ
+funktion kern_rt_moo_thread_free(p: ptr[u8]) -> void:
+    unsicher:
+        wenn u64(p) == 0:
+            gib_zurück
+        setze t: ptr[LaufzeitThread] auf zeiger(u64(p))
+        setze ich: ptr[LaufzeitPostfach] auf laufzeit_post_mein()
+        mutex_nimm(smp_planer(), zeiger(adresse_von(t.mutex)))
+        laufzeit_thread_join(t, ich)
+        mutex_gib(smp_planer(), zeiger(adresse_von(t.mutex)))
+        laufzeit_post_leeren(ich)
+        wenn u64(t.wartender) == 0 oder kern_c_moo_ist_geteilt(t.ergebnis):
+            kern_c_moo_release(t.ergebnis)
+        sonst:
+            laufzeit_post_abgeben(t.wartender, ich, t.ergebnis)
+        laufzeit_post_freigeben(t.wartender)
+        laufzeit_post_freigeben(t.postfach)
+        free(p)

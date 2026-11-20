@@ -1,0 +1,4 @@
+aus "../../../beispiele/kernel/kern_laufzeit_atom_api" importiere kern_rt_moo_atom_neu, kern_rt_moo_atom_laden, kern_rt_moo_atom_speichern, kern_rt_moo_atom_addieren, kern_rt_moo_atom_tauschen, kern_rt_moo_atom_vergleichen_und_tauschen, kern_rt_moo_atom_free
+@nativ
+@sektion(".data.moo_laufzeit")
+konstante LAUFZEIT_PROFIL: [u64; 1] auf [1]

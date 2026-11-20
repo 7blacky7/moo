@@ -1,0 +1,122 @@
+# Kleine positionsunabhängige QEMU-Nutzerprogramme zum Testen des Kernel-ABI.
+aus "kern_adressraum" importiere Adressraum, AR_ERSTE_VA, AR_SCHREIBEN, AR_AUSFUEHREN, adressraum_neu, adressraum_freigeben, ar_abbilden
+aus "kern_syscall" importiere BenutzerProzess, syscall_prozess_starten
+aus "kern_smp" importiere smp_anzahl, smp_planer
+aus "kern_ap" importiere ap_ist_online
+aus "kern_faden" importiere faden_abgeben
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch RING3_PROBE_RAUM: Adressraum auf 0
+@nativ
+statisch RING3_PROBE_PROZESS: BenutzerProzess auf 0
+@nativ
+konstante T_RING3_GP_OK: [u8; _] auf "MOO-RING3-GP-ABGEFANGEN\n"
+@nativ
+konstante T_RING3_PF_OK: [u8; _] auf "MOO-RING3-PF-ABGEFANGEN\n"
+@nativ
+konstante T_RING3_PROBE_CPU: [u8; _] auf "MOO-RING3 PROBE CPU "
+@nativ
+konstante T_RING3_PROBE_GRUND: [u8; _] auf "MOO-RING3 PROBE GRUND "
+@nativ
+konstante T_RING3_PROBE_KODE: [u8; _] auf "MOO-RING3 PROBE KODE "
+
+@nativ
+@nackt
+@verschiebbar
+@sektion(".text.ring3.normal")
+@einstieg
+funktion ring3_probe_normal() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movw %cs, %ax; andw $$3, %ax; cmpw $$3, %ax; jne .Lring3_fehler; movq %xmm0, %rax; testq %rax, %rax; jne .Lring3_fehler; movabsq $$0x123456789ABCDEF0, %r13; movq %r13, %xmm0; movl $$1, %eax; movl $$0x400000, %edi; movl $$1, %esi; syscall; cmpq $$-14, %rax; jne .Lring3_fehler; movl $$99, %eax; syscall; cmpq $$-38, %rax; jne .Lring3_fehler; movl $$2, %eax; syscall; testq %rax, %rax; jne .Lring3_fehler; movl $$3, %eax; movl $$2, %edi; syscall; testq %rax, %rax; jne .Lring3_fehler; rdtsc; shlq $$32, %rdx; orq %rax, %rdx; movq %rdx, %r14; .Lring3_takt: pause; rdtsc; shlq $$32, %rdx; orq %rax, %rdx; subq %r14, %rdx; cmpq $$80000000, %rdx; jb .Lring3_takt; movq %xmm0, %rax; cmpq %r13, %rax; jne .Lring3_fehler; movl $$1, %eax; leaq .Lring3_text(%rip), %rdi; movl $$.Lring3_text_ende-.Lring3_text, %esi; syscall; cmpq $$.Lring3_text_ende-.Lring3_text, %rax; jne .Lring3_fehler; xorl %eax, %eax; movl $$23, %edi; syscall; .Lring3_fehler: xorl %eax, %eax; movl $$1, %edi; syscall; ud2; .Lring3_text: .byte 77, 79, 79, 45, 82, 73, 78, 71, 51, 32, 85, 83, 69, 82, 32, 83, 67, 72, 82, 69, 73, 66, 69, 10; .Lring3_text_ende:", clobber=[])
+
+@nativ
+@nackt
+@verschiebbar
+@sektion(".text.ring3.gp")
+@einstieg
+funktion ring3_probe_gp() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="hlt; ud2", clobber=[])
+
+@nativ
+@nackt
+@verschiebbar
+@sektion(".text.ring3.pf")
+@einstieg
+funktion ring3_probe_pf() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movabsq $$0x0000008000200000, %rax; movq (%rax), %rax; ud2", clobber=[])
+
+@nativ
+funktion ring3_probe_fall(cpu: u32, phys: u64, quelle: u64, bytes: u64, grund: u64, kode: u64, dauer: u64, log_adr: u64) -> bool:
+    unsicher:
+        wenn bytes == 0 oder bytes > 4096:
+            gib_zurück falsch
+        setze raum: ptr[Adressraum] auf zeiger(adresse_von(RING3_PROBE_RAUM))
+        setze prozess: ptr[BenutzerProzess] auf zeiger(adresse_von(RING3_PROBE_PROZESS))
+        wenn nicht adressraum_neu(raum):
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < 8192:
+            speicher_schreiben(phys + i, u8(0), 1)
+            setze i auf i + 1
+        setze i auf 0
+        solange i < bytes:
+            speicher_schreiben(phys + i, speicher_lesen(quelle + i, 1), 1)
+            setze i auf i + 1
+        wenn nicht ar_abbilden(raum, AR_ERSTE_VA, phys, AR_AUSFUEHREN) oder nicht ar_abbilden(raum, AR_ERSTE_VA + 16384, phys + 4096, AR_SCHREIBEN):
+            gib_zurück falsch
+        atom_speichern(prozess.bp_status, 0, ordnung=locker)
+        wenn syscall_prozess_starten(cpu, prozess, raum, 0x0000800000000000, AR_ERSTE_VA + 20480, phys + 8192):
+            gib_zurück falsch
+        wenn nicht syscall_prozess_starten(cpu, prozess, raum, AR_ERSTE_VA, AR_ERSTE_VA + 20480, phys + 8192):
+            gib_zurück falsch
+        setze start: u64 auf takt()
+        solange atom_laden(prozess.bp_status, ordnung=erwerben) != 2 und takt() - start < dauer:
+            faden_abgeben(smp_planer())
+        wenn atom_laden(prozess.bp_status, ordnung=erwerben) != 2:
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(T_RING3_PROBE_GRUND), prozess.bp_grund)
+        log(adresse_von(T_RING3_PROBE_KODE), prozess.bp_kode)
+        setze richtig: bool auf prozess.bp_grund == grund und prozess.bp_kode == kode
+        solange takt() - start < dauer:
+            wenn adressraum_freigeben(raum):
+                gib_zurück richtig
+            faden_abgeben(smp_planer())
+        gib_zurück falsch
+
+@nativ
+funktion ring3_probe_lauf(phys: u64, tsc: u64, log_adr: u64, text_adr: u64) -> bool:
+    unsicher:
+        wenn phys == 0 oder tsc == 0 oder smp_anzahl() == 0:
+            gib_zurück falsch
+        setze cpu: u32 auf smp_anzahl() - 1
+        wenn nicht ap_ist_online(cpu):
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze text: ptr[fn[sysv64](u64) -> void] auf zeiger(text_adr)
+        log(adresse_von(T_RING3_PROBE_CPU), u64(cpu))
+        setze dauer: u64 auf tsc * 3000000
+        setze quelle: u64 auf sektion_anfang(".text.ring3.gp")
+        wenn nicht ring3_probe_fall(cpu, phys, quelle, sektion_ende(".text.ring3.gp") - quelle, 14, 0, dauer, log_adr):
+            gib_zurück falsch
+        text(adresse_von(T_RING3_GP_OK))
+        setze quelle auf sektion_anfang(".text.ring3.pf")
+        wenn nicht ring3_probe_fall(cpu, phys, quelle, sektion_ende(".text.ring3.pf") - quelle, 15, 4, dauer, log_adr):
+            gib_zurück falsch
+        text(adresse_von(T_RING3_PF_OK))
+        setze quelle auf sektion_anfang(".text.ring3.normal")
+        gib_zurück ring3_probe_fall(cpu, phys, quelle, sektion_ende(".text.ring3.normal") - quelle, 0, 23, dauer, log_adr)
+
+@nativ
+funktion ring3_probe_starten(phys: u64, tsc: u64, log_adr: u64, text_adr: u64) -> bool:
+    unsicher:
+        # Auch beim Warten auf denselben Kern muss der LAPIC Schlafzeiten zählen.
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gut: bool auf ring3_probe_lauf(phys, tsc, log_adr, text_adr)
+        irq_wiederherstellen(irq)
+        gib_zurück gut

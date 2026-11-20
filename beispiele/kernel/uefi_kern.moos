@@ -20,10 +20,25 @@
 # P10-T5: benannte x86-Bitbereiche statt Handmasken in GDT/IDT.
 importiere nativ_x86_deskriptoren
 
+# Optionaler skalarer Laufzeit-Einstieg; Minimalprofil liefert weak return 0.
+extern "C" funktion moo_laufzeit_programm() -> i32
+aus "kern_syscall_abi" importiere syscall_gdt_schreiben
+aus "kern_syscall" importiere syscall_initialisieren, syscall_benutzer_fehler, syscall_fatal_gs
+aus "kern_syscall_probe" importiere ring3_probe_starten
+aus "kern_smp" importiere smp_madt_lesen, smp_ressourcen, smp_planer, smp_faden_stapel, smp_melden, smp_nummer
+aus "kern_smp_planer" importiere IPI_NEUPLAN, IPI_TLB, IPI_HALT, smp_planer_initialisieren, smp_tlb_lokal, smp_tlb_abgleich, smp_alle_halten
+aus "kern_ap" importiere ap_starten, ap_bericht, ap_halt_quittieren
+aus "kern_smp_probe" importiere smp_probe_starten, smp_probe_halten
+
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, sperre_pruefen, unterbrechungen_an, unterbrechungen_aus, irq_sichern, irq_wiederherstellen
+aus "kern_faden" importiere FadenPlaner, FADEN_ANZAHL, FADEN_STACK_SEITEN, faden_planer_starten, faden_erzeugen, faden_abgeben, faden_pingpong_pruefen, planer_tick, faden_praeemption_pruefen, faden_schlafen, faden_wecken
+aus "kern_kanal" importiere kanal_pruefen
+aus "kern_adressraum" importiere ar_cpu_einrichten, adressraum_initialisieren, AR_ERSTE_VA
+aus "kern_adressraum_probe" importiere ar_probe_starten, ar_probe_schutz
 aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe, moo_bare_font_mono
-aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar, usb_braucht_poll
 aus "kern_tastatur" importiere tastatur_codepunkt
 aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
 aus "usb_speicher" importiere usb_speicher_pruefen
@@ -117,6 +132,93 @@ struktur Schirm:
 konstante RSDP_SIGNATUR: u64 auf 0x2052545020445352
 
 # ---------------- Statischer Speicher (P7-T6: @nativ statisch) ----------------
+@nativ
+statisch PFA_SPERRE: KernSperre auf 0
+@nativ
+statisch HEAP_SPERRE: KernSperre auf 0
+@nativ
+statisch KONSOLE_SPERRE: KernSperre auf 0
+@nativ
+statisch KERN_TICKS: atom[u64] auf 0
+
+@nativ
+konstante T_SPERRE_OK: [u8; _] auf "MOO-SPERRE-OK\n"
+
+@nativ
+statisch KERN_FADEN_PLANER: FadenPlaner auf 0
+
+# Nur das QEMU-Gate schaltet die Wächterprobe in seiner privaten ELF-Kopie ein.
+@nativ
+statisch FADEN_WACHT_PROFIL: [u64; 2] auf [0x3144474E45444146, 0]
+@nativ
+statisch SMP_STRESS_PROFIL: [u64; 2] auf [0x3130504D534F4F4D, 0]
+@nativ
+konstante T_SMP_PROBE_NEIN: [u8; _] auf "MOO-SMP-FEHLER\n"
+
+@nativ
+statisch AR_PROFIL: [u64; 2] auf [0x31303052414F4F4D, 0]
+@nativ
+konstante T_AR_OK: [u8; _] auf "MOO-AR-OK\n"
+@nativ
+konstante T_AR_FEHLER: [u8; _] auf "MOO-AR-FEHLER\n"
+@nativ
+konstante T_AR_SCHUTZ: [u8; _] auf "MOO-AR SCHUTZ ERWARTET "
+
+@nativ
+statisch RING3_PROFIL: [u64; 2] auf [0x33474E49524F4F4D, 0]
+@nativ
+konstante T_RING3_OK: [u8; _] auf "MOO-RING3-OK\n"
+@nativ
+konstante T_RING3_PROBE_FEHLER: [u8; _] auf "MOO-RING3-FEHLER\n"
+
+@nativ
+konstante T_SMP_TLB_OK: [u8; _] auf "MOO-SMP-TLB-OK\n"
+@nativ
+konstante T_SMP_HALT_OK: [u8; _] auf "MOO-SMP-HALT-OK\n"
+@nativ
+konstante T_SMP_PROBE_OK: [u8; _] auf "MOO-SMP-OK\n"
+
+@nativ
+konstante T_FADEN_OK: [u8; _] auf "MOO-FADEN-PINGPONG-OK\n"
+
+@nativ
+konstante T_PRAEEMPT_OK: [u8; _] auf "MOO-PRAEEMPT-OK\n"
+
+@nativ
+konstante T_PRAEEMPT_FEHLER: [u8; _] auf "MOO-PRAEEMPT-FEHLER\n"
+
+@nativ
+konstante T_KANAL_OK: [u8; _] auf "MOO-KANAL-OK\n"
+
+@nativ
+konstante T_KANAL_FEHLER: [u8; _] auf "MOO-KANAL-FEHLER\n"
+
+@nativ
+konstante T_DIENSTE_FEHLER: [u8; _] auf "MOO-FADEN DIENSTE FEHLER\n"
+
+struktur KernDienste:
+    kd_eingabe: u32
+    kd_ps2: bool
+    kd_timer: bool
+    kd_eingabe_ticks: u64
+    kd_tsc_pro_us: u64
+
+@nativ
+statisch KERN_DIENSTE: KernDienste auf 0
+
+@nativ
+statisch EINGABE_EREIGNISSE: atom[u64] auf 0
+
+@nativ
+konstante T_FADEN_FEHLER: [u8; _] auf "MOO-FADEN-START-FEHLER\n"
+
+@nativ
+konstante T_FADEN_WACHT: [u8; _] auf "MOO-FADEN WAECHTER ERWARTET "
+
+@nativ
+konstante T_AUS_CR2: [u8; _] auf "MOO-KERNEL AUSNAHME CR2 "
+
+
 # Stack des Kerns (vorher im Linkerskript).
 @nativ
 @ausrichten(16)
@@ -147,16 +249,16 @@ konstante T_SCHRIFT_KOMPAKT: [u8; _] auf "MOO-KERNEL SCHRIFT KOMPAKT\n"
 @nativ
 statisch SCHIRM: Schirm auf 0
 
-# GDT: Null, 64-Bit-Code (0x08), Daten (0x10), TSS (0x18, zwei Slots).
+# GDT mit Kern-/Benutzersegmenten in STAR-Reihenfolge und TSS ab 0x30.
 @nativ
 @ausrichten(16)
-statisch GDT: [u64; 5] auf [0, 0x00AF9A000000FFFF, 0x00CF92000000FFFF, 0, 0]
+statisch GDT: [u64; 8] auf 0
 
 @nativ
 @ausrichten(16)
 statisch GDT_ZEIGER: [u8; 16] auf 0
 
-# 64-Bit-TSS mit IST1 fuer Double Fault sowie 256 IDT-Tore.
+# 64-Bit-TSS mit IST1 für Double Fault, IST2 für Seitenfehler und 256 IDT-Toren.
 @nativ
 @ausrichten(16)
 statisch TSS: [u8; 104] auf 0
@@ -164,6 +266,10 @@ statisch TSS: [u8; 104] auf 0
 @nativ
 @ausrichten(16)
 statisch IST_DOPPELFEHLER: [u8; 16384] auf 0
+
+@nativ
+@ausrichten(16)
+statisch IST_SEITENFEHLER: [u8; 16384] auf 0
 
 @nativ
 @ausrichten(16)
@@ -186,7 +292,7 @@ statisch HARDWARE_ZUSTAND: [u64; 16] auf 0
 @nativ
 konstante USB_MSI_VEKTOR: u16 auf 66
 @nativ
-statisch USB_MSI_IRQS: [u64; 1] auf 0
+statisch USB_MSI_IRQS: atom[u64] auf 0
 @nativ
 konstante T_USB_MSI_IRQ: [u8; _] auf "MOO-KERNEL USB MSI IRQ "
 
@@ -219,6 +325,14 @@ statisch PD_KERN: [u64; 512] auf 0
 @nativ
 @ausrichten(4096)
 statisch PT_KERN: [u64; 16384] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PD_FADEN: [u64; 512] auf 0
+
+@nativ
+@ausrichten(4096)
+statisch PT_FADEN: [u64; 512] auf 0
 
 # P7-T7: Bitmap fuer 64 GiB / 4 KiB = 16.777.216 Frames = 2 MiB.
 # Ein gesetztes Bit bedeutet frei. Vor dem eigenen CR3 werden nur Typ-7-Seiten
@@ -487,7 +601,7 @@ funktion maske_breite(m: u64) -> u64:
 
 # 8-Bit-Kanal auf Maskenbreite skalieren und an die Maskenlage schieben.
 @nativ
-funktion kanal(c: u64, lage: u64, breite: u64) -> u64:
+funktion kern_farbkanal(c: u64, lage: u64, breite: u64) -> u64:
     unsicher:
         wenn breite == 0:
             gib_zurück 0
@@ -536,7 +650,7 @@ funktion praesentieren(quelle: u64, qs: u64, ziel: u64, zs: u64, breite: u64, y0
                 # Bitmaske: jeden Kanal auf Breite/Lage seiner Maske umsetzen.
                 solange x < breite:
                     setze v auf u64(speicher_lesen(q + x * 4, 4))
-                    speicher_schreiben(z + x * 4, u32(kanal(v & 0xFF, lr, br) | kanal((v >> 8) & 0xFF, lg, bg) | kanal((v >> 16) & 0xFF, lb, bb)), 4)
+                    speicher_schreiben(z + x * 4, u32(kern_farbkanal(v & 0xFF, lr, br) | kern_farbkanal((v >> 8) & 0xFF, lg, bg) | kern_farbkanal((v >> 16) & 0xFF, lb, bb)), 4)
                     setze x auf x + 1
             setze y auf y + 1
 
@@ -646,6 +760,14 @@ funktion kon_neue_zeile() -> void:
 @nativ
 funktion zeichen(z: u8) -> void:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        zeichen_gesperrt(z)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion zeichen_gesperrt(z: u8) -> void:
+    unsicher:
         seriell(z)
         netz_zeichen(z)
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
@@ -702,12 +824,44 @@ funktion konsole_starten(links: u64, oben: u64, rechts: u64, unten: u64, schrift
         kon_setze(versatz_von(Konsole, k_schmutz_unten), 0)
         kon_setze(versatz_von(Konsole, k_aktiv), 1)
 
+# Ein Syscall liefert bereits eine geprüfte, begrenzte Kopie im Kernelstack.
 @nativ
-funktion text(adr: u64) -> void:
+funktion kern_syscall_ausgabe(adr: u64, laenge: u64) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze i: u64 auf 0
+        solange i < laenge:
+            zeichen_gesperrt(speicher_lesen(adr + i, 1))
+            setze i auf i + 1
+        spin_gib(sperre, irq)
+
+# Vollprofil-Laufzeit: dieselben Ausgabekanäle und eine Sperre pro Zeile.
+@nativ
+@einstieg
+funktion moo_kern_ausgabe(adr: ptr[u8], zeilenende: bool) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        text_gesperrt(u64(adr))
+        wenn zeilenende:
+            zeichen_gesperrt(10)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion kern_text(adr: u64) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        text_gesperrt(adr)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion text_gesperrt(adr: u64) -> void:
     unsicher:
         setze i: u64 auf 0
         solange speicher_lesen(adr + i, 1) != 0:
-            zeichen(speicher_lesen(adr + i, 1))
+            zeichen_gesperrt(speicher_lesen(adr + i, 1))
             setze i auf i + 1
 
 @nativ
@@ -720,20 +874,38 @@ funktion hex_ziffer(wert: u64, index: u64) -> u8:
 @nativ
 funktion hex(wert: u64) -> void:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        hex_gesperrt(wert)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion hex_gesperrt(wert: u64) -> void:
+    unsicher:
         setze i: u64 auf 0
         solange i < 16:
-            zeichen(hex_ziffer(wert, i))
+            zeichen_gesperrt(hex_ziffer(wert, i))
             setze i auf i + 1
 
 @nativ
 funktion meldung(adr: u64, wert: u64) -> void:
     unsicher:
-        text(adr)
-        hex(wert)
-        zeichen(10)
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        text_gesperrt(adr)
+        hex_gesperrt(wert)
+        zeichen_gesperrt(10)
+        spin_gib(sperre, irq)
 
 @nativ
 funktion anhalten() -> void:
+    unsicher:
+        unterbrechungen_aus()
+        smp_alle_halten()
+        anhalten_lokal()
+
+@nativ
+funktion anhalten_lokal() -> void:
     unsicher:
         solange wahr:
             assembler(ziel="x86_64", code="cli; hlt", clobber=[])
@@ -749,14 +921,13 @@ funktion gdt_einrichten() -> u64:
     unsicher:
         setze z: u64 auf adresse_von(GDT_ZEIGER)
         setze basis: u64 auf adresse_von(TSS)
-        setze niedrig: u64 auf x86_tss_unterwort(basis)
-        # RSP0 und IST1; I/O-Bitmap beginnt hinter dem 104-Byte-TSS.
+        # RSP0, IST1 und IST2; I/O-Bitmap beginnt hinter dem 104-Byte-TSS.
         speicher_schreiben(basis + 4, adresse_von(KERN_STAPEL) + 65536, 8)
         speicher_schreiben(basis + 36, adresse_von(IST_DOPPELFEHLER) + 16384, 8)
+        speicher_schreiben(basis + 44, adresse_von(IST_SEITENFEHLER) + 16384, 8)
         speicher_schreiben(basis + 102, 104, 2)
-        speicher_schreiben(adresse_von(GDT) + 24, niedrig, 8)
-        speicher_schreiben(adresse_von(GDT) + 32, x86_tss_oberwort(basis), 8)
-        speicher_schreiben(z, u16(5 * 8 - 1), 2)
+        syscall_gdt_schreiben(adresse_von(GDT), basis)
+        speicher_schreiben(z, u16(8 * 8 - 1), 2)
         speicher_schreiben(z + 2, adresse_von(GDT), 8)
         gdt_laden(z)
         tss_laden()
@@ -766,7 +937,7 @@ funktion gdt_einrichten() -> u64:
 @nativ
 funktion tss_laden() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="movw $$0x18, %ax; ltr %ax", clobber=["rax", "memory"])
+        assembler(ziel="x86_64", code="movw $$0x30, %ax; ltr %ax", clobber=["rax", "memory"])
 
 @nativ
 funktion idt_laden(zeiger_adr: u64) -> void:
@@ -781,208 +952,251 @@ funktion idt_tor(vektor: u64, ziel: u64, ist: u64) -> void:
         speicher_schreiben(tor + 8, x86_idt_oberwort(ziel), 8)
 
 @nativ
-funktion ausnahme_melden(vektor: u64, fehler: u64, rip: u64) -> void:
+funktion ausnahme_speichern(vektor: u64, fehler: u64, rip: u64) -> void:
     unsicher:
         speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND), vektor, 8)
         speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 8, fehler, 8)
         speicher_schreiben(adresse_von(AUSNAHME_ZUSTAND) + 16, rip, 8)
+
+@nativ
+funktion ausnahme_melden(vektor: u64, fehler: u64, rip: u64) -> void:
+    unsicher:
+        ausnahme_speichern(vektor, fehler, rip)
         meldung(adresse_von(T_AUS_VEKTOR), vektor)
         meldung(adresse_von(T_AUS_FEHLER), fehler)
         meldung(adresse_von(T_AUS_RIP), rip)
         wenn vektor != 3:
             anhalten()
 
+# Benutzer-Ausnahmen wechseln bei Bedarf von IST auf den eigenen Kernelstack.
+@nativ
+funktion ausnahme_eingang(vektor: u64, fehler: u64, rahmen: ptr[u64]) -> void:
+    unsicher:
+        setze rip: u64 auf volatile_lesen(rahmen, 0)
+        wenn (volatile_lesen(rahmen, 1) & 3) == 3:
+            syscall_benutzer_fehler(vektor, fehler, rip)
+        ausnahme_melden(vektor, fehler, rip)
+
 @nativ
 @unterbrechung(0)
 funktion ausnahme_0(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(0, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(0, 0, rahmen)
 
 @nativ
 @unterbrechung(1)
 funktion ausnahme_1(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(1, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(1, 0, rahmen)
 
 @nativ
 @unterbrechung(2)
 funktion ausnahme_2(rahmen: ptr[u64]) -> void:
     unsicher:
+        syscall_fatal_gs()
         ausnahme_melden(2, 0, volatile_lesen(rahmen, 0))
 
 @nativ
 @unterbrechung(3)
 funktion ausnahme_3(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(3, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(3, 0, rahmen)
 
 @nativ
 @unterbrechung(4)
 funktion ausnahme_4(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(4, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(4, 0, rahmen)
 
 @nativ
 @unterbrechung(5)
 funktion ausnahme_5(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(5, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(5, 0, rahmen)
 
 @nativ
 @unterbrechung(6)
 funktion ausnahme_6(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(6, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(6, 0, rahmen)
 
 @nativ
 @unterbrechung(7)
 funktion ausnahme_7(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(7, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(7, 0, rahmen)
 
 @nativ
 @unterbrechung(8)
 funktion ausnahme_8(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
+        syscall_fatal_gs()
         ausnahme_melden(8, fehler, volatile_lesen(rahmen, 0))
 
 @nativ
 @unterbrechung(9)
 funktion ausnahme_9(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(9, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(9, 0, rahmen)
 
 @nativ
 @unterbrechung(10)
 funktion ausnahme_10(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(10, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(10, fehler, rahmen)
 
 @nativ
 @unterbrechung(11)
 funktion ausnahme_11(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(11, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(11, fehler, rahmen)
 
 @nativ
 @unterbrechung(12)
 funktion ausnahme_12(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(12, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(12, fehler, rahmen)
 
 @nativ
 @unterbrechung(13)
 funktion ausnahme_13(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(13, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(13, fehler, rahmen)
+
+# Beim Stapelüberlauf kann die unterbrochene Konsole ihre Sperre halten.
+@nativ
+funktion ausnahme_roh_meldung(namen: u64, wert: u64) -> void:
+    unsicher:
+        setze pos: u64 auf 0
+        setze z: u8 auf als(u8, speicher_lesen(namen, 1))
+        solange z != 0:
+            seriell(z)
+            setze pos auf pos + 1
+            setze z auf als(u8, speicher_lesen(namen + pos, 1))
+        setze pos auf 0
+        solange pos < 16:
+            seriell(hex_ziffer(wert, pos))
+            setze pos auf pos + 1
+        seriell(13)
+        seriell(10)
 
 @nativ
 @unterbrechung(14)
 funktion ausnahme_14(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(14, fehler, volatile_lesen(rahmen, 0))
+        wenn (volatile_lesen(rahmen, 1) & 3) == 3:
+            syscall_benutzer_fehler(14, fehler, volatile_lesen(rahmen, 0))
+        setze cr2: u64 auf assembler(ziel="x86_64", code="movq %cr2, $0", ausgang="=r", clobber=["memory"])
+        setze rip: u64 auf volatile_lesen(rahmen, 0)
+        ausnahme_speichern(14, fehler, rip)
+        ausnahme_roh_meldung(adresse_von(T_AUS_VEKTOR), 14)
+        ausnahme_roh_meldung(adresse_von(T_AUS_FEHLER), fehler)
+        ausnahme_roh_meldung(adresse_von(T_AUS_RIP), rip)
+        ausnahme_roh_meldung(adresse_von(T_AUS_CR2), cr2)
+        anhalten()
 
 @nativ
 @unterbrechung(15)
 funktion ausnahme_15(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(15, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(15, 0, rahmen)
 
 @nativ
 @unterbrechung(16)
 funktion ausnahme_16(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(16, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(16, 0, rahmen)
 
 @nativ
 @unterbrechung(17)
 funktion ausnahme_17(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(17, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(17, fehler, rahmen)
 
 @nativ
 @unterbrechung(18)
 funktion ausnahme_18(rahmen: ptr[u64]) -> void:
     unsicher:
+        syscall_fatal_gs()
         ausnahme_melden(18, 0, volatile_lesen(rahmen, 0))
 
 @nativ
 @unterbrechung(19)
 funktion ausnahme_19(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(19, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(19, 0, rahmen)
 
 @nativ
 @unterbrechung(20)
 funktion ausnahme_20(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(20, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(20, 0, rahmen)
 
 @nativ
 @unterbrechung(21)
 funktion ausnahme_21(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(21, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(21, fehler, rahmen)
 
 @nativ
 @unterbrechung(22)
 funktion ausnahme_22(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(22, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(22, 0, rahmen)
 
 @nativ
 @unterbrechung(23)
 funktion ausnahme_23(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(23, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(23, 0, rahmen)
 
 @nativ
 @unterbrechung(24)
 funktion ausnahme_24(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(24, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(24, 0, rahmen)
 
 @nativ
 @unterbrechung(25)
 funktion ausnahme_25(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(25, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(25, 0, rahmen)
 
 @nativ
 @unterbrechung(26)
 funktion ausnahme_26(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(26, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(26, 0, rahmen)
 
 @nativ
 @unterbrechung(27)
 funktion ausnahme_27(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(27, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(27, 0, rahmen)
 
 @nativ
 @unterbrechung(28)
 funktion ausnahme_28(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(28, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(28, 0, rahmen)
 
 @nativ
 @unterbrechung(29)
 funktion ausnahme_29(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(29, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(29, fehler, rahmen)
 
 @nativ
 @unterbrechung(30)
 funktion ausnahme_30(rahmen: ptr[u64], fehler: u64) -> void:
     unsicher:
-        ausnahme_melden(30, fehler, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(30, fehler, rahmen)
 
 @nativ
 @unterbrechung(31)
 funktion ausnahme_31(rahmen: ptr[u64]) -> void:
     unsicher:
-        ausnahme_melden(31, 0, volatile_lesen(rahmen, 0))
+        ausnahme_eingang(31, 0, rahmen)
 
 @nativ
 funktion idt_einrichten() -> bool:
@@ -990,7 +1204,7 @@ funktion idt_einrichten() -> bool:
         setze z: u64 auf adresse_von(IDT_ZEIGER)
         idt_tor(0, adresse_von(ausnahme_0), 0)
         idt_tor(1, adresse_von(ausnahme_1), 0)
-        idt_tor(2, adresse_von(ausnahme_2), 0)
+        idt_tor(2, adresse_von(ausnahme_2), 1)
         idt_tor(3, adresse_von(ausnahme_3), 0)
         idt_tor(4, adresse_von(ausnahme_4), 0)
         idt_tor(5, adresse_von(ausnahme_5), 0)
@@ -1002,11 +1216,11 @@ funktion idt_einrichten() -> bool:
         idt_tor(11, adresse_von(ausnahme_11), 0)
         idt_tor(12, adresse_von(ausnahme_12), 0)
         idt_tor(13, adresse_von(ausnahme_13), 0)
-        idt_tor(14, adresse_von(ausnahme_14), 0)
+        idt_tor(14, adresse_von(ausnahme_14), 2)
         idt_tor(15, adresse_von(ausnahme_15), 0)
         idt_tor(16, adresse_von(ausnahme_16), 0)
         idt_tor(17, adresse_von(ausnahme_17), 0)
-        idt_tor(18, adresse_von(ausnahme_18), 0)
+        idt_tor(18, adresse_von(ausnahme_18), 1)
         idt_tor(19, adresse_von(ausnahme_19), 0)
         idt_tor(20, adresse_von(ausnahme_20), 0)
         idt_tor(21, adresse_von(ausnahme_21), 0)
@@ -1021,6 +1235,9 @@ funktion idt_einrichten() -> bool:
         idt_tor(30, adresse_von(ausnahme_30), 0)
         idt_tor(31, adresse_von(ausnahme_31), 0)
         idt_tor(als(u64, USB_MSI_VEKTOR), adresse_von(usb_msi_irq), 0)
+        idt_tor(u64(IPI_NEUPLAN), adresse_von(neuplan_irq), 0)
+        idt_tor(u64(IPI_TLB), adresse_von(tlb_irq), 0)
+        idt_tor(u64(IPI_HALT), adresse_von(halt_irq), 0)
         speicher_schreiben(z, u16(256 * 16 - 1), 2)
         speicher_schreiben(z + 2, adresse_von(IDT), 8)
         idt_laden(z)
@@ -1116,6 +1333,7 @@ funktion acpi_tabelle(rsdp: u64, signatur: u32) -> u64:
 @nativ
 funktion madt_auswerten(madt: u64) -> void:
     unsicher:
+        smp_madt_lesen(madt)
         setze laenge: u64 auf u64(speicher_lesen(madt + 4, 4))
         setze pos: u64 auf 44
         setze typ: u64 auf 0
@@ -1220,31 +1438,84 @@ funktion apic_eoi() -> void:
         apic_schreiben(0xB0, 0)
 
 @nativ
-@unterbrechung(64)
-funktion timer_irq(rahmen: ptr[u64]) -> void:
+@nackt
+funktion timer_irq() -> void:
     unsicher:
-        hw_setze(10, hw(10) + 1)
-        apic_eoi()
+        assembler(ziel="x86_64", code="pushq $$64; jmp planer_irq_rahmen", clobber=["memory"])
 
 @nativ
-@unterbrechung(65)
-funktion tastatur_irq(rahmen: ptr[u64]) -> void:
+@nackt
+funktion tastatur_irq() -> void:
     unsicher:
-        wenn (ein8(0x64) & 1) != 0:
-            setze scan: u8 auf ein8(0x60)
-            wenn (scan & 0x80) == 0 und hw(11) == 0:
-                hw_setze(11, u64(scan))
-        apic_eoi()
+        assembler(ziel="x86_64", code="pushq $$65; jmp planer_irq_rahmen", clobber=["memory"])
 
-# Alle HID-Controller wecken dieselbe Kernschleife. Die ISR greift auf
-# keinen wechselnden xHCI-Slot zu. Der Hauptpfad leert die Eventringe.
 @nativ
-@unterbrechung(66)
-funktion usb_msi_irq(rahmen: ptr[u64]) -> void:
+@nackt
+funktion usb_msi_irq() -> void:
     unsicher:
-        setze zaehler: u64 auf adresse_von(USB_MSI_IRQS)
-        speicher_schreiben(zaehler, speicher_lesen(zaehler, 8) + 1, 8)
-        apic_eoi()
+        assembler(ziel="x86_64", code="pushq $$66; jmp planer_irq_rahmen", clobber=["memory"])
+
+@nativ
+@nackt
+funktion neuplan_irq() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pushq $$67; jmp planer_irq_rahmen", clobber=["memory"])
+
+@nativ
+@nackt
+funktion tlb_irq() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pushq $$68; jmp planer_irq_rahmen", clobber=["memory"])
+
+@nativ
+@nackt
+funktion halt_irq() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pushq $$69; jmp planer_irq_rahmen", clobber=["memory"])
+
+# Fünf Hardwareworte, Software-Vektor und 15 GPRs. Kernelursprung behält
+# den FXSAVE-Rahmen. Bei Ring3 liegt der volle Benutzerzustand im Faden.
+@nativ
+@nackt
+@einstieg
+funktion planer_irq_rahmen() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rbp; pushq %rsi; pushq %rdi; pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15; movq %rsp, %r12; andq $$-16, %rsp; subq $$512, %rsp; testb $$3, 136(%r12); jz 1f; swapgs; lfence; pushfq; andq $$-262145, (%rsp); popfq; call syscall_xzustand_sichern; jmp 2f; 1: fxsave64 (%rsp); 2: lfence; leaq 128(%r12), %rdi; movq 120(%r12), %rsi; cld; call planer_irq_dienst; testb $$3, 136(%r12); jz 3f; call syscall_xzustand_laden; swapgs; jmp 4f; 3: fxrstor64 (%rsp); 4: movq %r12, %rsp; popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8; popq %rdi; popq %rsi; popq %rbp; popq %rdx; popq %rcx; popq %rbx; popq %rax; addq $$8, %rsp; iretq", clobber=["memory"])
+
+@nativ
+@einstieg
+funktion planer_irq_dienst(rahmen: ptr[u64], vektor: u64) -> void:
+    unsicher:
+        wenn vektor == 65:
+            ps2_level_maske(wahr)
+            apic_eoi()
+            eingabe_irq_signal()
+        sonst wenn vektor == 66:
+            atom_addieren(USB_MSI_IRQS, 1, ordnung=locker)
+            apic_eoi()
+            eingabe_irq_signal()
+        sonst wenn vektor == 68:
+            smp_tlb_lokal()
+            apic_eoi()
+        sonst wenn vektor == 69:
+            apic_eoi()
+            ap_halt_quittieren()
+            anhalten_lokal()
+        sonst:
+            apic_eoi()
+            wenn vektor == 64:
+                wenn smp_nummer() == 0:
+                    atom_addieren(KERN_TICKS, 1, ordnung=locker)
+                planer_tick(smp_planer(), rahmen)
+            sonst:
+                faden_abgeben(smp_planer())
+
+@nativ
+funktion eingabe_irq_signal() -> void:
+    unsicher:
+        atom_addieren(EINGABE_EREIGNISSE, 1, ordnung=locker)
+        wenn KERN_DIENSTE.kd_eingabe != 0:
+            faden_wecken(smp_planer(), KERN_DIENSTE.kd_eingabe)
 
 @nativ
 funktion pm_vergangen(start: u64) -> u64:
@@ -1262,7 +1533,7 @@ funktion timer_starten(tsc_pro_us: u64) -> u64:
         wenn nicht apic_starten():
             gib_zurück 0
         idt_tor(64, adresse_von(timer_irq), 0)
-        hw_setze(10, 0)
+        atom_speichern(KERN_TICKS, 0, ordnung=locker)
         apic_schreiben(0x3E0, 3)
         apic_schreiben(0x320, 0x10000 | 64)
         apic_schreiben(0x380, 0xFFFFFFFF)
@@ -1392,15 +1663,32 @@ funktion ps2_starten() -> bool:
         hw_setze(11, 0)
         gib_zurück ioapic_route(hw(8), 65, hw(9))
 
+# Bei ACPI-Level-Override ist IRQ1 bis zum Leeren des i8042-Ausgangs maskiert.
 @nativ
-funktion unterbrechungen_an() -> void:
+funktion ps2_level_maske(sperren: bool) -> void:
     unsicher:
-        assembler(ziel="x86_64", code="sti", clobber=["memory"])
+        wenn ((hw(9) >> 2) & 3) == 3:
+            setze reg: u64 auf 0x10 + (hw(8) - hw(7)) * 2
+            setze eintrag: u32 auf ioapic_lesen(reg)
+            wenn sperren:
+                ioapic_schreiben(reg, eintrag | 0x10000)
+            sonst:
+                ioapic_schreiben(reg, eintrag & 0xFFFEFFFF)
 
 @nativ
-funktion unterbrechungen_aus() -> void:
+funktion ps2_berichte() -> bool:
     unsicher:
-        assembler(ziel="x86_64", code="cli", clobber=["memory"])
+        setze i: u64 auf 0
+        solange i < 32 und (ein8(0x64) & 1) != 0:
+            setze scan: u8 auf ein8(0x60)
+            wenn (scan & 0x80) == 0 und hw(11) == 0:
+                hw_setze(11, u64(scan))
+            setze i auf i + 1
+        wenn i < 32:
+            setze irq: u64 auf irq_sichern()
+            ps2_level_maske(falsch)
+            irq_wiederherstellen(irq)
+        gib_zurück i == 32
 
 @nativ
 funktion bis_unterbrechung_warten() -> void:
@@ -1484,16 +1772,23 @@ funktion paging_einrichten(bi: u64, max_phys: u64, fb: u64, fb_groesse: u64) -> 
 statisch PD_MMIO: [u64; 512] auf 0
 @nativ
 statisch MMIO_NAECHSTE: [u64; 1] auf 0
+@nativ
+statisch MMIO_SPERRE: KernSperre auf 0
 
 @nativ
 funktion kern_mmio_abbilden(bi: u64, basis: u64, bytes: u64) -> u64:
     unsicher:
+        wenn bytes == 0 oder bytes > 0x10000000 oder basis >= 0x1000000000000 oder bytes > 0x1000000000000 - basis:
+            gib_zurück 0
         setze offset: u64 auf basis & 0x1FFFFF
         setze seiten: u64 auf (offset + bytes + 0x1FFFFF) / 0x200000
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(MMIO_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
         setze pd: u64 auf adresse_von(PD_MMIO)
         setze i: u64 auf 0
         setze naechste: u64 auf speicher_lesen(adresse_von(MMIO_NAECHSTE), 8)
-        wenn bytes == 0 oder bytes > 0x10000000 oder basis >= 0x1000000000000 oder naechste + seiten > 512:
+        wenn naechste + seiten > 512:
+            spin_gib(sperre, irq)
             gib_zurück 0
         solange i < seiten:
             # Jede BAR behaelt ihr UC-Fenster; Netz und USB laufen gleichzeitig.
@@ -1501,7 +1796,9 @@ funktion kern_mmio_abbilden(bi: u64, basis: u64, bytes: u64) -> u64:
             setze i auf i + 1
         speicher_schreiben(adresse_von(MMIO_NAECHSTE), naechste + seiten, 8)
         speicher_schreiben(adresse_von(PDPT_KERN) + 509 * 8, physisch(bi, pd) | 3, 8)
-        cr3_laden(physisch(bi, adresse_von(PML4)))
+        spin_gib(sperre, irq)
+        wenn nicht smp_tlb_abgleich():
+            gib_zurück 0
         gib_zurück 0xFFFFFFFF40000000 + naechste * 0x200000 + offset
 
 # ---------------- Page-Frame-Allocator und Kernel-Heap ----------------
@@ -1589,8 +1886,57 @@ funktion pfa_starten(bi: u64, max_phys: u64) -> u64:
         pfa_reserviere(speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8), speicher_lesen(bi + versatz_von(MooBootInfo, kern_ende), 8) - speicher_lesen(bi + versatz_von(MooBootInfo, kern_basis), 8))
         gib_zurück pfa_wert(1)
 
+# PML4[511] / PDPT[508]: pro Slot erst eine ungemappte Seite,
+# anschließend die Stackseiten aus dem PFA. Ein beendeter Faden gibt
+# seinen virtuellen Slot zur Wiederverwendung frei und behält dessen Stapel.
+@nativ
+funktion faden_stapel_anlegen(bi: u64, nummer: u32) -> u64:
+    unsicher:
+        wenn nummer == 0 oder nummer >= FADEN_ANZAHL:
+            gib_zurück 0
+        setze basis: u64 auf pfa_nehme(FADEN_STACK_SEITEN)
+        wenn basis == 0:
+            gib_zurück 0
+        setze start: u64 auf u64(nummer) * (FADEN_STACK_SEITEN + 1)
+        setze pt: u64 auf adresse_von(PT_FADEN)
+        setze pd: u64 auf adresse_von(PD_FADEN)
+        speicher_schreiben(pt + start * 8, 0, 8)
+        setze i: u64 auf 0
+        solange i < FADEN_STACK_SEITEN:
+            speicher_schreiben(pt + (start + i + 1) * 8, (basis + i * 4096) | 3, 8)
+            setze i auf i + 1
+        speicher_schreiben(pd, physisch(bi, pt) | 3, 8)
+        speicher_schreiben(adresse_von(PDPT_KERN) + 508 * 8, physisch(bi, pd) | 3, 8)
+        cr3_laden(physisch(bi, adresse_von(PML4)))
+        gib_zurück 0xFFFFFFFF00000000 + (start + FADEN_STACK_SEITEN + 1) * 4096
+
+@nativ
+@nackt
+funktion faden_wacht_probe(stapelboden: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rdi, %rsp; pushq %rax; ud2", clobber=["memory"])
+
 @nativ
 funktion pfa_nehme(anzahl: u64) -> u64:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(PFA_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze ergebnis: u64 auf pfa_nehme_gesperrt(anzahl)
+        spin_gib(sperre, irq)
+        gib_zurück ergebnis
+
+# Rückgabe eines zuvor vom PFA erworbenen Rahmens durch seinen Besitzer.
+@nativ
+funktion pfa_gib(phys: u64) -> void:
+    unsicher:
+        wenn phys >= 0x100000 und (phys & 4095) == 0:
+            setze sperre: ptr[KernSperre] auf zeiger(adresse_von(PFA_SPERRE))
+            setze irq: u64 auf spin_nimm(sperre)
+            pfa_markiere(phys / 4096, wahr)
+            spin_gib(sperre, irq)
+
+@nativ
+funktion pfa_nehme_gesperrt(anzahl: u64) -> u64:
     unsicher:
         setze i: u64 auf 256
         setze lauf: u64 auf 0
@@ -1673,6 +2019,15 @@ funktion heap_starten() -> bool:
 @nativ
 funktion heap_nimm(bytes: u64) -> u64:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(HEAP_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze ergebnis: u64 auf heap_nimm_gesperrt(bytes)
+        spin_gib(sperre, irq)
+        gib_zurück ergebnis
+
+@nativ
+funktion heap_nimm_gesperrt(bytes: u64) -> u64:
+    unsicher:
         setze benoetigt: u64 auf (bytes + 15) & 0xFFFFFFFFFFFFFFF0
         setze block: u64 auf speicher_lesen(adresse_von(HEAP_ZUSTAND), 8)
         setze neuer_block: u64 auf 0
@@ -1699,6 +2054,14 @@ funktion heap_nimm(bytes: u64) -> u64:
 
 @nativ
 funktion heap_gib(adr: u64) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(HEAP_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        heap_gib_gesperrt(adr)
+        spin_gib(sperre, irq)
+
+@nativ
+funktion heap_gib_gesperrt(adr: u64) -> void:
     unsicher:
         wenn adr < 32:
             gib_zurück
@@ -1783,9 +2146,9 @@ funktion usb_layout_wechseln() -> void:
         setze us: u64 auf speicher_lesen(adresse_von(USB_LAYOUT_US), 8) ^ 1
         speicher_schreiben(adresse_von(USB_LAYOUT_US), us, 8)
         wenn us != 0:
-            text(adresse_von(T_LAYOUT_US))
+            kern_text(adresse_von(T_LAYOUT_US))
         sonst:
-            text(adresse_von(T_LAYOUT_DE))
+            kern_text(adresse_von(T_LAYOUT_DE))
         eingabe_zeigen()
 
 # F11 wechselt die Zellmetriken. Der Konsolenbildbereich beginnt dabei neu,
@@ -1809,7 +2172,7 @@ funktion schrift_wechseln() -> void:
         kern_raster_rect(kern, i32(links), i32(oben), i32(rechts - links), i32(unten - oben), u32(grund))
         konsole_starten(links, oben, rechts, unten, schrift, kon(versatz_von(Konsole, k_farbe)), grund)
         kon_schmutz(oben, unten)
-        text(marker)
+        kern_text(marker)
         eingabe_zeigen()
 
 # Zustand gehaltener Tasten pro HID-Slot, CapsLock fuer die gemeinsame Konsole.
@@ -1835,7 +2198,7 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
                 meldung(adresse_von(T_USB_TASTE_PORT), port)
                 meldung(adresse_von(T_USB_TASTE_SLOT), slot)
                 wenn xh(17) != 0:
-                    meldung(adresse_von(T_USB_MSI_IRQ), speicher_lesen(adresse_von(USB_MSI_IRQS), 8))
+                    meldung(adresse_von(T_USB_MSI_IRQ), atom_laden(USB_MSI_IRQS, ordnung=locker))
                 meldung(adresse_von(T_USB_HID), usage)
                 speicher_schreiben(adresse_von(USB_TASTEN), speicher_lesen(adresse_von(USB_TASTEN), 8) + 1, 8)
                 wenn usage == 57:
@@ -1860,11 +2223,10 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
             setze i auf i + 1
         speicher_schreiben(zuletzt, report, 8)
 
-# LAPIC-Ticks und xHCI-MSI wecken dieselbe Ereignisschleife.
 @nativ
-funktion usb_poll() -> void:
+funktion usb_poll() -> bool:
     unsicher:
-        usb_poll_berichte(adresse_von(usb_report_verarbeiten))
+        gib_zurück usb_poll_berichte(adresse_von(usb_report_verarbeiten))
 
 @nativ
 @aufrufkonvention("sysv64")
@@ -1933,6 +2295,14 @@ konstante T_NETZ_IGB: [u8; _] auf "MOO-KERNEL NETZ IGB INITIALISIERT "
 @nativ
 funktion netz_spuelen() -> void:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(KONSOLE_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        netz_spuelen_gesperrt()
+        spin_gib(sperre, irq)
+
+@nativ
+funktion netz_spuelen_gesperrt() -> void:
+    unsicher:
         setze z: u64 auf adresse_von(NETZ)
         setze q: u64 auf adresse_von(NETZ_FRUEH)
         setze kopf: u64 auf speicher_lesen(z + 16, 8)
@@ -1987,7 +2357,7 @@ funktion netz_senden(laenge: u64) -> void:
         setze j: u64 auf 0
         wenn speicher_lesen(z + 8, 8) != 0 und speicher_lesen(z, 8) == 0:
             gib_zurück
-        netz_spuelen()
+        netz_spuelen_gesperrt()
         wenn speicher_lesen(z + 56, 8) + laenge + 2 > 32768:
             speicher_schreiben(z + 32, speicher_lesen(z + 32, 8) + 1, 8)
             gib_zurück
@@ -1998,7 +2368,7 @@ funktion netz_senden(laenge: u64) -> void:
             setze j auf j + 1
         speicher_schreiben(z + 48, (ende + laenge + 2) & 32767, 8)
         speicher_schreiben(z + 56, speicher_lesen(z + 56, 8) + laenge + 2, 8)
-        netz_spuelen()
+        netz_spuelen_gesperrt()
 
 @nativ
 funktion netz_zeichen(z: u8) -> void:
@@ -2426,6 +2796,44 @@ funktion sammel_lauf(tsc: u64, bi: u64) -> void:
         meldung(adresse_von(SAM_T_I226_PHY_ENDE), phy_bereit)
         sammel_wartung(log)
 
+# ---------------- Kern-Dienste ----------------
+@nativ
+funktion kern_eingabe_faden(daten: u64) -> void:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf zeiger(daten)
+        wenn KERN_DIENSTE.kd_timer:
+            unterbrechungen_an()
+        solange wahr:
+            setze vorher: u64 auf atom_laden(EINGABE_EREIGNISSE, ordnung=locker)
+            setze usb_offen: bool auf usb_poll()
+            setze ps2_offen: bool auf falsch
+            wenn KERN_DIENSTE.kd_ps2:
+                setze ps2_offen auf ps2_berichte()
+            wenn KERN_DIENSTE.kd_timer und nicht usb_offen und nicht ps2_offen:
+                setze irq: u64 auf irq_sichern()
+                # IRQ zwischen Ringprüfung und Abgabe wird beim nächsten Faden
+                # zugestellt und kann den bereits schlafenden Faden wecken.
+                wenn atom_laden(EINGABE_EREIGNISSE, ordnung=locker) == vorher:
+                    faden_schlafen(planer, KERN_DIENSTE.kd_eingabe_ticks)
+                irq_wiederherstellen(irq)
+            sonst:
+                faden_abgeben(planer)
+
+@nativ
+funktion kern_netz_faden(daten: u64) -> void:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf zeiger(daten)
+        wenn KERN_DIENSTE.kd_timer:
+            unterbrechungen_an()
+        solange wahr:
+            netz_poll(KERN_DIENSTE.kd_tsc_pro_us)
+            netz_spuelen()
+            # Aktuell ist für die NICs kein Empfangs-IRQ gebunden.
+            wenn KERN_DIENSTE.kd_timer:
+                faden_schlafen(planer, 1)
+            sonst:
+                faden_abgeben(planer)
+
 # ---------------- Kern ----------------
 @nativ
 @einstieg
@@ -2468,7 +2876,7 @@ funktion kern_haupt(bi: u64) -> void:
         setze sammeln: bool auf speicher_lesen(adresse_von(SAMMEL_ZIEL) + 8, 8) == 1
         setze kern_start_takt: u64 auf takt()
         seriell_init()
-        text(adresse_von(T_START))
+        kern_text(adresse_von(T_START))
         # Laeuft der Kern wirklich in der oberen Haelfte? RIP und RSP direkt lesen.
         setze rip auf assembler(ziel="x86_64", code="leaq 0(%rip), $0", ausgang="=r", clobber=[])
         meldung(adresse_von(T_RIP), rip)
@@ -2522,6 +2930,8 @@ funktion kern_haupt(bi: u64) -> void:
             anhalten()
         # Eigene NIC-DMA-Ringe muessen vor Freigabe ihrer alten UEFI-Arena stehen.
         setze idt_ok auf idt_einrichten()
+        setze ar_cpu: u64 auf ar_cpu_einrichten(adresse_von(msr_lesen), adresse_von(msr_schreiben))
+        adressraum_initialisieren(cr3, adresse_von(pfa_nehme), adresse_von(pfa_gib), ar_cpu)
         setze tsc auf tsc_kalibrieren()
         meldung(adresse_von(T_TSC), tsc)
         meldung(adresse_von(T_NETZ), netz_starten(bi, tsc))
@@ -2535,6 +2945,10 @@ funktion kern_haupt(bi: u64) -> void:
             meldung(adresse_von(T_RSDP_OK), u64(speicher_lesen(rsdp, 8) == RSDP_SIGNATUR))
             setze acpi_ok auf acpi_starten(rsdp)
         meldung(adresse_von(T_ACPI), acpi_ok)
+        setze smp_ok: bool auf smp_ressourcen(adresse_von(pfa_nehme), adresse_von(physisch), bi, adresse_von(PDPT_KERN), adresse_von(KERN_STAPEL) + 65536, adresse_von(msr_schreiben), adresse_von(gdt_laden), adresse_von(tss_laden))
+        smp_melden(adresse_von(kern_text), smp_ok)
+        wenn smp_ok:
+            syscall_initialisieren(adresse_von(msr_lesen), adresse_von(msr_schreiben), adresse_von(kern_syscall_ausgabe), adresse_von(meldung))
         setze fadt_reset: u64 auf 0
         setze lpit: u64 auf 0
         wenn rsdp != 0:
@@ -2591,12 +3005,12 @@ funktion kern_haupt(bi: u64) -> void:
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0
                 konsole_starten(40, 300, breite - 40, hoehe - 100, adresse_von(moo_bare_font_mono), u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
-                text(adresse_von(T_SCHRIFT_MONO))
+                kern_text(adresse_von(T_SCHRIFT_MONO))
                 eingabe_zeigen()
                 setze t0 auf takt()
-                text(adresse_von(T_KON1))
+                kern_text(adresse_von(T_KON1))
                 setze t_zeile auf takt() - t0
-                text(adresse_von(T_KON2))
+                kern_text(adresse_von(T_KON2))
                 # Fruehe Resultate unveraendert auf dem jetzt aktiven Bildschirm spiegeln.
                 # Die Werte sind die Boot-Snapshots, keine zweite Initialisierung.
                 meldung(adresse_von(T_PFA), pfa_frei)
@@ -2604,7 +3018,7 @@ funktion kern_haupt(bi: u64) -> void:
                 meldung(adresse_von(T_TABELLEN), tabellen_frei)
                 meldung(adresse_von(T_IDT), u64(idt_ok))
                 meldung(adresse_von(T_ACPI), acpi_ok)
-                text(adresse_von(T_SICHT))
+                kern_text(adresse_von(T_SICHT))
                 meldung(adresse_von(T_ALT), t_alt)
                 meldung(adresse_von(T_NEU), t_neu)
                 wenn tsc != 0:
@@ -2618,12 +3032,15 @@ funktion kern_haupt(bi: u64) -> void:
         setze timer_start auf timer_starten(tsc)
         meldung(adresse_von(T_TIMER_QUELLE), hw(15))
         meldung(adresse_von(T_TIMER_INIT), timer_start)
+        pfa_reserviere(0x8000, 4096)
+        ap_bericht(adresse_von(kern_text), adresse_von(meldung), ap_starten(bi, cr3, tsc, timer_start, adresse_von(IDT_ZEIGER), hw(4), adresse_von(apic_lesen), adresse_von(apic_schreiben), adresse_von(msr_lesen), adresse_von(msr_schreiben)))
+        smp_planer_initialisieren(tsc)
         setze tastatur_ok auf ps2_starten()
         wenn tastatur_ok:
             meldung(adresse_von(T_TASTATUR_BEREIT), 1)
         sonst:
             meldung(adresse_von(T_TASTATUR_BEREIT), 0)
-            text(adresse_von(T_TASTATUR_FEHLT))
+            kern_text(adresse_von(T_TASTATUR_FEHLT))
         meldung(adresse_von(T_USB_TEST), u64(usb_report_pruefen()))
         # Erst die lesende Boot-Stick-Diagnose, dann den HID-Host neu initialisieren.
         # Der Rueckfallzweig weiter oben kehrt nicht hierher zurueck.
@@ -2651,16 +3068,20 @@ funktion kern_haupt(bi: u64) -> void:
                 sammel_krypto(adresse_von(meldung))
             meldung(adresse_von(SAM_T_ENDE), 1)
             sammel_wartung(adresse_von(meldung))
+        setze sperre_ok: bool auf sperre_pruefen()
         wenn timer_start != 0:
             unterbrechungen_an()
-            solange (hw(10) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und speicher_lesen(adresse_von(USB_TASTEN), 8) == 0)) und warte < 1000:
+            setze sperre_ok auf sperre_pruefen() und sperre_ok
+            solange (atom_laden(KERN_TICKS, ordnung=locker) < 3 oder (tastatur_ok und nicht usb_ok und hw(11) == 0) oder (usb_ok und speicher_lesen(adresse_von(USB_TASTEN), 8) == 0)) und warte < 1000:
                 usb_poll()
+                wenn tastatur_ok:
+                    ps2_berichte()
                 netz_spuelen()
                 testlauf_poll(adresse_von(meldung))
                 bis_unterbrechung_warten()
                 setze warte auf warte + 1
             unterbrechungen_aus()
-        setze ticks: u64 auf hw(10)
+        setze ticks: u64 auf atom_laden(KERN_TICKS, ordnung=locker)
         meldung(adresse_von(T_TIMER_TICKS), ticks)
         konsolen_status(pfa_frei, ticks)
         wenn tastatur_ok:
@@ -2676,15 +3097,83 @@ funktion kern_haupt(bi: u64) -> void:
                     ssh_shell_kern(netz_ipv4_adresse(), adresse_von(NETZ_PORTS), speicher_lesen(adresse_von(NETZ), 8), pfa_wert(0) * 4096)
                     ssh_booten(adresse_von(meldung), adresse_von(kern_ssh_freie_bytes), kern_start_takt, tsc)
             meldung(adresse_von(T_NETZ_IPV4), netz_ipv4_adresse())
-        text(adresse_von(T_OK))
-        # Eingabe, Netz-FIFO und Testreset bleiben auch bei fehlenden Geraeten aktiv.
-        # Ohne Timer nicht hlt: der befristete Test muss weiter per TSC pollen.
+        wenn sperre_ok:
+            kern_text(adresse_von(T_SPERRE_OK))
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze probestapel: u64 auf 0
+        wenn faden_planer_starten(planer, adresse_von(smp_faden_stapel), 0):
+            setze probestapel auf faden_pingpong_pruefen(planer)
+        wenn probestapel == 0:
+            kern_text(adresse_von(T_FADEN_FEHLER))
+            anhalten()
+        kern_text(adresse_von(T_FADEN_OK))
+        setze wachtprobe: bool auf speicher_lesen(adresse_von(FADEN_WACHT_PROFIL) + 8, 8) == 1
+        wenn timer_start != 0 und tsc != 0 und nicht wachtprobe:
+            wenn nicht faden_praeemption_pruefen(planer, tsc):
+                kern_text(adresse_von(T_PRAEEMPT_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_PRAEEMPT_OK))
+        wenn wachtprobe:
+            kern_text(adresse_von(T_OK))
+            setze boden: u64 auf probestapel - FADEN_STACK_SEITEN * 4096
+            meldung(adresse_von(T_FADEN_WACHT), boden - 8)
+            faden_wacht_probe(boden)
+        wenn nicht kanal_pruefen(planer):
+            kern_text(adresse_von(T_KANAL_FEHLER))
+            anhalten()
+        kern_text(adresse_von(T_KANAL_OK))
+        wenn moo_laufzeit_programm() != 0:
+            anhalten()
+        wenn speicher_lesen(adresse_von(SMP_STRESS_PROFIL) + 8, 8) == 1:
+            wenn nicht smp_probe_starten(tsc, adresse_von(meldung)) oder kern_mmio_abbilden(bi, 0xFEE00000, 4096) == 0:
+                kern_text(adresse_von(T_SMP_PROBE_NEIN))
+                anhalten()
+            kern_text(adresse_von(T_SMP_TLB_OK))
+            wenn nicht smp_probe_halten(tsc):
+                kern_text(adresse_von(T_SMP_PROBE_NEIN))
+                anhalten()
+            kern_text(adresse_von(T_SMP_HALT_OK))
+            kern_text(adresse_von(T_SMP_PROBE_OK))
+        setze ar_profil: u64 auf speicher_lesen(adresse_von(AR_PROFIL) + 8, 8)
+        wenn ar_profil != 0:
+            setze rahmen: u64 auf pfa_nehme(2)
+            wenn nicht ar_probe_starten(rahmen, tsc, adresse_von(meldung)):
+                kern_text(adresse_von(T_AR_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_AR_OK))
+            wenn ar_profil == 2:
+                kern_text(adresse_von(T_OK))
+                meldung(adresse_von(T_AR_SCHUTZ), AR_ERSTE_VA)
+                ar_probe_schutz(rahmen, tsc, adresse_von(meldung))
+                kern_text(adresse_von(T_AR_FEHLER))
+                anhalten()
+            pfa_gib(rahmen)
+            pfa_gib(rahmen + 4096)
+        wenn speicher_lesen(adresse_von(RING3_PROFIL) + 8, 8) == 1:
+            setze ring3_rahmen: u64 auf pfa_nehme(3)
+            wenn nicht ring3_probe_starten(ring3_rahmen, tsc, adresse_von(meldung), adresse_von(kern_text)):
+                kern_text(adresse_von(T_RING3_PROBE_FEHLER))
+                anhalten()
+            pfa_gib(ring3_rahmen)
+            pfa_gib(ring3_rahmen + 4096)
+            pfa_gib(ring3_rahmen + 8192)
+            kern_text(adresse_von(T_RING3_OK))
+        setze KERN_DIENSTE.kd_ps2 auf tastatur_ok
+        setze KERN_DIENSTE.kd_timer auf timer_start != 0
+        setze KERN_DIENSTE.kd_tsc_pro_us auf tsc
+        wenn usb_braucht_poll():
+            setze KERN_DIENSTE.kd_eingabe_ticks auf 1
+        setze KERN_DIENSTE.kd_eingabe auf faden_erzeugen(planer, adresse_von(kern_eingabe_faden), u64(planer))
+        wenn KERN_DIENSTE.kd_eingabe == 0 oder faden_erzeugen(planer, adresse_von(kern_netz_faden), u64(planer)) == 0:
+            kern_text(adresse_von(T_DIENSTE_FEHLER))
+            anhalten()
+        kern_text(adresse_von(T_OK))
+        # Faden 0 hält die Testlauf-Frist. Ohne Timer geben die Dienste
+        # kooperativ ab, damit Eingabe, Netz und TSC-Rückfall weiterlaufen.
         wenn timer_start != 0:
             unterbrechungen_an()
         solange wahr:
-            usb_poll()
-            netz_poll(tsc)
-            netz_spuelen()
             testlauf_poll(adresse_von(meldung))
+            faden_abgeben(planer)
             wenn timer_start != 0:
                 bis_unterbrechung_warten()

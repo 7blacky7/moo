@@ -1,0 +1,95 @@
+# P10-T14: öffentliche Atom-API. Semantik wie moo_thread.c:782–908.
+aus "kern_laufzeit_kontext" importiere LaufzeitWert
+aus "kern_laufzeit_werte" importiere laufzeit_nichts, laufzeit_bool, laufzeit_erwartet, laufzeit_zahl_pruefen, LW_ERWARTET_ATOM, kern_c_moo_alloc, free
+aus "kern_laufzeit_atom" importiere LaufzeitAtom, laufzeit_atom_init, laufzeit_atom_laden, laufzeit_atom_speichern, laufzeit_atom_addieren, laufzeit_atom_tauschen, laufzeit_atom_vergleichen
+
+@nativ
+konstante LW_ATOM: [u8; 5] auf [97, 116, 111, 109, 0]
+
+@nativ
+konstante LW_LADEN: [u8; 11] auf [97, 116, 111, 109, 95, 108, 97, 100, 101, 110, 0]
+
+@nativ
+konstante LW_SPEICHERN: [u8; 15] auf [97, 116, 111, 109, 95, 115, 112, 101, 105, 99, 104, 101, 114, 110, 0]
+
+@nativ
+konstante LW_ADDIEREN: [u8; 14] auf [97, 116, 111, 109, 95, 97, 100, 100, 105, 101, 114, 101, 110, 0]
+
+@nativ
+konstante LW_TAUSCHEN: [u8; 14] auf [97, 116, 111, 109, 95, 116, 97, 117, 115, 99, 104, 101, 110, 0]
+
+@nativ
+konstante LW_VERGLEICHEN: [u8; 30] auf [97, 116, 111, 109, 95, 118, 101, 114, 103, 108, 101, 105, 99, 104, 101, 110, 95, 117, 110, 100, 95, 116, 97, 117, 115, 99, 104, 101, 110, 0]
+
+@nativ
+funktion laufzeit_atom_pruefen(wert: LaufzeitWert, wer: ptr[u8]) -> ptr[LaufzeitAtom]:
+    unsicher:
+        wenn wert.tag != 32 oder wert.daten == 0:
+            laufzeit_erwartet(wer, zeiger(adresse_von(LW_ERWARTET_ATOM)), wert)
+            gib_zurück zeiger(0)
+        gib_zurück zeiger(wert.daten)
+
+@nativ
+funktion kern_rt_moo_atom_neu(start: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        wenn nicht laufzeit_zahl_pruefen(start, zeiger(adresse_von(LW_ATOM))):
+            gib_zurück laufzeit_nichts()
+        setze p: ptr[LaufzeitAtom] auf zeiger(kern_c_moo_alloc(groesse_von(LaufzeitAtom)))
+        laufzeit_atom_init(p, start.daten)
+        gib_zurück LaufzeitWert(32, u64(p))
+
+@nativ
+funktion kern_rt_moo_atom_laden(atom: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitAtom] auf laufzeit_atom_pruefen(atom, zeiger(adresse_von(LW_LADEN)))
+        wenn u64(p) == 0:
+            gib_zurück laufzeit_nichts()
+        gib_zurück LaufzeitWert(0, laufzeit_atom_laden(p))
+
+@nativ
+funktion kern_rt_moo_atom_speichern(atom: LaufzeitWert, wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitAtom] auf laufzeit_atom_pruefen(atom, zeiger(adresse_von(LW_SPEICHERN)))
+        wenn u64(p) == 0:
+            gib_zurück laufzeit_nichts()
+        wenn nicht laufzeit_zahl_pruefen(wert, zeiger(adresse_von(LW_SPEICHERN))):
+            gib_zurück laufzeit_nichts()
+        laufzeit_atom_speichern(p, wert.daten)
+        gib_zurück laufzeit_nichts()
+
+@nativ
+funktion kern_rt_moo_atom_addieren(atom: LaufzeitWert, wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitAtom] auf laufzeit_atom_pruefen(atom, zeiger(adresse_von(LW_ADDIEREN)))
+        wenn u64(p) == 0:
+            gib_zurück laufzeit_nichts()
+        wenn nicht laufzeit_zahl_pruefen(wert, zeiger(adresse_von(LW_ADDIEREN))):
+            gib_zurück laufzeit_nichts()
+        gib_zurück LaufzeitWert(0, laufzeit_atom_addieren(p, wert.daten))
+
+@nativ
+funktion kern_rt_moo_atom_tauschen(atom: LaufzeitWert, wert: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitAtom] auf laufzeit_atom_pruefen(atom, zeiger(adresse_von(LW_TAUSCHEN)))
+        wenn u64(p) == 0:
+            gib_zurück laufzeit_nichts()
+        wenn nicht laufzeit_zahl_pruefen(wert, zeiger(adresse_von(LW_TAUSCHEN))):
+            gib_zurück laufzeit_nichts()
+        gib_zurück LaufzeitWert(0, laufzeit_atom_tauschen(p, wert.daten))
+
+@nativ
+funktion kern_rt_moo_atom_vergleichen_und_tauschen(atom: LaufzeitWert, erwartet: LaufzeitWert, neue_zahl: LaufzeitWert) -> LaufzeitWert:
+    unsicher:
+        setze p: ptr[LaufzeitAtom] auf laufzeit_atom_pruefen(atom, zeiger(adresse_von(LW_VERGLEICHEN)))
+        wenn u64(p) == 0:
+            gib_zurück laufzeit_nichts()
+        wenn nicht laufzeit_zahl_pruefen(erwartet, zeiger(adresse_von(LW_VERGLEICHEN))):
+            gib_zurück laufzeit_nichts()
+        wenn nicht laufzeit_zahl_pruefen(neue_zahl, zeiger(adresse_von(LW_VERGLEICHEN))):
+            gib_zurück laufzeit_nichts()
+        gib_zurück laufzeit_bool(laufzeit_atom_vergleichen(p, erwartet.daten, neue_zahl.daten))
+
+@nativ
+funktion kern_rt_moo_atom_free(p: ptr[u8]) -> void:
+    unsicher:
+        free(p)

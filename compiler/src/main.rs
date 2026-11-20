@@ -25,6 +25,7 @@ mod lexer;
 mod native_vecmat;
 mod parser;
 mod runtime_bindings;
+mod runtime_provider;
 mod tokens;
 mod typpruefung;
 
@@ -1473,6 +1474,13 @@ fn build_kernel(
     } else {
         &[]
     };
+    let thread_runtime = compiler.hat_sektion(crate::runtime_provider::SECTION);
+    let runtime_sources: &[&str] = if thread_runtime {
+        &["boot/uefi_rt.c", "moo_value.c", "moo_memory.c", "moo_string.c",
+          "moo_list.c", "moo_dict.c", "moo_stdlib.c", "moo_print.c", "moo_frame.c",
+          "moo_object.c", "moo_buffer.c", "moo_buffer_index.c", "moo_struct_box.c",
+          "moo_struct_dyn.c", "moo_handle.c", "moo_defer_stack.c", "moo_defer_error.c"]
+    } else { &[] };
     const KERNEL_CFLAGS: [&str; 10] = [
         "-c", "-ffreestanding", "-fno-pic", "-fno-pie",
         "-O2", "-nostdlib",
@@ -1507,13 +1515,20 @@ fn build_kernel(
         }
     };
 
-    for src in KERNEL_SOURCES.iter().chain(crypto_sources).chain(mono_font_sources) {
+    for src in KERNEL_SOURCES.iter().chain(crypto_sources).chain(mono_font_sources).chain(runtime_sources) {
+        // Das Vollprofil benutzt die gemeinsame Wertausgabe; die rohe Early-
+        // Console bleibt nur im unveränderten Minimalprofil.
+        if thread_runtime && *src == "moo_bare_console.c" { continue; }
         let src_path = runtime_dir.join(src);
         if !src_path.exists() {
             return Err(format!("Kernel-Runtime-Quelle fehlt: {}", src_path.display()));
         }
         let obj = tmp.join(format!("{}.o", src.replace('/', "_")));
         let mut cmd = Command::new(cc_prog);
+        if thread_runtime {
+            cmd.args(["-DMOO_BARE_THREADS", "-DMOO_UEFI_COLLECTIONS", "-DMOO_HAS_SURFACE", "-D_GNU_SOURCE"]);
+            if *src == "boot/uefi_rt.c" { cmd.arg("-DMOO_UEFI_USE_BARE_RUNTIME"); }
+        }
         if mono_font_sources.contains(src) {
             cmd.arg("-DMOO_BARE_FONT_MONO");
         }
@@ -2134,6 +2149,12 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
         (Some(b), _) => Some(b.target),
         (None, t) => t,
     };
+    // P10-T14: --kernel mit Standardbibliothek wählt den nativen Thread-Träger.
+    // --no-stdlib behält den bisherigen Minimalpfad.
+    let kernel_runtime = kernel && !no_stdlib;
+    if kernel_runtime && codegen::CodeGen::resolve_triple(target.unwrap_or("native")) != "x86_64-unknown-none" {
+        return Err("Kernel-Standardruntime benötigt --target x86_64-bare".to_string());
+    }
     // Haupt-Datei parsen
     let mut program = parse_file(file)?;
     // P2-T29: Typpruefung je Datei (Module in resolve_modules), Abbruch vor dem Codegen.
@@ -2147,6 +2168,15 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let canonical = file.canonicalize().unwrap_or(file.clone());
     visited.insert(canonical);
     resolve_modules(&mut program, file.as_path(), &mut visited, lib_paths)?;
+    if kernel_runtime {
+        let root = kernel_source_root().ok_or("Kernel-Standardruntime: Compiler-Quellen fehlen")?
+            .join("..").join("beispiele").join("kernel").join("kern_laufzeit.moos");
+        let mut carrier = parse_file(&root)?;
+        resolve_modules(&mut carrier, &root, &mut visited, lib_paths)?;
+        program.funktion_quellen.extend(carrier.funktion_quellen);
+        carrier.statements.append(&mut program.statements);
+        program.statements = carrier.statements;
+    }
     fehlerpfade::pruefe(&haupt_statements, &program, &file.display().to_string());
     typpruefung::ergebnis()?;
     fehlerpfade::ergebnis()?;
@@ -2169,7 +2199,7 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     let uefi_runtime = link_triple == "x86_64-unknown-uefi" && !no_stdlib && !kernel;
     let is_bare_target = target.map(|t| t.contains("-bare")).unwrap_or(false);
     compiler.set_bare_mode(no_stdlib || is_bare_target || erlaube_kern || uefi_runtime);
-    compiler.set_bare_runtime_refcounts(uefi_runtime);
+    compiler.set_bare_runtime_refcounts(uefi_runtime || kernel_runtime);
     compiler.set_global_pruefplan(global_pruefplan);
     compiler.compile_program(&program)?;
     // P2-T43: MSVC-COFF traegt @bibliothek selbst (.drectve /DEFAULTLIB).
@@ -2193,12 +2223,16 @@ fn compile(file: &PathBuf, output: Option<&std::path::Path>, emit_ir: bool, targ
     }
 
     // Bare-Metal: One-Shot-Kernel-Pipeline oder nur Object-File
-    if no_stdlib {
+    if no_stdlib || kernel_runtime {
         // Plan-010 C2: --kernel (oder explizites --linker_script) bei einem
         // *-bare-Target baut moo->.o + moo_bare*.c -> ld -T script -> kernel.elf.
         let is_bare_target = target_str.contains("-bare");
         if is_bare_target && (kernel || linker_script.is_some()) {
-            return build_kernel(file, &compiler, output, target_str, linker_script, emit, board_profile, &libraries, lib_paths);
+            let runtime_script = if kernel_runtime && linker_script.is_none() {
+                Some(kernel_source_root().ok_or("Kernel-Standardruntime: Quellen fehlen")?
+                    .join("..").join("beispiele").join("kernel").join("linker-uefi.ld"))
+            } else { None };
+            return build_kernel(file, &compiler, output, target_str, linker_script.or(runtime_script.as_deref()), emit, board_profile, &libraries, lib_paths);
         }
         let obj_path = output
             .map(|p| p.to_path_buf())
