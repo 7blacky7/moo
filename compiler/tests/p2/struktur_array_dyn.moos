@@ -1,0 +1,157 @@
+# P2-T88: Arrayfelder sind Sichten, Strukturpuffer-Elemente sind Kopien.
+@bibliothek("struktur_array_orakel")
+extern "C" funktion struktur_array_orakel() -> i32
+
+@nativ
+funktion orakel() -> i32:
+    unsicher:
+        gib_zurück struktur_array_orakel()
+
+@gepackt
+struktur Gepackt:
+    vor: u8
+    zahlen: [i32; 3]
+
+struktur Punkt:
+    x: i32
+    y: i32
+struktur Andere:
+    x: i32
+    y: i32
+struktur Satz:
+    zahlen: [i32; 3]
+    flags: [bool; 2]
+    punkte: [Punkt; 2]
+struktur Breit:
+    werte: [u64; 2]
+struktur Matrix:
+    werte: [[i32; 2]; 2]
+
+@nativ
+@liest(1)
+funktion summe(p: puffer[i32]) -> i32:
+    unsicher:
+        gib_zurück p[0] + p[1] + p[2]
+
+@nativ
+funktion breit() -> Breit:
+    unsicher:
+        gib_zurück Breit([9007199254740993, 7])
+
+@nativ
+funktion breit_ok(b: Breit) -> bool:
+    unsicher:
+        gib_zurück b.werte[0] == 9007199254740993
+
+funktion ueberlebende_sicht():
+    setze lokal auf Satz([4, 5, 6], [wahr, falsch], [Punkt(1, 2), Punkt(3, 4)])
+    gib_zurück puffer_ansicht(lokal.zahlen, 1, 2)
+
+setze a auf Satz([1, 2, 3], [wahr, falsch], [Punkt(10, 11), Punkt(20, 21)])
+setze v auf a.zahlen
+v[1] = 8
+zeige a.zahlen[1]
+unsicher:
+    zeige summe(a.zahlen)
+setze teil auf puffer_ansicht(v, 1, 2)
+teil[1] = 9
+zeige a.zahlen[2]
+setze ueberlebt auf ueberlebende_sicht()
+zeige ueberlebt[0]
+ueberlebt[1] = 12
+zeige ueberlebt[1]
+
+a.flags[1] = wahr
+zeige a.flags[1]
+setze flags auf puffer_ansicht(a.flags, 0, 2)
+flags[0] = falsch
+zeige a.flags[0]
+
+setze punkt auf a.punkte[0]
+punkt.x = 99
+zeige a.punkte[0].x
+a.punkte[0] = punkt
+zeige a.punkte[0].x
+setze sicht auf puffer_ansicht(a.punkte, 1, 1)
+sicht[0] = Punkt(30, 31)
+zeige a.punkte[1].y
+
+setze p auf puffer_erstellen(Punkt, 2)
+p[0] = Punkt(3, 4)
+setze kopie auf p[0]
+kopie.x = 70
+zeige p[0].x
+p[0] = kopie
+zeige p[0].x
+setze ps auf puffer_ansicht(p, 0, 1)
+setze p auf nichts
+zeige ps[0].x
+ps[0] = Punkt(8, 9)
+zeige ps[0].y
+
+# Ganze Zuweisung kopiert; bereits geliehene Sichten sehen die neuen Werte.
+a.zahlen = [5, 6, 7]
+zeige v[1]
+setze b auf Satz()
+b.zahlen = a.zahlen
+a.zahlen[0] = 100
+zeige b.zahlen[0]
+unsicher:
+    setze weit auf breit()
+    setze weit2 auf Breit()
+    weit2.werte = weit.werte
+    zeige breit_ok(weit2)
+
+versuche:
+    a.zahlen = [1, 2, 3.5]
+    zeige "FALSCH"
+fange e:
+    zeige "bruch"
+zeige a.zahlen[1]
+versuche:
+    a.zahlen = [1, 2]
+    zeige "FALSCH"
+fange e:
+    zeige "laenge"
+versuche:
+    a.flags[0] = 1
+    zeige "FALSCH"
+fange e:
+    zeige "bool"
+versuche:
+    a.punkte[0] = Andere(1, 2)
+    zeige "FALSCH"
+fange e:
+    zeige "nominal"
+zeige a.punkte[0].x
+versuche:
+    zeige ps[1]
+    zeige "FALSCH"
+fange e:
+    zeige "grenze"
+versuche:
+    ps[-1] = Punkt(0, 0)
+    zeige "FALSCH"
+fange e:
+    zeige "negativ"
+versuche:
+    puffer_anhaengen(v, 1)
+    zeige "FALSCH"
+fange e:
+    zeige "fest"
+zeige v.length
+setze gepackt auf Gepackt(1, [2, 3, 4])
+zeige gepackt.zahlen[1]
+versuche:
+    unsicher:
+        zeige summe(gepackt.zahlen)
+    zeige "FALSCH"
+fange e:
+    zeige "ausrichtung"
+unsicher:
+    zeige orakel()
+# V2 beschreibt mehrdimensionale Arrays bereits als flache Elementfolge.
+setze matrix auf Matrix([1, 2, 3, 4])
+zeige matrix.werte[2]
+matrix.werte[3] = 8
+zeige matrix.werte[3]

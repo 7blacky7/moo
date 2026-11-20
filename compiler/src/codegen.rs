@@ -5713,10 +5713,21 @@ impl<'ctx> CodeGen<'ctx> {
             };
             let laenge = self.compile_expr(laenge)?;
             let i64t = self.context.i64_type();
-            return self.call_rt(create, &[
+            let wert = self.call_rt(create, &[
                 i64t.const_int(size, false).into(), i64t.const_int(align, false).into(),
                 i64t.const_int(id, false).into(), laenge.into(),
-            ], "puffer_struktur_neu");
+            ], "puffer_struktur_neu")?;
+            if self.native_structs.boxbar(typ_name).is_ok() {
+                let beschreibung = self.struktur_deskriptor(typ_name)?;
+                let ptr = self.context.ptr_type(inkwell::AddressSpace::default());
+                let beschreiben = self.module.get_function("moo_buffer_struct_beschreiben")
+                    .unwrap_or_else(|| self.module.add_function("moo_buffer_struct_beschreiben",
+                        self.context.void_type().fn_type(&[ptr.into(), ptr.into()], false), None));
+                let slot = self.entry_alloca(self.mv_type(), "strukturpuffer_beschreibung")?;
+                self.builder.build_store(slot, wert).map_err(|e| e.to_string())?;
+                self.builder.build_call(beschreiben, &[slot.into(), beschreibung.into()], "").map_err(|e| e.to_string())?;
+            }
+            return Ok(wert);
         }
         // Codes = MooBufferScalarType (compiler/runtime/moo_buffer.h).
         let code: u64 = match typ_name.as_str() {

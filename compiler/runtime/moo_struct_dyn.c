@@ -4,6 +4,7 @@
  * Speicherkern (Box, Sicht, Validierung): moo_struct_box.c. */
 #include "moo_struct_dyn.h"
 #include "moo_buffer_index.h"
+#include "moo_buffer_priv.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -178,9 +179,70 @@ static int element_schreiben(const MooStrukturTyp *typ, const MooStrukturFeld *f
     }
 }
 
-static void array_fehler(const MooStrukturTyp *typ, const MooStrukturFeld *f) {
-    struct_fehler("Struktur %s.%s: Arrayfelder sind dynamisch noch nicht zugreifbar (nur in nativen Funktionen)",
-                  typ->basis.name, f->name);
+/* Die Sicht besitzt den Array-Speicher nicht. Auch Pins halten diese
+ * Speicherbox und damit die Besitzerstruktur am Leben. Arrays wachsen nie. */
+static MooValue array_sicht(MooStructBox *box, const MooStrukturFeld *f) {
+    MooValue out = moo_none();
+    MooBufferStorage *s = calloc(1, sizeof(*s));
+    MooBuffer *b = malloc(sizeof(*b));
+    if (!s || !b) {
+        free(s); free(b);
+        struct_fehler("Strukturarray: kein Speicher");
+        return out;
+    }
+    if (moo_struct_box_retain(box) != MOO_STRUCT_OK) {
+        free(s); free(b);
+        struct_fehler("Strukturarray: Besitzerreferenz nicht moeglich");
+        return out;
+    }
+    s->refs = 1; s->views = 1;
+    s->elem_size = f->groesse / f->anzahl;
+    s->scalar_type = (MooBufferScalarType)f->skalar;
+    s->type_id = f->struktur ? f->struktur->typ_id : 0;
+    s->struktur = f->struktur;
+    s->bool_element = f->element == MOO_FELD_BOOL;
+    s->len = s->capacity = f->anzahl;
+    s->data = moo_struct_box_daten(box) + f->versatz;
+    s->besitzer = box;
+    s->besitzer_drop = moo_struct_box_drop;
+    b->refcount = 1; b->storage = s; b->start = 0;
+    b->len = f->anzahl; b->is_view = 1;
+    out.tag = MOO_BUFFER; moo_val_set_ptr(&out, b);
+    return out;
+}
+
+/* Ganze Arrayzuweisung ist eine Kopie. Erst alle Elemente prüfen und in
+ * separatem Speicher aufbauen; Fehler lassen das Ziel vollständig unverändert. */
+static int array_schreiben(const MooStrukturTyp *typ, const MooStrukturFeld *f,
+                           unsigned char *ziel, MooValue wert) {
+    MooBuffer *b = wert.tag == MOO_BUFFER ? moo_val_as_ptr(wert) : NULL;
+    MooList *liste = wert.tag == MOO_LIST ? MV_LIST(wert) : NULL;
+    size_t schritt = f->groesse / f->anzahl;
+    if ((!liste && !b) || (liste && (size_t)liste->length != f->anzahl)
+        || (b && (moo_buffer_len(b) != f->anzahl
+            || b->storage->elem_size != schritt
+            || b->storage->scalar_type != (MooBufferScalarType)f->skalar
+            || b->storage->bool_element != (f->element == MOO_FELD_BOOL)
+            || b->storage->type_id != (f->struktur ? f->struktur->typ_id : 0)))) {
+        struct_fehler("Struktur %s.%s erwartet ein Array mit %u passenden Elementen",
+                      typ->basis.name, f->name, (unsigned)f->anzahl);
+        return 0;
+    }
+    unsigned char *tmp = calloc(1, f->groesse);
+    if (!tmp) { struct_fehler("Strukturarray: kein Speicher"); return 0; }
+    for (uint32_t i = 0; i < f->anzahl; ++i) {
+        unsigned char *p = tmp + i * schritt;
+        if (liste) {
+            if (!element_schreiben(typ, f, p, liste->items[i])) { free(tmp); return 0; }
+        } else {
+            const unsigned char *q = b->storage->data + (b->start + i) * schritt;
+            if (f->struktur) blaetter_kopieren(&f->struktur->basis, q, p);
+            else memcpy(p, q, schritt);
+        }
+    }
+    memmove(ziel, tmp, f->groesse);
+    free(tmp);
+    return 1;
 }
 
 static const MooStrukturTyp *beschriebener_typ(MooValue s, MooStructBox **box, const char *wo) {
@@ -199,10 +261,7 @@ MooValue moo_struct_feld_get(MooValue s, const char *name) {
         feld_unbekannt(typ, name ? name : "");
         return moo_none();
     }
-    if (f->art == MOO_FELD_ARRAY) {
-        array_fehler(typ, f);
-        return moo_none();
-    }
+    if (f->art == MOO_FELD_ARRAY) return array_sicht(box, f);
     MooValue out = moo_none();
     element_lesen(typ, f, box, f->versatz, &out);
     return out;
@@ -213,7 +272,8 @@ void moo_struct_feld_set(MooValue s, const char *name, MooValue wert) {
     const MooStrukturTyp *typ = beschriebener_typ(s, &box, "Feldzuweisung");
     const MooStrukturFeld *f = (typ && name) ? feld_suchen(typ, name) : NULL;
     if (typ && !f) feld_unbekannt(typ, name ? name : "");
-    else if (f && f->art == MOO_FELD_ARRAY) array_fehler(typ, f);
+    else if (f && f->art == MOO_FELD_ARRAY)
+        array_schreiben(typ, f, moo_struct_box_daten(box) + f->versatz, wert);
     else if (f) element_schreiben(typ, f, moo_struct_box_daten(box) + f->versatz, wert);
     moo_release(wert);
 }
@@ -240,13 +300,10 @@ void moo_struct_new_values(const MooStrukturTyp *typ, const MooValue *argumente,
     }
     for (int32_t i = 0; i < anzahl; ++i) {
         const MooStrukturFeld *f = &typ->felder[i];
-        if (f->art == MOO_FELD_ARRAY) {
-            struct_fehler("Struktur %s.%s: Arrayfelder sind dynamisch noch nicht setzbar (%s() liefert den Nullwert)",
-                          typ->basis.name, f->name, typ->basis.name);
-            free(daten);
-            return;
-        }
-        if (!element_schreiben(typ, f, daten + f->versatz, argumente[i])) {
+        int ok = f->art == MOO_FELD_ARRAY
+            ? array_schreiben(typ, f, daten + f->versatz, argumente[i])
+            : element_schreiben(typ, f, daten + f->versatz, argumente[i]);
+        if (!ok) {
             free(daten);
             return;
         }

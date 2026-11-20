@@ -289,7 +289,7 @@ jobs:
           set -euo pipefail
           export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
           export MOO_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler"
-          for task in defer-vertrag defer-testframe native-wert; do
+          for task in defer-vertrag defer-testframe native-wert struktur-array-dyn; do
             mise run -C skripte/p2/frontend "$task" 2>&1 | tee -a p2-native-defer-linux.log
           done
 
@@ -376,6 +376,8 @@ jobs:
             p2-native-defer-linux.log
             build/p2-frontend/defer_vertrag/*.compile.log
             build/p2-frontend/defer_vertrag/*.lsan.err
+            build/p2-frontend/struktur_array_dyn/*.compile.log
+            build/p2-frontend/struktur_array_dyn/*.lsan.err
             build/p2-frontend/native_wert/*.log
             build/p2-frontend/native_wert/*.err
             p2-aarch64-cross.log

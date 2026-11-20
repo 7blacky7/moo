@@ -8,7 +8,8 @@ gefangen: Struktur Klein.an erwartet einen Wahrheitswert, erhalten: Zahl
 Gross(v: 9007199254740993)
 gefangen: Struktur Gross.v: 64-Bit-Wert nicht exakt als Moo-Zahl darstellbar
 gefangen: Struktur Innen hat kein Feld 'z' (Felder: x, y)
-gefangen: Struktur MitArray.werte: Arrayfelder sind dynamisch noch nicht zugreifbar (nur in nativen Funktionen)
+0
+gefangen: Pufferzugriff: falscher Typ oder Index ausserhalb
 gefangen: Struktur Innen.x erwartet eine Zahl (f32), erhalten: Text
 gefangen: Struktur Huelle.innen erwartet Innen, erhalten: Anders
 gefangen: Struktur Innen hat kein Feld 'z' (Felder: x, y)

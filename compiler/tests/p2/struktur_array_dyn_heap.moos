@@ -1,0 +1,26 @@
+# P2-T88: Besitzer, Sicht auf Sicht und kopierte Strukturelemente freigeben.
+struktur Element:
+    wert: i32
+struktur Rahmen:
+    zahlen: [i32; 3]
+    elemente: [Element; 2]
+
+funktion arbeit():
+    setze r auf Rahmen([1, 2, 3], [Element(4), Element(5)])
+    setze v auf puffer_ansicht(r.zahlen, 1, 2)
+    setze s auf puffer_ansicht(r.elemente, 0, 1)
+    setze r auf nichts
+    setze e auf s[0]
+    e.wert = 6
+    s[0] = e
+    v[0] = 7
+    setze p auf puffer_erstellen(Element, 1)
+    p[0] = s[0]
+    gib_zurück p[0].wert + v[0]
+
+setze sum auf 0
+setze i auf 0
+solange i < 20000:
+    setze sum auf sum + arbeit()
+    setze i auf i + 1
+zeige sum

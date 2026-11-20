@@ -1,14 +1,15 @@
 #include "moo_buffer_index.h"
 #include "moo_buffer_value.h"
 #include "moo_buffer_priv.h"
+#include "moo_struct_dyn.h"
 #include <float.h>
 #include <stdint.h>
 #include <string.h>
 
 /* Groesste Ganzzahl, bis zu der jede Ganzzahl exakt als double darstellbar ist. */
 #define MOO_BUFFER_EXAKT_MAX 9007199254740992LL /* 2^53 */
-/* P2-T48 D: Strukturelemente haben dynamisch (noch) keine Darstellung. */
-#define MOO_BUFFER_STRUKTUR_DYN "Elementzugriff auf puffer[Struktur] nur in nativen Funktionen (Boxing: P2-T49)"
+/* Strukturdeskriptoren liegen am Speicher und gelten auch fuer Ansichten. */
+#define MOO_BUFFER_STRUKTUR_DYN "Strukturpuffer ohne boxbare Feldbeschreibung ist dynamisch nicht zugreifbar"
 
 typedef union {
     int8_t i8; uint8_t u8; int16_t i16; uint16_t u16; int32_t i32; uint32_t u32;
@@ -217,9 +218,21 @@ MooValue moo_buffer_index_get(MooValue container, MooValue index) {
     double result = 0.0;
     int ok = buffer_index(index, &i);
     moo_release(index);
-    if (buffer && moo_buffer_struct_id(buffer)) {
-        moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
-        return moo_none();
+    if (buffer && (moo_buffer_struct_id(buffer) || buffer->storage->bool_element)) {
+        if (!ok || i >= buffer->len) {
+            moo_throw(moo_error("Pufferzugriff: Index ausserhalb oder keine nichtnegative Ganzzahl"));
+            return moo_none();
+        }
+        const unsigned char *p = buffer->storage->data
+            + (buffer->start + i) * buffer->storage->elem_size;
+        if (buffer->storage->bool_element) return moo_bool(*p != 0);
+        if (!buffer->storage->struktur) {
+            moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+            return moo_none();
+        }
+        MooValue out = moo_none();
+        moo_struct_box_value(buffer->storage->struktur, p, &out);
+        return out; /* Kopie: Aenderungen an der Box wirken nicht auf p[i]. */
     }
     if (!ok) {
         moo_throw(moo_error("Pufferindex muss eine nichtnegative Ganzzahl sein"));
@@ -244,14 +257,33 @@ void moo_buffer_index_set(MooValue container, MooValue index, MooValue value) {
     MooBufferElement element;
     size_t i = 0;
     int index_ok = buffer_index(index, &i);
-    int value_ok = value.tag == MOO_NUMBER
-        && element_aus_zahl(type, moo_val_as_double(value), &element);
     moo_release(index);
-    moo_release(value);
-    if (buffer && moo_buffer_struct_id(buffer)) {
-        moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+    if (buffer && (moo_buffer_struct_id(buffer) || buffer->storage->bool_element)) {
+        if (!index_ok || i >= buffer->len) {
+            moo_throw(moo_error("Pufferzuweisung: Index ausserhalb oder keine nichtnegative Ganzzahl"));
+        } else if (moo_buffer_geteilt(buffer)) {
+            moo_throw(moo_error(MOO_GETEILT_TEXT));
+        } else if (buffer->storage->bool_element) {
+            if (value.tag != MOO_BOOL) moo_throw(moo_error("Bool-Array erwartet einen Wahrheitswert"));
+            else {
+                unsigned char b = MV_BOOL(value) ? 1u : 0u;
+                moo_buffer_set(buffer, i, &b);
+            }
+        } else if (!buffer->storage->struktur) {
+            moo_throw(moo_error(MOO_BUFFER_STRUKTUR_DYN));
+        } else {
+            /* Unbox prueft den nominalen Typ vor der ersten Aenderung und
+             * kopiert Blattwerte; Padding im Zielelement bleibt null. */
+            void *p = buffer->storage->data
+                + (buffer->start + i) * buffer->storage->elem_size;
+            moo_struct_unbox_value(&value, buffer->storage->struktur, p);
+        }
+        moo_release(value);
         return;
     }
+    int value_ok = value.tag == MOO_NUMBER
+        && element_aus_zahl(type, moo_val_as_double(value), &element);
+    moo_release(value);
     if (!index_ok || !value_ok) {
         moo_throw(moo_error("Pufferzuweisung erwartet Index und passenden Elementwert (Ganzzahl im Bereich bzw. Kommazahl)"));
         return;
@@ -331,8 +363,11 @@ MooBufferPin *moo_buffer_native_pin(const MooValue *value, int32_t type, void **
     }
     MooBufferPin *pin = NULL;
     void *data = NULL;
-    if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
-        moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
+    MooBufferStatus pin_status = moo_buffer_pin(buffer, &pin, &data);
+    if (pin_status != MOO_BUFFER_OK) {
+        moo_throw(moo_error(pin_status == MOO_BUFFER_ALIGNMENT
+            ? "Native Puffer-Leihgabe: Arrayfeld nicht ABI-ausgerichtet; zuerst in eigenen Puffer kopieren"
+            : "Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
         return NULL;
     }
     *daten = data;
@@ -438,9 +473,12 @@ MooNativeLeihe *moo_native_leihen(const MooValue *wert, int32_t elementtyp, uint
             : struktur_id != 0 ? " mit anderer Strukturdefinition" : " mit anderem Elementtyp");
     }
     if (!leih_schreibschutz(wert, schreibbar)) { free(leihe); return NULL; }
-    if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
+    MooBufferStatus pin_status = moo_buffer_pin(buffer, &pin, &data);
+    if (pin_status != MOO_BUFFER_OK) {
         free(leihe);
-        moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
+        moo_throw(moo_error(pin_status == MOO_BUFFER_ALIGNMENT
+            ? "Native Puffer-Leihgabe: Arrayfeld nicht ABI-ausgerichtet; zuerst in eigenen Puffer kopieren"
+            : "Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
         return NULL;
     }
     leihe->pin = pin;
@@ -456,6 +494,20 @@ void moo_native_zurueck(MooNativeLeihe *leihe) {
        Repraesentation (store/GPU werden bei Bedarf neu gebildet). */
     if (leihe->tensor && leihe->schreibbar) leihe->tensor->valid = MOO_V_DATA;
     free(leihe);
+}
+
+
+/* Zeiger-ABI: keine plattformspezifische MooValue-Uebergabe. Keine globale
+ * Registry, die Beschreibung lebt zusammen mit dem typisierten Speicher. */
+void moo_buffer_struct_beschreiben(const MooValue *wert, const MooStrukturTyp *typ) {
+    MooBuffer *b = wert && wert->tag == MOO_BUFFER ? moo_val_as_ptr(*wert) : NULL;
+    if (!b) return; /* Der Konstruktor hat den Fehler bereits gesetzt. */
+    if (!moo_struktur_typ_gueltig(typ) || b->storage->type_id != typ->typ_id
+        || b->storage->elem_size != typ->basis.size) {
+        moo_throw(moo_error("Strukturpuffer: unpassende Feldbeschreibung"));
+        return;
+    }
+    b->storage->struktur = typ;
 }
 
 MooValue moo_buffer_create_struct(uint64_t size, uint64_t align, uint64_t type_id, MooValue len) {
@@ -490,8 +542,11 @@ MooBufferPin *moo_buffer_native_pin_struct(const MooValue *value, uint64_t type_
     }
     MooBufferPin *pin = NULL;
     void *data = NULL;
-    if (moo_buffer_pin(buffer, &pin, &data) != MOO_BUFFER_OK) {
-        moo_throw(moo_error("Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
+    MooBufferStatus pin_status = moo_buffer_pin(buffer, &pin, &data);
+    if (pin_status != MOO_BUFFER_OK) {
+        moo_throw(moo_error(pin_status == MOO_BUFFER_ALIGNMENT
+            ? "Native Puffer-Leihgabe: Arrayfeld nicht ABI-ausgerichtet; zuerst in eigenen Puffer kopieren"
+            : "Puffer konnte fuer den nativen Aufruf nicht gesperrt werden (kein Speicher)"));
         return NULL;
     }
     *daten = data;
@@ -508,7 +563,8 @@ MooValue moo_buffer_view_value(MooValue container, MooValue start, MooValue len)
     moo_release(start);
     moo_release(len);
     /* P2-T48 D: Ansicht eines Strukturpuffers erbt dessen Struktur-ID. */
-    if (buffer && type == MOO_BUFFER_SCALAR_NONE && moo_buffer_struct_id(buffer) && start_ok && len_ok) {
+    if (buffer && type == MOO_BUFFER_SCALAR_NONE
+        && (moo_buffer_struct_id(buffer) || buffer->storage->bool_element) && start_ok && len_ok) {
         MooBuffer *view = NULL;
         MooBufferStatus st = moo_buffer_view(buffer, s, n, &view);
         if (st == MOO_BUFFER_BOUNDS) {

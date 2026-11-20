@@ -72,6 +72,9 @@ MooStructStatus moo_struct_box_sicht(MooStructBox *besitzer, const MooStrukturTy
 /* NULL bei Boxen der Alt-API (ohne Feldbeschreibung). */
 const MooStrukturTyp *moo_struct_box_typ(const MooStructBox *box);
 unsigned char *moo_struct_box_daten(const MooStructBox *box);
+/* P2-T88: Deskriptor am Speicher, von jeder Pufferansicht geerbt. wert geliehen;
+ * ohne boxbare Beschreibung bleibt die bisherige native Nutzung möglich. */
+void moo_buffer_struct_beschreiben(const MooValue *wert, const MooStrukturTyp *typ);
 
 #ifdef __cplusplus
 }

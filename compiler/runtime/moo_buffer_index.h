@@ -4,6 +4,8 @@
 #include "moo_buffer.h"
 /* Container borrowed; index and set value are consumed on all paths.
  * Get returns an owning MooValue; failures throw and return NONE.
+ * P2-T88: Strukturpuffer mit Beschreibung liefern Kopie-Boxen; Set kopiert
+ * nach nominaler Typpruefung zurueck. Bool-Array-Sichten liefern/verlangen bool.
  * P2-T50: alle Skalartypen (i8..u64, f32, f64). Ganzzahlen werden nur exakt
  * und im Wertebereich gespeichert; 64-Bit-Elemente werden nur geliefert, wenn
  * sie exakt als Moo-Zahl (double, |v| <= 2^53) darstellbar sind. */

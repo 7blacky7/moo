@@ -1,6 +1,7 @@
 #include "moo_buffer.h"
 #include "moo_buffer_value.h"
 #include "moo_buffer_priv.h"
+#include "moo_struct_typed.h"
 #include "moo_rc.h"
 
 #include <float.h>
@@ -13,7 +14,8 @@ struct MooBufferPin { MooBufferStorage* storage; };
 
 static void moo_buffer_storage_drop(MooBufferStorage* s) {
     if (moo_rc_size_dec(&s->refs) == 0) {
-        free(s->data);
+        if (s->besitzer) s->besitzer_drop(s->besitzer);
+        else free(s->data);
         free(s);
     }
 }
@@ -249,6 +251,12 @@ MooBufferStatus moo_buffer_pin(MooBuffer* b, MooBufferPin** out, void** data) {
     if (!b || !out || !data) return MOO_BUFFER_INVALID;
     *out = NULL; *data = NULL;
     MooBufferStorage* s = b->storage;
+    unsigned char* basis = s->data ? s->data + b->start * s->elem_size : NULL;
+    /* Gepackte Arrayfelder sind dynamisch per memcpy nutzbar. Native Puffer-
+     * Loads setzen dagegen ABI-Ausrichtung voraus (local_array_alignment). */
+    size_t align = s->struktur ? s->struktur->basis.alignment
+        : s->scalar_type != MOO_BUFFER_SCALAR_NONE ? s->elem_size : 1;
+    if (s->besitzer && basis && (uintptr_t)basis % align) return MOO_BUFFER_ALIGNMENT;
     if (moo_rc_size_lesen(&s->refs) == SIZE_MAX || moo_rc_size_lesen(&s->pins) == SIZE_MAX) return MOO_BUFFER_OVERFLOW;
     MooBufferPin* pin = malloc(sizeof(*pin));
     if (!pin) return MOO_BUFFER_ALLOC;

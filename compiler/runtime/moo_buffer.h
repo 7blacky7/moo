@@ -29,7 +29,8 @@ typedef enum {
     MOO_BUFFER_ALLOC,
     MOO_BUFFER_PINNED,
     MOO_BUFFER_INVALID,
-    MOO_BUFFER_TYPE
+    MOO_BUFFER_TYPE,
+    MOO_BUFFER_ALIGNMENT
 } MooBufferStatus;
 
 /* Stable IDs for explicitly supported trivial scalar storage. Values are ABI. */

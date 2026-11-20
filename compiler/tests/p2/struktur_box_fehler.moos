@@ -1,7 +1,7 @@
 # P2-T49 (Plan 38c59c64 C2): fangbare Fehler an der Strukturgrenze. Falscher
 # Typ (Zahl, layoutgleiche andere Struktur) erreicht die native Funktion nicht
 # (Seiteneffekt-Marke im Puffer bleibt 1); Bereich, Bruch, bool, i64 > 2^53,
-# unbekanntes Feld, Arrayfeld, falscher Feldtyp. Die Folgeanweisung laeuft nie;
+# unbekanntes Feld, Arraygrenze, falscher Feldtyp. Die Folgeanweisung laeuft nie;
 # Werte bleiben nach dem Fehler unveraendert.
 struktur Innen:
     x: f32
@@ -89,8 +89,10 @@ versuche:
 fange e:
     zeige "gefangen: " + e
 setze m auf MitArray()
+setze v auf m.werte
+zeige v[0]
 versuche:
-    setze v auf m.werte
+    zeige v[3]
     zeige "NACH_FALSCH"
 fange e:
     zeige "gefangen: " + e

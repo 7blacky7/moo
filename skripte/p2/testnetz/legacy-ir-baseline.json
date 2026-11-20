@@ -1,11 +1,11 @@
 {
   "format": 2,
-  "compiler_sha256": "c2cc0096cbd35b9b3aa48d958799b001f81484244dd29ec34065813d68958fb2",
+  "compiler_sha256": "6ba6efd449cb987d5099848f093e960fcb206fc9e0a218ee6b5dc7cf2ee0f410",
   "normalization": "module-header-root-v2",
-  "batch": "34927",
+  "batch": "34934",
   "provenance_attestation": "caller-provided-unverified",
-  "compiler_runtime_inventory_sha256": "ed4a0a4639405135c0b6e8ae2806368108336a4df19e305fb2b69a7b16a34f31",
-  "snapshot_ref": "32391aed96f9669dd8c2db116fc65fedd9d4fd09",
+  "compiler_runtime_inventory_sha256": "8023187f935edf8cb72794888049a1627a219f195a529b1e2eb5910d910d723e",
+  "snapshot_ref": "c5563ddbd92f3d3a8c927a16e8ba7f44cbc89917",
   "snapshot_ref_attestation": "caller-provided-unverified",
   "profiles": {
     "beispiele/bootloader/stage2.moos": [
@@ -692,7 +692,7 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "6fc974ac38579864d7139e75caded908627d46b0a0b04be11abf1ea84bf11270",
+    "sha256": "d2182bf72c9c1e78dbe4ceacec86fcaa1fb826ba3feff1694b336968df1d39f0",
     "files": {
       "compiler/tests/must_fail/syntax_fehler.moos": "90c2db2ce64faecf7fd7ecc78e0903b1639f528623d383bc56cd703fb47ebedd",
       "compiler/tests/regression/p2_byteansicht_grenzen.moos": "4f85e2900ac2dce942d0dcaad1939df2e8c92b7bc8fb411896c83a7575227e48",
@@ -1686,10 +1686,12 @@
       "compiler/tests/p2/rueckruf_orakel.moos": "f37b7b0d5922ba57d60c1f9e023978eccfa5567d9635bde127c95cab06477616",
       "compiler/tests/p2/rueckruf_sicher.moos": "9266629946b0720ba407bdea988d8b87f1618c3b6b9e0f3cc2a91b795e103914",
       "compiler/tests/p2/rueckruf_ungefangen.moos": "2e68f0e6a599d990155c8424634091b2baca4214f99cecca76ec9e34b1ec5c1a",
+      "compiler/tests/p2/struktur_array_dyn.moos": "216e7284cee319bf1ff17f938729ea37d08e2b96d0989bf608a00410cdad5cd8",
+      "compiler/tests/p2/struktur_array_dyn_heap.moos": "05da87ca8c5950cf4e152078dee5482c47609bf632a1096524876b5eec1946c3",
       "compiler/tests/p2/struktur_array_null.moos": "6c815ea4a5fee5d09237d030da3ef4e6ee8f9a559d8d9101bfedf963f71f7a70",
       "compiler/tests/p2/struktur_ausrichten_klein.moos": "d8ea10b340f3010f17da23201c8e70f5071afb636b3a565b0f41957b5de4f471",
       "compiler/tests/p2/struktur_box.moos": "de8841b0044cd864a591b118df5836d7c6508b5eaa506e2c8ff382128b5f10c9",
-      "compiler/tests/p2/struktur_box_fehler.moos": "1a3b6e587e04a95b720947d8ebdb85938cde4b0c4145ae7cb4ff33d3eaa7f6e4",
+      "compiler/tests/p2/struktur_box_fehler.moos": "14bc120824e319bc09a0130075f6b892cb0f818bbb30e7c8ba1c1b50c245affb",
       "compiler/tests/p2/struktur_box_neg_ausrichtung.moos": "c0044ec99767f167f3b060968af2528bf0d0699012a5aaf3ed473ac022438946",
       "compiler/tests/p2/struktur_box_neg_stelligkeit.moos": "9b773d7d11306371070004f5024ffbac5de55925e143a3961c75552dc34d06cc",
       "compiler/tests/p2/struktur_box_neg_zeiger.moos": "a573bc80b9078956af926891378fb9f59be96d52d207e81f4bc0c7e16d9b4879",
@@ -2518,7 +2520,7 @@
     },
     "beispiele/grafik/netz3d_gitter.moos": {
       "status": "ok",
-      "sha256": "1d4a0d99cffe4f37ea74a77eec420ca9c7e91e77ba893d13e47ac4a2ad0dde9c"
+      "sha256": "94158940413b517670a594e97a8176f9ff3cfea332e163754a5ceecfc1c700fe"
     },
     "beispiele/grafik_demo.moos": {
       "status": "ok",
@@ -2890,11 +2892,11 @@
     },
     "beispiele/nativ/06_vec_mat.moos": {
       "status": "ok",
-      "sha256": "a9f416767887f2716565888e2251968e0d3d29a341b40bee3adf720909b13e01"
+      "sha256": "985c422dfb61bd0a86200319aee8b5c05fe9d190f026bab9651b8b3700499a76"
     },
     "beispiele/nativ/07_zeiger.moos": {
       "status": "ok",
-      "sha256": "5f53789cff13c3079f20be4bc708ab832f96d1d622f4d6fa103d7981586cae7a"
+      "sha256": "6d076907a4f9e262fd7256bc8deefab3dd3109738b643dbbf14543dfc3765aea"
     },
     "beispiele/nativ/08_leihgabe_liest.moos": {
       "status": "ok",

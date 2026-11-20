@@ -1,4 +1,9 @@
 
+[tasks.struktur-array-dyn]
+description = "P2-T88: Arrayfeld-Sichten und dynamische Strukturpuffer mit Kopiegrenzen und LSan"
+dir = "{{config_root}}/../../.."
+run = "bash skripte/p2/frontend/struktur_array_dyn.sh"
+
 [tasks.wirf-unsicher]
 description = "P2-T93: wirf verhaelt sich mit und ohne unsicher:-Block identisch (gefangen, ungefangen, aufraeumen)"
 dir = "{{config_root}}/../../.."

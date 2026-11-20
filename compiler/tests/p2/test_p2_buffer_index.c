@@ -12,6 +12,12 @@ MooValue moo_number(double value) {
     moo_val_set_double(&result, value);
     return result;
 }
+MooValue moo_bool(bool value) {
+    MooValue result = {MOO_BOOL, 0};
+    moo_val_set_bool(&result, value);
+    return result;
+}
+const char *moo_type_name(MooValue value) { (void)value; return "?"; }
 MooValue moo_error(const char *message) { (void)message; return moo_none(); }
 void moo_throw(MooValue value) { (void)value; throws++; }
 static int legacy_set;

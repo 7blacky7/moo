@@ -329,6 +329,16 @@ static void moo_wert_kinder(MooValue v, MooKindBesucher besuch, void* kontext) {
             besuch(t->halt_arg, kontext);
             break;
         }
+        case MOO_BUFFER: {
+            MooBuffer* b = moo_val_as_ptr(v);
+            if (b && b->storage->besitzer) {
+                MooValue owner;
+                owner.tag = MOO_STRUCT;
+                moo_val_set_ptr(&owner, b->storage->besitzer);
+                besuch(owner, kontext);
+            }
+            break;
+        }
         case MOO_STRUCT: {
             MooStructBox* box = moo_val_as_ptr(v);
             if (box && box->besitzer) {
@@ -515,13 +525,23 @@ void moo_sperre_unterelemente_sichern(MooValue wurzel) {
     for (size_t i = anfang; i < g.n; i++) {
         /* Der Besucher darf den Knotenvektor vergroessern. */
         MooSperrKnoten k = g.knoten[i];
-        if (k.speicher) continue;
+        if (k.speicher) {
+            /* Eine Besitzerreferenz je Speicher, nicht je Pufferansicht. */
+            if (k.speicher->besitzer) {
+                MooValue owner;
+                owner.tag = MOO_STRUCT;
+                moo_val_set_ptr(&owner, k.speicher->besitzer);
+                sperrgraph_kind(owner, &g);
+            }
+            continue;
+        }
         if (k.wert.tag == MOO_BUFFER) {
             MooBuffer* b = moo_val_as_ptr(k.wert);
             if (!moo_rc_lesen(&b->storage->eingefroren)) {
                 MooValue leer = {0};
                 sperrgraph_eintragen(&g, leer, b->storage);
             }
+            continue;
         }
         moo_wert_kinder(k.wert, sperrgraph_kind, &g);
     }

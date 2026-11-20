@@ -236,6 +236,14 @@ Ziel: Typfehler vor der Ausführung mit Datei:Zeile und Vorschlag, JSON-Diagnose
 
 **Noch offen / Stand des Scans (15.11.2026):** Der Scan (`f001_scan.sh beispiele stdlib`) meldet weiterhin Hinweise, darunter in `stdlib/dns`, `stdlib/websocket`, `stdlib/netz_frame` und `stdlib/ki_bild_easy`. Bei den stdlib-Modulen sind das laut der Messung oben die bewusst belassenen Stellen mit `FEHLERPFAD(`-Kommentar (Fehler werden per Vertrag an den Aufrufer geworfen). Für die übrigen Bereiche liegt keine neue Gesamtzählung vor; die frühere Liste offener Bereiche ist durch die Bereinigungen oben überholt. Nicht abbrechende `wirf`-Prüfungen gibt es weiterhin in `beispiele/p5/` (z. B. `grimm_langtext_sampling_20261030.moos`) und in weiteren Beispielen mit Orchestrator-Exitcode.
 
+## Dynamische Arrayfelder und Strukturpuffer (P2-T88)
+
+Arrayfelder geboxter Strukturen liefern feste Puffer-Sichten. Indexschreiben und Unteransichten wirken auf die Besitzerstruktur; die Sicht und ihre nativen Pins halten den Besitzer am Leben. Der vorhandene V2-Deskriptor beschreibt mehrdimensionale Arrayfelder als flache Elementfolge, daher ist auch ihre dynamische Puffer-Sicht eindimensional. Bool-Elemente verlangen Wahrheitswerte, numerische Elemente folgen denselben Bereichs- und Exaktheitsprüfungen wie vorhandene Puffer.
+
+`puffer[Struktur][i]` und Strukturelemente einer Array-Sicht liefern kopierte Boxen. Änderungen an dieser Kopie werden mit `p[i] = wert` zurückgeschrieben; der nominale Strukturtyp muss passen. Ganze Arrayfeld-Zuweisungen kopieren eine passende Puffer-Sicht oder eine Liste mit genau der erwarteten Elementzahl. Erst nach vollständiger Prüfung wird das Ziel geändert. Bereits vorhandene Sichten bleiben gültig.
+
+Geteilte Besitzer und Puffer bleiben schreibgeschützt. Gepackte Arrayfelder lassen sich dynamisch ohne ausgerichtete Loads lesen und schreiben. Eine native Puffer-Leihe wird bei fehlender ABI-Ausrichtung mit einer fangbaren Diagnose abgelehnt; vorher in einen eigenen Puffer zu kopieren stellt die Ausrichtung her. Strukturen ohne boxbare Feldbeschreibung bleiben weiterhin nur nativ indizierbar. Gate: `mise run -C skripte/p2/frontend struktur-array-dyn` (Moo-Proben, C-Orakel für Pin-Lebensdauer und Sperren-Graph, Linux-LSan).
+
 ## Root-Inhalt
 
 Dauerhaft im Root: `README.md`, `README.en.md`, `ARCHITECTURE.md`, `DEPENDENCIES.md`, `pyproject.toml`, `.gitignore`, `.github/`. Es gibt derzeit keine `LICENSE`-Datei. Alles andere sind Code- oder Doku-Verzeichnisse. Bitte keine losen `test_*.moos` im Root anlegen (siehe `scratch/README.md`).
