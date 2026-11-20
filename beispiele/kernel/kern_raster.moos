@@ -9,6 +9,18 @@ struktur KernRaster:
     kr_hoehe: u64
     kr_stride: u64
 
+# Read-only MooFontAaFace aus moo_surface.c. Drei 64-Bit-Adressen,
+# gefolgt von den fünf u32-Metriken des eingebetteten Faces.
+struktur KernAaSchrift:
+    ks_glyphen: u64
+    ks_vorschuebe: u64
+    ks_extras: u64
+    ks_breite: u32
+    ks_hoehe: u32
+    ks_erstes: u32
+    ks_anzahl: u32
+    ks_extra_anzahl: u32
+
 @nativ
 funktion raster_puffer_ok(pixel: u64, bytes: u64, breite: u64, hoehe: u64, stride: u64) -> bool:
     wenn pixel == 0 oder breite == 0 oder hoehe == 0 oder breite > 2147483647 oder hoehe > 2147483647:
@@ -211,7 +223,7 @@ funktion raster_glyphe(z: u64) -> u64:
         gib_zurück 42
 
 @nativ
-funktion raster_zeichen(kern: u64, glyph: u64, x: i64, y: i64, skala: i32, farbe: u32) -> void:
+funktion raster_kompakt_zeichen(kern: u64, glyph: u64, x: i64, y: i64, skala: i32, farbe: u32) -> void:
     unsicher:
         setze s: i64 auf als(i64, skala)
         setze adr: u64 auf adresse_von(RASTER_GLYPHEN) + glyph * 5
@@ -228,20 +240,96 @@ funktion raster_zeichen(kern: u64, glyph: u64, x: i64, y: i64, skala: i32, farbe
             setze r auf r + 1
 
 @nativ
+funktion kern_schrift_abstand(schrift: u64) -> u64:
+    unsicher:
+        wenn schrift == 0:
+            gib_zurück 4
+        # Der Leerschritt bestimmt die feste Zellbreite der Konsole.
+        setze vorschuebe: u64 auf speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_vorschuebe), 8)
+        gib_zurück als(u64, speicher_lesen(vorschuebe, 1))
+
+@nativ
+funktion kern_schrift_hoehe(schrift: u64) -> u64:
+    unsicher:
+        wenn schrift == 0:
+            gib_zurück 5
+        gib_zurück als(u64, speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_hoehe), 4))
+
+@nativ
+funktion raster_aa_index(schrift: u64, z: u64) -> u64:
+    unsicher:
+        setze erstes: u64 auf als(u64, speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_erstes), 4))
+        setze anzahl: u64 auf als(u64, speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_anzahl), 4))
+        setze extra_anzahl: u64 auf als(u64, speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_extra_anzahl), 4))
+        setze basis_anzahl: u64 auf anzahl - extra_anzahl
+        wenn z >= erstes und z - erstes < basis_anzahl:
+            gib_zurück z - erstes
+        setze extras: u64 auf speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_extras), 8)
+        setze i: u64 auf 0
+        solange i < extra_anzahl:
+            wenn z == als(u64, speicher_lesen(extras + i * 4, 4)):
+                gib_zurück basis_anzahl + i
+            setze i auf i + 1
+        # Die bei Surface ebenfalls verwendete Ersatzglyphe '?'.
+        gib_zurück 63 - erstes
+
+@nativ
+funktion raster_aa_zeichen(kern: u64, schrift: u64, z: u64, x: i64, y: i64, skala: i32, farbe: u32) -> void:
+    unsicher:
+        setze s: i64 auf als(i64, skala)
+        setze breite: u64 auf als(u64, speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_breite), 4))
+        setze hoehe: u64 auf kern_schrift_hoehe(schrift)
+        setze masken: u64 auf speicher_lesen(schrift + versatz_von(KernAaSchrift, ks_glyphen), 8)
+        setze maske: u64 auf masken + raster_aa_index(schrift, z) * breite * hoehe
+        setze alpha: u64 auf als(u64, farbe >> 24)
+        setze rgb: u32 auf farbe & 0x00FFFFFF
+        setze r: u64 auf 0
+        solange r < hoehe:
+            setze gy: i64 auf y + als(i64, r) * s
+            setze spalte: u64 auf 0
+            solange spalte < breite:
+                setze deckung: u64 auf als(u64, speicher_lesen(maske + r * breite + spalte, 1))
+                setze a: u64 auf (deckung * alpha + 127) / 255
+                setze gx: i64 auf x + als(i64, spalte) * s
+                wenn a != 0 und gx >= -2147483648 und gx <= 2147483647 und gy >= -2147483648 und gy <= 2147483647:
+                    kern_raster_rect(kern, als(i32, gx), als(i32, gy), skala, skala, rgb | (als(u32, a) << 24))
+                setze spalte auf spalte + 1
+            setze r auf r + 1
+
+@nativ
+funktion raster_zeichen(kern: u64, schrift: u64, z: u64, x: i64, y: i64, skala: i32, farbe: u32) -> void:
+    unsicher:
+        wenn schrift == 0:
+            raster_kompakt_zeichen(kern, raster_glyphe(z), x, y, skala, farbe)
+        sonst wenn z != 32:
+            raster_aa_zeichen(kern, schrift, z, x, y, skala, farbe)
+
+@nativ
+funktion kern_raster_schrift_zeichen(kern: u64, schrift: u64, x: i32, y: i32, skala: i32, codepunkt: u64, farbe: u32) -> void:
+    unsicher:
+        wenn skala > 0 und raster_gueltig(kern):
+            raster_zeichen(kern, schrift, codepunkt, als(i64, x), als(i64, y), skala, farbe)
+
+@nativ
 funktion kern_raster_zeichen(kern: u64, x: i32, y: i32, skala: i32, codepunkt: u64, farbe: u32) -> void:
-    wenn skala > 0 und raster_gueltig(kern):
-        raster_zeichen(kern, raster_glyphe(codepunkt), als(i64, x), als(i64, y), skala, farbe)
+    unsicher:
+        kern_raster_schrift_zeichen(kern, 0, x, y, skala, codepunkt, farbe)
 
 @nativ
 funktion kern_raster_text(kern: u64, x: i32, y: i32, skala: i32, textadresse: u64, laenge: u64, farbe: u32) -> u8:
+    unsicher:
+        gib_zurück kern_raster_schrift_text(kern, 0, x, y, skala, textadresse, laenge, farbe)
+
+@nativ
+funktion kern_raster_schrift_text(kern: u64, schrift: u64, x: i32, y: i32, skala: i32, textadresse: u64, laenge: u64, farbe: u32) -> u8:
     unsicher:
         wenn textadresse == 0 oder laenge > 0xFFFFFFFFFFFFFFFF - textadresse oder skala <= 0 oder nicht raster_gueltig(kern):
             gib_zurück 0
         setze pos_x: i64 auf als(i64, x)
         setze pos_y: i64 auf als(i64, y)
         setze max: i64 auf 9223372036854775807
-        setze dx: i64 auf als(i64, skala) * 4
-        setze dy: i64 auf als(i64, skala) * 6
+        setze dx: i64 auf als(i64, skala) * als(i64, kern_schrift_abstand(schrift))
+        setze dy: i64 auf als(i64, skala) * (als(i64, kern_schrift_hoehe(schrift)) + 1)
         setze i: u64 auf 0
         solange i < laenge:
             setze einheit: u64 auf utf8_lesen(textadresse + i, laenge - i)
@@ -257,7 +345,9 @@ funktion kern_raster_text(kern: u64, x: i32, y: i32, skala: i32, textadresse: u6
             sonst:
                 wenn pos_x > max - dx:
                     gib_zurück 0
-                raster_zeichen(kern, raster_glyphe(z), pos_x, pos_y, skala, farbe)
+                # Ursprünge darüber liegen ganz rechts bzw. unter dem Raster.
+                wenn pos_x <= 2147483647 und pos_y <= 2147483647:
+                    raster_zeichen(kern, schrift, z, pos_x, pos_y, skala, farbe)
                 setze pos_x auf pos_x + dx
             setze i auf i + (einheit >> 32)
         gib_zurück 1

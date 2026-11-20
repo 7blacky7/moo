@@ -1440,6 +1440,11 @@ fn build_kernel(
     } else {
         &[]
     };
+    let mono_font_sources: &[&str] = if compiler.hat_sektion(".data.moo_font_aa") {
+        &["moo_surface.c"]
+    } else {
+        &[]
+    };
     const KERNEL_CFLAGS: [&str; 10] = [
         "-c", "-ffreestanding", "-fno-pic", "-fno-pie",
         "-O2", "-nostdlib",
@@ -1474,13 +1479,16 @@ fn build_kernel(
         }
     };
 
-    for src in KERNEL_SOURCES.iter().chain(crypto_sources) {
+    for src in KERNEL_SOURCES.iter().chain(crypto_sources).chain(mono_font_sources) {
         let src_path = runtime_dir.join(src);
         if !src_path.exists() {
             return Err(format!("Kernel-Runtime-Quelle fehlt: {}", src_path.display()));
         }
         let obj = tmp.join(format!("{}.o", src.replace('/', "_")));
         let mut cmd = Command::new(cc_prog);
+        if mono_font_sources.contains(src) {
+            cmd.arg("-DMOO_BARE_FONT_MONO");
+        }
         if crypto_sources.contains(src) {
             cmd.arg("-mgeneral-regs-only")
                 .arg("-I")

@@ -11,7 +11,7 @@
 #   - Zeichnen NUR in den RGBA8888-Rueckpuffer im RAM,
 #     Present auf den GOP-Framebuffer mit Pixelformat-Umsetzung:
 #     0 = RGBX, 1 = BGRX, 2 = Bitmaske (beliebige Masken), 3 = BltOnly -> nur COM1
-#   - Textkonsole ueber Surface-Text (3x5-Schrift), Scrollen, Zeilen-Present
+#   - Textkonsole mit DejaVu Sans Mono AA, Scrollen und Zeilen-Present
 #   - COM1 (0x3F8) + debugcon (0xE9) als zweiter Kanal fuer jede Konsolenzeile
 #   - Selbsttest der Formatumsetzung und Messung (TSC, ueber PIT kalibriert)
 # Bau:  moo compile beispiele/kernel/uefi_kern.moos --no-stdlib --target x86_64-bare \
@@ -19,7 +19,9 @@
 
 # Vertrag Loader -> Kern: eine Quelle fuer beide Seiten.
 aus "moo_bootvertrag" importiere MooBootInfo, BOOT_MAGIE
-aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_zeichen
+aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe
+
+extern "C" funktion moo_bare_font_mono() -> u64
 aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar
 aus "kern_tastatur" importiere tastatur_codepunkt
 aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
@@ -87,6 +89,7 @@ struktur Konsole:
     k_rechts: u64
     k_unten: u64
     k_skala: u64
+    k_schrift: u64
     k_farbe: u64
     k_grund: u64
     k_aktiv: u64
@@ -132,7 +135,13 @@ statisch RASTER_KERN: [u64; 5] auf 0
 statisch KONSOLE_UTF8: [u64; 2] auf 0
 
 @nativ
+@sektion(".data.moo_font_aa")
 statisch KONSOLE: Konsole auf 0
+
+@nativ
+konstante T_SCHRIFT_MONO: [u8; _] auf "MOO-KERNEL SCHRIFT MONO\n"
+@nativ
+konstante T_SCHRIFT_KOMPAKT: [u8; _] auf "MOO-KERNEL SCHRIFT KOMPAKT\n"
 
 @nativ
 statisch SCHIRM: Schirm auf 0
@@ -557,7 +566,7 @@ funktion formate_pruefen() -> u64:
             setze ok auf ok + 1
         gib_zurück ok
 
-# ---------------- Textkonsole ueber Surface-Text ----------------
+# ---------------- Textkonsole im Moo-Raster ----------------
 @nativ
 funktion kon(feld: u64) -> u64:
     unsicher:
@@ -587,6 +596,11 @@ funktion kon_zeigen() -> void:
         kon_setze(versatz_von(Konsole, k_schmutz_oben), 0xFFFFFFFF)
         kon_setze(versatz_von(Konsole, k_schmutz_unten), 0)
 
+@nativ
+funktion kon_zeilenhoehe() -> u64:
+    unsicher:
+        gib_zurück (kern_schrift_hoehe(kon(versatz_von(Konsole, k_schrift))) + 1) * kon(versatz_von(Konsole, k_skala))
+
 # Konsolenbereich um eine Textzeile nach oben schieben (im Rueckpuffer).
 @nativ
 funktion kon_rollen() -> void:
@@ -598,7 +612,7 @@ funktion kon_rollen() -> void:
         setze rechts: u64 auf kon(versatz_von(Konsole, k_rechts))
         setze oben: u64 auf kon(versatz_von(Konsole, k_oben))
         setze unten: u64 auf kon(versatz_von(Konsole, k_unten))
-        setze h: u64 auf 6 * kon(versatz_von(Konsole, k_skala))
+        setze h: u64 auf kon_zeilenhoehe()
         setze y: u64 auf oben
         setze x: u64 auf 0
         setze w: u64 auf (rechts - links) / 2
@@ -614,7 +628,7 @@ funktion kon_rollen() -> void:
 @nativ
 funktion kon_neue_zeile() -> void:
     unsicher:
-        setze h: u64 auf 6 * kon(versatz_von(Konsole, k_skala))
+        setze h: u64 auf kon_zeilenhoehe()
         kon_setze(versatz_von(Konsole, k_x), kon(versatz_von(Konsole, k_links)))
         kon_setze(versatz_von(Konsole, k_y), kon(versatz_von(Konsole, k_y)) + h)
         wenn kon(versatz_von(Konsole, k_y)) + h > kon(versatz_von(Konsole, k_unten)):
@@ -650,17 +664,24 @@ funktion konsole_zeichen(z: u64) -> void:
             kon_neue_zeile()
             kon_zeigen()
             gib_zurück
+        setze schrift: u64 auf kon(versatz_von(Konsole, k_schrift))
+        setze dx: u64 auf kern_schrift_abstand(schrift) * skala
         setze x: u64 auf kon(versatz_von(Konsole, k_x))
-        setze y: u64 auf kon(versatz_von(Konsole, k_y))
-        kern_raster_zeichen(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8), i32(x), i32(y), i32(skala), z, u32(kon(versatz_von(Konsole, k_farbe))))
-        kon_schmutz(y, y + 5 * skala)
-        kon_setze(versatz_von(Konsole, k_x), x + 4 * skala)
-        wenn x + 7 * skala > kon(versatz_von(Konsole, k_rechts)):
+        wenn x + dx > kon(versatz_von(Konsole, k_rechts)):
             kon_neue_zeile()
+            setze x auf kon(versatz_von(Konsole, k_x))
+        setze y: u64 auf kon(versatz_von(Konsole, k_y))
+        kern_raster_schrift_zeichen(speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8), schrift, i32(x), i32(y), i32(skala), z, u32(kon(versatz_von(Konsole, k_farbe))))
+        kon_schmutz(y, y + kern_schrift_hoehe(schrift) * skala)
+        kon_setze(versatz_von(Konsole, k_x), x + dx)
 
 @nativ
-funktion konsole_starten(links: u64, oben: u64, rechts: u64, unten: u64, skala: u64, farbe: u64, grund: u64) -> void:
+funktion konsole_starten(links: u64, oben: u64, rechts: u64, unten: u64, schrift: u64, farbe: u64, grund: u64) -> void:
     unsicher:
+        setze skala: u64 auf 1
+        wenn schrift == 0:
+            setze skala auf 2
+        kon_setze(versatz_von(Konsole, k_schrift), schrift)
         kon_setze(versatz_von(Konsole, k_links), links)
         kon_setze(versatz_von(Konsole, k_oben), oben)
         kon_setze(versatz_von(Konsole, k_rechts), rechts)
@@ -1754,6 +1775,30 @@ funktion usb_layout_wechseln() -> void:
             text(adresse_von(T_LAYOUT_DE))
         eingabe_zeigen()
 
+# F11 wechselt die Zellmetriken. Der Konsolenbildbereich beginnt dabei neu,
+# während Eingabe, UTF-8-Zustand und die seriellen Meldungen erhalten bleiben.
+@nativ
+funktion schrift_wechseln() -> void:
+    unsicher:
+        wenn kon(versatz_von(Konsole, k_aktiv)) == 0:
+            gib_zurück
+        setze schrift: u64 auf 0
+        setze marker: u64 auf adresse_von(T_SCHRIFT_KOMPAKT)
+        wenn kon(versatz_von(Konsole, k_schrift)) == 0:
+            setze schrift auf moo_bare_font_mono()
+            setze marker auf adresse_von(T_SCHRIFT_MONO)
+        setze links: u64 auf kon(versatz_von(Konsole, k_links))
+        setze oben: u64 auf kon(versatz_von(Konsole, k_oben))
+        setze rechts: u64 auf kon(versatz_von(Konsole, k_rechts))
+        setze unten: u64 auf kon(versatz_von(Konsole, k_unten))
+        setze grund: u64 auf kon(versatz_von(Konsole, k_grund))
+        setze kern: u64 auf speicher_lesen(adresse_von(SCHIRM) + versatz_von(Schirm, s_kern), 8)
+        kern_raster_rect(kern, i32(links), i32(oben), i32(rechts - links), i32(unten - oben), u32(grund))
+        konsole_starten(links, oben, rechts, unten, schrift, kon(versatz_von(Konsole, k_farbe)), grund)
+        kon_schmutz(oben, unten)
+        text(marker)
+        eingabe_zeigen()
+
 # Zustand gehaltener Tasten pro HID-Slot, CapsLock fuer die gemeinsame Konsole.
 @nativ
 @aufrufkonvention("sysv64")
@@ -1780,8 +1825,11 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
                 speicher_schreiben(adresse_von(USB_TASTEN), speicher_lesen(adresse_von(USB_TASTEN), 8) + 1, 8)
                 wenn usage == 57:
                     speicher_schreiben(adresse_von(USB_CAPS), speicher_lesen(adresse_von(USB_CAPS), 8) ^ 1, 8)
-                wenn usage == 69 und (report & 255) == 0:
-                    usb_layout_wechseln()
+                wenn (report & 255) == 0:
+                    wenn usage == 68:
+                        schrift_wechseln()
+                    sonst wenn usage == 69:
+                        usb_layout_wechseln()
                 setze c: u64 auf tastatur_codepunkt(usage, report & 255, speicher_lesen(adresse_von(USB_CAPS), 8) != 0, speicher_lesen(adresse_von(USB_LAYOUT_US), 8) != 0)
                 wenn c != 0:
                     meldung(adresse_von(T_USB_TASTE), c)
@@ -2111,9 +2159,9 @@ statisch EINGABE: [u8; 1020] auf 0
 @nativ
 statisch EINGABE_N: [u64; 1] auf 0
 @nativ
-konstante T_EINGABE_DE: [u8; _] auf "EINGABE DE (F12: US)"
+konstante T_EINGABE_DE: [u8; _] auf "EINGABE DE (F12: US, F11: Schrift)"
 @nativ
-konstante T_EINGABE_US: [u8; _] auf "EINGABE US (F12: DE)"
+konstante T_EINGABE_US: [u8; _] auf "EINGABE US (F12: DE, F11: Schrift)"
 
 @nativ
 funktion eingabe_zeigen() -> void:
@@ -2129,10 +2177,16 @@ funktion eingabe_zeigen() -> void:
         setze titel: u64 auf adresse_von(T_EINGABE_DE)
         wenn speicher_lesen(adresse_von(USB_LAYOUT_US), 8) != 0:
             setze titel auf adresse_von(T_EINGABE_US)
-        kern_raster_text(kern, 52, i32(boden + 6), 2, titel, 20, rgba(200, 230, 255))
-        kern_raster_text(kern, 52, i32(boden + 28), 3, adresse_von(EINGABE), n, rgba(255, 230, 160))
+        setze schrift: u64 auf kon(versatz_von(Konsole, k_schrift))
+        setze skala: u64 auf 1
+        wenn schrift == 0:
+            setze skala auf 3
+        kern_raster_schrift_text(kern, schrift, 52, i32(boden + 6), i32(kon(versatz_von(Konsole, k_skala))), titel, 34, rgba(200, 230, 255))
+        kern_raster_schrift_text(kern, schrift, 52, i32(boden + 28), i32(skala), adresse_von(EINGABE), n, rgba(255, 230, 160))
+        setze dx: u64 auf kern_schrift_abstand(schrift) * skala
+        setze h: u64 auf kern_schrift_hoehe(schrift) * skala
         setze anzahl: u64 auf utf8_zeichenanzahl(adresse_von(EINGABE), n)
-        kern_raster_rect(kern, i32(52 + anzahl * 12), i32(boden + 45), 8, 2, rgba(255, 196, 64))
+        kern_raster_rect(kern, i32(52 + anzahl * dx), i32(boden + 30 + h), 8, 2, rgba(255, 196, 64))
         schirm_zeilen(boden, boden + 60)
 
 @nativ
@@ -2143,6 +2197,7 @@ funktion eingabe_taste(c: u64) -> void:
         setze n: u64 auf speicher_lesen(adresse_von(EINGABE_N), 8)
         wenn kon(versatz_von(Konsole, k_aktiv)) == 0 oder breite < 160:
             gib_zurück
+        # Der breitere Kompaktvorschub passt auch nach einem Schriftwechsel.
         setze max: u64 auf (breite - 116) / 12
         wenn max > 255:
             setze max auf 255
@@ -2520,7 +2575,8 @@ funktion kern_haupt(bi: u64) -> void:
                 setze t0 auf takt()
                 schirm_zeilen(0, hoehe)
                 setze t_neu auf takt() - t0
-                konsole_starten(40, 300, breite - 40, hoehe - 100, 2, u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                konsole_starten(40, 300, breite - 40, hoehe - 100, moo_bare_font_mono(), u64(rgba(200, 230, 255)), u64(rgba(32, 96, 128)))
+                text(adresse_von(T_SCHRIFT_MONO))
                 eingabe_zeigen()
                 setze t0 auf takt()
                 text(adresse_von(T_KON1))

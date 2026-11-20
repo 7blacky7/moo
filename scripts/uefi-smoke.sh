@@ -624,7 +624,9 @@ PY
       -netdev user,id=igb0,restrict=on -device igb,id=igb_a,addr=0x5,netdev=igb0,mac=52:54:00:22:57:01,romfile=
       -netdev user,id=igb1,restrict=on -device igb,id=igb_b,addr=0xa,netdev=igb1,mac=52:54:00:22:57:02,romfile=)
   fi
-  timeout --foreground $((WAIT_S + 60))s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
+  KERN_LAUFZEIT=$((WAIT_S + 60))
+  [ "$KERN_TASTATUR" != 1 ] || KERN_LAUFZEIT=$((KERN_LAUFZEIT + 35))
+  timeout --foreground "${KERN_LAUFZEIT}s" qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
       -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
       -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
       -drive format=raw,file="$OUT/uefi.img" \
@@ -721,24 +723,60 @@ PY
     printf 'screendump %s -f png\n' "$OUT/boot-screenshot.png" >&3
     for ((j = 0; j < 15; j++)); do [ -s "$OUT/boot-screenshot.png" ] && break; sleep 0.1; done
     if [ "$KERN_TASTATUR" = 1 ]; then
-      # QEMU sendet physische Tastenpositionen an die USB-Boot-Tastatur.
+      PIXEL_PROBE="$ROOT/skripte/p7/tastatur-pixel.py"
+      tastatur_bild() {
+        local ziel="$1" erwartet="$2" gesehen=0 j
+        for ((j = 0; j < 60; j++)); do
+          gesehen="$(grep -aEc 'MOO-KERNEL USB TASTE [0-9A-F]{16}' "$OUT/serial.log")"
+          [ "$gesehen" -ge "$erwartet" ] && break
+          sleep 0.1
+        done
+        [ "$gesehen" -ge "$erwartet" ] || fail "Tastaturbild: $gesehen von $erwartet Eingabemarkern"
+        # Der Framebuffer-Present kann dem seriellen Tastenmarker nachlaufen.
+        sleep 1
+        rm -f -- "$ziel"
+        printf 'screendump %s\n' "$ziel" >&3
+        for ((j = 0; j < 25; j++)); do
+          [ -s "$ziel" ] && return 0
+          sleep 0.1
+        done
+        fail "Tastaturbild fehlt: $ziel"
+      }
+      # Der Start-Handshake hat 'a' bereits an die USB-Tastatur gesendet.
+      soll_tasten=1
+      # Physische Positionen an die USB-Boot-Tastatur, einschließlich AltGr.
       for taste in y z \
           shift-1 shift_r-2 shift-3 shift-4 shift-5 shift-6 shift-7 shift-8 shift-9 shift-0 shift-minus \
           alt_r-q alt_r-e alt_r-7 alt_r-0 alt_r-8 alt_r-9 alt_r-minus alt_r-less alt_r-bracket_right \
-          apostrophe semicolon bracket_left shift-apostrophe shift-semicolon shift_r-bracket_left minus \
-          alt_r-e backspace apostrophe backspace caps_lock apostrophe shift-apostrophe caps_lock f12 y f12 y; do
+          apostrophe semicolon bracket_left shift-apostrophe shift-semicolon shift_r-bracket_left \
+          shift-grave_accent equal minus alt_r-e backspace apostrophe backspace \
+          caps_lock apostrophe shift-apostrophe caps_lock f12 y f12 y; do
         printf 'sendkey %s 70\n' "$taste" >&3
+        case "$taste" in caps_lock|f12) ;; *) soll_tasten=$((soll_tasten + 1));; esac
         sleep 0.22
       done
-      # Der Framebuffer-Present kann dem seriellen Tastenmarker nachlaufen.
-      sleep 1
-      printf 'screendump %s\n' "$OUT/tastatur.ppm" >&3
-      for ((j = 0; j < 25; j++)); do
-        [ -s "$OUT/tastatur.ppm" ] && break
-        sleep 0.1
+      tastatur_bild "$OUT/tastatur.ppm" "$soll_tasten"
+      printf 'sendkey f11 70\n' >&3
+      tastatur_bild "$OUT/tastatur-kompakt.ppm" "$soll_tasten"
+      printf 'sendkey f11 70\n' >&3
+      sleep 0.25
+      printf 'sendkey f12 70\n' >&3
+      sleep 0.25
+      # Drei kurze Gruppen passen auch im 640-Pixel-Modus samt Eingabecursor.
+      for gruppe in 0 1 2; do
+        tasten="$(uv run --no-project --offline python "$PIXEL_PROBE" --ascii-tasten "$gruppe")" \
+          || fail "ASCII-Tastenliste"
+        while IFS= read -r taste; do
+          printf 'sendkey %s 70\n' "$taste" >&3
+          soll_tasten=$((soll_tasten + 1))
+          sleep 0.22
+        done <<< "$tasten"
+        tastatur_bild "$OUT/tastatur-ascii-$gruppe.ppm" "$soll_tasten"
       done
-      uv run --no-project --offline python "$ROOT/skripte/p7/tastatur-pixel.py" \
-        "$OUT/tastatur.ppm" "$OUT/serial.log" || fail "Tastaturprobe"
+      printf 'sendkey f12 70\n' >&3
+      sleep 0.25
+      uv run --no-project --offline python "$PIXEL_PROBE" \
+        "$OUT" "$ROOT/compiler/runtime/moo_font_aa.h" || fail "Tastaturprobe"
     fi
     printf 'sendkey shift-b 60\n' >&3
     sleep 0.2
