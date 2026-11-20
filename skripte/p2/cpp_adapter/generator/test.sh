@@ -5,11 +5,15 @@ out=build/p2-t24/generator
 src=skripte/p2/cpp_adapter/generator
 compiler="${MOO_COMPILER:-compiler/target/release/moo-compiler}"
 mkdir -p "$out"
+rust_flags=()
+cpp_link_flags=()
 case "$(uname -s)" in
  Linux) target=x86_64-unknown-linux-gnu; exe=; cpp_flags=(); archive="$out/libp2_cpp_generated.a" ;;
- MINGW*|MSYS*) target=x86_64-pc-windows-msvc; exe=.exe; cpp_flags=(-fms-runtime-lib=dll); archive="$out/p2_cpp_generated.lib" ;;
+ MINGW*|MSYS*) target=x86_64-pc-windows-msvc; exe=.exe; cpp_flags=(-fms-runtime-lib=dll); cpp_link_flags=(-fuse-ld=lld); rust_flags=(-C "linker=${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER:-lld-link}"); archive="$out/p2_cpp_generated.lib" ;;
  *) echo "Dieser Lauf verlangt Linux x64 oder Windows x64"; exit 2 ;;
 esac
+rustc "${rust_flags[@]}" --edition=2024 --test -A dead_code "$src/pfad_test.rs" -o "$out/pfad-test$exe"
+"$out/pfad-test$exe"
 args=(--class Zaehler --class Fremd --prefix tg --library p2_cpp_generated --target "$target" -DMOO_CPP_PROBE=1)
 for emit in cpp moo; do
  "$compiler" bindgen-cpp "$src/probe.hpp" "${args[@]}" --emit "$emit" > "$out/bindung.$emit"
@@ -17,7 +21,7 @@ for emit in cpp moo; do
  cmp "$out/bindung.$emit" "$out/wiederholt.$emit"
 done
 cp "$out/bindung.cpp" "$out/adapter.cpp"
-clang++ "${cpp_flags[@]}" -std=c++17 -O2 -Wall -Wextra -Werror -I"$out" "$src/referenz.cpp" -o "$out/referenz$exe"
+clang++ "${cpp_flags[@]}" "${cpp_link_flags[@]}" -std=c++17 -O2 -Wall -Wextra -Werror -I"$out" "$src/referenz.cpp" -o "$out/referenz$exe"
 "$out/referenz$exe"
 clang++ "${cpp_flags[@]}" -std=c++17 -O2 -Wall -Wextra -Werror -c "$out/adapter.cpp" -o "$out/adapter.o"
 llvm-ar rcs "$archive" "$out/adapter.o"

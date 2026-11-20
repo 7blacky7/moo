@@ -68,7 +68,9 @@ MOO_COMPILER=/pfad/zum/moo-compiler mise -C skripte/p2/cpp_adapter run generator
 Doppelte Generierung, zwei Klassen, Konstruktoren, Overloads, const/void,
 C++/Moo-Roundtrip, voller U64MAX, Exception mit unverändertem Ergebnis,
 Nullargumente, explizite Freigabe, Alias-/Doppelfrei-/Typprüfung sowie elf
-negative Positionsdiagnosen werden geprüft. Unter Linux instrumentiert
+negative Positionsdiagnosen werden geprüft. Vier kleine Rust-Gegenproben prüfen
+Windows-Laufwerkspfade, maskierte Leerzeichen/#, Zeilenfortsetzung sowie
+Clang-TSV-Pfade unabhängig vom Host. Unter Linux instrumentiert
 ASan/UBSan/LSan das C++-Adapterorakel, nicht die gesamte Moo-Runtime.
 Ein zusätzlicher GCC-Link mit `--as-needed` prüft die Reihenfolge Adapter vor
 C++-Laufzeitbibliothek, unabhängig vom voreingestellten Host-Linker.

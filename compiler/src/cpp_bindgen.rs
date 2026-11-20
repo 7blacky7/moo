@@ -33,10 +33,39 @@ fn portable(path: &Path) -> Result<String,String> {
     if s.contains(['\n','\r','"']) { return Err("nicht unterstützter Pfad".into()); }
     Ok(s)
 }
+fn dependency_names(raw: &str, windows: bool) -> Result<Vec<String>,String> {
+    if !windows { return make_deps(raw); }
+    // Clang on Windows emits native directory separators, while spaces/# keep
+    // make escaping. Preserve those escapes and normalize only separators.
+    let joined=raw.replace("\\\r\n","").replace("\\\n","");
+    let mut chars=joined.chars().peekable();
+    let mut normalized=String::new();
+    while let Some(c)=chars.next() {
+        if c!='\\' {normalized.push(c);continue;}
+        let mut count=1;
+        while chars.peek()==Some(&'\\') {chars.next();count+=1;}
+        let escape=chars.peek().is_some_and(|c|matches!(c,' '|'\t'|'#'));
+        normalized.push_str(&"/".repeat(if escape {count-1} else {count}));
+        if escape {normalized.push('\\');normalized.push(chars.next().unwrap());}
+    }
+    make_deps(&normalized)
+}
+fn decode_field(raw: &str) -> Result<String,String> {
+    let mut chars=raw.chars();
+    let mut out=String::new();
+    while let Some(c)=chars.next() {
+        if c!='\\' {out.push(c);continue;}
+        out.push(match chars.next() {
+            Some('\\')=>'\\', Some('t')=>'\t', Some('r')=>'\r', Some('n')=>'\n',
+            _=>return Err("ungültiges TSV-Escape im Clang-AST".into()),
+        });
+    }
+    Ok(out)
+}
 fn dependencies(base: &[String], header: &str) -> Result<Vec<(String,String)>,String> {
     let mut args=base.to_vec(); args.extend(["-M".into(),"-MT".into(),"moo_cpp".into(),header.into()]);
     let mut result=Vec::new();
-    for name in make_deps(&command("clang",&args)?)? {
+    for name in dependency_names(&command("clang",&args)?,cfg!(windows))? {
         let path=portable(&std::fs::canonicalize(&name).map_err(|e|format!("{name}: {e}"))?)?;
         let hash=command("sha256sum",&["--".into(),path.clone()])?;
         let hash=hash.split_whitespace().next().ok_or("SHA256 fehlt")?.to_owned();
@@ -90,8 +119,7 @@ fn parse(raw: &str, selected: &BTreeSet<String>, prefix: &str, target: &str, hea
     let mut parameters=Vec::new();
     let mut names=BTreeSet::new();
     for line in raw.lines() {
-        let p:Vec<String>=line.split('\t').map(str::to_owned).collect();
-        if p.iter().any(|s|s.contains('\\')) { return Err("escaped AST-Feld nicht unterstützt".into()); }
+        let p:Vec<String>=line.split('\t').map(decode_field).collect::<Result<_,_>>()?;
         match p.first().map(String::as_str).unwrap_or("") {
             "R" => {
                 class=None; active=None;
@@ -254,6 +282,32 @@ pub fn run(header:&Path, names:&[String], prefix:&str, library:&str, target:&str
     // Nothing is printed until every class and public method has been validated.
     print!("{out}"); Ok(())
 }
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    #[test]
+    fn native_windows_dependencies_keep_separators() {
+        let raw="moo_cpp: D:\\a\\moo\\moo\\skripte\\p2\\probe.hpp\r\n";
+        assert_eq!(dependency_names(raw,true).unwrap(),vec!["D:/a/moo/moo/skripte/p2/probe.hpp"]);
+    }
+    #[test]
+    fn windows_space_hash_and_continuation() {
+        let raw="moo_cpp: C:\\Program\\ Files\\SDK\\a.hpp \\\r\n D:\\src\\foo\\#bar.hpp D:\\src\\\\#verzeichnis\\b.hpp";
+        assert_eq!(dependency_names(raw,true).unwrap(),vec!["C:/Program Files/SDK/a.hpp","D:/src/foo#bar.hpp","D:/src/#verzeichnis/b.hpp"]);
+    }
+    #[test]
+    fn posix_dependencies_keep_make_contract() {
+        assert_eq!(dependency_names("moo_cpp: /a/b\\ c.hpp \\\n /x/y.hpp",false).unwrap(),vec!["/a/b c.hpp","/x/y.hpp"]);
+    }
+    #[test]
+    fn ast_tsv_native_paths_decode_once() {
+        assert_eq!(decode_field(r"D:\\a\\moo\\temp.hpp").unwrap(),r"D:\a\moo\temp.hpp");
+        assert_eq!(decode_field(r"a\tb").unwrap(),"a\tb");
+        assert!(decode_field(r"a\q").is_err());
+    }
+}
+
 fn emit_moo(out:&mut String, library:&str, abi:&str, name:&str, args:&[String], ret:&str, consumes:bool, guard:&str, calls:&[String]) {
     emit_moo_parts(out,library,abi,name,args,args,ret,consumes,guard,calls,None)
 }
