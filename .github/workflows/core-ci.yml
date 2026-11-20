@@ -92,7 +92,7 @@ jobs:
             libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
             libsdl2-dev libsdl2-image-dev \
             libsqlite3-dev libssl-dev pkg-config python3 ripgrep \
-            qemu-system-x86 grub-common grub-pc-bin xorriso
+            qemu-system-x86 grub-common grub-pc-bin xorriso mtools
           echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
           echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
@@ -307,6 +307,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          command -v mformat
           MOO_BIN="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
             bash scripts/kernel-smoke.sh 2>&1 | tee p2-bare-qemu.log
           grep -Fx '# ERGEBNIS: ALLE 4 Phasen gruen.' p2-bare-qemu.log
