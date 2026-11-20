@@ -1,0 +1,80 @@
+# P2-T86: skalare ABI-Typen, Strukturkopie und geliehener Zeiger.
+struktur RegWert:
+    wert: i32
+
+@nativ
+funktion reg_bool(r: rueckruf[fn(bool) -> bool]) -> bool:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], bool) -> bool] auf rueckruf_zeiger(r)
+        gib_zurück cb(rueckruf_daten(r), wahr)
+
+@nativ
+funktion reg_float(r: rueckruf[fn(f32) -> f32]) -> f32:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], f32) -> f32] auf rueckruf_zeiger(r)
+        gib_zurück cb(rueckruf_daten(r), 1.25)
+
+@nativ
+funktion reg_breit(r: rueckruf[fn(u64) -> u64]) -> u64:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], u64) -> u64] auf rueckruf_zeiger(r)
+        setze basis: u64 auf 1152921504606846976
+        gib_zurück cb(rueckruf_daten(r), basis) - basis
+
+@nativ
+funktion reg_void(r: rueckruf[fn(i32) -> void]) -> void:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], i32) -> void] auf rueckruf_zeiger(r)
+        cb(rueckruf_daten(r), 7)
+
+@nativ
+funktion reg_struktur(r: rueckruf[fn(RegWert) -> i32]) -> i32:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], RegWert) -> i32] auf rueckruf_zeiger(r)
+        setze wert: RegWert auf RegWert(7)
+        gib_zurück cb(rueckruf_daten(r), wert)
+
+@nativ
+funktion reg_zeiger(r: rueckruf[fn(ptr[RegWert]) -> i32]) -> i32:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], ptr[RegWert]) -> i32] auf rueckruf_zeiger(r)
+        setze wert: RegWert auf RegWert(37)
+        gib_zurück cb(rueckruf_daten(r), zeiger(adresse_von(wert)))
+
+@nativ
+funktion reg_lesen(p: ptr[RegWert]) -> i32:
+    unsicher:
+        gib_zurück p.wert
+
+setze entkommen auf nichts
+funktion reg_merken(p):
+    global entkommen
+    setze entkommen auf p
+    unsicher:
+        gib_zurück reg_lesen(p)
+
+setze b auf rueckruf_registrieren[fn(bool) -> bool]((x) => nicht x, falsch)
+setze f auf rueckruf_registrieren[fn(f32) -> f32]((x) => x + 0.5, 0.0)
+setze w auf rueckruf_registrieren[fn(u64) -> u64]((x) => x + 256, 18446744073709551615)
+setze v auf rueckruf_registrieren[fn(i32) -> void]((x) => [x])
+setze s auf rueckruf_registrieren[fn(RegWert) -> i32]((x) => x.wert + 1, -1)
+setze p auf rueckruf_registrieren[fn(ptr[RegWert]) -> i32](reg_merken, -1)
+unsicher:
+    zeige reg_bool(b)
+    zeige reg_float(f)
+    zeige reg_breit(w)
+    reg_void(v)
+    zeige reg_struktur(s)
+    zeige reg_zeiger(p)
+versuche:
+    unsicher:
+        reg_lesen(entkommen)
+fange fehler:
+    zeige "zeiger-abgelaufen"
+rueckruf_abmelden(b)
+rueckruf_abmelden(f)
+rueckruf_abmelden(w)
+rueckruf_abmelden(v)
+rueckruf_abmelden(s)
+rueckruf_abmelden(p)
+zeige griffe_offen()

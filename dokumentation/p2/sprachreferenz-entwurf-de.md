@@ -88,11 +88,15 @@ u8..u64-Randwerte, drei Zieltripel, O2/O3, Inlining, Bytevergleich/Wipe,
 RFC 8439 und NIST-SHA256 gegen vorhandene C-Provider sowie deterministische
 CF-Modelle. Der bestehende Core-Runner enthält `p2_native_bits`.
 
-### Entscheidungsvorlage: T(x) und als(T, x) (noch nicht umgesetzt)
+### Beschlossen: als(T, x) und als_wrap(T, x)
 
-P2-T125 ändert keine bestehende Konstruktor- oder Cast-Semantik. Der
-Option-A-Kompatibilitätsfix bleibt maßgeblich. Der aktuelle Unterschied
-ist eine Eigenschaft des Emitters, nicht bloß des Funktionszwecks:
+Für neuen Code und neue Beispiele ist `als(T, x)` die kanonische geprüfte
+Konversion, `als_wrap(T, x)` die explizite Integer-Konversion modulo 2^N.
+`T(x)` bleibt in seiner bisherigen Form erhalten. Es gibt keine Migration,
+keine neue Migrationsdiagnose und keinen zusätzlichen Alias `abschneiden`.
+
+Der Option-A-Kompatibilitätsfix bleibt maßgeblich; dieser Dokumentationsentscheid
+ändert keine Emitter-Semantik. Der vorhandene Kompatibilitätsstand ist:
 
 | Schreibweise | Aktueller Stand |
 |---|---|
@@ -102,32 +106,9 @@ ist eine Eigenschaft des Emitters, nicht bloß des Funktionszwecks:
 | `T(x)` im engen Hardware-Emitter | typgebender Kontext für einen passenden Parameter oder ein Literal, kein allgemeiner Ersatz für eine Konversion zwischen Parametertypen |
 | `T(x)` im Pure-Emitter | klare Diagnose mit Vorschlag `als(T, wert)`; kein stiller Alias |
 
-Entscheidbare Varianten:
-
-1. **Explizite Operationen, schrittweise Ablösung der Konstruktorform
-   (Empfehlung):** `als` bleibt geprüft, `als_wrap` bleibt modulo.
-   Bestehende `T(x)`-Stellen laufen zunächst unverändert weiter und erhalten
-   später eine gezielte Migrationsdiagnose mit Vorschlag passend zur
-   bisherigen Operation. Ein zusätzlicher Name `abschneiden(T, x)` wäre
-   höchstens ein Integer-Alias von `als_wrap`, keine neue Semantik.
-   Vorteil: kein erneuter SCSI-/Wireformat-Bruch und keine Doppelbedeutung
-   neuer Programme. Nachteil: Übergangszeit mit bestehender Konstruktorform.
-2. **T(x) künftig überall geprüft:** erst alle bisherigen Integer-Verengungen
-   explizit nach `als_wrap` migrieren, bool-/Zeigeroperationen separat
-   benennen, danach Konstruktoren in allen Emittern an `als` anschließen.
-   Vorteil: eine geprüfte Standardform. Nachteil: bewusster Sprachbruch;
-   ohne vollständige Migration können bisher gültige Hardwarepfade abbrechen.
-3. **T(x) künftig überall modulo:** Pure und enger Hardware-Emitter werden
-   erst nach ausdrücklichem Entscheid an die System-Konversion angeglichen;
-   `als` bleibt geprüft. Vorteil: bisheriger Systemcode bleibt kompatibel.
-   Nachteil: zwei optisch ähnliche Standardformen mit unterschiedlichem
-   Fehlerverhalten; bool, Zeiger und Float brauchen weiterhin eigene Regeln.
-
-Für jede Änderung sind zeichenpräzise Diagnosen, ein Vorher/Nachher-Inventar
-der betroffenen Aufrufe sowie getrennte System-/Hardware-/Pure- und
-Wireformat-Regressionsfälle erforderlich. Kein automatischer Vorschlag darf
-eine geprüfte Konversion still durch Modulo oder umgekehrt ersetzen.
-Die Entscheidung und eine eventuelle Einführung von `abschneiden` bleiben offen.
+Eine geprüfte Konversion darf nicht still durch Modulo ersetzt werden oder
+umgekehrt. Eine spätere Änderung der bisherigen Konstruktor-Semantik braucht
+einen eigenen ausdrücklichen Sprachentscheid.
 
 ## Zusammengesetzte Typen und Layout
 
@@ -312,11 +293,35 @@ funktion schmal_probe() -> i32:
         gib_zurück p2_ffi_schmal(-1, 255)
 ```
 
-Das Snippet stammt aus dem Test `bibliothek_ziel_linux`; es braucht eine passende C-Bibliothek und ist deshalb kein Beispiel unter `beispiele/nativ/`. Das erste FFI-Inkrement umfasst feste skalare Integer-/Floatparameter, Pointer und `void`; die Bibliothek kann je Ziel benannt werden (`linux="..."`). Strukturen by value (Parameter und Rückgabe, `beispiele/nativ/11_struktur_by_value.moos`) und C-`bool` sind freigegeben (P2-T19/T56). Weiterhin abgelehnt sind feste Arrays und bloße Funktionstypen by value (Meldung „Aggregate und Funktionstypen by value sind nicht freigegeben“); Funktionszeiger gehen nur als `ptr[fn(...) -> R]` mit `@rückruf` (siehe unten). Variadics bleiben bis zum nachgewiesenen Ziel-ABI-Lowering abgelehnt. C-`_Bool`, C++-`bool` und Win32 `BOOL` sind getrennt zu prüfen. Zieltriple, Calling Convention und Datenlayout stehen vor der IR-Erzeugung fest.
+Das Snippet stammt aus dem Test `bibliothek_ziel_linux`; es braucht eine passende C-Bibliothek und ist deshalb kein Beispiel unter `beispiele/nativ/`. Das erste FFI-Inkrement umfasst feste skalare Integer-/Floatparameter, Pointer und `void`; die Bibliothek kann je Ziel benannt werden (`linux="..."`). Strukturen by value (Parameter und Rückgabe, `beispiele/nativ/11_struktur_by_value.moos`) und C-`bool` sind freigegeben (P2-T19/T56). Weiterhin abgelehnt sind feste Arrays und bloße Funktionstypen by value (Meldung „Aggregate und Funktionstypen by value sind nicht freigegeben“); Funktionszeiger gehen als `ptr[fn(...) -> R]`, statisch mit `@rückruf` oder über einen dynamischen Registrierungs-Griff (siehe unten). Variadics bleiben bis zum nachgewiesenen Ziel-ABI-Lowering abgelehnt. C-`_Bool`, C++-`bool` und Win32 `BOOL` sind getrennt zu prüfen. Zieltriple, Calling Convention und Datenlayout stehen vor der IR-Erzeugung fest.
 
 Eine Bindung beschreibt Borrow oder Transfer, Lebensdauer, Nullable, Mutierbarkeit, Pinning, Deallocator und Fehlerbehandlung. Fremde Bibliotheken dürfen Puffer nur für die vereinbarte Dauer behalten. C++ wird zunächst über einen `extern "C"`-Adapter mit opakem Handle angebunden; der Adapter fängt C++-Exceptions ab.
 
-Callbacks sind freigegeben (P2-T21/T57). Eine `@nativ`-Funktion auf oberster Ebene mit `@rückruf` erhält einen C-ABI-Thunk und wird als `ptr[fn(...) -> R]` übergeben (`beispiele/nativ/10_rueckruf.moos`, dort mit libc-`qsort`). Ohne `@rückruf` ist eine native Funktion kein C-Funktionszeiger; Lambdas, Methoden und dynamische Funktionen sind nicht zulässig, stattdessen gilt das `user_data`-Muster. Fehlbare Rückrufe brauchen einen vereinbarten Fehlerwert (`@rückruf(0)`, Test `rueckruf_fehler`): C läuft zu Ende, der Moo-Aufrufer prüft unmittelbar danach. Aufrufe von einem fremden C-Thread aus sind getestet (`rueckruf_sicher`). Im Einzelnen: Callbacks benötigen einen C-ABI-Thunk mit exakter Signatur. Captures werden über einen expliziten `user_data`-Vertrag verwaltet. Registrierung und Abmeldung müssen laufende und spätere Aufrufe berücksichtigen. Fehler dürfen nicht unkontrolliert durch fremde C-Frames entweichen; `void`-Callbacks benötigen einen externen Fehlerkanal. Fremde Threads und Reentranz werden unterstützt oder erkennbar abgewiesen.
+Statische Callbacks (P2-T21/T57) verwenden weiterhin eine Top-Level-`@nativ`-Funktion mit `@rückruf` als C-ABI-Thunk (`beispiele/nativ/10_rueckruf.moos`, libc-`qsort`). Ohne `@rückruf` ist eine native Funktion kein C-Funktionszeiger. Fehlbare statische Rückrufe brauchen einen vereinbarten Fehlerwert, etwa `@rückruf(0)`. Fehler bleiben im Moo-Fehlerkanal; es gibt kein Unwinding durch C-Frames.
+
+### Registrierte dynamische Funktionen und Closures (P2-T86)
+
+`rueckruf_registrieren[fn(...) -> R](funktion, fehlerwert)` hält eine dynamische Funktion oder Closure einschließlich ihrer Captures bis zur Abmeldung am Leben. Bei `void` entfällt der Fehlerwert. Sonst ist er ein zum Ergebnistyp passendes Literal; breite Integerliterale werden exakt geprüft. Ein Registrierungs-Griff hat nativ den Typ `rueckruf[fn(...) -> R]` und wird dort als geliehener Parameter verwendet. Dynamisches Moo kann ihn speichern und zurückgeben.
+
+```moos
+@nativ
+funktion aufrufen(r: rueckruf[fn(i32) -> i32], x: i32) -> i32:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], i32) -> i32] auf rueckruf_zeiger(r)
+        gib_zurück cb(rueckruf_daten(r), x)
+
+setze faktor auf 3
+setze r auf rueckruf_registrieren[fn(i32) -> i32]((x) => x * faktor, -1)
+aufräumen: rueckruf_abmelden(r)
+unsicher:
+    zeige aufrufen(r, 7)
+```
+
+Die beiden Komponenten benötigen `unsicher:`. Der C-Funktionszeiger hat einen zusätzlichen `void* user_data`-Parameter **an erster Stelle**. C darf die von `rueckruf_daten` erhaltenen Daten speichern und unverändert zurückgeben, aber nicht dereferenzieren. Die Signatur wird vor dem Fremdaufruf geprüft. Die C-Seite muss spätere Aufrufe abbestellen, bevor Moo `rueckruf_abmelden(r)` aufruft. Abmelden ist idempotent; ein bereits laufender Rückruf hält seine Closure bis zum Ende, auch bei Selbst-Abmeldung oder reentrantem Aufruf. Ein gespeicherter alter C-Rückruf läuft nach Abmeldung in den Fehlerkanal und liefert seinen Fehlerwert.
+
+Jede Registrierung gehört zum erzeugenden Moo-Thread und muss vor dessen Ende abgemeldet werden; `aufräumen:` übernimmt dies auch bei Return oder Fehler. Das bloße Verwerfen des Griffs meldet die C-Seite nicht ab. Andere Moo-Threads dürfen den Griff weder aufrufen noch schließen; sie können eigene Registrierungen anlegen. Fremde C-Threads werden vor jedem Moo-/Capture-Zugriff mit einer Diagnose abgebrochen. Bei einem Moo-Fehler erhält C den vereinbarten Fehlerwert; weitere Aufrufe bei noch offenem Fehler überspringen den Moo-Körper. Der Moo-Aufrufer prüft den Fehlerkanal nach Rückkehr aus C.
+
+Parameter unterstützen die vorhandenen skalaren C-Typen, `ptr[void]`, `ptr[Struktur]` und dynamisch boxbare Strukturwerte. Ergebnisse unterstützen Skalare, `void` und diese Zeigerformen. Strukturparameter werden kopiert. Zeigerparameter sind für die Dauer des Rückrufs geliehen: auch gespeicherte Moo-Aliase werden beim Verlassen geschlossen und können danach keinen Fremdaufruf mehr auslösen. Das fremde Objekt wird dabei nicht freigegeben. Nicht freigegeben sind Struktur-Ergebnisse ohne Fehlerwertvertrag, dynamische Funktions-/Mehrfachzeiger als Griff und mehr als acht Moo-Argumente. Die ABI- und Fehlerproben liegen bei `compiler/tests/p2/rueckruf_registriert*.moos`; das vorhandene Gate `skripte/p2/ffi/rueckruf.sh` bindet sie ein.
 
 ## Vektoren und Matrizen
 

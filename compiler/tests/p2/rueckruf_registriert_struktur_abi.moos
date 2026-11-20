@@ -1,0 +1,28 @@
+# C liefert einen echten Funktionszeiger mit Struktur-ABI, kein Moo-Spiegel.
+struktur RegPaar:
+    a: i32
+    b: i64
+
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_struktur_zeiger() -> ptr[fn(RegPaar) -> RegPaar]
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_struktur_wert(p: RegPaar) -> RegPaar
+
+@nativ
+funktion reg_struktur_abi() -> i64:
+    unsicher:
+        setze cb: ptr[fn(RegPaar) -> RegPaar] auf rr_reg_struktur_zeiger()
+        setze p: RegPaar auf RegPaar(-7, 4000000000)
+        setze q: RegPaar auf cb(p)
+        gib_zurück als(i64, q.a) * 10000000000 + q.b
+
+@nativ
+funktion reg_struktur_benannt() -> i64:
+    unsicher:
+        setze p: RegPaar auf RegPaar(-7, 4000000000)
+        setze q: RegPaar auf rr_reg_struktur_wert(p)
+        gib_zurück als(i64, q.a) * 10000000000 + q.b
+
+unsicher:
+    zeige reg_struktur_benannt()
+    zeige reg_struktur_abi()

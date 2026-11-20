@@ -362,6 +362,26 @@ impl Parser {
         &self.tokens[self.pos]
     }
 
+    /// Nur die neue Typform enthaelt einen duennen Pfeil im Indexpaar.
+    /// Gewoehnliches reg[0] oder reg[fn(x)] behaelt seine Indexbedeutung.
+    fn registration_type_follows(&self) -> bool {
+        let mut brackets = 0usize;
+        for token in self.tokens.iter().skip(self.pos) {
+            match &token.token_type {
+                TokenType::LBracket => brackets += 1,
+                TokenType::RBracket => {
+                    if brackets == 0 { return false; }
+                    brackets -= 1;
+                    if brackets == 0 { return false; }
+                }
+                TokenType::ThinArrow if brackets > 0 => return true,
+                TokenType::Newline | TokenType::Eof => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn current_type(&self) -> &TokenType {
         &self.tokens[self.pos].token_type
     }
@@ -894,11 +914,12 @@ impl Parser {
         let id = |n: &str| Expr::Identifier(n.to_string());
         let setze = |n: &str, value: Expr| Stmt::Assignment { zeile, name: n.to_string(), ty: None, value };
         let verlassen = |pruefen: bool| Stmt::Expression(Expr::FunctionCall {
+            type_args: Vec::new(),
             name: "__moo_sperre_verlassen".to_string(),
             args: vec![id(&s), Expr::Boolean(pruefen)], zeile, spalten: (0, 0) }, zeile);
         let stmts = vec![
             setze(&s, sperre),
-            setze(&name, Expr::FunctionCall { name: "__moo_sperre_betreten".to_string(), args: vec![id(&s)], zeile, spalten: (0, 0) }),
+            setze(&name, Expr::FunctionCall { type_args: Vec::new(), name: "__moo_sperre_betreten".to_string(), args: vec![id(&s)], zeile, spalten: (0, 0) }),
             Stmt::TryCatch {
                 zeile,
                 try_body: body,
@@ -2052,8 +2073,54 @@ impl Parser {
                     if let TokenType::Identifier(var) = self.current_type().clone() {
                         let zeile = self.current().line;
                         self.pos += 1;
-                        return Ok(Expr::FunctionCall { name: "übergib".to_string(), args: vec![Expr::Identifier(var)], zeile, spalten: (0, 0) });
+                        return Ok(Expr::FunctionCall { type_args: Vec::new(), name: "übergib".to_string(), args: vec![Expr::Identifier(var)], zeile, spalten: (0, 0) });
                     }
+                }
+                // P2-T86: Die Rückrufsignatur ist ein echter Typkontext;
+                // sie wird bis zum Codegen im AST erhalten.
+                if matches!(name.as_str(), "rueckruf_registrieren" | "rückruf_registrieren")
+                    && matches!(self.current_type(), TokenType::LBracket)
+                    && self.registration_type_follows() {
+                    self.pos += 1;
+                    let mut type_args = Vec::new();
+                    loop {
+                        type_args.push(self.parse_type()?);
+                        if !matches!(self.current_type(), TokenType::Comma) { break; }
+                        self.pos += 1;
+                    }
+                    self.eat(&TokenType::RBracket)?;
+                    self.eat(&TokenType::LParen)?;
+                    let mut args = Vec::new();
+                    if !matches!(self.current_type(), TokenType::RParen) {
+                        // Ein Pipe fuegt die Funktion erst im Codegen vorne ein.
+                        // Dann ist bereits das erste geschriebene Argument der
+                        // Fehlerwert. Zahlen auch hier verlustfrei erhalten,
+                        // Lambda-/Factory-Ausdruecke bleiben dynamischer Kontext.
+                        let alt = self.native_context;
+                        if matches!(self.current_type(), TokenType::Number(_) | TokenType::Minus) {
+                            self.native_context = true;
+                        }
+                        let erster = self.parse_expression();
+                        self.native_context = alt;
+                        args.push(erster?);
+                        while matches!(self.current_type(), TokenType::Comma) {
+                            self.pos += 1;
+                            // Fehlerwerte haben den expliziten nativen Ergebnistyp.
+                            // Das Original-Literal behalten, auch jenseits von 2^53.
+                            let alt = self.native_context;
+                            self.native_context = true;
+                            let wert = self.parse_expression();
+                            self.native_context = alt;
+                            args.push(wert?);
+                        }
+                    }
+                    self.eat(&TokenType::RParen)?;
+                    return Ok(Expr::FunctionCall {
+                        name, type_args, args, zeile: start.line,
+                        spalten: (start.column, if self.tokens[self.pos - 1].line == start.line {
+                            self.tokens[self.pos - 1].column + 1
+                        } else { 0 }),
+                    });
                 }
                 if matches!(self.current_type(), TokenType::LParen) {
                     self.pos += 1;
@@ -2075,7 +2142,7 @@ impl Parser {
                         self.parse_args_list()?
                     };
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                    Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2094,7 +2161,7 @@ impl Parser {
                 self.pos += 2;
                 let args = self.parse_args_list()?;
                 self.eat(&TokenType::RParen)?;
-                Ok(Expr::FunctionCall { name: "als".to_string(), args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                Ok(Expr::FunctionCall { type_args: Vec::new(), name: "als".to_string(), args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
             }
             TokenType::Data => {
                 // Soft-Keyword: "daten" als Variable/Funktion erlaubt, ausser
@@ -2113,7 +2180,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                    Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2135,7 +2202,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                    Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2157,7 +2224,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                    Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }
@@ -2185,7 +2252,7 @@ impl Parser {
                         self.pos += 1;
                         let args = self.parse_args_list()?;
                         self.eat(&TokenType::RParen)?;
-                        Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                        Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                     } else {
                         Ok(Expr::Identifier(name))
                     }
@@ -2199,7 +2266,7 @@ impl Parser {
                     self.pos += 1;
                     let args = self.parse_args_list()?;
                     self.eat(&TokenType::RParen)?;
-                    Ok(Expr::FunctionCall { name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
+                    Ok(Expr::FunctionCall { type_args: Vec::new(), name, args, zeile: if self.native_context { start.line } else { self.tokens[self.pos - 1].line }, spalten: (start.column, if self.tokens[self.pos - 1].line == start.line { self.tokens[self.pos - 1].column + 1 } else { 0 }) })
                 } else {
                     Ok(Expr::Identifier(name))
                 }

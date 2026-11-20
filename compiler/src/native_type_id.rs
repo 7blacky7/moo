@@ -20,6 +20,9 @@ pub(crate) enum NativeTypeId {
     // zielabhängige Auflösung (z. B. "uefi") erfolgt erst beim Absenken.
     Function { params: Vec<NativeTypeId>, result: Box<NativeTypeId>, variadic: bool, convention: Option<String> },
     Nominal { module: String, name: String },
+    /// Anhaengen bewahrt die Reihenfolge/Hash-Diskriminanten des Bestands.
+    /// Verwalteter Registrierungs-Griff; keine C-Wert-/Zeigerkonvertierung.
+    Registration { signature: Box<NativeTypeId> },
 }
 
 /// Moo-Quellschreibweise fuer Diagnosen (P2-T21/T57: Rueckruf-Signaturvergleich).
@@ -36,6 +39,7 @@ impl std::fmt::Display for NativeTypeId {
             NativeTypeId::Void => f.write_str("void"),
             NativeTypeId::Pointer { pointee, .. } => write!(f, "ptr[{pointee}]"),
             NativeTypeId::Buffer { element } => write!(f, "puffer[{element}]"),
+            NativeTypeId::Registration { signature } => write!(f, "rueckruf[{signature}]"),
             NativeTypeId::Nominal { name, .. } => f.write_str(name),
             NativeTypeId::Function { params, result, variadic, convention } => {
                 f.write_str("fn")?;
@@ -78,6 +82,18 @@ pub(crate) fn hat_bool_zeigerziel(ty: &TypeRef) -> bool {
     }
 }
 
+/// Dieselbe Typ-ID an beiden Grenzen. Die Quelle kann diesen Namen nicht
+/// als Strukturbezeichner deklarieren (Klammern sind keine Identifier).
+pub(crate) fn registration_id(name: &str) -> Option<u64> {
+    if !name.starts_with("rueckruf[fn") || !name.ends_with(']') { return None; }
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in b"moo.registration.v1:".iter().chain(name.as_bytes()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Some(hash | (1u64 << 63))
+}
+
 pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<NativeTypeId, String> {
     match &ty.kind {
         TypeKind::Name(name) => {
@@ -107,6 +123,16 @@ pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<Nativ
                 return Err(BOOL_ZEIGERZIEL.into());
             }
             Ok(NativeTypeId::Pointer { address_space: 0, pointee: Box::new(pointee) })
+        }
+        TypeKind::Generic { name, args } if name == "rueckruf" || name == "rückruf" => {
+            let [signature] = args.as_slice() else {
+                return Err("rueckruf braucht genau eine fn(...)-Signatur".into());
+            };
+            let signature = resolve_type(signature, nominal)?;
+            if !matches!(&signature, NativeTypeId::Function { variadic: false, .. }) {
+                return Err("rueckruf erwartet eine nicht-variadische fn(...)-Signatur".into());
+            }
+            Ok(NativeTypeId::Registration { signature: Box::new(signature) })
         }
         TypeKind::Generic { name, args } if name == "puffer" || name == "buffer" => {
             if args.len() != 1 { return Err("Puffer benötigt genau einen Elementtyp".into()); }

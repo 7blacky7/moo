@@ -79,6 +79,7 @@ pub(crate) enum STy {
     Float(NType),
     Bool,
     Ptr(NativeTypeId),
+    Registration(NativeTypeId),
     /// Nativer Strukturwert, ohne MooValue-Boxing.
     Struct(NativeTypeId),
     /// P2-T50 (Plan bb3878ef E1/E2): puffer[T] als nicht besitzender Ausschnitt
@@ -95,6 +96,8 @@ pub(crate) enum STy {
 impl STy {
     fn from_type_ref(ty: &TypeRef, nominal: &NominalTypes) -> Result<Self, String> {
         match &ty.kind {
+            TypeKind::Generic { name, .. } if name == "rueckruf" || name == "rückruf" =>
+                Ok(STy::Registration(resolve_type(ty, nominal)?)),
             TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger" => {
                 let identity = resolve_type(ty, nominal)?;
                 Ok(STy::Ptr(identity))
@@ -139,6 +142,7 @@ impl STy {
         Ok(Some(match identity {
             NativeTypeId::Void => return Ok(None),
             NativeTypeId::Pointer { .. } => STy::Ptr(identity.clone()),
+            NativeTypeId::Registration { .. } => STy::Registration(identity.clone()),
             NativeTypeId::Nominal { .. } => STy::Struct(identity.clone()),
             NativeTypeId::Buffer { element } => Self::puffer_element(element)?,
             NativeTypeId::Scalar(scalar) => match scalar {
@@ -173,7 +177,7 @@ impl STy {
 
     fn identity(&self) -> NativeTypeId {
         match self {
-            STy::Ptr(identity) | STy::Struct(identity) => identity.clone(),
+            STy::Ptr(identity) | STy::Struct(identity) | STy::Registration(identity) => identity.clone(),
             STy::Buffer(t) => NativeTypeId::Buffer { element: Box::new(match t {
                 NType::F32 | NType::F64 => STy::Float(*t),
                 _ => STy::Int(*t),
@@ -201,7 +205,7 @@ impl STy {
         match self {
             STy::Int(ty) | STy::Float(ty) => Ok(ty.llvm_type(context)),
             STy::Bool => Ok(context.bool_type().into()),
-            STy::Ptr(_) => Ok(context.ptr_type(AddressSpace::default()).into()),
+            STy::Ptr(_) | STy::Registration(_) => Ok(context.ptr_type(AddressSpace::default()).into()),
             STy::Buffer(_) | STy::StrukturPuffer(_) => Ok(context.struct_type(
                 &[context.ptr_type(AddressSpace::default()).into(), context.i64_type().into()], false,
             ).into()),
@@ -218,6 +222,7 @@ impl STy {
             STy::Int(ty) | STy::Float(ty) => format!("{ty:?}").to_lowercase(),
             STy::Bool => "bool".into(),
             STy::Ptr(identity) => format!("{identity:?}"),
+            STy::Registration(identity) => identity.to_string(),
             STy::Buffer(t) => format!("puffer[{}]", format!("{t:?}").to_lowercase()),
             STy::StrukturPuffer(id) => format!("puffer[{}]", STy::Struct(id.clone()).name()),
             STy::Array { element, length } => format!("[{}; {length}]", element.name()),
@@ -252,8 +257,22 @@ pub(crate) enum DynErgebnis {
 
 /// P2-T23/T53 B2: Zeigerziel, das an der dyn-Grenze als Griff laufen darf:
 /// ptr[void] -> Some(None), ptr[Struktur] -> Some(Some(name)), sonst None.
+/// C-Rueckrufzeiger = Signatur mit opakem user_data als erstem Argument.
+fn registration_component(ty: &STy, code: bool) -> Option<STy> {
+    let STy::Registration(NativeTypeId::Registration { signature }) = ty else { return None; };
+    let void_ptr = NativeTypeId::Pointer { address_space: 0, pointee: Box::new(NativeTypeId::Void) };
+    if !code { return Some(STy::Ptr(void_ptr)); }
+    let NativeTypeId::Function { params, result, variadic, convention } = signature.as_ref() else { return None; };
+    let mut inputs = vec![void_ptr];
+    inputs.extend(params.iter().cloned());
+    Some(STy::Ptr(NativeTypeId::Pointer { address_space: 0, pointee: Box::new(
+        NativeTypeId::Function { params: inputs, result: result.clone(), variadic: *variadic, convention: convention.clone() }
+    ) }))
+}
+
 fn griff_ziel(ty: &STy) -> Option<Option<String>> {
     match ty {
+        STy::Registration(identity) => Some(Some(identity.to_string())),
         STy::Ptr(NativeTypeId::Pointer { address_space: 0, pointee }) => match pointee.as_ref() {
             NativeTypeId::Void => Some(None),
             NativeTypeId::Nominal { name, .. } => Some(Some(name.clone())),
@@ -495,6 +514,7 @@ impl LiestPruefung<'_> {
 pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize, (usize, usize))> {
     fn roh(name: &str) -> bool {
         matches!(name, "zeiger" | "pointer" | "adresse_von" | "address_of"
+            | "rueckruf_zeiger" | "rueckruf_daten"
             | "speicher_lesen" | "mem_read" | "speicher_schreiben" | "mem_write"
             | "strukturfeld_lesen" | "struct_field_read" | "strukturfeld_schreiben" | "struct_field_write"
             | "registerfeld_lesen" | "register_field_read" | "registerfeld_schreiben" | "register_field_write")
@@ -503,7 +523,7 @@ pub(crate) fn rohzugriff_ohne_unsicher(body: &[Stmt]) -> Option<(String, usize, 
     }
     fn ausdruck(expr: &Expr) -> Option<(String, usize, (usize, usize))> {
         match expr {
-            Expr::FunctionCall { name, args, zeile, spalten } => if roh(name)
+            Expr::FunctionCall { name, args, zeile, spalten, .. } => if roh(name)
                 || (matches!(name.as_str(), "byteansicht" | "byte_view") && args.len() == 2)
             {
                 Some((name.clone(), *zeile, *spalten))
@@ -1938,7 +1958,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             STy::Int(t) => t.llvm_type(self.context).into_int_type().const_zero().into(),
             STy::Float(t) => t.llvm_type(self.context).into_float_type().const_zero().into(),
             STy::Bool => self.context.bool_type().const_zero().into(),
-            STy::Ptr(_) => self.ptrt().const_null().into(),
+            STy::Ptr(_) | STy::Registration(_) => self.ptrt().const_null().into(),
             STy::Struct(_) | STy::Buffer(_) | STy::StrukturPuffer(_) =>
                 ty.llvm(self.context, self.layouts)?.into_struct_type().const_zero().into(),
             STy::Array { .. } =>
@@ -3440,6 +3460,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             },
             Expr::FunctionCall { name, args, .. } => {
+                if matches!(name.as_str(), "rueckruf_zeiger" | "rueckruf_daten") {
+                    return args.first().and_then(|arg| self.infer(arg))
+                        .and_then(|ty| registration_component(&ty, name == "rueckruf_zeiger"));
+                }
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
                 if !self.callees.contains_key(name) {
                     if crate::native_crypto::rng_name(name).is_some() { return Some(STy::Bool); }
@@ -3626,7 +3650,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             Expr::FunctionCall { name, args, .. } if self.trig_funktion(name, args).is_some() =>
                 self.trig_aufruf(name, args, expected),
-            Expr::FunctionCall { name, args, zeile, spalten } => {
+            Expr::FunctionCall { name, args, zeile, spalten, .. } => {
                 let value = self.call(name, args, expected, false)?
                     .ok_or_else(|| format!("Systemkoerper: '{name}' liefert keinen Wert"))?;
                 if matches!(name.as_str(), "speicher_lesen" | "mem_read") {
@@ -4494,6 +4518,27 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)")));
             }
         }
+        if matches!(name, "rueckruf_zeiger" | "rueckruf_daten") {
+            if !self.hosted { return Err("Registrierte dynamische Rueckrufe brauchen die hosted Moo-Laufzeit".into()); }
+            let [arg] = args else { return Err(format!("{name} erwartet einen Registrierungs-Griff")); };
+            let ty = self.infer(arg).ok_or_else(|| format!("{name}: rueckruf[fn(...)] erwartet"))?;
+            let output = registration_component(&ty, name == "rueckruf_zeiger")
+                .ok_or_else(|| format!("{name}: rueckruf[fn(...)] erwartet, erhalten {}", ty.name()))?;
+            let value = self.expr(arg, Some(&ty))?;
+            let raw = value.value.into_pointer_value();
+            let missing = self.builder.build_is_null(raw, "sys.rueckruf.nichts").map_err(e)?;
+            let failure = self.trap_block()?;
+            let present = self.context.append_basic_block(self.function, "sys.rueckruf.gueltig");
+            self.builder.build_conditional_branch(missing, failure, present).map_err(e)?;
+            self.builder.position_at_end(present);
+            let p = self.context.ptr_type(AddressSpace::default());
+            let record = self.context.struct_type(&[p.into(), p.into(), p.into()], false);
+            let index = if name == "rueckruf_zeiger" { 1 } else { 2 };
+            let slot = self.builder.build_struct_gep(record, value.value.into_pointer_value(), index,
+                "sys.rueckruf.feld").map_err(e)?;
+            let value = self.builder.build_load(p, slot, "sys.rueckruf.zeiger").map_err(e)?;
+            return Ok(Some(SVal { ty: output, value }));
+        }
         if !self.callees.contains_key(name) {
             if crate::native_crypto::wipe_name(name) { return self.crypto_bytes(args, true); }
             if crate::native_crypto::rng_name(name).is_some() { return self.crypto_rng(name, args); }
@@ -4569,7 +4614,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     self.builder.build_int_cast_sign_flag(raw, llvm, false, "sys.konv").map_err(e)?
                 }
                 STy::Bool => self.builder.build_int_z_extend(value.value.into_int_value(), llvm, "sys.konv").map_err(e)?,
-                STy::Struct(_) | STy::Float(_) | STy::Buffer(_) | STy::StrukturPuffer(_) | STy::Array { .. } => return Err(format!(
+                STy::Registration(_) | STy::Struct(_) | STy::Float(_) | STy::Buffer(_) | STy::StrukturPuffer(_) | STy::Array { .. } => return Err(format!(
                     "Systemkoerper: {name}(x) konvertiert nur Ganzzahlen, Zeiger und bool; fuer Floatwerte als({name}, x) (geprueft) oder als_saettigend({name}, x) verwenden, Strukturen per Feldzugriff"
                 )),
                 STy::Int(source) => {
@@ -4918,11 +4963,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let result_ty = STy::from_identity(result)?;
             let callee_ptr = self.expr(&Expr::Identifier(name.to_string()), None)?;
             let values = self.args_for(name, args, &param_tys)?;
-            let signature = crate::ffi_types::FfiSignature::from_indirect_identity(self.triple, &identity, self.nominals)?;
             let callee = crate::ffi_types::TypedFfiValue { value: callee_ptr.value, identity: identity.clone() };
             let typed: Vec<crate::ffi_types::TypedFfiValue<'ctx>> = values.iter()
                 .map(|v| crate::ffi_types::TypedFfiValue { value: v.value, identity: v.ty.identity() }).collect();
-            let result = signature.emit_indirect_call(self.context, &self.builder, self.module, &callee, &typed, true)?;
+            let aggregate = params.iter().chain(std::iter::once(result.as_ref()))
+                .any(|ty| matches!(ty, NativeTypeId::Nominal { .. }));
+            let result = if aggregate {
+                crate::ffi_types::emit_indirect_abi_call(self.context, &self.builder, self.module,
+                    self.target, self.layouts, self.nominals, &callee, &typed, true)?
+            } else {
+                let signature = crate::ffi_types::FfiSignature::from_indirect_identity(self.triple, &identity, self.nominals)?;
+                signature.emit_indirect_call(self.context, &self.builder, self.module, &callee, &typed, true)?
+            };
             self.nach_fremdaufruf_pruefen()?;
             return Ok(match (result, result_ty) {
                 (Some(value), Some(ty)) => Some(SVal { ty, value: value.value }),

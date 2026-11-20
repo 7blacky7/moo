@@ -1,0 +1,41 @@
+# P2-T86: jede Registrierung gehoert zu ihrem erzeugenden Moo-Thread.
+@nativ
+funktion thread_reg_aufrufen(reg: rueckruf[fn(i32) -> i32], wert: i32) -> i32:
+    unsicher:
+        setze ziel: ptr[fn(ptr[void], i32) -> i32] auf rueckruf_zeiger(reg)
+        gib_zurück ziel(rueckruf_daten(reg), wert)
+
+funktion fremd_aufrufen(reg):
+    versuche:
+        unsicher:
+            thread_reg_aufrufen(reg, 1)
+    fange fehler:
+        gib_zurück "aufruf-anderer-thread"
+    gib_zurück "FEHLER"
+
+funktion fremd_abmelden(reg):
+    versuche:
+        rueckruf_abmelden(reg)
+    fange fehler:
+        gib_zurück "abmelden-anderer-thread"
+    gib_zurück "FEHLER"
+
+funktion eigener_reg(wert):
+    setze daten auf [wert]
+    setze reg auf rueckruf_registrieren[fn(i32) -> i32]((x) => x * daten[0], -1)
+    aufräumen: rueckruf_abmelden(reg)
+    unsicher:
+        gib_zurück thread_reg_aufrufen(reg, 3)
+
+setze reg auf rueckruf_registrieren[fn(i32) -> i32]((x) => x + 10, -1)
+setze a auf starte(fremd_aufrufen, reg)
+zeige a.warten()
+setze b auf starte(fremd_abmelden, reg)
+zeige b.warten()
+unsicher:
+    zeige thread_reg_aufrufen(reg, 2)
+rueckruf_abmelden(reg)
+setze c auf starte(eigener_reg, 7)
+setze d auf starte(eigener_reg, 14)
+zeige c.warten() + d.warten()
+zeige griffe_offen()

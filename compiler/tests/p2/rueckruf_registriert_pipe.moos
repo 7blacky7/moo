@@ -1,0 +1,15 @@
+# Der erste geschriebene Pipe-Parameter ist der exakt typisierte Fehlerwert.
+@nativ
+funktion pipe_wert(r: rueckruf[fn(u64) -> u64]) -> u64:
+    unsicher:
+        setze cb: ptr[fn(ptr[void], u64) -> u64] auf rueckruf_zeiger(r)
+        gib_zurück cb(rueckruf_daten(r), 7)
+
+funktion pipe_probe():
+    setze r auf ((x) => x) |> rueckruf_registrieren[fn(u64) -> u64](18446744073709551615)
+    aufräumen: rueckruf_abmelden(r)
+    unsicher:
+        gib_zurück pipe_wert(r)
+
+zeige pipe_probe()
+zeige griffe_offen()

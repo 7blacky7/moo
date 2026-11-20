@@ -1,0 +1,8 @@
+# Erstmaliges Einbetten der Moo-Registry innerhalb eines offenen Catch-Rahmens.
+versuche:
+    setze reg auf rueckruf_registrieren[fn(i32) -> i32]((x) => x, -1)
+    rueckruf_abmelden(reg)
+    zeige "bootstrap"
+fange fehler:
+    zeige "FEHLER"
+zeige griffe_offen()

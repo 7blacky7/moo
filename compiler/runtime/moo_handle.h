@@ -17,6 +17,17 @@ typedef struct MooHandle MooHandle;
 
 /* NULL -> moo_none(), sonst owning MOO_HANDLE (+1). */
 MooValue moo_handle_box(void* zeiger, uint64_t typ_id);
+/* Owning Kopie opaker Bytes direkt hinter der Griff-Box. Kein Fremdobjekt
+ * und kein Finalizer: das normale Box-free gibt die Bytes mit frei.
+ * Die Registrierungslogik verbleibt in Moo; diese ABI kopiert nur Speicher. */
+void moo_handle_box_bytes(const void* bytes, size_t length, uint64_t typ_id, MooValue* out);
+/* Eigene unveraenderliche Bytes: 1 = Payload, 0 = Fehler; auch nach Close
+ * lesbar, ohne damit den Griff wieder gueltig zu machen. Keine Fremdobjekte. */
+int32_t moo_handle_payload(const MooValue* value, size_t length, void** out);
+/* Payload beginnt mit einem Owner-Cookie. Thread-/Payload-Pruefung kommt
+ * vor dem Lesen des mutablen Griffzustands, danach normale Typ-/Close-Pruefung. */
+int32_t moo_handle_unbox_owned(const MooValue* value, uint64_t typ_id, size_t length,
+                               const void* owner, void** out);
 /* value geliehen. nichts -> *out = NULL, 1. Griff passender Typ-ID im Zustand
  * gueltig -> *out = Zeiger, 1. Sonst fangbarer Fehler (kein Griff, falscher
  * Typ, bereits freigegeben), *out = NULL, 0. */

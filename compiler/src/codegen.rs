@@ -8,7 +8,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicTypeEnum, StructType};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, PointerValue, StructValue};
 use inkwell::OptimizationLevel;
 use inkwell::AddressSpace;
@@ -1353,6 +1353,15 @@ impl<'ctx> CodeGen<'ctx> {
                         | "aarch64-unknown-linux-gnu")
                         || crate::ffi_types::darwin_aarch64(name)
                 };
+                let has_registration = param_types.iter().flatten().chain(return_type.iter()).any(|ty|
+                    matches!(&ty.kind, TypeKind::Generic { name, .. } if name == "rueckruf" || name == "rückruf"));
+                if has_registration && (self.bare_mode || !hosted_x86) {
+                    return Err(format!("Native Funktion '{name}': registrierte dynamische Rueckrufe brauchen hosted Moo"));
+                }
+                if return_type.as_ref().is_some_and(|ty|
+                    matches!(&ty.kind, TypeKind::Generic { name, .. } if name == "rueckruf" || name == "rückruf")) {
+                    return Err(format!("Native Funktion '{name}': rueckruf[fn] ist ein verwalteter Griff; nativ nur als geliehenen Parameter verwenden, Griffe aus dynamischem Moo zurueckgeben"));
+                }
                 let has_pointer = param_types.iter().flatten().any(|ty| matches!(
                     &ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger"
                 ));
@@ -1379,7 +1388,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // FFI-Pfad. Mit Zeiger- oder Strukturtypen in der Signatur
                 // uebernimmt der Systemkoerper: der skalare FFI-Emitter kennt
                 // keine Zeiger (ffi_types.rs scalar_parameters/scalar_result).
-                let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct || has_buffer)
+                let ffi_single = !(has_pointer || returns_pointer || struct_param || returns_struct || has_buffer || has_registration)
                     && matches!(body.as_slice(), [Stmt::UnsafeBlock { body: inner, .. }]
                     if matches!(inner.as_slice(),
                         [Stmt::Return(Some(Expr::FunctionCall { name, .. }), _)]
@@ -1392,7 +1401,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // koerper, kern_*-Builtins und bare_mode bleiben unberuehrt.
                 let hosted_system = hosted_x86 && !self.bare_mode && !ffi_single
                     && matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
-                    && (returns_struct || struct_param || has_pointer || returns_pointer || has_buffer
+                    && (returns_struct || struct_param || has_pointer || returns_pointer || has_buffer || has_registration
                         || crate::native_system::has_struct_values(body, &native_nominals)
                         || crate::native_system::is_system_body(body, params));
                 // P2-T12 C2 (Plan 31194239): sichere Koerper mit Kontrollfluss
@@ -1403,7 +1412,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // Hosted puffer[T]-/ptr-Signaturen (Review 074b5d17) laufen auch in
                 // Pure-Slice-Form hier (Pure-Emitter kennt sie nicht); Bare-Zeiger-
                 // funktionen behalten ihren Bestandspfad.
-                let zeiger_puffer = has_pointer || returns_pointer || has_buffer;
+                let zeiger_puffer = has_pointer || returns_pointer || has_buffer || has_registration;
                 // P2-T16: ebenso Strukturwerte (z. B. vec3/mat4) in Signatur oder
                 // Locals; der Pure-Emitter kennt nur Skalare.
                 let pure_ungeeignet = zeiger_puffer || struct_param || returns_struct
@@ -5233,9 +5242,18 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(p)
     }
 
+    fn registration_builtin_visible(&self, name: &str) -> bool {
+        matches!(name, "rueckruf_registrieren" | "rückruf_registrieren" | "rueckruf_abmelden")
+            && self.module.get_function(name).is_none()
+            && !self.variables.contains_key(name) && !self.globals.contains_key(name)
+    }
+
     fn runtime_defer_expr_supported(&self, expr: &Expr) -> bool {
         if !self.recursive_statement_expr_supported(expr) { return false; }
         match expr {
+            Expr::FunctionCall { name, args, .. } if name == "rueckruf_abmelden"
+                && self.registration_builtin_visible(name) =>
+                args.iter().all(|arg| self.runtime_defer_expr_supported(arg)),
             Expr::FunctionCall { name, args, .. } =>
                 self.defer_safe_calls.contains(name)
                     && args.iter().all(|arg| self.runtime_defer_expr_supported(arg)),
@@ -5559,6 +5577,7 @@ impl<'ctx> CodeGen<'ctx> {
                     body: Box::new(Expr::FunctionCall {
                         zeile,
                         spalten: (0, 0),
+                        type_args: Vec::new(),
                         name: name.to_string(),
                         args: params.iter().map(|p| Expr::Identifier(p.clone())).collect(),
                     }),
@@ -5591,6 +5610,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn native_call_fangbar(&self, name: &str) -> bool {
+        if !self.bare_mode && self.registration_builtin_visible(name) { return true; }
         if self.bare_mode || !self.native_signatures.contains_key(name) {
             return false;
         }
@@ -6879,11 +6899,528 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| e.to_string())?.into_struct_value())
     }
 
+
+    /// P2-T86: Tabellen-/Closure-Logik wird als normales Moo kompiliert.
+    /// LLVM-TLS haelt nur den Zustand; kein C-Registry und kein C-Signaturparser.
+    fn registration_library(&mut self) -> Result<inkwell::values::GlobalValue<'ctx>, String> {
+        const STATE: &str = "__moo_registered.state";
+        if let Some(global) = self.module.get_global(STATE) { return Ok(global); }
+        if self.bare_mode || self.module.get_triple().as_str().to_string_lossy().starts_with("wasm") {
+            return Err("Registrierte dynamische Rueckrufe brauchen eine hosted 64-Bit-Laufzeit".into());
+        }
+        let target = self.target_data.as_ref().ok_or("Datenlayout fehlt")?;
+        if target.get_pointer_byte_size(None) != 8 {
+            return Err("Registrierte dynamische Rueckrufe brauchen 64-Bit-Zeiger".into());
+        }
+        let tokens = crate::lexer::Lexer::new().tokenize(include_str!("../runtime/moo_rueckruf.moos"))
+            .map_err(|e| format!("Interne Rueckruf-Bibliothek: {e:?}"))?;
+        let library = crate::parser::Parser::new(tokens).parse()
+            .map_err(|e| format!("Interne Rueckruf-Bibliothek: {e:?}"))?;
+        for stmt in &library.statements {
+            let Stmt::FunctionDef { name, params, .. } = stmt else { return Err("Rueckruf-Bibliothek darf nur Funktionen definieren".into()); };
+            if self.module.get_function(name).is_some() {
+                return Err(format!("Reservierter interner Rueckrufname '{name}' ist bereits definiert"));
+            }
+            let params: Vec<BasicMetadataTypeEnum<'ctx>> = params.iter().map(|_| self.mv_type().into()).collect();
+            self.module.add_function(name, self.mv_type().fn_type(&params, false), Some(inkwell::module::Linkage::Internal));
+            self.dyn_named_functions.insert(name.clone());
+        }
+        let global = self.module.add_global(self.mv_type(), None, STATE);
+        global.set_linkage(inkwell::module::Linkage::Internal);
+        global.set_thread_local_mode(Some(inkwell::ThreadLocalMode::GeneralDynamicTLSModel));
+        global.set_initializer(&self.registration_none());
+        // Die Bibliothek wird auch innerhalb eines versuche:-Aufrufs erstmals
+        // benoetigt. Dessen Catch-Block darf nicht in eine fremde Funktion geraten.
+        let previous_try = std::mem::take(&mut self.try_stack);
+        for stmt in &library.statements {
+            if let Stmt::FunctionDef { name, params, defaults, body, decorators, .. } = stmt {
+                self.funktion_quellen.insert(name.clone(), "compiler/runtime/moo_rueckruf.moos".into());
+                self.compile_function_def(name, params, defaults, body, decorators)?;
+            }
+        }
+        self.try_stack = previous_try;
+        Ok(global)
+    }
+
+    fn registration_none(&self) -> StructValue<'ctx> {
+        self.mv_type().const_named_struct(&[
+            self.context.i64_type().const_int(tag::NONE, false).into(),
+            self.context.i64_type().const_zero().into(),
+        ])
+    }
+
+    /// Rueckrufcode leiht sich ausschliesslich das vorhandene Fehlerflag.
+    fn registration_guard(&self, error: inkwell::basic_block::BasicBlock<'ctx>) -> Result<(), String> {
+        let flag = self.builder.build_call(self.rt.moo_try_check, &[], "registered.error")
+            .map_err(|e| e.to_string())?.try_as_basic_value().basic()
+            .ok_or("moo_try_check liefert keinen Wert")?.into_int_value();
+        let failed = self.builder.build_int_compare(inkwell::IntPredicate::NE, flag,
+            flag.get_type().const_zero(), "registered.failed").map_err(|e| e.to_string())?;
+        let function = self.current_function.ok_or("Rueckruf ohne Funktion")?;
+        let ok = self.context.append_basic_block(function, "registered.ok");
+        self.builder.build_conditional_branch(failed, error, ok).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(ok);
+        Ok(())
+    }
+
+    /// Globale CAS-Folge wird bei 2^53-1 angehalten, niemals wiederverwendet.
+    /// So sind alle Token in Moo exakt und passen verlustfrei durch void*.
+    fn registration_token(&mut self, error: inkwell::basic_block::BasicBlock<'ctx>)
+        -> Result<inkwell::values::IntValue<'ctx>, String>
+    {
+        use inkwell::AtomicOrdering::SequentiallyConsistent as SeqCst;
+        let i64t = self.context.i64_type();
+        let counter = match self.module.get_global("__moo_registered.counter") {
+            Some(g) => g,
+            None => {
+                let g = self.module.add_global(i64t, None, "__moo_registered.counter");
+                g.set_linkage(inkwell::module::Linkage::Internal);
+                g.set_initializer(&i64t.const_zero());
+                g.set_alignment(8);
+                g
+            }
+        };
+        let function = self.current_function.ok_or("Registrierung ohne Funktion")?;
+        let retry = self.context.append_basic_block(function, "registered.token.retry");
+        let attempt = self.context.append_basic_block(function, "registered.token.cas");
+        let exhausted = self.context.append_basic_block(function, "registered.token.exhausted");
+        let done = self.context.append_basic_block(function, "registered.token.done");
+        self.builder.build_unconditional_branch(retry).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(retry);
+        let old = self.builder.build_load(i64t, counter.as_pointer_value(), "registered.token.old")
+            .map_err(|e| e.to_string())?;
+        let instruction = old.as_instruction_value().ok_or("Token-Load fehlt")?;
+        instruction.set_alignment(8).map_err(|e| e.to_string())?;
+        instruction.set_atomic_ordering(SeqCst).map_err(|e| e.to_string())?;
+        let old = old.into_int_value();
+        let available = self.builder.build_int_compare(inkwell::IntPredicate::ULT, old,
+            i64t.const_int(9007199254740991, false), "registered.token.available").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(available, attempt, exhausted).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(exhausted);
+        let text = self.make_global_str("Rueckruf: Tokenvorrat erschoepft", "registered.exhausted")?;
+        let message = self.call_rt(self.rt.moo_string_new, &[text.into()], "registered.message")?;
+        self.call_rt_void(self.rt.moo_throw, &[message.into()], "registered.throw")?;
+        self.builder.build_unconditional_branch(error).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(attempt);
+        let next = self.builder.build_int_add(old, i64t.const_int(1, false), "registered.token.next").map_err(|e| e.to_string())?;
+        let pair = self.builder.build_cmpxchg(counter.as_pointer_value(), old, next, SeqCst, SeqCst).map_err(|e| e.to_string())?;
+        let success = self.builder.build_extract_value(pair, 1, "registered.token.success")
+            .map_err(|e| e.to_string())?.into_int_value();
+        self.builder.build_conditional_branch(success, done, retry).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done);
+        Ok(next)
+    }
+
+    fn registration_replace_state(&self, global: inkwell::values::GlobalValue<'ctx>, value: StructValue<'ctx>) -> Result<(), String> {
+        let previous = self.builder.build_load(self.mv_type(), global.as_pointer_value(), "registered.previous")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        self.builder.build_store(global.as_pointer_value(), value).map_err(|e| e.to_string())?;
+        self.call_rt_void(self.rt.moo_release, &[previous.into()], "registered.release_previous")
+    }
+
+    fn registration_state_argument(&self, global: inkwell::values::GlobalValue<'ctx>) -> Result<StructValue<'ctx>, String> {
+        let state = self.builder.build_load(self.mv_type(), global.as_pointer_value(), "registered.state")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        // Moo-Parameter sind owning. Die TLS-Referenz bleibt bis replace erhalten.
+        self.call_rt_void(self.rt.moo_retain, &[state.into()], "registered.retain_state")?;
+        Ok(state)
+    }
+
+
+    fn registration_native_type(&self, ty: &TypeRef, parameter: bool) -> Result<Option<BasicTypeEnum<'ctx>>, String> {
+        if matches!(&ty.kind, TypeKind::Name(n) if n == "void") { return Ok(None); }
+        if let Ok(scalar) = crate::codegen_native::NType::from_type_ref(ty) {
+            return Ok(Some(scalar.llvm_type(self.context)));
+        }
+        if matches!(&ty.kind, TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1) {
+            self.registration_pointer_target(ty)?;
+            return Ok(Some(self.context.ptr_type(inkwell::AddressSpace::default()).into()));
+        }
+        if parameter {
+            if let TypeKind::Name(name) = &ty.kind {
+                self.native_structs.boxbar(name)
+                    .map_err(|e| format!("Rueckrufparameter '{name}' ist dynamisch nicht boxbar: {e}"))?;
+                return Ok(Some(self.context.ptr_type(inkwell::AddressSpace::default()).into()));
+            }
+        }
+        Err("Registrierter Rueckruf: Skalar, ptr[void]/ptr[Struktur] oder boxbarer Strukturparameter erwartet; Strukturrueckgaben besitzen keinen Fehlerwertvertrag".into())
+    }
+
+    fn registration_pointer_target(&self, ty: &TypeRef) -> Result<Option<String>, String> {
+        let TypeKind::Generic { args, .. } = &ty.kind else { return Err("Zeigertyp erwartet".into()); };
+        match args.as_slice() {
+            [TypeRef { kind: TypeKind::Name(name), .. }] if name == "void" => Ok(None),
+            [TypeRef { kind: TypeKind::Name(name), .. }] if self.native_structs.layout(name).is_some() || self.native_structs.ist_opak(name) => Ok(Some(name.clone())),
+            _ => Err("Dynamische Rueckrufzeiger brauchen ptr[void] oder ptr[Struktur]; Funktions-/Mehrfachzeiger haben keine dynamische Griffdarstellung".into()),
+        }
+    }
+
+    fn registration_fallback(&self, ty: &TypeRef, expr: Option<&Expr>) -> Result<Option<BasicValueEnum<'ctx>>, String> {
+        use crate::codegen_native::NType;
+        if matches!(&ty.kind, TypeKind::Name(n) if n == "void") {
+            if expr.is_some() { return Err("void-Rueckruf erwartet keinen Fehlerwert".into()); }
+            return Ok(None);
+        }
+        let expr = expr.ok_or("rueckruf_registrieren braucht einen expliziten konstanten Fehlerwert")?;
+        if matches!(&ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger") {
+            let zero = matches!(expr, Expr::None)
+                || matches!(expr, Expr::NativeNumber { text, .. } if text == "0")
+                || matches!(expr, Expr::Number(n) if *n == 0.0);
+            if !zero { return Err("Zeiger-Rueckruf braucht nichts oder 0 als Fehlerwert".into()); }
+            return Ok(Some(self.context.ptr_type(inkwell::AddressSpace::default()).const_null().into()));
+        }
+        let scalar = NType::from_type_ref(ty)?;
+        if scalar == NType::Bool {
+            if let Expr::Boolean(value) = expr {
+                return Ok(Some(self.context.bool_type().const_int(u64::from(*value), false).into()));
+            }
+        }
+        let (literal, negative) = match expr {
+            Expr::NativeNumber { text, .. } => (text.clone(), false),
+            Expr::Number(n) if n.is_finite() => (n.abs().to_string(), n.is_sign_negative()),
+            Expr::UnaryOp { op: UnaryOpKind::Neg, operand } => match operand.as_ref() {
+                Expr::NativeNumber { text, .. } => (text.clone(), true),
+                Expr::Number(n) if n.is_finite() => (n.abs().to_string(), !n.is_sign_negative()),
+                _ => return Err("Rueckruf-Fehlerwert muss ein Literal sein".into()),
+            },
+            _ => return Err("Rueckruf-Fehlerwert muss ein passendes Literal sein".into()),
+        };
+        if scalar == NType::Bool {
+            if negative || (literal != "0" && literal != "1") { return Err("bool-Fehlerwert muss wahr/falsch oder 0/1 sein".into()); }
+            return Ok(Some(self.context.bool_type().const_int(u64::from(literal == "1"), false).into()));
+        }
+        let value = if matches!(scalar, NType::F32 | NType::F64) {
+            scalar.float_literal(self.context, &literal, negative)?.0.value
+        } else {
+            scalar.integer_literal(self.context, &literal, negative)?.value
+        };
+        Ok(Some(value))
+    }
+
+    /// C-Argumentzeiger sind nur waehrend des Rueckrufs geliehen. Escape-Aliase
+    /// behalten eine geschlossene Box und werden vor jedem spaeteren C-Aufruf
+    /// abgewiesen; das fremde Objekt selbst wird niemals freigegeben.
+    fn registration_expire_borrowed(&self, slots: &[PointerValue<'ctx>]) -> Result<(), String> {
+        if slots.is_empty() { return Ok(()); }
+        let p = self.context.ptr_type(inkwell::AddressSpace::default());
+        let close = match self.module.get_function("moo_handle_close") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_close", self.context.void_type().fn_type(&[p.into()], false), None),
+        };
+        for slot in slots {
+            self.builder.build_call(close, &[(*slot).into()], "").map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Native Innenfunktion + vorhandener C-ABI-Export. Alle owning Moo-Werte
+    /// liegen in initialisierten Slots und verlassen auch Fehlerpfade sauber.
+    fn registration_thunk(&mut self, signature: &TypeRef, fallback: Option<&Expr>)
+        -> Result<(FunctionValue<'ctx>, String), String>
+    {
+        use crate::codegen_native::NType;
+        let TypeKind::Function { params, return_type, convention } = &signature.kind else {
+            return Err("rueckruf_registrieren erwartet fn(...)->T als Typargument".into());
+        };
+        if params.len() > 8 { return Err("Dynamische Moo-Funktionen erlauben hoechstens 8 Rueckrufargumente".into()); }
+        let global = self.registration_library()?;
+        let module_name = self.module.get_name().to_string_lossy().into_owned();
+        let nominals = self.native_structs.nominal_types(&module_name);
+        let identity = crate::native_type_id::resolve_type(signature, &nominals)?;
+        let registration_name = format!("rueckruf[{identity}]");
+        let result_ty = self.registration_native_type(return_type, false)?;
+        let fallback = self.registration_fallback(return_type, fallback)?;
+        let p = self.context.ptr_type(inkwell::AddressSpace::default());
+        let mut types: Vec<BasicMetadataTypeEnum<'ctx>> = vec![p.into()];
+        for ty in params {
+            types.push(self.registration_native_type(ty, true)?.ok_or("void ist kein Rueckrufparameter")?.into());
+        }
+        let native_type = match result_ty {
+            Some(ty) => ty.fn_type(&types, false),
+            None => self.context.void_type().fn_type(&types, false),
+        };
+        let ordinal = self.module.get_functions().count();
+        let internal = self.module.add_function(&format!("__moo_registered.body.{ordinal}"), native_type, Some(inkwell::module::Linkage::Internal));
+        let entry = self.context.append_basic_block(internal, "entry");
+        let error = self.context.append_basic_block(internal, "registered.failure");
+        let previous_function = self.current_function.replace(internal);
+        let previous_block = self.builder.get_insert_block();
+        let previous_variables = std::mem::take(&mut self.variables);
+        let previous_borrowed = self.defer_borrowed_handler.take();
+        let previous_try = std::mem::take(&mut self.try_stack);
+        let frame = self.rahmen_betreten(RahmenArt::Sonstig);
+        self.native_skip_target = Some(error);
+        self.builder.position_at_end(entry);
+        let borrowed: Vec<usize> = params.iter().enumerate().filter_map(|(index, ty)|
+            matches!(&ty.kind, TypeKind::Generic { name, .. } if name == "ptr" || name == "zeiger").then_some(index)).collect();
+        let mut slots = Vec::new();
+        for index in 0..params.len() + 2 + borrowed.len() {
+            let name = format!("__registered.value.{index}");
+            let slot = self.entry_alloca(self.mv_type(), &name)?;
+            self.builder.build_store(slot, self.registration_none()).map_err(|e| e.to_string())?;
+            self.variables.insert(name, slot);
+            slots.push(slot);
+        }
+        let state = self.registration_state_argument(global)?;
+        let token = self.builder.build_ptr_to_int(internal.get_nth_param(0).ok_or("user_data fehlt")?.into_pointer_value(),
+            self.context.i64_type(), "registered.token").map_err(|e| e.to_string())?;
+        let token = self.builder.build_unsigned_int_to_float(token, self.context.f64_type(), "registered.token.number").map_err(|e| e.to_string())?;
+        let token = self.call_rt(self.rt.moo_number, &[token.into()], "registered.token.box")?;
+        let sig_ptr = self.make_global_str(&registration_name, "registered.signature")?;
+        let sig_value = self.call_rt(self.rt.moo_string_new, &[sig_ptr.into()], "registered.signature.box")?;
+        let finder = self.module.get_function("__moo_rueckruf_finden").ok_or("Rueckruf-Suche fehlt")?;
+        let closure = self.call_rt(finder, &[state.into(), token.into(), sig_value.into()], "registered.find")?;
+        self.builder.build_store(slots[params.len()], closure).map_err(|e| e.to_string())?;
+        self.registration_guard(error)?;
+        for (index, ty) in params.iter().enumerate() {
+            let raw = internal.get_nth_param(index as u32 + 1).ok_or("Rueckrufparameter fehlt")?;
+            let boxed = if let Ok(scalar) = NType::from_type_ref(ty) {
+                match scalar {
+                    NType::Bool => self.call_rt(self.rt.moo_bool_fn, &[raw.into()], "registered.bool")?,
+                    NType::F32 | NType::F64 => {
+                        let number = if scalar == NType::F32 {
+                            self.builder.build_float_ext(raw.into_float_value(), self.context.f64_type(), "registered.float").map_err(|e| e.to_string())?
+                        } else { raw.into_float_value() };
+                        self.call_rt(self.rt.moo_number, &[number.into()], "registered.float.box")?
+                    }
+                    NType::I64 | NType::U64 => {
+                        let number = self.box_native_wide(raw.into_int_value(), scalar == NType::U64)?;
+                        self.call_rt(self.rt.moo_number, &[number.into()], "registered.wide.box")?
+                    }
+                    _ => {
+                        let number = if scalar.is_signed_integer() {
+                            self.builder.build_signed_int_to_float(raw.into_int_value(), self.context.f64_type(), "registered.int")
+                        } else {
+                            self.builder.build_unsigned_int_to_float(raw.into_int_value(), self.context.f64_type(), "registered.uint")
+                        }.map_err(|e| e.to_string())?;
+                        self.call_rt(self.rt.moo_number, &[number.into()], "registered.int.box")?
+                    }
+                }
+            } else if matches!(&ty.kind, TypeKind::Generic { .. }) {
+                let target = self.registration_pointer_target(ty)?;
+                self.native_handle_box(raw.into_pointer_value(), target.as_deref())?
+            } else if let TypeKind::Name(name) = &ty.kind {
+                self.native_struct_box(raw.into_pointer_value(), name)?
+            } else { return Err("Rueckrufparameter kann nicht geboxt werden".into()); };
+            self.builder.build_store(slots[index], boxed).map_err(|e| e.to_string())?;
+            if let Some(pin) = borrowed.iter().position(|&parameter| parameter == index) {
+                self.call_rt_void(self.rt.moo_retain, &[boxed.into()], "registered.borrowed.pin")?;
+                self.builder.build_store(slots[params.len()+2+pin], boxed).map_err(|e| e.to_string())?;
+            }
+            self.registration_guard(error)?;
+        }
+        let mut dynamic_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![closure.into()];
+        for slot in &slots[..params.len()] {
+            let value = self.builder.build_load(self.mv_type(), *slot, "registered.argument").map_err(|e| e.to_string())?;
+            dynamic_args.push(value.into());
+            // Der dynamische Aufruf uebernimmt Argumente, die Closure bleibt geliehen.
+            self.builder.build_store(*slot, self.registration_none()).map_err(|e| e.to_string())?;
+        }
+        let call = match params.len() {
+            0 => self.rt.moo_func_call_0, 1 => self.rt.moo_func_call_1,
+            2 => self.rt.moo_func_call_2, 3 => self.rt.moo_func_call_3,
+            4 => self.rt.moo_func_call_4, 5 => self.rt.moo_func_call_5,
+            6 => self.rt.moo_func_call_6, 7 => self.rt.moo_func_call_7,
+            _ => self.rt.moo_func_call_8,
+        };
+        let result = self.call_rt(call, &dynamic_args, "registered.invoke")?;
+        self.builder.build_store(slots[params.len()+1], result).map_err(|e| e.to_string())?;
+        self.registration_guard(error)?;
+        let result_expr = Expr::Identifier(format!("__registered.value.{}", params.len()+1));
+        let native_result: Option<BasicValueEnum<'ctx>> = if result_ty.is_none() { None }
+        else if let Ok(scalar) = NType::from_type_ref(return_type) {
+            Some(match scalar {
+                NType::Bool => self.compile_native_bool_argument(&result_expr, Some(error))?.into(),
+                NType::F32 | NType::F64 => self.compile_native_float_argument(&result_expr, scalar, Some(error))?.into(),
+                NType::I64 | NType::U64 => self.compile_native_wide_argument(&result_expr, scalar, Some(error))?.into(),
+                _ => self.compile_native_integer_argument(&result_expr, scalar, Some(error))?.into(),
+            })
+        } else {
+            let target = self.registration_pointer_target(return_type)?;
+            let (raw, _, pin) = self.compile_native_handle_argument(&result_expr, target.as_deref(), &[], &[], Some(error))?;
+            self.call_rt_void(self.rt.moo_release, &[pin.into()], "registered.release_result_pin")?;
+            Some(raw.into())
+        };
+        self.registration_expire_borrowed(&slots[params.len()+2..])?;
+        self.release_function_locals()?;
+        self.builder.build_return(native_result.as_ref().map(|v| v as &dyn BasicValue<'ctx>)).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(error);
+        self.registration_expire_borrowed(&slots[params.len()+2..])?;
+        self.release_function_locals()?;
+        let zero = result_ty.map(|ty| ty.const_zero());
+        self.builder.build_return(zero.as_ref().map(|v| v as &dyn BasicValue<'ctx>)).map_err(|e| e.to_string())?;
+        self.rahmen_verlassen(frame);
+        self.current_function = previous_function;
+        self.variables = previous_variables;
+        self.defer_borrowed_handler = previous_borrowed;
+        self.try_stack = previous_try;
+        if let Some(block) = previous_block { self.builder.position_at_end(block); }
+        let triple = self.module.get_triple().as_str().to_string_lossy().into_owned();
+        let convention = match convention.as_deref() {
+            Some(name) => crate::ffi_types::llvm_call_convention(name, &triple)?,
+            None => 0, // LLVM C_CC, wie ffi_types::CC_C.
+        };
+        let mut inputs = vec![TypeRef { kind: TypeKind::Generic { name: "ptr".into(), args: vec![
+            TypeRef { kind: TypeKind::Name("void".into()), ..signature.clone() }
+        ] }, ..signature.clone() }];
+        inputs.extend(params.iter().cloned());
+        let thunk = crate::ffi_types::emit_abi_export(self.context, &self.module,
+            self.target_data.as_ref().ok_or("Datenlayout fehlt")?, &format!("__moo_registered.thunk.{ordinal}"),
+            internal, &inputs, return_type, &self.native_structs, convention, inkwell::module::Linkage::Internal,
+            Some(crate::ffi_types::RueckrufVertrag { name: registration_name.clone(), fehlerwert: fallback }))?;
+        Ok((thunk, registration_name))
+    }
+
+
+    fn compile_registration(&mut self, types: &[TypeRef], args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        let [signature] = types else { return Err("rueckruf_registrieren[fn(...)->T](funktion, fehlerwert) erwartet genau einen Signaturtyp".into()); };
+        if args.is_empty() || args.len() > 2 { return Err("rueckruf_registrieren erwartet Funktion und bei Nicht-void einen Fehlerwert".into()); }
+        let global = self.registration_library()?;
+        let (thunk, name) = self.registration_thunk(signature, args.get(1))?;
+        let type_id = crate::native_type_id::registration_id(&name).ok_or("Rueckruf-Typ-ID fehlt")?;
+        let function = self.current_function.ok_or("Registrierung ohne Funktion")?;
+        let failure = self.context.append_basic_block(function, "registered.create.failure");
+        let done = self.context.append_basic_block(function, "registered.create.done");
+        let mut slots = Vec::new();
+        for _ in 0..4 {
+            let slot = self.entry_alloca(self.mv_type(), "registered.create.owned")?;
+            self.builder.build_store(slot, self.registration_none()).map_err(|e| e.to_string())?;
+            slots.push(slot);
+        }
+        let closure = self.compile_expr(&args[0])?;
+        self.builder.build_store(slots[0], closure).map_err(|e| e.to_string())?;
+        self.registration_guard(failure)?;
+        let token = self.registration_token(failure)?;
+        let p = self.context.ptr_type(inkwell::AddressSpace::default());
+        let record_type = self.context.struct_type(&[p.into(), p.into(), p.into()], false);
+        let record = self.entry_alloca(record_type, "registered.record")?;
+        let data = self.builder.build_int_to_ptr(token, p, "registered.user_data").map_err(|e| e.to_string())?;
+        let fields = [global.as_pointer_value(), thunk.as_global_value().as_pointer_value(), data];
+        for (index, value) in fields.iter().enumerate() {
+            let field = self.builder.build_struct_gep(record_type, record, index as u32, "registered.record.field").map_err(|e| e.to_string())?;
+            self.builder.build_store(field, *value).map_err(|e| e.to_string())?;
+        }
+        let i64t = self.context.i64_type();
+        let size = self.target_data.as_ref().ok_or("Datenlayout fehlt")?.get_abi_size(&record_type);
+        let boxer = match self.module.get_function("moo_handle_box_bytes") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_box_bytes", self.context.void_type().fn_type(
+                &[p.into(), i64t.into(), i64t.into(), p.into()], false), None),
+        };
+        self.builder.build_call(boxer, &[record.into(), i64t.const_int(size, false).into(),
+            i64t.const_int(type_id, false).into(), slots[3].into()], "").map_err(|e| e.to_string())?;
+        self.registration_guard(failure)?;
+        let state = self.registration_state_argument(global)?;
+        self.builder.build_store(slots[1], state).map_err(|e| e.to_string())?;
+        let sig_ptr = self.make_global_str(&name, "registered.signature")?;
+        let signature_value = self.call_rt(self.rt.moo_string_new, &[sig_ptr.into()], "registered.signature.box")?;
+        self.builder.build_store(slots[2], signature_value).map_err(|e| e.to_string())?;
+        self.registration_guard(failure)?;
+        let number = self.builder.build_unsigned_int_to_float(token, self.context.f64_type(), "registered.token.number").map_err(|e| e.to_string())?;
+        let number = self.call_rt(self.rt.moo_number, &[number.into()], "registered.token.box")?;
+        let register = self.module.get_function("__moo_rueckruf_anmelden").ok_or("Moo-Registrierung fehlt")?;
+        // Uebergabe der drei owning Parameter; TLS und Griff bleiben separat.
+        for slot in &slots[..3] {
+            self.builder.build_store(*slot, self.registration_none()).map_err(|e| e.to_string())?;
+        }
+        let updated = self.call_rt(register, &[state.into(), number.into(), signature_value.into(), closure.into()], "registered.create")?;
+        self.builder.build_store(slots[1], updated).map_err(|e| e.to_string())?;
+        self.registration_guard(failure)?;
+        self.registration_replace_state(global, updated)?;
+        self.builder.build_store(slots[1], self.registration_none()).map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(failure);
+        let closer = match self.module.get_function("moo_handle_close") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_close", self.context.void_type().fn_type(&[p.into()], false), None),
+        };
+        self.builder.build_call(closer, &[slots[3].into()], "").map_err(|e| e.to_string())?;
+        for slot in &slots {
+            let value = self.builder.build_load(self.mv_type(), *slot, "registered.create.release").map_err(|e| e.to_string())?;
+            self.call_rt_void(self.rt.moo_release, &[value.into()], "registered.create.release")?;
+            self.builder.build_store(*slot, self.registration_none()).map_err(|e| e.to_string())?;
+        }
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done);
+        Ok(self.builder.build_load(self.mv_type(), slots[3], "registered.handle").map_err(|e| e.to_string())?.into_struct_value())
+    }
+
+    fn compile_registration_close(&mut self, args: &[Expr]) -> Result<StructValue<'ctx>, String> {
+        let [arg] = args else { return Err("rueckruf_abmelden erwartet genau einen Registrierungs-Griff".into()); };
+        let global = self.registration_library()?;
+        let function = self.current_function.ok_or("Abmeldung ohne Funktion")?;
+        let done = self.context.append_basic_block(function, "registered.close.done");
+        let open = self.context.append_basic_block(function, "registered.close.open");
+        let same_thread = self.context.append_basic_block(function, "registered.close.owner");
+        let wrong_thread = self.context.append_basic_block(function, "registered.close.wrong_thread");
+        let p = self.context.ptr_type(inkwell::AddressSpace::default());
+        let i64t = self.context.i64_type();
+        let value_slot = self.entry_alloca(self.mv_type(), "registered.close.handle")?;
+        let state_slot = self.entry_alloca(self.mv_type(), "registered.close.state")?;
+        self.builder.build_store(state_slot, self.registration_none()).map_err(|e| e.to_string())?;
+        let value = self.compile_expr(arg)?;
+        self.builder.build_store(value_slot, value).map_err(|e| e.to_string())?;
+        self.registration_guard(done)?;
+        let data_slot = self.entry_alloca(p, "registered.close.payload")?;
+        let record_type = self.context.struct_type(&[p.into(), p.into(), p.into()], false);
+        let size = self.target_data.as_ref().ok_or("Datenlayout fehlt")?.get_abi_size(&record_type);
+        let payload = match self.module.get_function("moo_handle_payload") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_payload", self.context.i32_type().fn_type(
+                &[p.into(), i64t.into(), p.into()], false), None),
+        };
+        let status = self.builder.build_call(payload, &[value_slot.into(), i64t.const_int(size, false).into(), data_slot.into()],
+            "registered.close.status").map_err(|e| e.to_string())?.try_as_basic_value().basic().ok_or("Payload-Status fehlt")?.into_int_value();
+        let valid = self.builder.build_int_compare(inkwell::IntPredicate::EQ, status, self.context.i32_type().const_int(1, false),
+            "registered.close.valid").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(valid, open, done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(open);
+        let data = self.builder.build_load(p, data_slot, "registered.close.data").map_err(|e| e.to_string())?.into_pointer_value();
+        let owner_slot = self.builder.build_struct_gep(record_type, data, 0, "registered.close.owner_slot").map_err(|e| e.to_string())?;
+        let owner = self.builder.build_load(p, owner_slot, "registered.close.owner").map_err(|e| e.to_string())?.into_pointer_value();
+        let owner = self.builder.build_int_compare(inkwell::IntPredicate::EQ,
+            self.builder.build_ptr_to_int(owner, i64t, "registered.owner.id").map_err(|e| e.to_string())?,
+            self.builder.build_ptr_to_int(global.as_pointer_value(), i64t, "registered.current.id").map_err(|e| e.to_string())?,
+            "registered.same_thread").map_err(|e| e.to_string())?;
+        self.builder.build_conditional_branch(owner, same_thread, wrong_thread).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(wrong_thread);
+        let text = self.make_global_str("Rueckruf darf nur im registrierenden Moo-Thread abgemeldet werden", "registered.wrong_thread")?;
+        let message = self.call_rt(self.rt.moo_string_new, &[text.into()], "registered.wrong_thread.box")?;
+        self.call_rt_void(self.rt.moo_throw, &[message.into()], "registered.wrong_thread.throw")?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(same_thread);
+        let token_slot = self.builder.build_struct_gep(record_type, data, 2, "registered.close.token_slot").map_err(|e| e.to_string())?;
+        let token = self.builder.build_load(p, token_slot, "registered.close.token").map_err(|e| e.to_string())?.into_pointer_value();
+        let token = self.builder.build_ptr_to_int(token, i64t, "registered.close.token.id").map_err(|e| e.to_string())?;
+        let number = self.builder.build_unsigned_int_to_float(token, self.context.f64_type(), "registered.close.number").map_err(|e| e.to_string())?;
+        let number = self.call_rt(self.rt.moo_number, &[number.into()], "registered.close.box")?;
+        let state = self.registration_state_argument(global)?;
+        let unregister = self.module.get_function("__moo_rueckruf_abmelden").ok_or("Moo-Abmeldung fehlt")?;
+        let updated = self.call_rt(unregister, &[state.into(), number.into()], "registered.close")?;
+        self.builder.build_store(state_slot, updated).map_err(|e| e.to_string())?;
+        self.registration_guard(done)?;
+        self.registration_replace_state(global, updated)?;
+        self.builder.build_store(state_slot, self.registration_none()).map_err(|e| e.to_string())?;
+        let closer = match self.module.get_function("moo_handle_close") {
+            Some(f) => f,
+            None => self.module.add_function("moo_handle_close", self.context.void_type().fn_type(&[p.into()], false), None),
+        };
+        self.builder.build_call(closer, &[value_slot.into()], "").map_err(|e| e.to_string())?;
+        self.builder.build_unconditional_branch(done).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(done);
+        for slot in [value_slot, state_slot] {
+            let value = self.builder.build_load(self.mv_type(), slot, "registered.close.release").map_err(|e| e.to_string())?;
+            self.call_rt_void(self.rt.moo_release, &[value.into()], "registered.close.release")?;
+        }
+        Ok(self.registration_none())
+    }
+
     /// P2-T23/T53 B3: Laufzeit-Typ-ID eines Griffs (0 = ptr[void], sonst Struktur-ID).
     fn griff_typ_id(&self, ziel: Option<&str>) -> Result<u64, String> {
         match ziel {
             None => Ok(0),
-            Some(name) => self.native_structs.struktur_id(name)
+            Some(name) => crate::native_type_id::registration_id(name)
+                .or_else(|| self.native_structs.struktur_id(name))
                 .ok_or_else(|| format!("Griff ptr[{name}]: Strukturidentitaet fehlt")),
         }
     }
@@ -6905,18 +7442,30 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
         let i64t = self.context.i64_type();
         let typ_id = self.griff_typ_id(ziel)?;
-        let unbox = match self.module.get_function("moo_handle_unbox") {
+        let registration = ziel.and_then(crate::native_type_id::registration_id).is_some();
+        let owner = if registration { Some(self.registration_library()?.as_pointer_value()) } else { None };
+        let unbox_name = if registration { "moo_handle_unbox_owned" } else { "moo_handle_unbox" };
+        let mut parameter_types: Vec<BasicMetadataTypeEnum<'ctx>> = vec![ptr_type.into(), i64t.into()];
+        if registration { parameter_types.push(i64t.into()); parameter_types.push(ptr_type.into()); }
+        parameter_types.push(ptr_type.into());
+        let unbox = match self.module.get_function(unbox_name) {
             Some(f) => f,
-            None => self.module.add_function("moo_handle_unbox", self.context.i32_type().fn_type(
-                &[ptr_type.into(), i64t.into(), ptr_type.into()], false), None),
+            None => self.module.add_function(unbox_name, self.context.i32_type().fn_type(&parameter_types, false), None),
         };
         let wert = self.compile_expr(expr)?;
         let wert_slot = self.entry_alloca(self.mv_type(), "native.griff.wert")?;
         self.builder.build_store(wert_slot, wert).map_err(|e| e.to_string())?;
         let zeiger_slot = self.entry_alloca(ptr_type, "native.griff.zeiger")?;
-        let ok = self.builder.build_call(unbox, &[
-            wert_slot.into(), i64t.const_int(typ_id, false).into(), zeiger_slot.into(),
-        ], "native.griff.unbox").map_err(|e| e.to_string())?.try_as_basic_value();
+        let mut unbox_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![wert_slot.into(), i64t.const_int(typ_id, false).into()];
+        if let Some(owner) = owner {
+            let record = self.context.struct_type(&[ptr_type.into(), ptr_type.into(), ptr_type.into()], false);
+            let size = self.target_data.as_ref().ok_or("Datenlayout fuer Registrierung fehlt")?.get_abi_size(&record);
+            unbox_args.push(i64t.const_int(size, false).into());
+            unbox_args.push(owner.into());
+        }
+        unbox_args.push(zeiger_slot.into());
+        let ok = self.builder.build_call(unbox, &unbox_args, "native.griff.unbox")
+            .map_err(|e| e.to_string())?.try_as_basic_value();
         let ok = match ok {
             inkwell::values::ValueKind::Basic(value) => value.into_int_value(),
             _ => return Err("moo_handle_unbox liefert keinen Wert".into()),
@@ -7852,12 +8401,24 @@ impl<'ctx> CodeGen<'ctx> {
                 self.call_rt_void(self.rt.moo_release, &[val.into()], "rel_un")?;
                 Ok(res)
             }
-            Expr::FunctionCall { name, args, zeile: aufruf_zeile, .. } => {
+            Expr::FunctionCall { name, type_args, args, zeile: aufruf_zeile, .. } => {
                 let aufruf_zeile = *aufruf_zeile;
                 if aufruf_zeile > 0 {
                     self.diag_zeile = aufruf_zeile;
                 }
                 let guard_args = std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard;
+                if matches!(name.as_str(), "rueckruf_registrieren" | "rückruf_registrieren") {
+                    if self.registration_builtin_visible(name) {
+                        return self.compile_registration(type_args, args);
+                    }
+                    if !type_args.is_empty() {
+                        return Err(format!("'{name}' ist durch eine eigene Funktion verdeckt; typisierte Registrierung ist hier nicht eindeutig"));
+                    }
+                }
+                if name == "rueckruf_abmelden" && self.registration_builtin_visible(name) {
+                    if !type_args.is_empty() { return Err("rueckruf_abmelden erwartet keine Typargumente".into()); }
+                    return self.compile_registration_close(args);
+                }
                 if let Some(function) = self.native_functions.get(name).copied() {
                     let signature = match self.native_signatures.get(name).cloned() {
                         Some(signature) => signature,
@@ -14054,17 +14615,17 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(fv)
             }
             Expr::Pipe { left, right } => {
-                if self.defer_runtime {
+                if self.defer_runtime || matches!(right.as_ref(), Expr::FunctionCall { type_args, .. } if !type_args.is_empty()) {
                     // Derselbe Aufrufpfad wie f(a, b, c), einschliesslich
                     // nativer Adapter, Funktionswerte und Besitz-Fehlerkanten.
-                    let (name, mut args, zeile, spalten) = match right.as_ref() {
-                        Expr::FunctionCall { name, args, zeile, spalten } =>
-                            (name.clone(), args.clone(), *zeile, *spalten),
-                        Expr::Identifier(name) => (name.clone(), Vec::new(), 0, (0, 0)),
+                    let (name, mut args, zeile, spalten, type_args) = match right.as_ref() {
+                        Expr::FunctionCall { name, args, zeile, spalten, type_args } =>
+                            (name.clone(), args.clone(), *zeile, *spalten, type_args.clone()),
+                        Expr::Identifier(name) => (name.clone(), Vec::new(), 0, (0, 0), Vec::new()),
                         _ => return Err("Pipe: rechte Seite muss Funktionsaufruf oder Identifier sein".into()),
                     };
                     args.insert(0, left.as_ref().clone());
-                    return self.compile_expr(&Expr::FunctionCall { name, args, zeile, spalten });
+                    return self.compile_expr(&Expr::FunctionCall { name, args, zeile, spalten, type_args });
                 }
                 // a |> f(b, c) wird zu f(a, b, c)
                 let left_val = self.compile_expr(left)?;

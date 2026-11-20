@@ -1,0 +1,14 @@
+# Ungefangener Fremdthread-Abbruch ist hier das Testziel, kein Moo-Koerperlauf.
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_fremdthread(cb: ptr[fn(ptr[void], i32) -> i32], ud: ptr[void], x: i32) -> i32
+
+@nativ
+funktion reg_fremdthread(r: rueckruf[fn(i32) -> i32]) -> i32:
+    unsicher:
+        gib_zurück rr_reg_fremdthread(rueckruf_zeiger(r), rueckruf_daten(r), 7)
+
+setze r auf rueckruf_registrieren[fn(i32) -> i32]((x) => x + 1, -1)
+zeige "vor"
+unsicher:
+    reg_fremdthread(r)
+zeige "NICHT ERREICHT"

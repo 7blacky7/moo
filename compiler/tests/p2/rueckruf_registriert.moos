@@ -1,0 +1,28 @@
+# P2-T86: dynamische Funktion und Closure durch einen echten C-ABI-Thunk.
+@nativ
+funktion registriert_aufrufen(reg: rueckruf[fn(i32) -> i32], wert: i32) -> i32:
+    unsicher:
+        setze ziel: ptr[fn(ptr[void], i32) -> i32] auf rueckruf_zeiger(reg)
+        gib_zurück ziel(rueckruf_daten(reg), wert)
+
+funktion registriert_erzeugen(faktor):
+    gib_zurück rueckruf_registrieren[fn(i32) -> i32]((x) => x * faktor, -17)
+
+funktion registriert_plus(x):
+    gib_zurück x + 2
+
+setze reg auf registriert_erzeugen(3)
+unsicher:
+    zeige registriert_aufrufen(reg, 7)
+setze anderer auf rueckruf_registrieren[fn(i32) -> i32](registriert_plus, -9)
+unsicher:
+    zeige registriert_aufrufen(anderer, 5)
+rueckruf_abmelden(reg)
+rueckruf_abmelden(reg)
+rueckruf_abmelden(anderer)
+versuche:
+    unsicher:
+        registriert_aufrufen(reg, 1)
+fange fehler:
+    zeige "geschlossen"
+zeige griffe_offen()

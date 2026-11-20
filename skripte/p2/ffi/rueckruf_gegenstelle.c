@@ -97,3 +97,52 @@ int32_t rr_auf_thread(RrBesuch cb, void *ud, int32_t x) {
 #endif
     return t.erg;
 }
+
+
+/* P2-T86: gleiche C-Gegenstelle, user_data zuerst fuer registrierte Closures. */
+typedef int32_t (*RrRegistriert)(void*, int32_t);
+int32_t rr_reg_wiederhole(int32_t n, RrRegistriert cb, void* ud);
+void rr_reg_merke(RrRegistriert cb, void* ud);
+int32_t rr_reg_ausloesen(int32_t x);
+int32_t rr_reg_letzter(void);
+int32_t rr_reg_fremdthread(RrRegistriert cb, void* ud, int32_t x);
+static RrRegistriert rr_reg_gemerkt;
+static void* rr_reg_daten;
+static int32_t rr_reg_resultat;
+
+int32_t rr_reg_wiederhole(int32_t n, RrRegistriert cb, void* ud) {
+    int64_t summe = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        rr_reg_resultat = cb(ud, i);
+        summe += rr_reg_resultat;
+    }
+    return (int32_t)summe;
+}
+void rr_reg_merke(RrRegistriert cb, void* ud) {
+    rr_reg_gemerkt = cb;
+    rr_reg_daten = ud;
+}
+int32_t rr_reg_ausloesen(int32_t x) {
+    rr_reg_resultat = rr_reg_gemerkt ? rr_reg_gemerkt(rr_reg_daten, x) : -1;
+    return rr_reg_resultat;
+}
+int32_t rr_reg_letzter(void) { return rr_reg_resultat; }
+
+typedef struct { RrRegistriert cb; void* ud; } RrRegistriertThread;
+static int32_t rr_reg_thread_adapter(int32_t x, void* raw) {
+    RrRegistriertThread* context = (RrRegistriertThread*)raw;
+    return context->cb(context->ud, x);
+}
+int32_t rr_reg_fremdthread(RrRegistriert cb, void* ud, int32_t x) {
+    RrRegistriertThread context = { cb, ud };
+    return rr_auf_thread(rr_reg_thread_adapter, &context, x);
+}
+
+/* Unabhaengiges C-Orakel fuer Strukturparameter UND Strukturrueckgabe. */
+RrTausch rr_reg_struktur_zeiger(void);
+RrPaar rr_reg_struktur_wert(RrPaar p);
+RrPaar rr_reg_struktur_wert(RrPaar p) {
+    RrPaar ergebnis = { p.a, p.b };
+    return ergebnis;
+}
+RrTausch rr_reg_struktur_zeiger(void) { return rr_reg_struktur_wert; }

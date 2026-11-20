@@ -1,0 +1,8 @@
+setze rueckruf_registrieren auf [5]
+setze rückruf_registrieren auf [7]
+zeige rueckruf_registrieren[0]
+zeige rückruf_registrieren[0]
+setze rueckruf_registrieren auf (x) => x + 2
+setze rueckruf_abmelden auf (x) => x + 3
+zeige rueckruf_registrieren(4)
+zeige rueckruf_abmelden(4)

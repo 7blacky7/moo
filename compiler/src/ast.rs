@@ -44,6 +44,9 @@ pub enum Expr {
         /// P2-T123: 1-basierte Spalten des Aufrufs; exklusives Ende, 0 = synthetisch/mehrzeilig.
         spalten: (usize, usize),
         name: std::string::String,
+        /// Statische Typinformationen eines typisierten Builtin-Aufrufs.
+        /// Leer bei allen bisherigen Aufrufen; keine Laufzeit-Argumente.
+        type_args: Vec<TypeRef>,
         args: Vec<Expr>,
     },
     MethodCall {

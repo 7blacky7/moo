@@ -1,0 +1,1 @@
+setze r auf rueckruf_registrieren[fn() -> bool](() => wahr, 2)

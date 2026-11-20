@@ -24,11 +24,14 @@ mkdir -p "$out/lib" "$out/san" "$out/tsan"
 # --- 1. Positiv ---
 ${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror -pthread -c skripte/p2/ffi/rueckruf_gegenstelle.c -o "$out/lib/rr.o"
 ar rcs "$out/lib/libp2_rueckruf.a" "$out/lib/rr.o"
-for name in rueckruf_sicher rueckruf_fehler rueckruf_ungefangen rueckruf_fremdthread; do
+positive=(rueckruf_sicher rueckruf_fehler rueckruf_registriert rueckruf_registriert_c
+    rueckruf_registriert_thread rueckruf_registriert_bootstrap rueckruf_registriert_typen
+    rueckruf_registriert_defer rueckruf_registriert_index rueckruf_registriert_struktur_abi rueckruf_registriert_pipe)
+for name in "${positive[@]}" rueckruf_ungefangen rueckruf_fremdthread rueckruf_registriert_fremdthread; do
     "$compiler" compile "$tests/$name.moos" --lib-pfad "$out/lib" -o "$out/$name" > "$out/$name.compile.log" 2>&1 \
         || { cat "$out/$name.compile.log" >&2; echo "FEHLER: $name kompiliert nicht" >&2; exit 1; }
 done
-for name in rueckruf_sicher rueckruf_fehler; do
+for name in "${positive[@]}"; do
     "$out/$name" > "$out/$name.out"
     diff -u "$tests/$name.expected" "$out/$name.out" || { echo "FEHLER: $name weicht ab" >&2; exit 1; }
 done
@@ -52,6 +55,16 @@ grep -qF "Rückruf 'teile' auf fremdem Thread: fehlbare Rückrufe sind nur auf M
 ! grep -q 'NICHT ERREICHT' "$out/fremdthread.out" || { echo 'FEHLER: Fremdthread lief weiter' >&2; exit 1; }
 echo "PASS Rueckruf ungefangen RC 1 mit Diagnose; fehlbar auf fremdem Thread abgelehnt (RC $rc_f)"
 
+# P2-T86: dynamische Rueckrufe duerfen fremde C-Threads nicht betreten.
+set +e
+(ulimit -c 0; "$out/rueckruf_registriert_fremdthread") > "$out/registriert_fremd.out" 2> "$out/registriert_fremd.err"
+rc_rf=$?
+set -e
+[ "$rc_rf" -ge 128 ] && grep -qx 'vor' "$out/registriert_fremd.out" \
+    && ! grep -q 'NICHT ERREICHT' "$out/registriert_fremd.out" \
+    && grep -qF 'auf fremdem Thread' "$out/registriert_fremd.err" \
+    || { cat "$out/registriert_fremd.err" >&2; echo 'FEHLER: registrierter Fremdthread-Rueckruf' >&2; exit 1; }
+
 # --- 3. Sanitizer ---
 mise exec -- clang -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all \
     -Wall -Wextra -Werror -pthread -c skripte/p2/ffi/rueckruf_gegenstelle.c -o "$out/san/rr.o"
@@ -59,7 +72,7 @@ ar rcs "$out/san/libp2_rueckruf.a" "$out/san/rr.o"
 clang_bin="$(mise exec -- which clang)"
 printf '#!/bin/sh\nexec "%s" -fsanitize=address,undefined "$@"\n' "$clang_bin" > "$out/san/cc"
 chmod +x "$out/san/cc"
-for name in rueckruf_sicher rueckruf_fehler; do
+for name in rueckruf_sicher rueckruf_fehler rueckruf_registriert_c rueckruf_registriert_typen rueckruf_registriert_defer rueckruf_registriert_struktur_abi; do
     PATH="$PWD/$out/san:$PATH" "$compiler" compile "$tests/$name.moos" --lib-pfad "$out/san" -o "$out/san/$name" \
         > "$out/san/$name.compile.log" 2>&1 || { cat "$out/san/$name.compile.log" >&2; exit 1; }
     ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 "$out/san/$name" > "$out/san/$name.out"
@@ -96,6 +109,12 @@ done
 ! grep -q 'moo_native_rueckruf_thread' "$out/sicher.ll" || { echo 'FEHLER: Modul ohne fehlbare Rueckrufe deklariert den Thread-Hook' >&2; exit 1; }
 echo 'PASS Rueckruf-Thunks: intern; fehlerfrei ohne Runtime; fehlbar mit Thread- und Fehlerpruefung'
 
+# Die breite Fehlerwertkonstante bleibt ohne double-Zwischenschritt erhalten.
+"$compiler" compile "$tests/rueckruf_registriert_typen.moos" --emit-ir -o "$out/registriert.ll"
+mise exec -- opt -passes=verify -disable-output "$out/registriert.ll"
+awk '/^define internal i64 @__moo_registered.thunk/{inside=1} inside && /ret i64 -1/{found=1} /^}/{inside=0} END{exit !found}' "$out/registriert.ll" \
+    || { echo 'FEHLER: u64-Fehlerwert nicht exakt' >&2; exit 1; }
+
 # --- 5. Negativ ---
 neg() {
     local name="$1" text="$2" rc
@@ -119,4 +138,9 @@ neg einstieg "@einstieg-Exporte haben bereits die C-ABI"
 neg dynamisch "nur für Top-Level-@nativ-Funktionen"
 neg puffer "Signatur ist kein C-Rückruf"
 neg adresse_von "als C-Funktionszeiger nur ueber @rückruf"
-echo 'PASS Rueckruf negativ: 11 Compilefehler mit Meldung'
+neg registriert_bereich 'passt nicht in U8'
+neg registriert_bool 'bool-Fehlerwert muss'
+neg registriert_ohne_typ 'erwartet genau einen Signaturtyp'
+neg registriert_unsicher 'M-M005'
+neg registriert_rueckgabe 'verwalteter Griff'
+echo 'PASS Rueckruf negativ: 16 Compilefehler mit Meldung'

@@ -1,0 +1,3 @@
+@nativ
+funktion roh(r: rueckruf[fn() -> i32]) -> ptr[void]:
+    gib_zurück rueckruf_daten(r)

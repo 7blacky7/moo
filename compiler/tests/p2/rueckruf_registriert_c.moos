@@ -1,0 +1,100 @@
+# P2-T86: Referenz-C ruft registrierte Closures wiederholt/gespeichert auf.
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_wiederhole(n: i32, cb: ptr[fn(ptr[void], i32) -> i32], ud: ptr[void]) -> i32
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_merke(cb: ptr[fn(ptr[void], i32) -> i32], ud: ptr[void]) -> void
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_ausloesen(x: i32) -> i32
+@bibliothek("p2_rueckruf")
+extern "C" funktion rr_reg_letzter() -> i32
+
+@nativ
+funktion reg_wiederhole(reg: rueckruf[fn(i32) -> i32], n: i32) -> i32:
+    unsicher:
+        gib_zurück rr_reg_wiederhole(n, rueckruf_zeiger(reg), rueckruf_daten(reg))
+
+@nativ
+funktion reg_merke(reg: rueckruf[fn(i32) -> i32]) -> void:
+    unsicher:
+        rr_reg_merke(rueckruf_zeiger(reg), rueckruf_daten(reg))
+
+@nativ
+funktion reg_ausloesen(x: i32) -> i32:
+    unsicher:
+        gib_zurück rr_reg_ausloesen(x)
+
+@nativ
+funktion reg_letzter() -> i32:
+    unsicher:
+        gib_zurück rr_reg_letzter()
+
+funktion reg_erzeugen(faktor):
+    setze werte auf [faktor]
+    gib_zurück rueckruf_registrieren[fn(i32) -> i32]((x) => x * werte[0], -17)
+
+setze aufrufe auf 0
+funktion reg_fehler(x):
+    global aufrufe
+    setze aufrufe auf aufrufe + 1
+    wenn x == 1:
+        wirf "absicht"
+    gib_zurück x + 1
+
+setze selbst_griff auf nichts
+funktion reg_selbst(x):
+    global selbst_griff
+    rueckruf_abmelden(selbst_griff)
+    gib_zurück x + 30
+
+setze reg auf reg_erzeugen(4)
+unsicher:
+    zeige reg_wiederhole(reg, 3)
+    reg_merke(reg)
+    zeige reg_ausloesen(5)
+rueckruf_abmelden(reg)
+setze reg auf nichts
+versuche:
+    unsicher:
+        reg_ausloesen(6)
+fange fehler:
+    zeige "spaet"
+unsicher:
+    zeige reg_letzter()
+
+setze kaputt auf rueckruf_registrieren[fn(i32) -> i32](reg_fehler, -9)
+versuche:
+    unsicher:
+        reg_wiederhole(kaputt, 5)
+fange fehler:
+    zeige "fehler"
+unsicher:
+    zeige reg_letzter()
+zeige aufrufe
+rueckruf_abmelden(kaputt)
+
+setze falscher auf rueckruf_registrieren[fn(f64) -> f64]((x) => x, -1.0)
+versuche:
+    unsicher:
+        reg_wiederhole(falscher, 1)
+fange fehler:
+    zeige "signatur"
+rueckruf_abmelden(falscher)
+
+setze selbst_griff auf rueckruf_registrieren[fn(i32) -> i32](reg_selbst, -5)
+unsicher:
+    zeige reg_wiederhole(selbst_griff, 1)
+rueckruf_abmelden(selbst_griff)
+
+setze re_griff auf nichts
+funktion reg_reentrant(x):
+    global re_griff
+    wenn x == 0:
+        gib_zurück 1
+    unsicher:
+        gib_zurück reg_wiederhole(re_griff, x) + 1
+
+setze re_griff auf rueckruf_registrieren[fn(i32) -> i32](reg_reentrant, -1)
+unsicher:
+    zeige reg_wiederhole(re_griff, 3)
+rueckruf_abmelden(re_griff)
+zeige griffe_offen()

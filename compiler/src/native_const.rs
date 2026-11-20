@@ -124,7 +124,7 @@ fn konstanten_ausdruck(context: &Context, ty: &TypeRef, value: &Expr) -> Result<
         literal
     };
     let typ = if scalar == NType::F32 { "f32" } else { "f64" };
-    Ok(Some(Expr::FunctionCall { name: "als".into(), args: vec![Expr::Identifier(typ.into()), literal], zeile: 0, spalten: (0, 0) }))
+    Ok(Some(Expr::FunctionCall { type_args: Vec::new(), name: "als".into(), args: vec![Expr::Identifier(typ.into()), literal], zeile: 0, spalten: (0, 0) }))
 }
 
 /// Exakter Wert eines (ggf. negierten) Integerliterals fuer den Typ `ty`.
@@ -331,10 +331,10 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
         Ok(match expr {
             // P7-T5: adresse_von(NAME) nimmt die Adresse, nicht den gefalteten Wert.
             Expr::FunctionCall { name, .. } if name == "adresse_von" || name == "address_of" => expr.clone(),
-            Expr::FunctionCall { name, args, zeile, spalten } => match query(name) {
+            Expr::FunctionCall { name, args, zeile, spalten, type_args } => match query(name) {
                 Some(kind) => number(i128::from(self.query(kind, name, args)?)),
                 // Die Quellzeile bleibt erhalten (Diagnosen in nativen Koerpern).
-                None => Expr::FunctionCall { name: name.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()?, zeile: *zeile, spalten: *spalten },
+                None => Expr::FunctionCall { name: name.clone(), type_args: type_args.clone(), args: args.iter().map(fold).collect::<Result<_, _>>()?, zeile: *zeile, spalten: *spalten },
             },
             Expr::Identifier(name) if !shadow.contains(name) => match self.scalars.get(name) {
                 Some(value) => number(*value),

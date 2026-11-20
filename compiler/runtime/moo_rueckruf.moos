@@ -1,0 +1,32 @@
+# P2-T86: Registrierungslogik in Moo. Der Compiler hält die Liste
+# threadlokal und übergibt einen pro Prozess einmaligen, exakten Token.
+# Es gibt keine globalen Moo-Variablen und keine C-Registrierungstabelle.
+# Der ABI-Thunk prüft Thread/Fehlerflag, bevor er diese Funktionen betritt.
+
+funktion __moo_rueckruf_anmelden(zustand, token, signatur, funktion_wert):
+    wenn typ_von(funktion_wert) != "Funktion":
+        wirf "rueckruf_registrieren erwartet eine Funktion oder Closure"
+    wenn zustand == nichts:
+        setze zustand auf []
+    zustand.hinzufügen([token, signatur, funktion_wert])
+    gib_zurück zustand
+
+funktion __moo_rueckruf_finden(zustand, token, signatur):
+    wenn zustand != nichts:
+        für eintrag in zustand:
+            wenn eintrag[0] == token und eintrag[1] == signatur:
+                gib_zurück eintrag[2]
+    wirf "Rueckruf ist abgemeldet oder gehoert zu einem anderen Thread/einer anderen Signatur"
+
+funktion __moo_rueckruf_abmelden(zustand, token):
+    wenn zustand == nichts:
+        gib_zurück nichts
+    setze index auf 0
+    solange index < länge(zustand):
+        wenn zustand[index][0] == token:
+            zustand.entfernen(index)
+            wenn länge(zustand) == 0:
+                gib_zurück nichts
+            gib_zurück zustand
+        setze index auf index + 1
+    gib_zurück zustand

@@ -1,0 +1,3 @@
+@nativ
+funktion liefere(r: rueckruf[fn() -> i32]) -> rueckruf[fn() -> i32]:
+    gib_zurück r

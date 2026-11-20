@@ -383,12 +383,7 @@ pub(crate) struct AbiBinding<'ctx> {
     function: inkwell::values::FunctionValue<'ctx>,
     params: Vec<TypeRef>,
     result: TypeRef,
-    plan: crate::ffi_abi::Signaturplan,
-    /// Je Strukturparameter (Layouttyp, Ausrichtung, Zwischenspeicher-Bytes).
-    param_structs: Vec<Option<(inkwell::types::StructType<'ctx>, u32, u32)>>,
-    result_struct: Option<(inkwell::types::StructType<'ctx>, u32, u32)>,
-    param_ext: Vec<Option<&'static str>>,
-    result_ext: Option<&'static str>,
+    form: AbiForm<'ctx>,
 }
 
 /// LLVM-Registerform eines Strukturteils (Argument bzw. Rueckgabe).
@@ -450,12 +445,32 @@ impl<'ctx> AbiBinding<'ctx> {
         builder: &inkwell::builder::Builder<'ctx>,
         args: &[inkwell::values::BasicValueEnum<'ctx>],
     ) -> Result<Option<inkwell::values::BasicValueEnum<'ctx>>, String> {
+        self.form.emit_call(context, builder, AbiCallTarget::Named(self.function), args)
+    }
+
+}
+
+
+/// Named und indirekt benutzen denselben Register-/byval-/sret-Pfad.
+enum AbiCallTarget<'ctx> {
+    Named(inkwell::values::FunctionValue<'ctx>),
+    Indirect(inkwell::values::PointerValue<'ctx>),
+}
+
+impl<'ctx> AbiForm<'ctx> {
+    fn emit_call(
+        &self,
+        context: &'ctx inkwell::context::Context,
+        builder: &inkwell::builder::Builder<'ctx>,
+        callee: AbiCallTarget<'ctx>,
+        args: &[inkwell::values::BasicValueEnum<'ctx>],
+    ) -> Result<Option<inkwell::values::BasicValueEnum<'ctx>>, String> {
         use crate::ffi_abi::Uebergabe;
         use inkwell::attributes::{Attribute, AttributeLoc};
         use inkwell::values::{BasicMetadataValueEnum, BasicValue};
         let e = |err: inkwell::builder::BuilderError| err.to_string();
         let ea = |err: inkwell::values::InstructionValueError| err.to_string();
-        if args.len() != self.params.len() {
+        if args.len() != self.plan.params.len() {
             return Err("C-ABI: falsche Argumentzahl".into());
         }
         let i8t = context.i8_type();
@@ -513,8 +528,11 @@ impl<'ctx> AbiBinding<'ctx> {
                 _ => return Err("C-ABI: Signaturplan und Parameter widersprechen sich".into()),
             }
         }
-        let call = builder.build_call(self.function, &call_args, "abi.aufruf").map_err(e)?;
-        call.set_call_convention(self.function.get_call_conventions());
+        let (call, convention) = match callee {
+            AbiCallTarget::Named(function) => (builder.build_call(function, &call_args, "abi.aufruf").map_err(e)?, function.get_call_conventions()),
+            AbiCallTarget::Indirect(pointer) => (builder.build_indirect_call(self.function_type, pointer, &call_args, "abi.aufruf").map_err(e)?, self.convention),
+        };
+        call.set_call_convention(convention);
         for (index, attr) in attrs {
             call.add_attribute(AttributeLoc::Param(index), attr);
         }
@@ -556,6 +574,90 @@ impl<'ctx> AbiBinding<'ctx> {
             _ => Err("C-ABI: Rueckgabeplan und Rueckgabetyp widersprechen sich".into()),
         }
     }
+}
+
+/// Verlorene Quellorte werden nicht erfunden. Nominale Identitaeten werden
+/// ausschliesslich ueber dieselbe explizite Registry rueckaufgeloest.
+fn indirect_source_type(
+    identity: &crate::native_type_id::NativeTypeId,
+    nominal: &crate::native_type_id::NominalTypes,
+) -> Result<TypeRef, String> {
+    use crate::native_type_id::NativeTypeId;
+    let kind = match identity {
+        NativeTypeId::Scalar(_) | NativeTypeId::Void => TypeKind::Name(identity.to_string()),
+        NativeTypeId::Nominal { module, name } => {
+            let visible = nominal.iter().filter(|(_, (m, n))| m == module && n == name)
+                .map(|(visible, _)| visible).min()
+                .ok_or("Indirekter Aufruf: nominaler Typ gehoert nicht zur Registry")?;
+            TypeKind::Name(visible.clone())
+        }
+        NativeTypeId::Pointer { address_space: 0, pointee } => TypeKind::Generic {
+            name: "ptr".into(), args: vec![indirect_source_type(pointee, nominal)?],
+        },
+        NativeTypeId::Function { params, result, variadic: false, convention } => TypeKind::Function {
+            params: params.iter().map(|p| indirect_source_type(p, nominal)).collect::<Result<_, _>>()?,
+            return_type: Box::new(indirect_source_type(result, nominal)?),
+            convention: convention.clone(),
+        },
+        _ => return Err("Indirekter Strukturaufruf: Typ nicht C-kompatibel".into()),
+    };
+    let ty = TypeRef { kind, line: 0, column: 0, end_line: 0, end_column: 0 };
+    if crate::native_type_id::resolve_type(&ty, nominal)? != *identity {
+        return Err("Indirekter Aufruf: Typidentitaet nicht verlustfrei rekonstruierbar".into());
+    }
+    Ok(ty)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn emit_indirect_abi_call<'ctx>(
+    context: &'ctx inkwell::context::Context,
+    builder: &inkwell::builder::Builder<'ctx>,
+    module: &inkwell::module::Module<'ctx>,
+    target: &inkwell::targets::TargetData,
+    layouts: &crate::native_struct::NativeStructRegistry<'ctx>,
+    nominal: &crate::native_type_id::NominalTypes,
+    callee: &TypedFfiValue<'ctx>,
+    args: &[TypedFfiValue<'ctx>],
+    unsafe_context: bool,
+) -> Result<Option<TypedFfiValue<'ctx>>, String> {
+    use crate::native_type_id::NativeTypeId;
+    use inkwell::values::BasicValueEnum;
+    if !unsafe_context { return Err("Indirekter extern-C-Aufruf erfordert unsicher".into()); }
+    let block = builder.get_insert_block().ok_or("Indirekter Aufruf ohne aktiven Block")?;
+    let caller = block.get_parent().ok_or("Indirekter Aufruf ohne Funktion")?;
+    if block.get_terminator().is_some() { return Err("Indirekter Aufruf in beendetem Block".into()); }
+    let caller_name = caller.get_name().to_string_lossy();
+    if module.get_function(&caller_name) != Some(caller) { return Err("Indirekter Aufruf: fremdes Modul".into()); }
+    let NativeTypeId::Pointer { address_space: 0, pointee } = &callee.identity else {
+        return Err("Indirekter Strukturaufruf: ptr[fn(...)] erwartet".into());
+    };
+    let NativeTypeId::Function { params, result, variadic: false, convention } = pointee.as_ref() else {
+        return Err("Indirekter Strukturaufruf: nicht-variadische Funktion erwartet".into());
+    };
+    let pointer = match callee.value {
+        BasicValueEnum::PointerValue(p) if p.get_type() == context.ptr_type(inkwell::AddressSpace::default()) => p,
+        _ => return Err("Indirekter Aufruf: Funktionszeigertyp stimmt nicht".into()),
+    };
+    if params.len() != args.len() { return Err("Indirekter Aufruf: falsche Argumentzahl".into()); }
+    let inputs = params.iter().map(|p| indirect_source_type(p, nominal)).collect::<Result<Vec<_>, _>>()?;
+    let output = indirect_source_type(result, nominal)?;
+    for ((arg, expected), source) in args.iter().zip(params).zip(&inputs) {
+        if &arg.identity != expected { return Err("Indirekter Aufruf: Argumentidentitaet stimmt nicht".into()); }
+        let llvm = match &source.kind {
+            TypeKind::Name(name) if layouts.layout(name).is_some() => layouts.layout(name).ok_or("Strukturlayout fehlt")?.llvm_type.into(),
+            _ => value_type(source)?.llvm_type(context),
+        };
+        if arg.value.get_type() != llvm { return Err("Indirekter Aufruf: Argumentlayout stimmt nicht".into()); }
+    }
+    let triple = module.get_triple().as_str().to_string_lossy().into_owned();
+    let convention = match convention.as_deref() {
+        Some(name) => llvm_call_convention(name, &triple)?,
+        None => CC_C,
+    };
+    let form = abi_form(context, module, target, "<indirekt>", &inputs, &output, layouts, convention)?;
+    let raw: Vec<_> = args.iter().map(|arg| arg.value).collect();
+    Ok(form.emit_call(context, builder, AbiCallTarget::Indirect(pointer), &raw)?
+        .map(|value| TypedFfiValue { value, identity: result.as_ref().clone() }))
 }
 
 impl<'ctx> ExternRegistry<'ctx> {
@@ -610,9 +712,7 @@ impl<'ctx> ExternRegistry<'ctx> {
             function.add_attribute(AttributeLoc::Return, context.create_enum_attribute(Attribute::get_named_enum_kind_id(ext), 0));
         }
         self.abi_bindings.insert(name.to_owned(), AbiBinding {
-            function, params: inputs.to_vec(), result: result.clone(), plan: form.plan,
-            param_structs: form.param_structs, result_struct: form.result_struct,
-            param_ext: form.param_ext, result_ext: form.result_ext,
+            function, params: inputs.to_vec(), result: result.clone(), form,
         });
         Ok(())
     }
@@ -622,6 +722,7 @@ impl<'ctx> ExternRegistry<'ctx> {
 /// extern-C-Deklarationen (declare_abi) und @einstieg-Export-Thunks.
 struct AbiForm<'ctx> {
     function_type: inkwell::types::FunctionType<'ctx>,
+    convention: u32,
     attrs: Vec<(u32, inkwell::attributes::Attribute)>,
     result_ext: Option<&'static str>,
     plan: crate::ffi_abi::Signaturplan,
@@ -743,7 +844,7 @@ fn abi_form<'ctx>(
             (None, None) => context.void_type().fn_type(&llvm_params, false),
             _ => return Err(format!("C-ABI '{name}': Rueckgabe nicht klassifizierbar")),
         };
-        Ok(AbiForm { function_type, attrs, result_ext, plan, param_structs, result_struct, param_ext })
+        Ok(AbiForm { function_type, convention, attrs, result_ext, plan, param_structs, result_struct, param_ext })
 }
 
 /// P2-T19/T56 D1 (Plan 91033131): externer C-ABI-Thunk `name` vor der internen

@@ -1,0 +1,21 @@
+# Die Registrierung wird auch beim Werfen direkt per aufraeumen geschlossen.
+funktion mit_cleanup():
+    setze r auf rueckruf_registrieren[fn() -> i32](() => 1, -1)
+    aufräumen: rueckruf_abmelden(r)
+    wirf "erster"
+
+versuche:
+    mit_cleanup()
+fange fehler:
+    zeige fehler
+zeige griffe_offen()
+
+# Fehler bei Abmeldung im normalen Helfer darf keine Folgeausgabe ausfuehren.
+funktion kaputte_abmeldung():
+    rueckruf_abmelden(7)
+    zeige "NICHT ERREICHT"
+
+versuche:
+    kaputte_abmeldung()
+fange fehler:
+    zeige "abmeldung-gefangen"
