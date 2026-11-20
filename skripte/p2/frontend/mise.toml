@@ -113,7 +113,12 @@ set -eu
 out=build/p2-frontend/defer_testframe
 mkdir -p "$out"
 timeout 30s compiler/target/release/moo-compiler compile compiler/tests/p2/defer_testframe.moos -o "$out/probe"
+set +e
 timeout 30s "$out/probe" > "$out/probe.out" 2> "$out/probe.err"
+rc=$?
+set -e
+# P2-T117: ein bewusst fehlgeschlagener Test beendet main mit Exit 1.
+[ "$rc" -eq 1 ] || { echo "FAIL Test-Frame: Exit $rc (erwartet 1)"; exit 1; }
 awk '
   $0 == "BODY_OK" {if (s != 0) exit 1; s=1; next}
   $0 == "CLEANUP_OK" {if (s != 1) exit 1; s=2; next}

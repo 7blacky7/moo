@@ -6,6 +6,7 @@ teste "fallthrough":
 teste "erwarte_fehler":
     aufräumen: marke("CLEANUP_FAIL")
     zeige "BODY_FAIL"
+    # Bewusster Testfehler: der Harness prueft Cleanup und Prozess-Exit 1.
     erwarte falsch
     zeige "NACH_FALSCH"
 teste_alle()

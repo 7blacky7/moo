@@ -976,7 +976,13 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        let main_defer_handler = self.defer_frame_begin()?;
         for stmt in &program.statements {
+            // Ein Return beendet den Laufzeitpfad, nicht die Emission bereits
+            // vorwaerts deklarierter Funktions-/Klassen-/Testkoerper.
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some()
+                && !matches!(stmt, Stmt::FunctionDef { .. } | Stmt::ClassDef { .. }
+                    | Stmt::DataClassDef { .. } | Stmt::TestDef { .. }) { continue; }
             // Nur direkte Top-Level-Externs wurden vorab deklariert.
             // Verschachtelte Deklarationen bleiben in compile_stmt fail-closed.
             if matches!(stmt, Stmt::ExternC { .. } | Stmt::StructDef { .. } | Stmt::NativeConst { .. }) { continue; }
@@ -997,7 +1003,7 @@ impl<'ctx> CodeGen<'ctx> {
         // Sicherstellen dass main terminiert ist
         if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
             // Wie bei Funktionen muessen Defers vor dem Local-Cleanup laufen.
-            self.emit_defers()?;
+            self.defer_frame_finish()?;
             // Normal-main-Epilog: Nur die per collect_all_var_names vorallokierten
             // Main-Frame-Locals freigeben. Direkte Top-Level-Zuweisungen sind
             // LLVM-Globals und behalten bewusst ihre bisherige Prozess-Lifetime.
@@ -1035,6 +1041,8 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| format!("Return-Fehler: {e}"))?;
             }
         }
+
+        self.defer_frame_end(main_defer_handler)?;
 
         // P011-A1: llvm.used emittieren — @benutzt/@einstieg-Funktionen vor DCE schuetzen.
         // Appending-Linkage + Section llvm.metadata = LLVM-Konvention fuer used-Symbole.
@@ -3010,7 +3018,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::CompoundAssignment { name, op, value, .. } => {
                 let current = self.load_var(name)?;
-                let rhs = self.compile_expr(value)?;
+                let rhs = self.compile_defer_expr(value, &[current])?;
                 let func = match op.as_str() {
                     "+=" => self.rt.moo_add,
                     "-=" => self.rt.moo_sub,
@@ -3018,11 +3026,16 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 let result = self.call_rt(func,
                     &[current.into(), rhs.into()], "compound")?;
+                if self.defer_runtime {
+                    self.call_rt_void(self.rt.moo_release, &[current.into()], "compound.release_left")?;
+                    self.call_rt_void(self.rt.moo_release, &[rhs.into()], "compound.release_right")?;
+                    self.guard_local_expr_error(&[result])?;
+                }
                 self.store_var(name, result)
             }
             Stmt::PropertyAssignment { object, property, value, .. } => {
-                let obj = self.compile_expr(object)?;
-                let val = self.compile_expr(value)?;
+                let obj = self.compile_defer_expr(object, &[])?;
+                let val = self.compile_defer_expr(value, &[obj])?;
                 let prop_str = self.make_global_str(property, "prop")?;
                 self.call_rt_void(self.rt.moo_object_set,
                     &[obj.into(), prop_str.into(), val.into()], "obj_set")?;
@@ -3344,19 +3357,24 @@ impl<'ctx> CodeGen<'ctx> {
                     self.variables.insert(name, slot);
                 }
 
+                let test_rahmen = self.rahmen_betreten(RahmenArt::Sonstig);
+                let test_defer_handler = self.defer_frame_begin()?;
                 for s in body {
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
                     self.compile_stmt(s)?;
                 }
 
                 if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
                     // Defers lesen noch Locals; erst danach die Slots freigeben.
-                    self.emit_defers()?;
+                    self.defer_frame_finish()?;
                     self.release_function_locals()?;
                     let bval = self.context.bool_type().const_int(1, false);
                     let result = self.call_rt(self.rt.moo_bool_fn, &[bval.into()], "pass")?;
                     self.builder.build_return(Some(&result)).map_err(|e| format!("{e}"))?;
                 }
 
+                self.defer_frame_end(test_defer_handler)?;
+                self.rahmen_verlassen(test_rahmen);
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
                 self.defer_stack = prev_defers;
@@ -3399,7 +3417,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let msg_val = self.call_rt(self.rt.moo_string_new, &[msg.into()], "emsg")?;
                 self.call_rt_void(self.rt.moo_print, &[msg_val.into()], "eprint")?;
                 self.call_rt_void(self.rt.moo_release, &[msg_val.into()], "rel_expect_msg")?;
-                self.emit_defers()?;
+                self.defer_frame_finish()?;
                 // main fuehrt Globals in variables; diese hier nicht freigeben.
                 if func.get_name().to_str() != Ok("main") {
                     self.release_function_locals()?;
@@ -3951,8 +3969,11 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(entry);
         self.variables.clear();
         self.init_defer_frame()?;
-        self.defer_runtime = self.defer_guard_targets.contains(name)
-            && !self.defer_catalog.actions().is_empty() && self.runtime_defer_scope_supported(body);
+        // Eigene Registrierungen gehoeren zur Aktivierung, unabhaengig davon,
+        // ob der Koerper native, indirekte oder externe Aufrufe enthaelt. Der
+        // Callgraph bestimmt nur weiter unten die geliehenen Callee-Guards.
+        self.defer_runtime = !self.bare_mode && !self.profiling
+            && !self.defer_catalog.actions().is_empty();
         // P2-T82: Benannte Funktionen mit hosted fangbaren @nativ-Aufrufen erhalten
         // einen Pruefpunkt-Ausgang (native_guard_exit_block), damit Statement-
         // und Operanden-Guards auch ohne eigenes versuche: greifen: nach einem
@@ -4333,9 +4354,12 @@ impl<'ctx> CodeGen<'ctx> {
             self.call_rt_void(self.rt.moo_throw, &[error.into()], "defer.to_catch")?;
             self.builder.build_unconditional_branch(catch_bb).map_err(|e| e.to_string())?;
         } else {
-            self.release_function_locals()?;
+            self.release_defer_frame_locals()?;
             self.call_rt_void(self.rt.moo_throw, &[error.into()], "defer.propagate")?;
-            if func.get_type().get_return_type().is_none() {
+            if self.in_main_function() {
+                self.builder.build_return(Some(&self.context.i32_type().const_int(1, false)))
+                    .map_err(|e| e.to_string())?;
+            } else if func.get_type().get_return_type().is_none() {
                 self.builder.build_return(None).map_err(|e| e.to_string())?;
             } else {
                 let none = self.call_rt(self.rt.moo_none, &[], "defer.error.return")?;
@@ -4539,7 +4563,12 @@ impl<'ctx> CodeGen<'ctx> {
                     .map_err(|e| e.to_string())?;
                 self.builder.position_at_end(success_bb);
             }
-            self.emit_defers()?;
+            if self.defer_runtime {
+                let (has, first) = self.drain_runtime_defers(None)?;
+                self.route_runtime_defer_error(has, first, None, false)?;
+            } else {
+                self.emit_defers()?;
+            }
             if checked && self.defer_stack.is_empty() {
                 for _ in &local_handlers {
                     self.call_rt_void(self.rt.moo_try_leave, &[], "main_return_try_leave")?;
@@ -4567,6 +4596,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_unconditional_branch(resume_bb).map_err(|e| e.to_string())?;
                 self.builder.position_at_end(resume_bb);
             }
+            if self.defer_runtime { self.release_defer_frame_locals()?; }
             let zero = self.context.i32_type().const_int(0, false);
             self.builder.build_return(Some(&zero)).map_err(|e| format!("{e}"))?;
             return Ok(());
@@ -4784,19 +4814,22 @@ impl<'ctx> CodeGen<'ctx> {
                     self.variables.insert(n.clone(), alloca);
                 }
 
+                let method_defer_handler = self.defer_frame_begin()?;
                 for s in method_body {
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() { break; }
                     self.compile_stmt(s)?;
                 }
 
                 let current_bb = self.builder.get_insert_block().unwrap();
                 if current_bb.get_terminator().is_none() {
-                    self.emit_defers()?;
+                    self.defer_frame_finish()?;
                     // Wie bei explizitem Return erst nach den Defers freigeben.
                     self.release_function_locals()?;
                     let none_val = self.call_rt(self.rt.moo_none, &[], "none")?;
                     self.builder.build_return(Some(&none_val)).map_err(|e| format!("{e}"))?;
                 }
 
+                self.defer_frame_end(method_defer_handler)?;
                 self.rahmen_verlassen(rahmen);
                 self.current_function = prev_fn;
                 self.variables = prev_vars;
@@ -4864,11 +4897,16 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn compile_match(&mut self, value: &Expr, cases: &[(Option<Expr>, Option<Expr>, Vec<Stmt>)]) -> Result<(), String> {
         let func = self.current_function.unwrap();
-        let val = self.compile_expr(value)?;
+        let val = self.compile_defer_expr(value, &[])?;
         // Match-Wert in Variable speichern fuer Bindings
-        let val_ptr = self.builder.build_alloca(self.mv_type(), "match_val")
-            .map_err(|e| format!("{e}"))?;
-        self.builder.build_store(val_ptr, val).map_err(|e| format!("{e}"))?;
+        let val_ptr = if self.defer_runtime {
+            self.defer_hold_value(val)?
+        } else {
+            let slot = self.builder.build_alloca(self.mv_type(), "match_val")
+                .map_err(|e| format!("{e}"))?;
+            self.builder.build_store(slot, val).map_err(|e| format!("{e}"))?;
+            slot
+        };
         let merge_bb = self.context.append_basic_block(func, "match_end");
 
         for (pattern, guard, body) in cases {
@@ -4885,7 +4923,7 @@ impl<'ctx> CodeGen<'ctx> {
                         let mut check_bb = self.builder.get_insert_block().unwrap();
                         for (key_expr, _) in pairs {
                             if matches!(key_expr, Expr::Spread(_)) { continue; }
-                            let key_val = self.compile_expr(key_expr)?;
+                            let key_val = self.compile_defer_expr(key_expr, &[])?;
                             let has = self.call_rt(self.rt.moo_dict_has,
                                 &[current_val.into(), key_val.into()], "has_key")?;
                             let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
@@ -4895,6 +4933,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                                 _ => return Err("truthy fehlgeschlagen".to_string()),
                             };
+                            // moo_dict_has konsumiert String-Keys bereits.
                             let cont_bb = self.context.append_basic_block(func, "destr_cont");
                             self.builder.build_conditional_branch(is_true, cont_bb, next_bb)
                                 .map_err(|e| format!("{e}"))?;
@@ -4907,17 +4946,21 @@ impl<'ctx> CodeGen<'ctx> {
                         for (key_expr, val_expr) in pairs {
                             if matches!(key_expr, Expr::Spread(_)) { continue; }
                             if let Expr::Identifier(binding_name) = val_expr {
-                                let key_val = self.compile_expr(key_expr)?;
+                                let key_val = self.compile_defer_expr(key_expr, &[])?;
                                 let current_val = self.builder.build_load(self.mv_type(), val_ptr, "mval")
                                     .map_err(|e| format!("{e}"))?.into_struct_value();
                                 let bound_val = self.call_rt(self.rt.moo_dict_get,
                                     &[current_val.into(), key_val.into()], "bound")?;
+                                if self.defer_runtime {
+                                    // moo_dict_get konsumiert String-Keys bereits.
+                                    self.defer_local_slot(binding_name)?;
+                                }
                                 self.store_var(binding_name, bound_val)?;
                             }
                         }
 
                         if let Some(guard_expr) = guard {
-                            let guard_val = self.compile_expr(guard_expr)?;
+                            let guard_val = self.compile_defer_expr(guard_expr, &[])?;
                             let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[guard_val.into()], "guard")
                                 .map_err(|e| format!("{e}"))?;
@@ -4925,6 +4968,9 @@ impl<'ctx> CodeGen<'ctx> {
                                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                                 _ => return Err("guard truthy fehlgeschlagen".to_string()),
                             };
+                            if self.defer_runtime {
+                                self.call_rt_void(self.rt.moo_release, &[guard_val.into()], "rel_match_guard")?;
+                            }
                             self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
                                 .map_err(|e| format!("{e}"))?;
                         } else {
@@ -4940,8 +4986,12 @@ impl<'ctx> CodeGen<'ctx> {
                         if guard.is_some() {
                             if let Expr::Identifier(name) = pat_expr {
                                 // Identifier mit Guard: binde Variable, prüfe nur Guard
+                                if self.defer_runtime {
+                                    self.defer_local_slot(name)?;
+                                    self.call_rt_void(self.rt.moo_retain, &[current_val.into()], "retain_match_binding")?;
+                                }
                                 self.store_var(name, current_val)?;
-                                let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
+                                let guard_val = self.compile_defer_expr(guard.as_ref().unwrap(), &[])?;
                                 let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[guard_val.into()], "guard")
                                     .map_err(|e| format!("{e}"))?;
@@ -4949,12 +4999,18 @@ impl<'ctx> CodeGen<'ctx> {
                                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                                     _ => return Err("guard truthy fehlgeschlagen".to_string()),
                                 };
+                                if self.defer_runtime {
+                                    self.call_rt_void(self.rt.moo_release, &[guard_val.into()], "rel_match_guard")?;
+                                }
                                 self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
                                     .map_err(|e| format!("{e}"))?;
                             } else {
                                 // Normaler Vergleich + Guard
-                                let pat_val = self.compile_expr(pat_expr)?;
+                                let pat_val = self.compile_defer_expr(pat_expr, &[])?;
                                 let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
+                                if self.defer_runtime {
+                                    self.call_rt_void(self.rt.moo_release, &[pat_val.into()], "rel_match_pattern")?;
+                                }
                                 let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[eq.into()], "truthy")
                                     .map_err(|e| format!("{e}"))?;
@@ -4967,7 +5023,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     .map_err(|e| format!("{e}"))?;
 
                                 self.builder.position_at_end(guard_bb);
-                                let guard_val = self.compile_expr(guard.as_ref().unwrap())?;
+                                let guard_val = self.compile_defer_expr(guard.as_ref().unwrap(), &[])?;
                                 let guard_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                     &[guard_val.into()], "guard")
                                     .map_err(|e| format!("{e}"))?;
@@ -4975,13 +5031,19 @@ impl<'ctx> CodeGen<'ctx> {
                                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                                     _ => return Err("guard truthy fehlgeschlagen".to_string()),
                                 };
+                                if self.defer_runtime {
+                                    self.call_rt_void(self.rt.moo_release, &[guard_val.into()], "rel_match_guard")?;
+                                }
                                 self.builder.build_conditional_branch(guard_bool, case_bb, next_bb)
                                     .map_err(|e| format!("{e}"))?;
                             }
                         } else {
                             // Normaler Wert-Vergleich ohne Guard
-                            let pat_val = self.compile_expr(pat_expr)?;
+                            let pat_val = self.compile_defer_expr(pat_expr, &[])?;
                             let eq = self.call_rt(self.rt.moo_eq, &[current_val.into(), pat_val.into()], "match_eq")?;
+                            if self.defer_runtime {
+                                self.call_rt_void(self.rt.moo_release, &[pat_val.into()], "rel_match_pattern")?;
+                            }
                             let is_true_result = self.call_rt_abi(self.rt.moo_is_truthy,
                                 &[eq.into()], "truthy")
                                 .map_err(|e| format!("{e}"))?;
@@ -5023,6 +5085,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         self.builder.position_at_end(merge_bb);
+        if self.defer_runtime { self.defer_clear_value(val_ptr)?; }
         Ok(())
     }
 
@@ -5357,7 +5420,42 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Number(_) | Expr::String(_) | Expr::Boolean(_) | Expr::None | Expr::Identifier(_) => true,
             Expr::BinaryOp { left, right, .. } =>
                 self.recursive_statement_expr_supported(left) && self.recursive_statement_expr_supported(right),
+            Expr::UnaryOp { operand, .. } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(operand),
+            Expr::PropertyAccess { object, .. } | Expr::OptionalChain { object, .. } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(object),
+            Expr::Ternary { condition, then_val, else_val } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(condition)
+                    && self.recursive_statement_expr_supported(then_val)
+                    && self.recursive_statement_expr_supported(else_val),
+            Expr::NullishCoalesce { left, right } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(left) && self.recursive_statement_expr_supported(right),
+            Expr::New { args, .. } if self.defer_runtime => args.iter().all(|a| self.recursive_statement_expr_supported(a)),
+            Expr::This | Expr::Lambda { .. } if self.defer_runtime => true,
+            Expr::MethodCall { object, method, args } if self.defer_runtime
+                && (args.len() <= 1 || self.class_methods.keys().any(|(_, m)| m == method)) =>
+                self.recursive_statement_expr_supported(object)
+                    && args.iter().all(|a| self.recursive_statement_expr_supported(a)),
+            Expr::MatchExpr { value, cases } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(value) && cases.iter().all(|(p, g, r)|
+                    p.as_ref().map_or(true, |e| self.recursive_statement_expr_supported(e))
+                        && g.as_ref().map_or(true, |e| self.recursive_statement_expr_supported(e))
+                        && self.recursive_statement_expr_supported(r)),
+            Expr::QueryExpr { source, where_cond, order_expr, select_expr, .. } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(source)
+                    && where_cond.as_ref().map_or(true, |e| self.recursive_statement_expr_supported(e))
+                    && order_expr.as_ref().map_or(true, |e| self.recursive_statement_expr_supported(e))
+                    && self.recursive_statement_expr_supported(select_expr),
+            Expr::Spread(inner) if self.defer_runtime => self.recursive_statement_expr_supported(inner),
+            Expr::Pipe { left, right } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(left) && self.recursive_statement_expr_supported(right),
             Expr::List(elements) => elements.iter().all(|e| self.recursive_statement_expr_supported(e)),
+            Expr::Dict(pairs) if self.defer_runtime => pairs.iter().all(|(key, value)|
+                self.recursive_statement_expr_supported(key) && self.recursive_statement_expr_supported(value)),
+            Expr::ListComprehension { expr, iterable, condition, .. } if self.defer_runtime =>
+                self.recursive_statement_expr_supported(expr)
+                    && self.recursive_statement_expr_supported(iterable)
+                    && condition.as_ref().map_or(true, |c| self.recursive_statement_expr_supported(c)),
             // Endpunkte duerfen keine Seiteneffekte enthalten; C-Konversion
             // bleibt innerhalb des definierten int32-Bereichs.
             Expr::Range { start, end } => match (start.as_ref(), end.as_ref()) {
@@ -5365,7 +5463,12 @@ impl<'ctx> CodeGen<'ctx> {
                     n.is_finite() && **n >= i32::MIN as f64 && **n <= i32::MAX as f64),
                 _ => false,
             },
-            // Slice-Code hat noch keine rekursive Objekt-Fehlerkante.
+            Expr::IndexAccess { object, index } if self.defer_runtime && matches!(index.as_ref(), Expr::Range { .. }) => {
+                let Expr::Range { start, end } = index.as_ref() else { unreachable!() };
+                self.recursive_statement_expr_supported(object)
+                    && self.recursive_statement_expr_supported(start) && self.recursive_statement_expr_supported(end)
+            },
+            // Ausserhalb des Defer-Frames bleibt die bisherige Slice-Grenze.
             Expr::IndexAccess { object, index } =>
                 !matches!(index.as_ref(), Expr::Range { .. })
                     && self.recursive_statement_expr_supported(object) && self.recursive_statement_expr_supported(index),
@@ -5378,6 +5481,11 @@ impl<'ctx> CodeGen<'ctx> {
             // 'Division durch Null!', moo_ops.c) und Folgeaufrufe mit dem
             // nichts-Ergebnis unterbleiben.
             Expr::FunctionCall { name, args, .. } if self.native_call_fangbar(name) =>
+                args.iter().all(|a| self.recursive_statement_expr_supported(a)),
+            // In einem Defer-Frame ist auch ein Wertaufruf an den lokalen
+            // Handler angebunden; dessen Argumente und Eltern bleiben owning.
+            Expr::FunctionCall { name, args, .. } if self.defer_runtime
+                && (self.variables.contains_key(name) || self.globals.contains_key(name)) =>
                 args.iter().all(|a| self.recursive_statement_expr_supported(a)),
             Expr::FunctionCall { name, args, .. } =>
                 !self.native_functions.contains_key(name)
@@ -6042,7 +6150,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn nativer_wert_ausgang_vorhanden(&self) -> bool {
-        if self.bare_mode || self.defer_runtime { return false; }
+        if self.bare_mode { return false; }
         let Some(function) = self.current_function else { return false; };
         self.try_stack.iter().any(|bb| bb.get_parent() == Some(function))
             || (self.im_standardrahmen() && !self.in_main_function())
@@ -6732,7 +6840,7 @@ impl<'ctx> CodeGen<'ctx> {
         let mut werte = Vec::with_capacity(args.len());
         for (i, arg) in args.iter().enumerate() {
             let base = self.stmt_owned_context.len();
-            if self.stmt_recursive_guard { self.stmt_owned_context.extend_from_slice(&werte); }
+            if self.native_value_temps() { self.stmt_owned_context.extend_from_slice(&werte); }
             let ergebnis = self.compile_expr(arg);
             self.stmt_owned_context.truncate(base);
             let wert = ergebnis?;
@@ -7543,9 +7651,9 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let lhs = self.compile_expr(left)?;
                 if guard_operands { self.guard_local_expr_error(&[lhs])?; }
-                if self.stmt_recursive_guard { self.stmt_owned_context.push(lhs); }
+                if self.native_value_temps() { self.stmt_owned_context.push(lhs); }
                 let rhs_result = self.compile_expr(right);
-                if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                if self.native_value_temps() { self.stmt_owned_context.pop(); }
                 let rhs = rhs_result?;
                 if guard_operands { self.guard_local_expr_error(&[lhs, rhs])?; }
 
@@ -7723,7 +7831,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::UnaryOp { op, operand } => {
-                let val = self.compile_expr(operand)?;
+                let val = self.compile_defer_expr(operand, &[])?;
                 let func = match op {
                     UnaryOpKind::Neg => self.rt.moo_neg,
                     UnaryOpKind::Not => self.rt.moo_not,
@@ -8165,7 +8273,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let mut owned_args = Vec::new();
                     for a in args {
                         let base = self.stmt_owned_context.len();
-                        if self.stmt_recursive_guard { self.stmt_owned_context.extend_from_slice(&owned_args); }
+                        if self.native_value_temps() { self.stmt_owned_context.extend_from_slice(&owned_args); }
                         let value_result = self.compile_expr(a);
                         self.stmt_owned_context.truncate(base);
                         let value = value_result?;
@@ -11969,7 +12077,11 @@ impl<'ctx> CodeGen<'ctx> {
                             compiled_args.push(fn_val.into());
                             let mut owned_args = vec![fn_val];
                             for a in args {
-                                let v = self.compile_expr(a)?;
+                                let owned_len = self.stmt_owned_context.len();
+                                if self.native_value_temps() { self.stmt_owned_context.extend_from_slice(&owned_args); }
+                                let compiled = self.compile_expr(a);
+                                self.stmt_owned_context.truncate(owned_len);
+                                let v = compiled?;
                                 owned_args.push(v);
                                 if guard_args { self.guard_local_expr_error(&owned_args)?; }
                                 compiled_args.push(v.into());
@@ -12039,7 +12151,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let mut compiled_args: Vec<BasicMetadataValueEnum> = Vec::new();
                 let mut owned_args = Vec::new();
                 for a in args {
-                    let v = self.compile_expr(a)?;
+                    let owned_len = self.stmt_owned_context.len();
+                    if self.native_value_temps() { self.stmt_owned_context.extend_from_slice(&owned_args); }
+                    let compiled = self.compile_expr(a);
+                    self.stmt_owned_context.truncate(owned_len);
+                    let v = compiled?;
                     owned_args.push(v);
                     if guard_args { self.guard_local_expr_error(&owned_args)?; }
                     compiled_args.push(v.into());
@@ -12084,7 +12200,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
 
-                let obj_val = self.compile_expr(object)?;
+                let obj_val = self.compile_defer_expr(object, &[])?;
 
                 // Per-Expression-Slot im Entry-Block fuer den obj-Temp:
                 // - Releaset VOR dem Store die letzte Iteration (oder NONE),
@@ -12999,8 +13115,14 @@ impl<'ctx> CodeGen<'ctx> {
                         // retain_for_slot leakte dort +1 pro Call).
                         self.call_rt_void(self.rt.moo_retain, &[obj.into()], "retain_selbst_arg")?;
                         let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                        // Der zusaetzliche Receiver-Ref und alle bisherigen
+                        // Argumente werden erst beim erfolgreichen Aufruf
+                        // an die Methode uebertragen.
+                        let mut owned = vec![obj];
                         for a in args {
-                            call_args.push(self.compile_expr(a)?.into());
+                            let value = self.compile_defer_expr(a, &owned)?;
+                            owned.push(value);
+                            call_args.push(value.into());
                         }
 
                         // Statische Klasse des Receivers bestimmen:
@@ -13177,7 +13299,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::PropertyAccess { object, property } => {
-                let obj = self.compile_expr(object)?;
+                let obj = self.compile_defer_expr(object, &[])?;
                 // P2-T49 (Befund LSan/RSS): obj ist ein +1-Temp (load_var-retain bzw.
                 // Zwischenergebnis einer Feldkette) und wurde nie freigegeben - Leck
                 // je Feldzugriff (1M `d.n`: RSS 23 MB -> 536 MB). Ergebnis von
@@ -13202,7 +13324,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::OptionalChain { object, property } => {
-                let obj = self.compile_expr(object)?;
+                let obj = self.compile_defer_expr(object, &[])?;
                 let func = self.current_function.unwrap();
 
                 // Prüfe ob obj none ist
@@ -13249,7 +13371,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(phi.as_basic_value().into_struct_value())
             }
             Expr::NullishCoalesce { left, right } => {
-                let lhs = self.compile_expr(left)?;
+                let lhs = self.compile_defer_expr(left, &[])?;
                 let func = self.current_function.unwrap();
 
                 let is_none_result = self.call_rt_abi(self.rt.moo_is_none,
@@ -13270,7 +13392,10 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // None -> rechte Seite
                 self.builder.position_at_end(then_bb);
-                let rhs = self.compile_expr(right)?;
+                let rhs = self.compile_defer_expr(right, &[lhs])?;
+                if self.defer_runtime {
+                    self.call_rt_void(self.rt.moo_release, &[lhs.into()], "rel_nullish_none")?;
+                }
                 self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
                 let then_end = self.builder.get_insert_block().unwrap();
 
@@ -13292,21 +13417,21 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::IndexAccess { object, index } => {
                 let guard_index = (std::mem::take(&mut self.stmt_root_guard) || self.stmt_recursive_guard)
                     && !matches!(index.as_ref(), Expr::Range { .. });
-                let obj = self.compile_expr(object)?;
+                let obj = self.compile_defer_expr(object, &[])?;
                 if guard_index { self.guard_local_expr_error(&[obj])?; }
                 // String-Slicing: obj[start..end] -> moo_string_slice(obj, start, end)
                 let result = if let Expr::Range { start, end } = index.as_ref() {
-                    let s = self.compile_expr(start)?;
-                    let e = self.compile_expr(end)?;
+                    let s = self.compile_defer_expr(start, &[obj])?;
+                    let e = self.compile_defer_expr(end, &[obj, s])?;
                     let slice_res = self.call_rt(self.rt.moo_string_slice,
                         &[obj.into(), s.into(), e.into()], "str_slice")?;
                     self.call_rt_void(self.rt.moo_release, &[s.into()], "rel_s")?;
                     self.call_rt_void(self.rt.moo_release, &[e.into()], "rel_e")?;
                     slice_res
                 } else {
-                    if self.stmt_recursive_guard { self.stmt_owned_context.push(obj); }
+                    if self.native_value_temps() { self.stmt_owned_context.push(obj); }
                     let idx_result = self.compile_expr(index);
-                    if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                    if self.native_value_temps() { self.stmt_owned_context.pop(); }
                     let idx = idx_result?;
                     if guard_index { self.guard_local_expr_error(&[obj, idx])?; }
                     // idx ist Caller-Ref: moo_index_get (→ dict_get/list_get)
@@ -13341,12 +13466,13 @@ impl<'ctx> CodeGen<'ctx> {
                 for elem in elements {
                     if let Expr::Spread(inner) = elem {
                         // Spread: source-Liste iterieren und jedes Element appenden
-                        let src = self.compile_expr(inner)?;
+                        let src = self.compile_defer_expr(inner, &[list])?;
                         self.compile_spread_into_list(list_ptr, src)?;
+                        if self.defer_runtime { self.guard_local_expr_error(&[list])?; }
                     } else {
-                        if self.stmt_recursive_guard { self.stmt_owned_context.push(list); }
+                        if self.native_value_temps() { self.stmt_owned_context.push(list); }
                         let val_result = self.compile_expr(elem);
-                        if self.stmt_recursive_guard { self.stmt_owned_context.pop(); }
+                        if self.native_value_temps() { self.stmt_owned_context.pop(); }
                         let val = val_result?;
                         if guard_elements { self.guard_local_expr_error(&[list, val])?; }
                         let current_list = self.builder.build_load(self.mv_type(), list_ptr, "list")
@@ -13363,6 +13489,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(final_list)
             }
             Expr::ListComprehension { expr, var_name, iterable, condition } => {
+                if self.defer_runtime { self.defer_local_slot(var_name)?; }
                 // Create empty result list
                 let result_list = self.call_rt(self.rt.moo_list_new,
                     &[self.context.i32_type().const_int(0, false).into()], "comp_list")?;
@@ -13370,7 +13497,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_store(result_ptr, result_list).map_err(|e| format!("{e}"))?;
 
                 // Compile iterable and get length
-                let list_val = self.compile_expr(iterable)?;
+                let list_val = self.compile_defer_expr(iterable, &[result_list])?;
                 let list_ptr = self.entry_alloca(self.mv_type(), "comp_iter_ptr")?;
                 self.builder.build_store(list_ptr, list_val).map_err(|e| format!("{e}"))?;
 
@@ -13418,7 +13545,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let _append_bb = if let Some(cond_expr) = condition {
                     let filter_bb = self.context.append_basic_block(func, "comp_filter");
                     let skip_bb = self.context.append_basic_block(func, "comp_skip");
-                    let cond_val = self.compile_expr(cond_expr)?;
+                    let cond_val = self.compile_defer_expr(cond_expr, &[result_list, list_val])?;
                     let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                         &[cond_val.into()], "truthy")
                         .map_err(|e| format!("{e}"))?
@@ -13427,6 +13554,9 @@ impl<'ctx> CodeGen<'ctx> {
                         inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                         _ => return Err("truthy fehlgeschlagen".to_string()),
                     };
+                    if self.defer_runtime {
+                        self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "comp.release_condition")?;
+                    }
                     self.builder.build_conditional_branch(cond_bool, filter_bb, skip_bb)
                         .map_err(|e| format!("{e}"))?;
 
@@ -13446,11 +13576,12 @@ impl<'ctx> CodeGen<'ctx> {
                 };
 
                 // Compute expression and append to result
-                let val = self.compile_expr(expr)?;
+                let val = self.compile_defer_expr(expr, &[result_list, list_val])?;
                 let current_result = self.builder.build_load(self.mv_type(), result_ptr, "res_list")
                     .map_err(|e| format!("{e}"))?.into_struct_value();
                 self.call_rt_void(self.rt.moo_list_append,
                     &[current_result.into(), val.into()], "append")?;
+                if self.defer_runtime { self.guard_local_expr_error(&[result_list, list_val])?; }
 
                 // Increment index
                 let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
@@ -13463,6 +13594,9 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(after_bb);
                 let final_list = self.builder.build_load(self.mv_type(), result_ptr, "comp_result")
                     .map_err(|e| format!("{e}"))?.into_struct_value();
+                if self.defer_runtime {
+                    self.call_rt_void(self.rt.moo_release, &[list_val.into()], "comp.release_iterable")?;
+                }
                 Ok(final_list)
             }
             Expr::Dict(pairs) => {
@@ -13473,15 +13607,17 @@ impl<'ctx> CodeGen<'ctx> {
                 for (key, val) in pairs {
                     if let Expr::Spread(inner) = key {
                         // Spread in Dict: keys holen, iterieren, get+set
-                        let src = self.compile_expr(inner)?;
+                        let src = self.compile_defer_expr(inner, &[dict])?;
                         self.compile_spread_into_dict(dict_ptr, src)?;
+                        if self.defer_runtime { self.guard_local_expr_error(&[dict])?; }
                     } else {
-                        let k = self.compile_expr(key)?;
-                        let v = self.compile_expr(val)?;
+                        let k = self.compile_defer_expr(key, &[dict])?;
+                        let v = self.compile_defer_expr(val, &[dict, k])?;
                         let current_dict = self.builder.build_load(self.mv_type(), dict_ptr, "dict")
                             .map_err(|e| format!("{e}"))?.into_struct_value();
                         self.call_rt_void(self.rt.moo_dict_set,
                             &[current_dict.into(), k.into(), v.into()], "dict_set")?;
+                        if self.defer_runtime { self.guard_local_expr_error(&[dict])?; }
                     }
                 }
 
@@ -13517,8 +13653,11 @@ impl<'ctx> CodeGen<'ctx> {
 
                 if let Some(func) = ctor_fn {
                     let mut call_args: Vec<BasicMetadataValueEnum> = vec![obj.into()];
+                    let mut held = vec![obj];
                     for a in args {
-                        call_args.push(self.compile_expr(a)?.into());
+                        let value = self.compile_defer_expr(a, &held)?;
+                        held.push(value);
+                        call_args.push(value.into());
                     }
                     let expected_params = func.count_params() as usize;
                     if call_args.len() > expected_params {
@@ -13534,6 +13673,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.call_rt_void(self.rt.moo_retain, &[obj.into()], "retain_ctor_receiver")?;
                     let result = self.call_rt(func, &call_args, "ctor")?;
                     self.call_rt_void(self.rt.moo_release, &[result.into()], "release_ctor_result")?;
+                    if self.defer_runtime { self.guard_local_expr_error(&[obj])?; }
                 }
 
                 Ok(obj)
@@ -13761,7 +13901,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Ternary { condition, then_val, else_val } => {
                 let func = self.current_function.unwrap();
-                let cond_val = self.compile_expr(condition)?;
+                let cond_val = self.compile_defer_expr(condition, &[])?;
                 let is_true = self.call_rt_abi(self.rt.moo_is_truthy,
                     &[cond_val.into()], "tern_truthy")
                     .map_err(|e| format!("{e}"))?
@@ -13770,6 +13910,9 @@ impl<'ctx> CodeGen<'ctx> {
                     inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                     _ => return Err("ternary truthy fehlgeschlagen".to_string()),
                 };
+                if self.defer_runtime {
+                    self.call_rt_void(self.rt.moo_release, &[cond_val.into()], "rel_ternary_condition")?;
+                }
 
                 let then_bb = self.context.append_basic_block(func, "tern_then");
                 let else_bb = self.context.append_basic_block(func, "tern_else");
@@ -13780,13 +13923,13 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // Then
                 self.builder.position_at_end(then_bb);
-                let then_result = self.compile_expr(then_val)?;
+                let then_result = self.compile_defer_expr(then_val, &[])?;
                 let then_final_bb = self.builder.get_insert_block().unwrap();
                 self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
 
                 // Else
                 self.builder.position_at_end(else_bb);
-                let else_result = self.compile_expr(else_val)?;
+                let else_result = self.compile_defer_expr(else_val, &[])?;
                 let else_final_bb = self.builder.get_insert_block().unwrap();
                 self.builder.build_unconditional_branch(merge_bb).map_err(|e| format!("{e}"))?;
 
@@ -13839,9 +13982,12 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::MatchExpr { value, cases } => {
                 let func = self.current_function.unwrap();
-                let val = self.compile_expr(value)?;
-                let vp = self.builder.build_alloca(self.mv_type(), "mexpr_val").map_err(|e| format!("{e}"))?;
-                self.builder.build_store(vp, val).map_err(|e| format!("{e}"))?;
+                let val = self.compile_defer_expr(value, &[])?;
+                let vp = if self.defer_runtime { self.defer_hold_value(val)? } else {
+                    let p = self.builder.build_alloca(self.mv_type(), "mexpr_val").map_err(|e| format!("{e}"))?;
+                    self.builder.build_store(p, val).map_err(|e| format!("{e}"))?;
+                    p
+                };
                 let rp = self.builder.build_alloca(self.mv_type(), "mexpr_res").map_err(|e| format!("{e}"))?;
                 let n = self.call_rt(self.rt.moo_none, &[], "none")?;
                 self.builder.build_store(rp, n).map_err(|e| format!("{e}"))?;
@@ -13853,21 +13999,28 @@ impl<'ctx> CodeGen<'ctx> {
                         let cv = self.builder.build_load(self.mv_type(), vp, "v").map_err(|e| format!("{e}"))?.into_struct_value();
                         if guard.is_some() {
                             if let Expr::Identifier(name) = pe {
+                                if self.defer_runtime {
+                                    self.defer_local_slot(name)?;
+                                    self.call_rt_void(self.rt.moo_retain, &[cv.into()], "retain_mexpr_binding")?;
+                                }
                                 self.store_var(name, cv)?;
-                                let gv = self.compile_expr(guard.as_ref().unwrap())?;
+                                let gv = self.compile_defer_expr(guard.as_ref().unwrap(), &[])?;
                                 let gr = self.call_rt_abi(self.rt.moo_is_truthy, &[gv.into()], "g").map_err(|e| format!("{e}"))?;
                                 let gb = match gr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
+                                if self.defer_runtime { self.call_rt_void(self.rt.moo_release, &[gv.into()], "rel_mexpr_guard")?; }
                                 self.builder.build_conditional_branch(gb, cb, nb).map_err(|e| format!("{e}"))?;
                             } else {
-                                let pv = self.compile_expr(pe)?;
+                                let pv = self.compile_defer_expr(pe, &[])?;
                                 let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
+                            if self.defer_runtime { self.call_rt_void(self.rt.moo_release, &[pv.into()], "rel_mexpr_pattern")?; }
                                 let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
                                 let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
                                 self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
                             }
                         } else {
-                            let pv = self.compile_expr(pe)?;
+                            let pv = self.compile_defer_expr(pe, &[])?;
                             let eq = self.call_rt(self.rt.moo_eq, &[cv.into(), pv.into()], "eq")?;
+                            if self.defer_runtime { self.call_rt_void(self.rt.moo_release, &[pv.into()], "rel_mexpr_pattern")?; }
                             let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[eq.into()], "t").map_err(|e| format!("{e}"))?;
                             let tb = match tr.try_as_basic_value() { inkwell::values::ValueKind::Basic(v) => v.into_int_value(), _ => return Err("truthy".into()) };
                             self.builder.build_conditional_branch(tb, cb, nb).map_err(|e| format!("{e}"))?;
@@ -13876,7 +14029,7 @@ impl<'ctx> CodeGen<'ctx> {
                         self.builder.build_unconditional_branch(cb).map_err(|e| format!("{e}"))?;
                     }
                     self.builder.position_at_end(cb);
-                    let r = self.compile_expr(rexpr)?;
+                    let r = self.compile_defer_expr(rexpr, &[])?;
                     self.builder.build_store(rp, r).map_err(|e| format!("{e}"))?;
                     self.builder.build_unconditional_branch(merge).map_err(|e| format!("{e}"))?;
                     self.builder.position_at_end(nb);
@@ -13886,9 +14039,22 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 self.builder.position_at_end(merge);
                 let fv = self.builder.build_load(self.mv_type(), rp, "mexpr_result").map_err(|e| format!("{e}"))?.into_struct_value();
+                if self.defer_runtime { self.defer_clear_value(vp)?; }
                 Ok(fv)
             }
             Expr::Pipe { left, right } => {
+                if self.defer_runtime {
+                    // Derselbe Aufrufpfad wie f(a, b, c), einschliesslich
+                    // nativer Adapter, Funktionswerte und Besitz-Fehlerkanten.
+                    let (name, mut args, zeile, spalten) = match right.as_ref() {
+                        Expr::FunctionCall { name, args, zeile, spalten } =>
+                            (name.clone(), args.clone(), *zeile, *spalten),
+                        Expr::Identifier(name) => (name.clone(), Vec::new(), 0, (0, 0)),
+                        _ => return Err("Pipe: rechte Seite muss Funktionsaufruf oder Identifier sein".into()),
+                    };
+                    args.insert(0, left.as_ref().clone());
+                    return self.compile_expr(&Expr::FunctionCall { name, args, zeile, spalten });
+                }
                 // a |> f(b, c) wird zu f(a, b, c)
                 let left_val = self.compile_expr(left)?;
                 match right.as_ref() {
@@ -14062,7 +14228,8 @@ impl<'ctx> CodeGen<'ctx> {
                           select_expr: &Expr) -> Result<StructValue<'ctx>, String> {
         let func = self.current_function.unwrap();
         let i32_type = self.context.i32_type();
-        let src_val = self.compile_expr(source)?;
+        if self.defer_runtime { self.defer_local_slot(var_name)?; }
+        let src_val = self.compile_defer_expr(source, &[])?;
 
         // Hilfsfunktion: Iteriere Liste, wende closure auf jedes Element an
         // 1. Filter (wo/where)
@@ -14098,13 +14265,16 @@ impl<'ctx> CodeGen<'ctx> {
             let el = self.call_rt(self.rt.moo_list_iter_get, &[sl.into(), il.into()], "e")?;
             self.store_var(var_name, el)?;
 
-            let cv = self.compile_expr(cond)?;
+            let cv = self.compile_defer_expr(cond, &[src_val, filt])?;
             let tr = self.call_rt_abi(self.rt.moo_is_truthy, &[cv.into()], "t")
                 .map_err(|e| format!("{e}"))?;
             let tb = match tr.try_as_basic_value() {
                 inkwell::values::ValueKind::Basic(v) => v.into_int_value(),
                 _ => return Err("t".into()),
             };
+            if self.defer_runtime {
+                self.call_rt_void(self.rt.moo_release, &[cv.into()], "rel_query_condition")?;
+            }
             let adb = self.context.append_basic_block(func, "qf_ad");
             let skb = self.context.append_basic_block(func, "qf_sk");
             self.builder.build_conditional_branch(tb, adb, skb).map_err(|e| format!("{e}"))?;
@@ -14113,6 +14283,7 @@ impl<'ctx> CodeGen<'ctx> {
             let el2 = self.load_var(var_name)?;
             let fl = self.builder.build_load(self.mv_type(), fp, "f").map_err(|e| format!("{e}"))?.into_struct_value();
             self.call_rt_void(self.rt.moo_list_append, &[fl.into(), el2.into()], "a")?;
+            if self.defer_runtime { self.guard_local_expr_error(&[src_val, filt, el2])?; }
             self.builder.build_unconditional_branch(skb).map_err(|e| format!("{e}"))?;
 
             self.builder.position_at_end(skb);
@@ -14122,6 +14293,9 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.build_unconditional_branch(cb).map_err(|e| format!("{e}"))?;
 
             self.builder.position_at_end(ab);
+            if self.defer_runtime {
+                self.call_rt_void(self.rt.moo_release, &[src_val.into()], "rel_query_source")?;
+            }
             self.builder.build_load(self.mv_type(), fp, "filtered").map_err(|e| format!("{e}"))?.into_struct_value()
         } else {
             src_val
@@ -14133,6 +14307,8 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             filtered
         };
+
+        if self.defer_runtime { self.guard_local_expr_error(&[sorted])?; }
 
         // 3. Map (wähle/select)
         let res = self.call_rt(self.rt.moo_list_new, &[i32_type.const_int(0, false).into()], "q_res")?;
@@ -14165,9 +14341,10 @@ impl<'ctx> CodeGen<'ctx> {
         let il2 = self.builder.build_load(i32_type, ip2, "i").map_err(|e| format!("{e}"))?.into_int_value();
         let el3 = self.call_rt(self.rt.moo_list_iter_get, &[sl2.into(), il2.into()], "e")?;
         self.store_var(var_name, el3)?;
-        let mapped = self.compile_expr(select_expr)?;
+        let mapped = self.compile_defer_expr(select_expr, &[sorted, res])?;
         let rl = self.builder.build_load(self.mv_type(), rp, "r").map_err(|e| format!("{e}"))?.into_struct_value();
         self.call_rt_void(self.rt.moo_list_append, &[rl.into(), mapped.into()], "a")?;
+        if self.defer_runtime { self.guard_local_expr_error(&[sorted, res, mapped])?; }
 
         let ni2 = self.builder.build_load(i32_type, ip2, "i").map_err(|e| format!("{e}"))?.into_int_value();
         let nn2 = self.builder.build_int_add(ni2, i32_type.const_int(1, false), "n").map_err(|e| format!("{e}"))?;
@@ -14175,6 +14352,9 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_unconditional_branch(mc).map_err(|e| format!("{e}"))?;
 
         self.builder.position_at_end(ma);
+        if self.defer_runtime {
+            self.call_rt_void(self.rt.moo_release, &[sorted.into()], "rel_query_input")?;
+        }
         let fv = self.builder.build_load(self.mv_type(), rp, "q_result").map_err(|e| format!("{e}"))?.into_struct_value();
         Ok(fv)
     }
@@ -14227,6 +14407,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?.into_struct_value();
         self.call_rt_void(self.rt.moo_list_append,
             &[target.into(), element.into()], "spread_append")?;
+        if self.defer_runtime { self.guard_local_expr_error(&[target, source, element])?; }
 
         let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
             .map_err(|e| format!("{e}"))?.into_int_value();
@@ -14236,6 +14417,7 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
 
         self.builder.position_at_end(after_bb);
+        if self.defer_runtime { self.call_rt_void(self.rt.moo_release, &[source.into()], "rel_spread_source")?; }
         Ok(())
     }
 
@@ -14293,6 +14475,9 @@ impl<'ctx> CodeGen<'ctx> {
         // Value aus Source-Dict holen
         let src_loaded = self.builder.build_load(self.mv_type(), src_ptr, "src")
             .map_err(|e| format!("{e}"))?.into_struct_value();
+        // Lookup konsumiert seinen String-Key; der Set-Aufruf braucht
+        // daneben die vom Iterator gelieferte eigene Referenz.
+        if self.defer_runtime { self.call_rt_void(self.rt.moo_retain, &[key.into()], "retain_dspread_lookup_key")?; }
         let val = self.call_rt(self.rt.moo_dict_get,
             &[src_loaded.into(), key.into()], "dspread_val")?;
         // In Ziel-Dict setzen
@@ -14300,6 +14485,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| format!("{e}"))?.into_struct_value();
         self.call_rt_void(self.rt.moo_dict_set,
             &[target.into(), key.into(), val.into()], "dspread_set")?;
+        if self.defer_runtime { self.guard_local_expr_error(&[target, source, keys, key, val])?; }
 
         let idx_now = self.builder.build_load(i32_type, idx_ptr, "idx")
             .map_err(|e| format!("{e}"))?.into_int_value();
@@ -14309,6 +14495,10 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.build_unconditional_branch(cond_bb).map_err(|e| format!("{e}"))?;
 
         self.builder.position_at_end(after_bb);
+        if self.defer_runtime {
+            self.call_rt_void(self.rt.moo_release, &[keys.into()], "rel_dspread_keys")?;
+            self.call_rt_void(self.rt.moo_release, &[source.into()], "rel_dspread_source")?;
+        }
         Ok(())
     }
 

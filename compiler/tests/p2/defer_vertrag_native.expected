@@ -1,0 +1,29 @@
+2
+RICHTIG direkt
+3
+SCHLEIFE
+SCHLEIFE
+SCHLEIFE
+5
+RICHTIG wert
+7
+METHODE
+METHODE
+METHODENWERT
+9
+MUSTER
+
+=== moo Tests ===
+  teste "native defer"...
+8
+TEST
+    OK
+=== Ergebnis ===
+1 Tests: 1 OK, 0 FAIL
+CLEANUP WERT
+GEFANGEN
+WEITER
+2
+11
+ALIAS
+MAIN

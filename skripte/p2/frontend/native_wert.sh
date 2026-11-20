@@ -9,7 +9,7 @@ mkdir -p "$out"
 failed=0
 
 # Positiv: Ausgabe gegen .expected (Wert, Rückruf, map/filter, Import, Fehler).
-for name in positiv import fehler thread leck grenzen; do
+for name in positiv import fehler thread leck grenzen alias; do
   src="compiler/tests/p2/native_wert_${name}.moos"
   if timeout 60s "$compiler" compile "$src" -o "$out/$name" > "$out/$name.log" 2>&1 \
      && timeout 30s "$out/$name" > "$out/$name.out" 2>&1 \
@@ -45,14 +45,23 @@ pruefe_negativ() {
     echo "PASS $name"
   fi
 }
-# Ohne versuche: Arityfehler beim Thread-Start gemeldet, kein Absturz.
-if timeout 60s "$compiler" compile compiler/tests/p2/native_wert_thread_ungefangen.moos -o "$out/thread_ungefangen" > "$out/thread_ungefangen.log" 2>&1 \
-   && timeout 30s "$out/thread_ungefangen" > "$out/thread_ungefangen.out" 2>&1 \
-   && rg -q -F "erwartet 2 Argumente, bekommen 1" "$out/thread_ungefangen.out" \
-   && rg -q -x -F "ENDE" "$out/thread_ungefangen.out"; then
-  echo "PASS thread_ungefangen"
+# Ohne versuche: der Thread-Startfehler ist unbehandelt und endet mit 1.
+# Keine Folgeanweisung, kein Absturz oder Timeout; der Thunk wird nicht gestartet.
+if timeout 60s "$compiler" compile compiler/tests/p2/native_wert_thread_ungefangen.moos -o "$out/thread_ungefangen" > "$out/thread_ungefangen.log" 2>&1; then
+  set +e
+  timeout 30s "$out/thread_ungefangen" > "$out/thread_ungefangen.out" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 1 ] \
+     && rg -q -F "erwartet 2 Argumente, bekommen 1" "$out/thread_ungefangen.out" \
+     && rg -q -F "Unbehandelter Fehler" "$out/thread_ungefangen.out" \
+     && ! rg -q -x -F "ENDE" "$out/thread_ungefangen.out"; then
+    echo "PASS thread_ungefangen"
+  else
+    echo "FAIL thread_ungefangen: Exit/Ausgabe ($rc)"; failed=1
+  fi
 else
-  echo "FAIL thread_ungefangen"; failed=1
+  echo "FAIL thread_ungefangen: Compilefehler"; failed=1
 fi
 
 # Leckprobe: map/filter mit nativem Funktionswert unter LSan (nur wenn libasan

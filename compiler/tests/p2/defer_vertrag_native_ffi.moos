@@ -1,0 +1,48 @@
+# C++-Aufrufzaehler beweist die Argument-/Ergebnisgrenze des nativen Thunks.
+@bibliothek("defer_orakel")
+extern "C" funktion defer_orakel_wert(x: i64) -> i64
+@bibliothek("defer_orakel")
+extern "C" funktion defer_orakel_anzahl() -> u64
+
+@nativ
+funktion c_wert(x: i64) -> i64:
+    unsicher:
+        gib_zurück defer_orakel_wert(x)
+
+@nativ
+funktion c_anzahl() -> u64:
+    unsicher:
+        gib_zurück defer_orakel_anzahl()
+
+funktion marke(text):
+    zeige text
+
+funktion probe(g, x):
+    wenn falsch:
+        aufräumen: marke("FALSCH C")
+    aufräumen: marke("C CLEANUP")
+    zeige g(x)
+    zeige "C WEITER"
+
+funktion karte(g):
+    aufräumen: marke("MAP CLEANUP")
+    zeige [1, -1, 3].map(g)
+    zeige "FALSCH MAP"
+
+probe(c_wert, 7)
+zeige c_anzahl()
+versuche:
+    probe(c_wert, -1)
+fange e:
+    zeige "ERGEBNISFEHLER"
+zeige c_anzahl()
+versuche:
+    probe(c_wert, "text")
+fange e:
+    zeige "ARGUMENTFEHLER"
+zeige c_anzahl()
+versuche:
+    karte(c_wert)
+fange e:
+    zeige "MAPFEHLER"
+zeige c_anzahl()

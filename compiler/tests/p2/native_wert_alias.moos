@@ -1,0 +1,20 @@
+@nativ
+funktion ink(x: i64) -> i64:
+    gib_zurück x + 1
+
+funktion alpha(x):
+    gib_zurück x + 1
+
+funktion beta(x):
+    gib_zurück x + 10
+
+funktion probe():
+    # Bestehende Namensgrenze: Aufrufname und Wertlesen haben anderen Vorrang.
+    setze alpha auf beta
+    zeige alpha(1)
+    setze f auf alpha
+    zeige f(1)
+    setze f auf ink
+    zeige f(1)
+
+probe()

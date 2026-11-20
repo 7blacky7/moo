@@ -1,0 +1,9 @@
+aufräumen: marke()
+zeige spaeter()
+gib_zurück
+
+funktion spaeter():
+    gib_zurück 41
+
+funktion marke():
+    zeige "AUFGERAEUMT"

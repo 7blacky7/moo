@@ -93,7 +93,7 @@ Belege: die Fixtures `compiler/tests/p2/native_wert_*`. Der direkte Aufruf einer
 - Importiert aus einem Modul: Direktaufruf und Funktionswert (`native_wert_import`).
 - Als Thread-Start: `starte(quadrat, 6)` ruft die Funktion mit genau einem Argument; `t.warten()` liefert 36 (`native_wert_thread`).
 - Prüfung beim Aufruf über den Wert, vor dem nativen Aufruf und mit `versuche:` fangbar: falsche Argumentzahl („Funktion 'quadrat' erwartet 1 Argument, bekommen 2“), falscher Typ, nicht exakter Wert (`1.5` für `i64`) und Bereichsüberlauf (`300` für `i8`). Danach läuft das Programm normal weiter (`native_wert_fehler`). Dieselbe Argumentzahl-Prüfung gilt beim Thread-Start: ein zweistelliger nativer Wert mit einem Argument ist ein fangbarer Fehler (`native_wert_thread`).
-- Speicher: Wird der `@nativ`-Name direkt an `map`/`filter` übergeben (`xs.map(plus1)`), wird der Funktionswert je Element erzeugt und nach dem Aufruf freigegeben; dazu läuft laut Fixture-Kommentar eine Leckprobe unter LSan im Gate (`native_wert_leck`, nur dieser Fall). **Bekannte Einschränkung (wird behoben):** Wird der Funktionswert zuvor an eine Variable gebunden (`setze f auf plus`, dann `xs.map(f)`), leckt er unter LSan.
+- Speicher: Direkte `@nativ`-Namen und zuvor gebundene native Funktionswerte (`setze f auf plus1; xs.map(f)`) laufen in `map`/`filter` ohne Leck im geprüften Linux-Fall. `native_wert_leck` prüft beide Wege nach dem Verlassen des Moo-Rahmens unter LSan; der Fall wurde zusätzlich mit instrumentierter Runtime unter ASan/UBSan/LSan geprüft.
 
 **Was nicht geht (Compilefehler):**
 
@@ -102,6 +102,42 @@ Belege: die Fixtures `compiler/tests/p2/native_wert_*`. Der direkte Aufruf einer
 - **M-N003:** Eine mit `extern "C"` deklarierte Funktion ist kein moo-Wert (`native_wert_extern`, Beispiel `sinf`). Der Weg ist eine `@nativ`-Hülle um den C-Aufruf in der skalaren FFI-Einzelform (siehe Ausnahme bei M-N001); C-Funktionszeiger für C-Bibliotheken entstehen über `@rückruf`.
 
 Die Texte der Diagnosen: `moo-compiler erklaere M-N001` (Katalog in `compiler/src/diagnose.rs`).
+
+
+### Cleanup an nativen Grenzen (P2-T59)
+
+Im gehosteten Profil ohne Profiling werden `aufräumen:`-Aktionen erst beim
+tatsächlichen Durchlaufen registriert. Ein nicht ausgeführter Zweig registriert
+nichts; jede Schleifeniteration registriert eine eigene Aktion. Beim Verlassen
+des Rahmens laufen die registrierten Aktionen in umgekehrter Reihenfolge.
+Das gilt auch bei nativen Direktaufrufen, nativen Funktionswerten und der
+skalaren C-FFI-Einzelform, in Hauptprogramm, Funktionen, Methoden und Tests.
+Auch nach einem Cleanup-Fehler laufen die übrigen Aktionen; der erste Fehler
+bleibt erhalten. Verworfenes Heap-Ergebnis und temporäre Elternwerte werden
+auf den geprüften Fehlerpfaden freigegeben.
+
+Die Linux-Gates `mise run -C skripte/p2/frontend defer-vertrag`,
+`defer-testframe` und `native-wert` prüfen diese Grenzen. Die Fixtures
+`defer_vertrag_native*` und `defer_vertrag_ausdruecke` enthalten einen
+`extern "C"`-Adapter in C++, dynamische Aufrufe sowie verschachtelte Listen,
+Wörterbücher, Comprehensions, Queries, Match, Konstruktoren, Feldzuweisungen,
+Methodenargumente, Pipe, Slice und Spread. Der Heap-Stress und der Adapter
+werden zusätzlich mit instrumentierter Runtime unter ASan, UBSan und LSan
+geprüft. Native Funktionswerte benötigen weiterhin die gehostete Runtime;
+diese Linux-Nachweise ersetzen keine Freigabe für Bare-/UEFI-/Wasm-Werte.
+
+**Bekannte Namensgrenze und Entscheidungsvorlage:** Nach
+`setze alpha auf beta` ruft `alpha(1)` weiterhin die deklarierte Funktion
+`alpha` auf; beim Wertlesen bezeichnet `alpha` die gebundene Variable.
+`setze f auf alpha; f(1)` ruft deshalb `beta` auf. Die isolierte Fixture
+`native_wert_alias` prüft dieses bestehende Verhalten auch beim Wechsel
+von einem Moo- zu einem nativen Funktionswert. P2-T59 ändert den Vorrang nicht.
+
+Für eine Vereinheitlichung stehen Variablenvorrang beim Aufruf oder eine
+Diagnose für den Namenskonflikt zur Entscheidung. Bei Variablenvorrang müssen
+auch noch nicht zugewiesene lokale Slots, Default-Argumente, Argumentzahl und
+gespeicherte Closure-Captures festgelegt werden. Die bisherige Namensgrenze
+bleibt bis zu dieser Sprachentscheidung ausdrücklich bestehen.
 
 ### Direkte native Aufrufe: Argumentzahl und Rekursion (seit Commit e9a3809)
 

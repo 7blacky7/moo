@@ -1,0 +1,33 @@
+@nativ
+funktion identitaet(x: i64) -> i64:
+    gib_zurück x
+
+funktion marke(x):
+    zeige x
+    gib_zurück identitaet(x)
+
+klasse Kiste:
+    funktion erstelle(wert):
+        selbst.wert = wert
+    funktion markierung(wert):
+        zeige wert
+
+funktion probe():
+    aufräumen: 11 |> marke()
+    aufräumen: [...[marke(10)]]
+    aufräumen: "ABCDE"[identitaet(0)..identitaet(1)]
+    aufräumen: {...{"Wert": identitaet(1)}}
+    setze kiste auf neu Kiste(0)
+    aufräumen: kiste.markierung(9)
+    aufräumen: [1, 2, 3].map(identitaet)
+    aufräumen: prüfe 0:
+        fall _: marke(8)
+    aufräumen: von x in [6, 7] wo wahr wähle marke(x)
+    aufräumen: neu Kiste(marke(5))
+    aufräumen: (wahr ? marke(4) : marke(90))
+    aufräumen: (nichts ?? marke(3))
+    aufräumen: -marke(2)
+    aufräumen: [marke(1)].length
+    zeige "BODY"
+
+probe()

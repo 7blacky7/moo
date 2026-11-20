@@ -1,0 +1,100 @@
+# Laufzeitregistrierung bleibt bei nativen Aufrufen und Funktionswerten erhalten.
+@nativ
+funktion ink(x: i64) -> i64:
+    gib_zurück x + 1
+
+funktion marke(text):
+    zeige text
+
+funktion bedingt():
+    wenn falsch:
+        aufräumen: marke("FALSCH direkt")
+    wenn wahr:
+        aufräumen: marke("RICHTIG direkt")
+    zeige ink(1)
+
+funktion schleife():
+    setze i auf 0
+    solange i < 3:
+        aufräumen: marke("SCHLEIFE")
+        setze i auf i + 1
+    zeige ink(2)
+
+funktion mit_wert(g):
+    wenn falsch:
+        aufräumen: marke("FALSCH wert")
+    aufräumen: marke("RICHTIG wert")
+    zeige g(4)
+
+bedingt()
+schleife()
+mit_wert(ink)
+
+klasse Rahmen:
+    funktion probe(g):
+        wenn falsch:
+            aufräumen: marke("FALSCH methode")
+        für i in 0..2:
+            aufräumen: marke("METHODE")
+        zeige g(6)
+        gib_zurück "METHODENWERT"
+
+funktion muster(wert):
+    prüfe wert:
+        fall 0:
+            aufräumen: marke("FALSCH muster")
+        fall _:
+            aufräumen: marke("MUSTER")
+    zeige ink(8)
+
+setze objekt auf neu Rahmen()
+zeige objekt.probe(ink)
+muster(1)
+
+teste "native defer":
+    wenn falsch:
+        aufräumen: marke("FALSCH test")
+    aufräumen: marke("TEST")
+    zeige ink(7)
+teste_alle()
+
+@nativ
+funktion teilen(x: i64) -> i64:
+    gib_zurück 100 / x
+
+funktion spaeter():
+    zeige "NACH_TEILAUSDRUCK"
+    gib_zurück 1
+
+funktion fehler_wert(g):
+    aufräumen: marke("CLEANUP WERT")
+    zeige [[g(0), spaeter()]]
+
+versuche:
+    fehler_wert(teilen)
+fange e:
+    zeige "GEFANGEN"
+zeige "WEITER"
+
+
+funktion alpha(x):
+    gib_zurück x + 1
+
+funktion beta(x):
+    gib_zurück x + 10
+
+funktion aliasgrenze():
+    aufräumen: marke("ALIAS")
+    # Kompatibilitaetsgrenze 961a8bd8: der direkte Name ruft weiterhin
+    # die deklarierte Funktion auf; als Ausdruck gelesen ist alpha die Variable.
+    # Eine Vereinheitlichung ist eine offene Sprachentscheidung, kein T59-Fix.
+    setze alpha auf beta
+    zeige alpha(1)
+    setze f auf alpha
+    zeige f(1)
+
+aliasgrenze()
+
+wenn falsch:
+    aufräumen: marke("FALSCH main")
+aufräumen: marke("MAIN")

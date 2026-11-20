@@ -4,5 +4,6 @@ funktion probe():
     fange fehler:
         gib_zurück "FALSCH"
 zeige probe()
+# Bewusst ungefangen: der Harness prueft stderr, Exit 1 und den vorherigen stdout.
 wirf "aussen"
 zeige "NACH_FALSCH"

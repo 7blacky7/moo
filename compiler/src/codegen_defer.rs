@@ -262,3 +262,153 @@ impl DeferCatalog {
         Ok(())
     }
 }
+
+
+
+impl<'ctx> super::CodeGen<'ctx> {
+    /// Auch ein nativer Funktionswert ohne eigene Defer-Aktion springt bei
+    /// Fehler zum vorhandenen Rahmenausgang. Die gehaltenen SSA-Werte werden
+    /// dabei gebraucht; RahmenZustand trennt sie von verschachtelten Lambdas.
+    pub(super) fn native_value_temps(&self) -> bool {
+        self.stmt_recursive_guard || self.defer_runtime
+            || (!self.native_functions.is_empty() && self.nativer_wert_ausgang_vorhanden())
+    }
+
+    /// Ein Teilausdruck kann bei einem nativen Wertfehler sofort zum Frame-
+    /// Handler springen. Alle vorher erzeugten owning Eltern muessen auf
+    /// genau dieser Fehlerkante frei werden, auch bei komplexen AST-Formen.
+    pub(super) fn compile_defer_expr(&mut self, expr: &Expr,
+        held: &[inkwell::values::StructValue<'ctx>],
+    ) -> Result<inkwell::values::StructValue<'ctx>, String> {
+        if !self.native_value_temps() { return self.compile_expr(expr); }
+        let previous = self.stmt_owned_context.len();
+        self.stmt_owned_context.extend_from_slice(held);
+        let result = self.compile_expr(expr).and_then(|value| {
+            if self.defer_runtime { self.guard_local_expr_error(&[value])?; }
+            Ok(value)
+        });
+        self.stmt_owned_context.truncate(previous);
+        result
+    }
+
+    /// Vor einer Schleife angelegte Slots muessen auf jeder Iteration den
+    /// alten Besitzwert freigeben. store_var allein emittiert bei der ersten
+    /// Codegen-Zuweisung noch keinen Release-Pfad.
+    pub(super) fn defer_local_slot(&mut self, name: &str)
+        -> Result<inkwell::values::PointerValue<'ctx>, String>
+    {
+        if let Some(ptr) = self.variables.get(name).or_else(|| self.globals.get(name)) {
+            return Ok(*ptr);
+        }
+        let function = self.current_function.ok_or("Defer-Local ohne Funktion")?;
+        let entry = function.get_first_basic_block().ok_or("Defer-Local ohne Entry")?;
+        let current = self.builder.get_insert_block().ok_or("Defer-Local ohne Block")?;
+        if let Some(first) = entry.get_first_instruction() {
+            self.builder.position_before(&first);
+        } else {
+            self.builder.position_at_end(entry);
+        }
+        let slot = self.builder.build_alloca(self.mv_type(), name).map_err(|e| e.to_string())?;
+        let none = self.mv_type().const_named_struct(&[
+            self.context.i64_type().const_int(super::tag::NONE, false).into(),
+            self.context.i64_type().const_zero().into(),
+        ]);
+        self.builder.build_store(slot, none).map_err(|e| e.to_string())?;
+        self.builder.position_at_end(current);
+        self.variables.insert(name.to_string(), slot);
+        Ok(slot)
+    }
+
+    /// Ein Match-Wert bleibt auch bei Return oder lokalem Catch im Frame
+    /// besessen. Dieselben Local-/Receiver-Exitpfade raeumen den Slot auf.
+    pub(super) fn defer_hold_value(&mut self, value: inkwell::values::StructValue<'ctx>)
+        -> Result<inkwell::values::PointerValue<'ctx>, String>
+    {
+        let name = format!("__defer_owned.{}", self.variables.len());
+        let slot = self.defer_local_slot(&name)?;
+        self.store_var(&name, value)?;
+        if self.in_main_function() { self.main_mcall_slots.push(slot); }
+        Ok(slot)
+    }
+
+    pub(super) fn defer_clear_value(&mut self, slot: inkwell::values::PointerValue<'ctx>)
+        -> Result<(), String>
+    {
+        let value = self.builder.build_load(self.mv_type(), slot, "defer.owned.value")
+            .map_err(|e| e.to_string())?.into_struct_value();
+        let none = self.mv_type().const_named_struct(&[
+            self.context.i64_type().const_int(super::tag::NONE, false).into(),
+            self.context.i64_type().const_zero().into(),
+        ]);
+        self.builder.build_store(slot, none).map_err(|e| e.to_string())?;
+        self.call_rt_void(self.rt.moo_release, &[value.into()], "defer.owned.release")
+    }
+
+    /// Nach der Initialisierung aller Locals beginnen. Ein eigener Handler
+    /// garantiert die Ausfuehrung auch ohne versuche: im aufrufenden Frame.
+    pub(super) fn defer_frame_begin(&mut self)
+        -> Result<Option<inkwell::basic_block::BasicBlock<'ctx>>, String>
+    {
+        self.defer_runtime = !self.bare_mode && !self.profiling
+            && !self.defer_catalog.actions().is_empty();
+        if !self.defer_runtime { return Ok(None); }
+        self.native_guard_enabled = false;
+        let function = self.current_function.ok_or("Defer-Frame ohne Funktion")?;
+        self.call_rt_void(self.rt.moo_try_enter, &[], "defer.frame.enter")?;
+        let handler = self.context.append_basic_block(function, "defer.frame.error");
+        self.try_stack.push(handler);
+        self.guard_local_expr_error(&[])?;
+        Ok(Some(handler))
+    }
+
+    /// Normaler Frame-Austritt. Innere versuche:-Handler werden nur auf
+    /// diesem erfolgreichen Return-Pfad verlassen, niemals vor den Aktionen.
+    pub(super) fn defer_frame_finish(&mut self) -> Result<(), String> {
+        if !self.defer_runtime { return self.emit_defers(); }
+        let (has, first) = self.drain_runtime_defers(None)?;
+        self.route_runtime_defer_error(has, first, None, false)?;
+        let function = self.current_function.ok_or("Defer-Exit ohne Funktion")?;
+        let count = self.try_stack.iter().filter(|bb|
+            bb.get_parent() == Some(function) && Some(**bb) != self.defer_borrowed_handler).count();
+        for _ in 0..count {
+            self.call_rt_void(self.rt.moo_try_leave, &[], "defer.frame.leave")?;
+        }
+        Ok(())
+    }
+
+    /// Nach den normalen Return-Bloecken emittieren. Der erste Fehler wird
+    /// vor dem Entleeren gesichert, damit fehlernde Aktionen ihn nicht ersetzen.
+    pub(super) fn defer_frame_end(&mut self,
+        handler: Option<inkwell::basic_block::BasicBlock<'ctx>>,
+    ) -> Result<(), String> {
+        let Some(handler) = handler else { return Ok(()); };
+        if self.try_stack.pop() != Some(handler) {
+            return Err("Defer-Handler gehoert nicht zum aktuellen Frame".into());
+        }
+        self.builder.position_at_end(handler);
+        let take = self.rt.declare_try_take_error(self.context, &self.module, self.runtime_windows_abi);
+        let error = self.call_rt(take, &[], "defer.frame.take_error")?;
+        self.call_rt_void(self.rt.moo_try_leave, &[], "defer.frame.error_leave")?;
+        let (has, first) = self.drain_runtime_defers(Some(error))?;
+        self.route_runtime_defer_error(has, first, None, true)
+    }
+
+    /// main-Globals behalten ihre Prozess-Lifetime. Echte Frame-Locals und
+    /// Receiver-Slots werden bei Fehler genau einmal und deterministisch frei.
+    pub(super) fn release_defer_frame_locals(&mut self) -> Result<(), String> {
+        if !self.in_main_function() { return self.release_function_locals(); }
+        let mut slots: Vec<_> = self.variables.iter()
+            .map(|(name, ptr)| (name.clone(), *ptr)).collect();
+        slots.sort_by(|a, b| a.0.cmp(&b.0));
+        let globals: Vec<_> = self.globals.values().copied().collect();
+        let mut released = Vec::new();
+        for (_, ptr) in slots {
+            if globals.contains(&ptr) || released.contains(&ptr) { continue; }
+            let value = self.builder.build_load(self.mv_type(), ptr, "defer.main.local")
+                .map_err(|e| e.to_string())?.into_struct_value();
+            self.call_rt_void(self.rt.moo_release, &[value.into()], "defer.main.release")?;
+            released.push(ptr);
+        }
+        Ok(())
+    }
+}

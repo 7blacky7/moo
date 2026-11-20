@@ -1,5 +1,5 @@
-# Ohne versuche: der Arityfehler beim Thread-Start wird gemeldet, warten auf
-# den fehlenden Thread ist ebenfalls ein Fehler, das Programm stürzt nicht ab.
+# Bewusst ohne versuche: der Arityfehler beim Thread-Start muss Exit 1
+# liefern. Warten und ENDE duerfen danach nicht mehr erreicht werden.
 @nativ
 funktion plus(a: i64, b: i64) -> i64:
     gib_zurück a + b

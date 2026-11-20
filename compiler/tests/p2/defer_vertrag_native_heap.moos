@@ -1,0 +1,158 @@
+# Jede Aktivierung verwirft eine Heap-Rueckgabe nach einem Cleanup-Fehler.
+# Die weitere Aktion liefert selbst einen frischen owning Heapwert.
+setze zaehler auf 0
+
+@nativ
+funktion teilen(x: i64) -> i64:
+    gib_zurück 100 / x
+
+funktion frisch():
+    global zaehler
+    setze zaehler auf zaehler + 1
+    gib_zurück ["frisch", [1, 2, 3]]
+
+funktion verworfen(g):
+    aufräumen: frisch()
+    aufräumen: g(0)
+    gib_zurück ["verworfen", ["Heap-Rueckgabe"]]
+
+funktion woerterbuch(g):
+    aufräumen: frisch()
+    gib_zurück {"erster": [1, 2, 3], "fehler": g(0)}
+
+funktion sammlung(g):
+    aufräumen: frisch()
+    gib_zurück [g(x) für x in [0, 1, 2]]
+
+klasse Inhalt:
+    funktion erstelle():
+        selbst.wert = []
+
+klasse Paar:
+    funktion erstelle(a, b):
+        selbst.a = a
+        selbst.b = b
+
+funktion verbund(g):
+    aufräumen: frisch()
+    setze wert auf [1, 2, 3]
+    wert += g(0)
+
+funktion eigenschaft(g):
+    aufräumen: frisch()
+    setze ding auf neu Inhalt()
+    ding.wert = g(0)
+
+funktion konstruktor(g):
+    aufräumen: frisch()
+    gib_zurück neu Paar(["links"], g(0))
+
+funktion bedingung(g):
+    aufräumen: frisch()
+    gib_zurück (["Bedingung", [1, 2, 3]] ? g(0) : 1)
+
+funktion abfrage_filter(g):
+    aufräumen: frisch()
+    gib_zurück von x in [[1, 2, 3], [4, 5, 6]] wo g(0) wähle x
+
+funktion abfrage_auswahl(g):
+    aufräumen: frisch()
+    gib_zurück von x in [[1, 2, 3], [4, 5, 6]] wo wahr wähle [x, g(0)]
+
+funktion muster_fehler(g):
+    aufräumen: frisch()
+    prüfe ["Muster", [1, 2, 3]]:
+        fall g(0):
+            zeige "UNERREICHBAR"
+        fall _:
+            zeige "UNERREICHBAR"
+
+funktion muster_ausdruck(g):
+    aufräumen: frisch()
+    gib_zurück prüfe ["Musterwert", [1, 2, 3]]:
+        fall _: ["links", g(0)]
+
+funktion muster_bindung(g):
+    aufräumen: frisch()
+    prüfe ["Bindung", [1, 2, 3]]:
+        fall gebunden wenn g(0):
+            zeige gebunden
+        fall _:
+            zeige "UNERREICHBAR"
+
+klasse Mehr:
+    funktion probe(a, b):
+        gib_zurück [a, b]
+
+funktion methode(g):
+    aufräumen: frisch()
+    setze ding auf neu Mehr()
+    gib_zurück ding.probe(["Argument", [1, 2, 3]], g(0))
+
+funktion muster_woerterbuch(g):
+    aufräumen: frisch()
+    prüfe {"wert": [1, 2, 3]}:
+        fall {"wert": gebunden} wenn g(0):
+            zeige gebunden
+        fall _:
+            zeige "UNERREICHBAR"
+
+funktion paar_wert(a, b):
+    gib_zurück [a, b]
+
+funktion rohr(g):
+    aufräumen: frisch()
+    gib_zurück ["Rohr", [1, 2, 3]] |> paar_wert(g(0))
+
+funktion ausschnitt(g):
+    aufräumen: frisch()
+    gib_zurück ("Anfang" + "Ende")[0..g(0)]
+
+funktion listen_spread(g):
+    aufräumen: frisch()
+    gib_zurück [...[["Spread", [1, 2, 3]]], g(0)]
+
+funktion dict_spread(g):
+    aufräumen: frisch()
+    gib_zurück {...{"wert": [1, 2, 3]}, "fehler": g(0)}
+
+funktion ohne_aktion(g):
+    # Auch ein aufgerufener Rahmen ohne eigene Defer-Aktion besitzt seine
+    # Teilausdruckswerte bis zum Fehlerausgang des nativen Funktionswerts.
+    zeige [[g(0), "UNERREICHBAR"]]
+
+funktion einmal(g):
+    versuche:
+        g(teilen)
+    fange e:
+        gib_zurück 1
+    gib_zurück 0
+
+funktion stress():
+    setze i auf 0
+    setze summe auf 0
+    solange i < 20000:
+        setze summe auf summe + einmal(verworfen)
+        setze summe auf summe + einmal(woerterbuch)
+        setze summe auf summe + einmal(sammlung)
+        setze summe auf summe + einmal(verbund)
+        setze summe auf summe + einmal(eigenschaft)
+        setze summe auf summe + einmal(konstruktor)
+        setze summe auf summe + einmal(bedingung)
+        setze summe auf summe + einmal(abfrage_filter)
+        setze summe auf summe + einmal(abfrage_auswahl)
+        setze summe auf summe + einmal(muster_fehler)
+        setze summe auf summe + einmal(muster_ausdruck)
+        setze summe auf summe + einmal(muster_bindung)
+        setze summe auf summe + einmal(methode)
+        setze summe auf summe + einmal(muster_woerterbuch)
+        setze summe auf summe + einmal(rohr)
+        setze summe auf summe + einmal(ausschnitt)
+        setze summe auf summe + einmal(listen_spread)
+        setze summe auf summe + einmal(dict_spread)
+        setze summe auf summe + einmal(ohne_aktion)
+        setze i auf i + 1
+    gib_zurück summe
+
+zeige stress()
+zeige zaehler

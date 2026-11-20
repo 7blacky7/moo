@@ -30,6 +30,7 @@ on:
       - "scripts/kernel-smoke.sh"
       - "beispiele/kernel/hallo_kern.moos"
       - "skripte/p2/zahlen/**"
+      - "skripte/p2/frontend/**"
       - "beispiele/kernel/netz_tcp.moos"
       - "skripte/p2/runtime/rc_geteilt_stress.sh"
       - "beispiele/snake_plus_selftest.moos"
@@ -281,6 +282,17 @@ jobs:
           mise -C skripte/p2/zahlen run modulo-codegen 2>&1 | tee p127-modulo-ci.log
 
 
+      - name: Check native values and defer contracts
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$LLVM_SYS_221_PREFIX/bin:$PATH"
+          export MOO_COMPILER="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler"
+          for task in defer-vertrag defer-testframe native-wert; do
+            mise run -C skripte/p2/frontend "$task" 2>&1 | tee -a p2-native-defer-linux.log
+          done
+
       - name: Check Linux native C ABI and verify LLVM IR
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -361,6 +373,11 @@ jobs:
             core-ci-${{ runner.os }}.log
             p2-native-platform-${{ runner.os }}.log
             p2-native-abi-linux.log
+            p2-native-defer-linux.log
+            build/p2-frontend/defer_vertrag/*.compile.log
+            build/p2-frontend/defer_vertrag/*.lsan.err
+            build/p2-frontend/native_wert/*.log
+            build/p2-frontend/native_wert/*.err
             p2-aarch64-cross.log
             p2-bare-qemu.log
             build/p2-bare-qemu/hallo_kern.elf

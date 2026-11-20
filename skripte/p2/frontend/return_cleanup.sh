@@ -13,12 +13,12 @@ for name in unhandled outer ausdruck defer; do
     failed=1
     continue
   fi
-  # P2-T95: Abbruchvertrag nur noch mit MOO_STRENG=1 (Standard: Hinweis + Weiterlauf).
+  # P2-T117: ungefangene Fehler enden mit Exit 1 und Diagnose auf stderr.
   streng=0; [ "$name" = unhandled ] && streng=1
   MOO_STRENG=$streng timeout 30s "$out" > "$out.out" 2> "$out.err"
   rc=$?
   if [ "$name" = unhandled ]; then
-    if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ] || [ "$rc" -ge 128 ] || ! rg -q -F 'Unbehandelter Fehler' "$out.err"; then
+    if [ "$rc" -ne 1 ] || ! rg -q -F 'Unbehandelter Fehler' "$out.err"; then
       echo "FAIL $name: erwarteter unbehandelter Fehler fehlt (Exit $rc)"
       failed=1
       continue

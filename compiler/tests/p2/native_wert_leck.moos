@@ -1,5 +1,5 @@
-# Ein nativer Funktionswert in map/filter wird je Element erzeugt und nach
-# dem Aufruf wieder freigegeben (Leckprobe unter LSan im Gate).
+# Direkte Native-Namen und gebundene native Funktionswerte in map/filter:
+# LSan prueft beide Wege nach dem Verlassen des Moo-Frames.
 @nativ
 funktion plus1(a: i64) -> i64:
     gib_zurück a + 1
@@ -10,8 +10,12 @@ funktion gerade(a: i64) -> bool:
 
 funktion arbeite():
     setze xs auf [1, 2, 3, 4, 5]
-    setze erg auf xs.map(plus1)
+    setze direkt auf xs.map(plus1)
+    setze direkt_filter auf xs.filter(gerade)
+    setze f auf plus1
+    setze g auf gerade
+    setze erg auf xs.map(f)
     zeige erg
-    zeige xs.filter(gerade)
+    zeige xs.filter(g)
 
 arbeite()
