@@ -25,7 +25,9 @@ Private Implementierungsfelder bleiben in C++. Konstruktoren und gewöhnliche
 öffentliche Methoden haben höchstens sechs skalare Argumente, konstante
 Methoden sowie skalare/void-Rückgaben sind eingeschlossen.
 Überladungsnamen enthalten Argumenttypen und bei Bedarf `_const`.
-Kollisionen werden abgelehnt. Statische Methoden, Operatoren, Defaultargumente,
+Kollisionen zwischen allen generierten Typen und Funktionen werden abgelehnt.
+Ein Präfix muss über getrennt gebaute Adapterbibliotheken hinweg eindeutig sein.
+Statische Methoden, Operatoren, Defaultargumente,
 Makromethoden, Referenzqualifikatoren, Namespaces und verschachtelte Klassen
 sind außerhalb der Teilmenge.
 
@@ -68,4 +70,6 @@ C++/Moo-Roundtrip, voller U64MAX, Exception mit unverändertem Ergebnis,
 Nullargumente, explizite Freigabe, Alias-/Doppelfrei-/Typprüfung sowie elf
 negative Positionsdiagnosen werden geprüft. Unter Linux instrumentiert
 ASan/UBSan/LSan das C++-Adapterorakel, nicht die gesamte Moo-Runtime.
+Ein zusätzlicher GCC-Link mit `--as-needed` prüft die Reihenfolge Adapter vor
+C++-Laufzeitbibliothek, unabhängig vom voreingestellten Host-Linker.
 Ein Windows-Beweis darf erst nach tatsächlicher Windows-Ausführung behauptet werden.

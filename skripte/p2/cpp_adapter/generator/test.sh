@@ -42,7 +42,18 @@ rg -q "negativ.hpp:5:[0-9]+:.*Referenz" "$out/indirekt.err"
 rc=0
 "$compiler" bindgen-cpp "$src/negativ.hpp" --class Referenz --class Zeiger --prefix tg --library p2_cpp_generated --emit cpp > "$out/teil.out" 2> "$out/teil.err" || rc=$?
 test "$rc" -eq 2 && test ! -s "$out/teil.out"
+rc=0
+"$compiler" bindgen-cpp "$src/negativ.hpp" --class A --class A_m_b --prefix tg --library p2_cpp_generated --emit cpp > "$out/kollision.out" 2> "$out/kollision.err" || rc=$?
+test "$rc" -eq 2 && test ! -s "$out/kollision.out"
+rg -q "Symbolkollision.*tg_A_m_b_m_c_leer" "$out/kollision.err"
 if [[ "$target" == x86_64-unknown-linux-gnu ]]; then
+ mkdir -p "$out/gcc-bin"
+ gcc_path="$(command -v gcc)"
+ printf '#!/usr/bin/env bash\nexec "%s" -Wl,--as-needed "$@"\n' "$gcc_path" > "$out/gcc-bin/cc"
+ chmod +x "$out/gcc-bin/cc"
+ PATH="$PWD/$out/gcc-bin:$PATH" "$compiler" compile "$out/program.moos" --lib-pfad "$out" -o "$out/program-gcc" > "$out/compile-gcc.log" 2>&1
+ "$out/program-gcc" > "$out/program-gcc.out"
+ diff -u "$src/probe.expected" "$out/program-gcc.out"
  clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -I"$out" "$src/referenz.cpp" -o "$out/referenz-san"
  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$out/referenz-san"
  "$compiler" bindgen-cpp "$src/probe.hpp" --class Zaehler --prefix tg --library p2_cpp_generated --target x86_64-pc-windows-msvc --emit moo > "$out/windows.moo"

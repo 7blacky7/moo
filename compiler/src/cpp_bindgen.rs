@@ -164,7 +164,21 @@ fn parse(raw: &str, selected: &BTreeSet<String>, prefix: &str, target: &str, hea
     for name in selected {
         if !classes.iter().any(|c|&c.name==name) {return Err(format!("{header}:0:0: keine unterstützte globale Definition für '{name}' (Namespaces und verschachtelte Klassen nicht unterstützt)"));}
     }
-    classes.sort_by(|a,b|a.name.cmp(&b.name)); Ok(classes)
+    classes.sort_by(|a,b|a.name.cmp(&b.name));
+    let mut emitted=BTreeSet::from([format!("{prefix}_fehler"),format!("{prefix}_abi_fehler")]);
+    for class in &classes {
+        let mut symbols=vec![format!("{prefix}_{}",class.name),format!("{prefix}_{}_frei",class.name),format!("{prefix}_{}_frei_abi",class.name)];
+        for method in &class.methods {
+            symbols.push(method.symbol.clone());
+            symbols.push(format!("{}_abi",method.symbol));
+        }
+        for symbol in symbols {
+            if !emitted.insert(symbol.clone()) {
+                return Err(format!("{}: Symbolkollision '{symbol}' zwischen generierten Typen/Funktionen; Klassen getrennt mit verschiedenen Präfixen generieren",class.pos));
+            }
+        }
+    }
+    Ok(classes)
 }
 pub fn run(header:&Path, names:&[String], prefix:&str, library:&str, target:&str, emit:&str, includes:&[PathBuf], defines:&[String]) -> Result<(),String> {
     if !matches!(target,"x86_64-unknown-linux-gnu"|"x86_64-pc-windows-msvc") {return Err("nur x86_64 Linux-SysV und Windows-MSVC unterstützt".into());}
@@ -194,9 +208,8 @@ pub fn run(header:&Path, names:&[String], prefix:&str, library:&str, target:&str
         out.push_str(&format!("#include <cstdint>\n#include \"{header}\"\nstatic_assert(sizeof(int)==4 && sizeof(long long)==8 && sizeof(float)==4 && sizeof(double)==8);\n"));
         out.push_str(&format!("static thread_local int32_t {prefix}_status = 0;\nextern \"C\" int32_t {prefix}_abi_fehler() noexcept {{ return {prefix}_status; }}\n"));
     } else {
-        out.push_str(if target.contains("windows") {"@bibliothek(\"msvcprt\")\n"} else {"@bibliothek(\"stdc++\")\n"});
         out.push_str("# Status: 0 Erfolg, -1 Nullargument, -2 C++-Exception, -3 Ergebnis-Pufferlaenge.\n# Ergebnisse bleiben bei Fehler unveraendert; Objekte koennen vor einer Exception mutieren.\n# Konstruktor: nichts bei Fehler, fehler() liefert -2; erfolgreicher Griff wird explizit freigegeben.\n");
-        emit_moo(&mut out,library,&format!("{prefix}_abi_fehler"),&format!("{prefix}_fehler"),&[], "i32",false,"",&[]);
+        emit_moo_parts(&mut out,library,&format!("{prefix}_abi_fehler"),&format!("{prefix}_fehler"),&[],&[],"i32",false,"",&[],Some(if target.contains("windows") {"msvcprt"} else {"stdc++"}));
     }
     for class in classes {
         let opaque=format!("{prefix}_{}",class.name);
@@ -234,7 +247,7 @@ pub fn run(header:&Path, names:&[String], prefix:&str, library:&str, target:&str
                     moo_calls.push("puffer_zeiger(ergebnis)".into());
                     guard="    wenn länge(ergebnis) != 1:\n        gib_zurück -3\n".into();
                 }
-                emit_moo_parts(&mut out,library,&format!("{}_abi",m.symbol),&m.symbol,&foreign,&moo,&ret,false,&guard,&moo_calls);
+                emit_moo_parts(&mut out,library,&format!("{}_abi",m.symbol),&m.symbol,&foreign,&moo,&ret,false,&guard,&moo_calls,None);
             }
         }
     }
@@ -242,8 +255,12 @@ pub fn run(header:&Path, names:&[String], prefix:&str, library:&str, target:&str
     print!("{out}"); Ok(())
 }
 fn emit_moo(out:&mut String, library:&str, abi:&str, name:&str, args:&[String], ret:&str, consumes:bool, guard:&str, calls:&[String]) {
-    emit_moo_parts(out,library,abi,name,args,args,ret,consumes,guard,calls)
+    emit_moo_parts(out,library,abi,name,args,args,ret,consumes,guard,calls,None)
 }
-fn emit_moo_parts(out:&mut String, library:&str, abi:&str, name:&str, foreign:&[String], args:&[String], ret:&str, consumes:bool, guard:&str, calls:&[String]) {
-    out.push_str(&format!("\n@bibliothek(\"{library}\")\nextern \"C\" funktion {abi}({}) -> {ret}\n\n@nativ\n{}funktion {name}({}) -> {ret}:\n{guard}    unsicher:\n        setze wert: {ret} auf {abi}({})\n        gib_zurück wert\n",foreign.join(", "),if consumes {"@verbraucht(1)\n"}else{""},args.join(", "),calls.join(", ")));
+fn emit_moo_parts(out:&mut String, library:&str, abi:&str, name:&str, foreign:&[String], args:&[String], ret:&str, consumes:bool, guard:&str, calls:&[String], runtime:Option<&str>) {
+    out.push_str(&format!("\n@bibliothek(\"{library}\")\n"));
+    if let Some(runtime)=runtime {
+        out.push_str(&format!("@bibliothek(\"{runtime}\")\n"));
+    }
+    out.push_str(&format!("extern \"C\" funktion {abi}({}) -> {ret}\n\n@nativ\n{}funktion {name}({}) -> {ret}:\n{guard}    unsicher:\n        setze wert: {ret} auf {abi}({})\n        gib_zurück wert\n",foreign.join(", "),if consumes {"@verbraucht(1)\n"}else{""},args.join(", "),calls.join(", ")));
 }

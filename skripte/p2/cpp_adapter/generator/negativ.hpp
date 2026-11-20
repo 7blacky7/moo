@@ -10,4 +10,7 @@ struct Virtuell { Virtuell(); virtual int wert(); };
 struct Standardarg { Standardarg(); int wert(int n = 3); };
 struct Statisch { Statisch(); static int wert(); };
 struct OhneKonstruktor { int wert(); };
+struct A { A(); int b_m_c(); };
+struct A_m_b { A_m_b(); int c(); };
+
 struct Privat { private: Privat(); };

@@ -116,7 +116,6 @@ jobs:
             zlib
             libxml2
             libxml2-devel
-            jq
           cache-environment: true
 
       - name: Configure MSVC developer environment
