@@ -29,6 +29,8 @@
 #   scripts/kernel-smoke.sh [pfad/zur/kernel.moos]
 #   (Default: beispiele/kernel/hallo_kern.moos)
 #   MOO_BIN=... ueberschreibt den Compiler-Pfad.
+#   MOO_KERNEL_GRUB_DIR und MOO_KERNEL_BIOS legen die GRUB-Plattform und das BIOS fest.
+#   MOO_KERNEL_OUT=<dir> behaelt ELF, ISO und Bootlogs fuer CI und Reproduktion.
 #
 # EXIT-CODES: 0 = alle Phasen gruen ODER QEMU sauber geskippt; 1 = Fehler.
 # run_all.sh bleibt QEMU-/GPU-frei — dieses Script ist die separate Schiene.
@@ -40,8 +42,13 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MOO_BIN="${MOO_BIN:-$ROOT/compiler/target/release/moo-compiler}"
 KERNEL_SRC="${1:-$ROOT/beispiele/kernel/hallo_kern.moos}"
 
-OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_kernel_smoke.XXXXXX")"
-trap 'rm -rf "$OUT"' EXIT
+OUT="${MOO_KERNEL_OUT:-}"
+if [ -n "$OUT" ]; then
+  mkdir -p "$OUT" || exit 1
+else
+  OUT="$(mktemp -d "${TMPDIR:-/tmp}/moo_kernel_smoke.XXXXXX")" || exit 1
+  trap 'rm -rf "$OUT"' EXIT
+fi
 ELF="$OUT/hallo_kern.elf"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -166,32 +173,59 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
 fi
 
 ISO_DIR="$OUT/iso"
-mkdir -p "$ISO_DIR/boot/grub"
-cp "$ELF" "$ISO_DIR/boot/hallo_kern.elf"
+mkdir -p "$ISO_DIR/boot/grub" || fail "ISO-Verzeichnis"
+cp -- "$ELF" "$ISO_DIR/boot/hallo_kern.elf" || fail "Kern ins ISO-Verzeichnis kopieren"
 cat > "$ISO_DIR/boot/grub/grub.cfg" <<'EOF'
+insmod serial
+serial --unit=0 --speed=115200
+terminal_output serial
 set timeout=0
 set default=0
 menuentry "moo-kernel" {
+    echo MOO-GRUB-MULTIBOOT2
     multiboot2 /boot/hallo_kern.elf
     boot
 }
 EOF
 
-grub-mkrescue -o "$OUT/moo.iso" "$ISO_DIR" >"$OUT/grub.log" 2>&1 \
+GRUB_PLATFORM=()
+if [ -n "${MOO_KERNEL_GRUB_DIR:-}" ]; then
+  [ -r "$MOO_KERNEL_GRUB_DIR/modinfo.sh" ] || fail "GRUB-Plattform fehlt: $MOO_KERNEL_GRUB_DIR"
+  GRUB_PLATFORM=(-d "$MOO_KERNEL_GRUB_DIR")
+fi
+grub-mkrescue "${GRUB_PLATFORM[@]}" -o "$OUT/moo.iso" "$ISO_DIR" >"$OUT/grub.log" 2>&1 \
   || { sed 's/^/      | /' "$OUT/grub.log"; fail "grub-mkrescue fehlgeschlagen"; }
 
 SERIAL_LOG="$OUT/serial.log"
-# Der Kernel endet in cli/hlt — QEMU laeuft weiter, timeout (rc 124) ist erwartet.
-QEMU_ACCEL=()
-[ "${MOO_KERNEL_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
-timeout --foreground 25s qemu-system-x86_64 "${QEMU_ACCEL[@]}" \
-    -cdrom "$OUT/moo.iso" -m 128M \
-    -display none -no-reboot -serial stdio \
-    > "$SERIAL_LOG" 2>&1
+QEMU_LOG="$OUT/qemu.log"
+RESET_LOG="$OUT/qemu-reset.log"
+: >"$SERIAL_LOG" || fail "Serielles Log kann nicht angelegt werden"
+: >"$RESET_LOG" || fail "Reset-Log kann nicht angelegt werden"
+QEMU_BIOS=()
+if [ -n "${MOO_KERNEL_BIOS:-}" ]; then
+  [ -r "$MOO_KERNEL_BIOS" ] || fail "BIOS-Image fehlt: $MOO_KERNEL_BIOS"
+  QEMU_BIOS=(-bios "$MOO_KERNEL_BIOS")
+fi
+# Bei einem Kernel in cli/hlt ist der Timeout (rc 124) erwartet.
+QEMU_ACCEL=(-accel tcg)
+[ "${MOO_KERNEL_KVM:-0}" != 1 ] || QEMU_ACCEL=(-enable-kvm -cpu host)
+timeout --foreground 25s qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${QEMU_BIOS[@]}" \
+    -boot order=d -nic none -cdrom "$OUT/moo.iso" -m 128M \
+    -display none -no-reboot -monitor none -serial "file:$SERIAL_LOG" \
+    -d cpu_reset -D "$RESET_LOG" >"$QEMU_LOG" 2>&1
 QEMU_RC=$?
+
+boot_fehler() {
+  printf '      QEMU rc=%s\n' "$QEMU_RC"
+  for log in "$OUT/grub.log" "$QEMU_LOG" "$RESET_LOG" "$SERIAL_LOG"; do
+    printf '      %s\n' "$log"
+    tail -30 "$log" | sed 's/^/      | /'
+  done
+  fail "$1"
+}
+
 if [ "$QEMU_RC" -ne 0 ] && [ "$QEMU_RC" -ne 124 ]; then
-  sed 's/^/      | /' "$SERIAL_LOG" | tail -30
-  fail "qemu-system-x86_64 rc=$QEMU_RC (weder 0 noch timeout)"
+  boot_fehler "qemu-system-x86_64 beendet"
 fi
 
 if [ -n "${KERNEL_MARKER:-}" ]; then
@@ -199,12 +233,12 @@ if [ -n "${KERNEL_MARKER:-}" ]; then
   read -r -a MARKER <<<"$KERNEL_MARKER"
   for m in "${MARKER[@]}"; do
     tr -d '\r' <"$SERIAL_LOG" | grep -Eq "^${m}\$" \
-      || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker $m fehlt auf seriell"; }
+      || boot_fehler "Marker $m fehlt auf seriell"
     echo "      OK: Marker $m"
   done
 else
-grep -q 'MOO-KERN-OK'       "$SERIAL_LOG" || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker MOO-KERN-OK fehlt auf seriell"; }
-grep -q 'MOO-KERN-TICKS-OK' "$SERIAL_LOG" || { sed 's/^/      | /' "$SERIAL_LOG" | tail -30; fail "Marker MOO-KERN-TICKS-OK fehlt (PIT-Timer zaehlt nicht?)"; }
+grep -q 'MOO-KERN-OK'       "$SERIAL_LOG" || boot_fehler "Marker MOO-KERN-OK fehlt auf seriell"
+grep -q 'MOO-KERN-TICKS-OK' "$SERIAL_LOG" || boot_fehler "Marker MOO-KERN-TICKS-OK fehlt (PIT-Timer zaehlt nicht?)"
 
 echo "      OK: beide Marker auf seriell — Kernel bootet, Timer zaehlt."
 echo "      Serielle Ausgabe (Auszug):"

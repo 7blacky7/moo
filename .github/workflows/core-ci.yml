@@ -92,7 +92,7 @@ jobs:
             libglfw3-dev libgl1-mesa-dev libvulkan-dev glslang-tools \
             libsdl2-dev libsdl2-image-dev \
             libsqlite3-dev libssl-dev pkg-config python3 ripgrep \
-            qemu-system-x86 grub-common grub-pc-bin xorriso mtools
+            qemu-system-x86 seabios grub-common grub-pc-bin xorriso
           echo "LLVM_SYS_221_PREFIX=/usr/lib/llvm-22" >> "$GITHUB_ENV"
           echo "LLVM_SYS_221_STRICT_VERSIONING=1" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
@@ -307,8 +307,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v mformat
+          qemu-system-x86_64 --version
           MOO_BIN="$GITHUB_WORKSPACE/compiler/target/release/moo-compiler" \
+            MOO_KERNEL_GRUB_DIR=/usr/lib/grub/i386-pc \
+            MOO_KERNEL_BIOS=/usr/share/seabios/bios-256k.bin MOO_KERNEL_OUT=build/p2-bare-qemu \
             bash scripts/kernel-smoke.sh 2>&1 | tee p2-bare-qemu.log
           grep -Fx '# ERGEBNIS: ALLE 4 Phasen gruen.' p2-bare-qemu.log
 
@@ -353,6 +355,11 @@ jobs:
             p2-native-abi-linux.log
             p2-aarch64-cross.log
             p2-bare-qemu.log
+            build/p2-bare-qemu/hallo_kern.elf
+            build/p2-bare-qemu/grub.log
+            build/p2-bare-qemu/qemu.log
+            build/p2-bare-qemu/qemu-reset.log
+            build/p2-bare-qemu/serial.log
             build/p2/aarch64-ffi/file-headers.txt
             build/p2-msvc-zweige/
             thread-start-ci-${{ runner.os }}.log
