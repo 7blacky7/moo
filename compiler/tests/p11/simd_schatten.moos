@@ -1,0 +1,4 @@
+importiere "simd_schatten_probe"
+# Bei unerwartetem nativem Fehler soll die Probe abbrechen.
+unsicher:
+    zeige simd_schatten_probe()

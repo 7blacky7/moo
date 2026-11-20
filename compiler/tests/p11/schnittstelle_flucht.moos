@@ -1,0 +1,9 @@
+importiere "schnittstelle_definitionen"
+
+@nativ
+funktion ungueltige_probe() -> ptr[dyn Speicher]:
+    unsicher:
+        setze a: PlusSpeicher auf PlusSpeicher(1)
+        setze p: ptr[PlusSpeicher] auf zeiger(adresse_von(a))
+        setze objekt: ptr[dyn Speicher] auf p
+        gib_zurück objekt

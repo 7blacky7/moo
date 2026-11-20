@@ -1,0 +1,19 @@
+[tasks.schnittstellen]
+description = "P11-T2: native Schnittstellen, Vtable-IR und negative Typverträge"
+run = "bash schnittstellen.sh"
+
+[tasks.datensicht]
+description = "P11-T3: Endian-Felder, CBW/CDB und sichere Strukturansichten"
+run = "bash datensicht.sh"
+
+[tasks.ergebnis]
+description = "P11-T4: heapfreie native Ergebnisse, Must-use, Weitergabe und ABI"
+run = "bash ergebnis.sh"
+
+[tasks.simd]
+description = "P11-T19: Ganzzahl-SIMD, ISA-Varianten und vollständiges Byte-Orakel"
+run = "bash simd.sh"
+
+[tasks.simd-winrm]
+description = "P11-T19: alle Bytepaare mit echtem GFNI128/256 auf Windows-N100"
+run = "bash simd-winrm.sh"

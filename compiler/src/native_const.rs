@@ -132,7 +132,7 @@ fn konstanten_ausdruck(context: &Context, ty: &TypeRef, value: &Expr) -> Result<
 /// Werten wird mit derselben Regel wie der Lowerer gefaltet: b-fache
 /// Multiplikation mit Wrap modulo 2^N, 0 ** 0 = 1, negativer Exponent
 /// (signed) ist ein Compilefehler.
-fn literal_value(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
+pub(crate) fn literal_value(context: &Context, expr: &Expr, ty: NType) -> Result<i128, String> {
     ganz_ausdruck(context, expr, ty, false)
 }
 
@@ -295,6 +295,7 @@ pub(crate) struct Folder<'a, 'ctx> {
     /// P2-T48 B1: skalare Float-/bool-Konstanten als typisierter Ausdruck
     /// (als(T, Literal) bzw. wahr/falsch) fuer @nativ-Koerper.
     ausdruecke: HashMap<String, Expr>,
+    pro_kern: HashMap<String, (u64, TypeRef)>,
 }
 
 impl<'a, 'ctx> Folder<'a, 'ctx> {
@@ -328,10 +329,80 @@ impl<'a, 'ctx> Folder<'a, 'ctx> {
         }
     }
 
+    /// Der bestehende @pro_kern-ABI-Aggregattyp bestimmt auch ASM-Offsets.
+    /// Nur statisch adressierbare CPU-lokale Objekte sind hier zulässig.
+    fn pro_kern_lvalue(&self, expr: &Expr, shadow: &HashSet<String>) -> Result<(u64, TypeRef), String> {
+        match expr {
+            Expr::Identifier(name) if !shadow.contains(name) =>
+                self.pro_kern.get(name).cloned()
+                    .ok_or_else(|| format!("pro_kern_versatz: '{name}' ist kein @pro_kern statisch-Objekt")),
+            Expr::PropertyAccess { object, property } => {
+                let (basis, ty) = self.pro_kern_lvalue(object, shadow)?;
+                let TypeKind::Name(name) = &ty.kind else {
+                    return Err("pro_kern_versatz: Feldzugriff erwartet eine native Struktur".into());
+                };
+                let layout = self.registry.layout(name)
+                    .ok_or_else(|| format!("pro_kern_versatz: unbekannte Struktur '{name}'"))?;
+                if !layout.bitfelder.is_empty() {
+                    return Err("pro_kern_versatz: Bitbereiche haben keinen eigenen Byteoffset".into());
+                }
+                let index = layout.fields.iter().position(|(name, _)| name == property)
+                    .ok_or_else(|| format!("pro_kern_versatz: '{name}' hat kein Feld '{property}'"))?;
+                let offset = basis.checked_add(layout.offsets[index])
+                    .ok_or("pro_kern_versatz: Offsetüberlauf")?;
+                Ok((offset, layout.fields[index].1.clone()))
+            }
+            Expr::IndexAccess { object, index } => {
+                let (basis, ty) = self.pro_kern_lvalue(object, shadow)?;
+                let TypeKind::Array { element, length } = &ty.kind else {
+                    return Err("pro_kern_versatz: Indexzugriff erwartet ein festes Array".into());
+                };
+                let index = literal_value(self.context, &self.expr(index, shadow)?, NType::U64)
+                    .map_err(|_| "pro_kern_versatz: Index muss eine nichtnegative Ganzzahlkonstante sein")? as u64;
+                let length = literal_value(self.context, length, NType::U64)? as u64;
+                if index >= length {
+                    return Err("pro_kern_versatz: Arrayindex außerhalb der deklarierten Länge".into());
+                }
+                let llvm = self.registry.field_type(self.context, self.target, element)?;
+                let offset = index.checked_mul(self.target.get_abi_size(&llvm))
+                    .and_then(|n| basis.checked_add(n)).ok_or("pro_kern_versatz: Offsetüberlauf")?;
+                Ok((offset, element.as_ref().clone()))
+            }
+            _ => Err("pro_kern_versatz erwartet ein unverschattetes @pro_kern statisch-Objekt, dessen Feld oder konstanten Arrayindex".into()),
+        }
+    }
+
     fn expr(&self, expr: &Expr, shadow: &HashSet<String>) -> Result<Expr, String> {
         let fold = |e: &Expr| self.expr(e, shadow);
         let boxed = |e: &Expr| self.expr(e, shadow).map(Box::new);
         Ok(match expr {
+            Expr::FunctionCall { name, args, .. } if name == "pro_kern_versatz" => {
+                let [arg] = args.as_slice() else {
+                    return Err("pro_kern_versatz erwartet genau ein CPU-lokales Objekt".into());
+                };
+                number(i128::from(self.pro_kern_lvalue(arg, shadow)?.0))
+            }
+            Expr::FunctionCall { name, args, zeile, spalten, type_args } if name == "assembler" => {
+                let args = args.iter().map(|arg| match arg {
+                    Expr::Dict(pairs) => Ok(Expr::Dict(pairs.iter().map(|(key, value)| {
+                        let input = matches!(key, Expr::String(k) if matches!(k.as_str(), "eingaenge" | "eingänge" | "inputs"));
+                        let value = if input {
+                            match value {
+                                Expr::Dict(items) => Expr::Dict(items.iter().map(|(constraint, expr)| {
+                                    let value = if matches!(constraint, Expr::String(c) if c == "i") {
+                                        fold(expr)?
+                                    } else { expr.clone() };
+                                    Ok((constraint.clone(), value))
+                                }).collect::<Result<_, String>>()?),
+                                _ => value.clone(),
+                            }
+                        } else { value.clone() };
+                        Ok((key.clone(), value))
+                    }).collect::<Result<_, String>>()?)),
+                    _ => Ok(arg.clone()),
+                }).collect::<Result<_, String>>()?;
+                Expr::FunctionCall { name: name.clone(), args, zeile: *zeile, spalten: *spalten, type_args: type_args.clone() }
+            }
             // P7-T5: adresse_von(NAME) nimmt die Adresse, nicht den gefalteten Wert.
             Expr::FunctionCall { name, .. } if name == "adresse_von" || name == "address_of" => expr.clone(),
             Expr::FunctionCall { name, args, zeile, spalten, type_args } => match query(name) {
@@ -454,7 +525,25 @@ pub(crate) fn fold_program<'ctx>(
         Some(target) if has_native => target,
         _ => return Ok(program.clone()),
     };
-    let mut folder = Folder { context, target, registry, scalars: HashMap::new(), ausdruecke: HashMap::new() };
+    let mut folder = Folder { context, target, registry, scalars: HashMap::new(), ausdruecke: HashMap::new(), pro_kern: HashMap::new() };
+    // Genau dieselbe Reihenfolge und dasselbe ABI-Padding wie emit_constants.
+    let pro_kern: Vec<_> = program.statements.iter().filter_map(|stmt| match stmt {
+        Stmt::NativeConst { name, ty, value: Some(value), decorators, .. }
+            if decorators.iter().any(|d| d.name == "pro_kern") =>
+                Some((name.clone(), text_length(ty, value))),
+        _ => None,
+    }).collect();
+    if !pro_kern.is_empty() {
+        let types = pro_kern.iter().map(|(_, ty)| registry.field_type(context, target, ty))
+            .collect::<Result<Vec<_>, _>>()?;
+        let layout = context.struct_type(&types, false);
+        for (index, (name, ty)) in pro_kern.into_iter().enumerate() {
+            let offset = target.offset_of_element(&layout, index as u32)
+                .ok_or("pro_kern_versatz: ABI-Offset fehlt")?;
+            folder.pro_kern.insert(name, (offset, ty));
+        }
+    }
+
     let empty = HashSet::new();
     let mut names = HashSet::new();
     for stmt in &program.statements {

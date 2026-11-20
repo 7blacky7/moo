@@ -1,0 +1,11 @@
+struktur u8x16:
+    wert: u64
+
+@nativ
+funktion simd_mischen(x: u64) -> u64:
+    gib_zurück x + 5
+
+@nativ
+funktion simd_schatten_probe() -> u64:
+    setze a: u8x16 auf u8x16(7)
+    gib_zurück a.wert + simd_mischen(2)

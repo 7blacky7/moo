@@ -1,0 +1,5 @@
+@nativ
+@nackt
+funktion falsch_asm(a: u64) -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq $0, %rax; retq", eingaenge={"r": a}, clobber=[])

@@ -18,6 +18,9 @@ Program {
                 ),
             ],
             decorators: [],
+            bitfelder: [],
+            interfaces: [],
+            methods: [],
         },
         FunctionDef {
             zeile: 2,

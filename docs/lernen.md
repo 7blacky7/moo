@@ -1402,6 +1402,209 @@ Laufzeitfehler die CPU sofort an (`llvm.trap`), damit kein falscher Wert
 weiterverwendet wird. Die bestehenden Builtins `als_u8` bis `als_u64` für
 dynamischen Code bleiben unverändert (Bitmuster-Konversion).
 
+### Ganzzahlvektoren und `@simd`
+
+Auf x86-64 stehen in typisierten nativen Funktionen `u8x16`, `u8x32`
+und `u64x4` bereit. Die Zahl hinter `x` ist die Anzahl der Bahnen.
+Ein Konstruktor ohne Argument setzt alle Bahnen auf null; ein skalares
+Argument wird einmal ausgewertet und auf alle Bahnen verteilt.
+Eine Liste oder einzelne Argumente müssen genau die Bahnanzahl haben.
+
+```moo
+@nativ
+@simd
+funktion byte_summe(a: u8x16, b: u8x16) -> u8x16:
+    gib_zurück a + b
+```
+
+`+ - *`, unäres Minus sowie `& | ^ ~` arbeiten bahnweise.
+Ganzzahlrechnungen wrappen in der jeweiligen Bahnbreite:
+`u8x16(250) + u8x16(9)` enthält sechzehnmal `3`.
+Beide Operanden brauchen denselben Vektortyp.
+`==` und `!=` vergleichen den gesamten Wert und liefern `bool`.
+Über `v[i]` liest oder schreibt man eine einzelne Bahn; der Index ist
+`u64` und wird gegen die Bahnanzahl geprüft.
+
+`simd_mischen(quelle, maske)` unterstützt beide Bytevektortypen.
+Jedes Maskenbyte wählt mit seinen unteren vier Bits ein Byte innerhalb
+derselben 16-Byte-Hälfte; gesetztes Bit 7 erzeugt null.
+Bei `u8x32` bleiben die beiden Hälften getrennt.
+
+`simd_gf256_mal(a, b)` multipliziert Bytevektoren bahnweise im endlichen
+Körper mit Polynom `x^8+x^4+x^3+x^2+1` (`0x11D`), etwa `128 * 2 = 29`.
+Die skalare Variante und die GFNI-Variante verwenden dasselbe Polynom.
+
+`@simd` wählt zur Laufzeit eine verfügbare skalare, SSSE3-, AVX2-
+oder GFNI-Variante. AVX benötigt auch die Freigabe durch das Betriebssystem.
+Mit `@simd("skalar")`, `@simd("ssse3")`, `@simd("avx2")`,
+`@simd("gfni128")` oder `@simd("gfni")` begrenzt man die erlaubte ISA.
+`gfni128` verwendet höchstens 128-Bit-Instruktionen, auch auf AVX2-CPUs.
+Fehlt ein Merkmal, bleibt die passende Rückfallvariante verfügbar.
+
+Im Bare-/UEFI-Profil braucht Ganzzahlvektorrechnung `@simd`.
+Der Funktionsrahmen sichert den Erweiterungszustand vor der Rechnung
+und stellt ihn bei Rückgaben wieder her. Die Kernel-Timer sichern
+auch den YMM-Zustand bei Präemption. Cleanup-Aufrufe behalten das ISA-Profil.
+Der Bereich ist für Ganzzahlrechnung vorgesehen; skalare
+Fließkommaparameter und Fließkommarechnung erhalten eine Diagnose.
+Assembler innerhalb von `unsicher:` braucht eine eigene CPU-Prüfung.
+
+Vektorwerte nutzen die vorhandene native Struktur-Speicher-ABI;
+bei C-Aufrufen gelten die Strukturregeln. Gleichnamige eigene Typen und
+Funktionen behalten Vorrang vor den eingebauten Namen.
+
+### Native Schnittstellen
+
+Eine native Struktur kann eine `schnittstelle` mit vollständig typisierten
+Methoden `implementiert` deklarieren. Der erste Parameter ist der Empfänger;
+im Strukturblock erhält `selbst` automatisch den Typ `ptr[Strukturname]`.
+Die Methoden im Strukturblock sind nativ:
+
+```moo
+schnittstelle Zaehler:
+    funktion wert(selbst, zusatz: u64) -> u64
+
+struktur Basis implementiert Zaehler:
+    start: u64
+    funktion wert(selbst, zusatz: u64) -> u64:
+        unsicher:
+            gib_zurück selbst.start + zusatz
+
+@nativ
+funktion benutze(p: ptr[dyn Zaehler]) -> u64:
+    unsicher:
+        gib_zurück p.wert(5)
+
+@nativ
+funktion probe() -> u64:
+    unsicher:
+        setze basis: Basis auf Basis(20)
+        setze p: ptr[Basis] auf zeiger(adresse_von(basis))
+        gib_zurück benutze(p)   # 25
+```
+
+Ein `ptr[Basis]` ruft die bekannte Implementierung direkt auf.
+`ptr[dyn Zaehler]` enthält Daten- und Vtablezeiger; die Vtable enthält
+typisierte `fn[sysv64]`-Einträge. Die Übergabe eines passenden `ptr[Basis]`
+an einen solchen Parameter oder eine entsprechend typisierte Variable erzeugt
+die geliehene Ansicht. Dieselbe Interfacevariable kann anschließend auf eine
+andere Implementierung zeigen.
+
+Die Parameteranzahl, Ganzzahlbreite und Vorzeichen, vollständige Zeigerziele
+und der Rückgabetyp müssen mit der Schnittstelle übereinstimmen. Fehlende
+Methoden und Konvertierungen ohne registrierte Implementierung sind
+Compilefehler. Die Vtable-Signaturen verwenden die vorhandenen SysV-C-Werttypen:
+Skalare, Zeiger und native Strukturwerte.
+
+Das Dateneigentum bleibt beim Aufrufer. Er hält den Speicher für jeden Zugriff
+über die Ansicht am Leben. Methoden werden auf `ptr[T]` oder `ptr[dyn S]`
+aufgerufen; Speicherzugriffe im Methodenkörper stehen wie gewohnt in
+`unsicher:`. Native Schnittstellen mit SysV-Vtable sind für x86-64 vorgesehen.
+
+### Native Ergebniswerte
+
+`ergebnis[T, F]` ist ein nativer Wert mit Erfolgsnutzlast `T` oder
+Fehlernutzlast `F`. Beide Typen sind feste native Werttypen; `void` ist für
+eine Variante ohne Nutzwert erlaubt. Der Compiler erzeugt den Speicher im
+Aufrufrahmen. Das Ergebnis selbst benötigt keine Heapallokation.
+
+```moo
+@nativ
+funktion eingabe_pruefen(x: u64) -> ergebnis[u64, u32]:
+    wenn x > 1000:
+        gib_zurück fehlschlag(1)
+    gib_zurück erfolg(x)
+
+@nativ
+funktion naechster_wert(x: u64) -> ergebnis[u64, u32]:
+    setze wert: u64 auf weitergeben(eingabe_pruefen(x))
+    gib_zurück erfolg(wert + 1)
+
+@nativ
+funktion auswerten(x: u64) -> u64:
+    setze r: ergebnis[u64, u32] auf naechster_wert(x)
+    wenn ist_erfolg(r):
+        gib_zurück ergebnis_wert(r)
+    gib_zurück als(u64, ergebnis_fehler(r))
+```
+
+`erfolg(wert)` und `fehlschlag(fehler)` erhalten ihren vollständigen Ergebnistyp
+aus der Rückgabe- oder Variablenannotation. Für `void` wird der entsprechende
+Konstruktor ohne Argument aufgerufen, etwa `erfolg()`.
+`ist_erfolg(r)` prüft die Variante. `ergebnis_wert(r)` und
+`ergebnis_fehler(r)` packen den zugehörigen Nutzwert aus; die falsche Variante
+führt zum nativen Fehlerpfad. Die internen Felder des Ergebnisses sind opak.
+
+`weitergeben(r)` liefert bei Erfolg den Nutzwert. Bei Fehler kehrt die
+aktuelle Funktion sofort mit diesem Fehlerwert zurück und führt dabei ihre
+registrierten `aufräumen`-Aktionen aus. Der Fehlertyp muss exakt mit dem
+Fehlertyp der aktuellen Funktion übereinstimmen. Der Erfolgstyp darf sich
+ändern. Bei `ergebnis[void, F]` steht die Weitergabe als eigene Anweisung.
+
+Ergebniswerte müssen auf jedem folgenden Kontrollflusspfad geprüft,
+ausgepackt oder weitergegeben werden. Verwerfen eines Aufrufresultats,
+ungelesenes Überschreiben und ein unbenutztes Ergebnis in `aufräumen` sind
+Compilefehler. Eine Nutzung ausschließlich im Schleifenkörper genügt nicht,
+weil die Schleife null Iterationen ausführen kann. Die Leihprüfung gilt auch
+für Zeiger in beiden Varianten und für den impliziten Fehlerrückweg der
+Weitergabe. Ergebniswerte werden innerhalb typisierter `@nativ`-Körper
+verarbeitet. Der dynamische MooValue-Adapter führt kein implizites Boxing aus.
+
+**Layout und ABI:** Der Compiler senkt den Typ auf eine private native Struktur
+ab: zuerst ein `u64`-Tag (`0` für Erfolg, `1` für Fehler), danach die
+Erfolgs- und Fehlernutzlast in dieser Reihenfolge. Für `void` entfällt das
+entsprechende Feld. Inaktive Nutzlastfelder werden mit null initialisiert;
+Größe, Padding und Ausrichtung folgen dem nativen Strukturlayout.
+
+Moo-interne Aufrufe verwenden den vorhandenen Strukturwertvertrag: Der Aufrufer
+stellt einen exklusiven `sret`-Puffer, dessen Zeiger der erste Parameter ist
+(x86-64 SysV: `RDI`; Win64: `RCX`). Die Funktion gibt auf LLVM-Ebene
+`void` zurück. Strukturparameter werden über exklusive Aufruferkopien
+übergeben. Schnittstellen-Vtables und `@rueckruf` verwenden die vorhandenen
+typisierten C-ABI-Thunks. Beispielsweise ist `ergebnis[u32, u32]` 16 Byte
+groß: SysV führt den C-Rückgabewert in `RAX/RDX`, Win64 verwendet einen
+Ergebnispuffer. `ergebnis[u64, u32]` benötigt 24 Byte und verwendet auch
+im SysV-C-ABI einen Ergebnispuffer.
+
+### Endian-Felder und geprüfte Datenansichten
+
+Native Strukturen können `u16be`, `u16le`, `u32be`, `u32le`, `u64be`
+und `u64le` als Feldtypen verwenden. Der Feldzugriff liefert bzw. erwartet
+den entsprechenden normalen Ganzzahltyp, beispielsweise `u32` bei `u32be`.
+Konstruktoren und Feldzuweisungen kodieren die Bytes; Lesen dekodiert sie.
+Die Bytefolge hängt damit nicht von der Rechnerarchitektur ab. Für ein
+Wireformat ohne Padding wird die Struktur ausdrücklich mit `@gepackt` versehen.
+
+```moo
+@gepackt
+struktur Paketkopf:
+    laenge: u16be
+    kennung: u32le
+
+@nativ
+funktion paket_schreiben(bytes: puffer[u8], versatz: u64) -> u32:
+    setze kopf: puffer[Paketkopf] auf sicht(bytes, Paketkopf, versatz)
+    kopf[0].laenge = 512
+    kopf[0].kennung = 0x11223344
+    gib_zurück kopf[0].kennung
+```
+
+`sicht(bytes, Strukturtyp, versatz)` liefert eine geliehene
+`puffer[Strukturtyp]`-Ansicht mit genau einem Element. Vor der Erstellung
+prüft der Compiler zur Laufzeit den vollständigen Strukturbereich gegen die
+Bytepufferlänge, auch bei sehr großen Versätzen. Ein Grenzverstoß folgt dem
+nativen Fehlerpfad und kann im gehosteten Aufrufer mit `versuche/fange`
+behandelt werden. Ansicht und Feldzugriffe benötigen kein `unsicher:`;
+die Erstellung einer Byteansicht aus einem rohen Zeiger benötigt es weiterhin.
+
+Der Speicher gehört weiterhin dem Besitzer des Bytepuffers und muss während
+aller Zugriffe leben. Ansichten auf lokale Arrays dürfen die Funktion nicht
+verlassen. Für sichere Byteansichten sind Bytefelder, Endian-Felder, eingebettete
+solche Strukturen und Bytearrays erlaubt. Zeiger, `bool`, `atom[T]` und
+hostabhängige Wortfelder werden abgewiesen. Endianbezeichnungen sind native
+Speicherfeldtypen; sie sind keine eigenständigen Rechentypen oder Casts und
+stehen derzeit nicht unmittelbar als Arrayelementtyp zur Verfügung.
+
 ### Hardware-Syntax (Bare-Metal/UEFI)
 
 Hardwarezugriff steht typisiert in `@nativ`-Funktionen, innerhalb von `unsicher:`:

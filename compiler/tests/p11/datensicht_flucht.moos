@@ -1,0 +1,5 @@
+importiere "datensicht_typen"
+@nativ
+funktion datensicht_entkommt() -> puffer[DatensichtWort]:
+    setze bytes: [u8; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+    gib_zurück sicht(byteansicht(bytes), DatensichtWort, 0)

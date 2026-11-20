@@ -1,0 +1,22 @@
+# Zwei echte Implementierungen, identische native Methodensignaturen.
+schnittstelle Speicher:
+    funktion lesen(selbst, index: u64) -> u64
+    funktion schreiben(selbst, index: u64, wert: u64) -> void
+
+struktur PlusSpeicher implementiert Speicher:
+    basis: u64
+    funktion lesen(selbst, index: u64) -> u64:
+        unsicher:
+            gib_zurück selbst.basis + index
+    funktion schreiben(selbst, index: u64, wert: u64) -> void:
+        unsicher:
+            selbst.basis = wert - index
+
+struktur XorSpeicher implementiert Speicher:
+    basis: u64
+    funktion lesen(selbst, index: u64) -> u64:
+        unsicher:
+            gib_zurück selbst.basis ^ index
+    funktion schreiben(selbst, index: u64, wert: u64) -> void:
+        unsicher:
+            selbst.basis = wert ^ index

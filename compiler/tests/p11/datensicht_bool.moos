@@ -1,0 +1,6 @@
+struktur DatensichtBool:
+    wert: bool
+@nativ
+funktion datensicht_bool(bytes: puffer[u8]) -> u64:
+    setze p: puffer[DatensichtBool] auf sicht(bytes, DatensichtBool, 0)
+    gib_zurück 0

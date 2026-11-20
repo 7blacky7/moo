@@ -568,3 +568,72 @@ pub fn ergebnis() -> Result<(), String> {
         n => Err(format!("{n} unbehandelte Fehlerpfade (--typ-streng)")),
     }
 }
+
+
+/// Native Ergebniswerte dürfen weder verworfen noch ungelesen überschrieben
+/// werden. Rückwärtsanalyse: eine Zuweisung braucht auf jedem Folgepfad einen
+/// Lese-/Weitergabezugriff. Schleifen dürfen auch null Iterationen ausführen.
+pub(crate) fn native_ergebnis_nutzung(
+    body: &[Stmt], bindings: &std::collections::HashSet<String>, parameters: &[String],
+) -> Result<(), String> {
+    use std::collections::HashSet;
+    fn read(e: &Expr, used: &mut HashSet<String>) {
+        crate::typpruefung::native_gelesene_namen(e, used);
+    }
+    fn block(body: &[Stmt], bindings: &HashSet<String>, mut used: HashSet<String>)
+        -> Result<HashSet<String>, String>
+    {
+        for stmt in body.iter().rev() {
+            match stmt {
+                Stmt::Assignment { name, value, zeile, .. }
+                | Stmt::ConstAssignment { name, value, zeile, .. } => {
+                    if bindings.contains(name) && !used.remove(name) {
+                        return Err(crate::diagnose::vormerken("M-C000", *zeile,
+                            format!("Unbenutztes ergebnis '{name}': auf jedem Pfad prüfen, auspacken oder weitergeben")));
+                    }
+                    read(value, &mut used);
+                }
+                Stmt::Return(value, _) => {
+                    used.clear();
+                    if let Some(e) = value { read(e, &mut used); }
+                }
+                Stmt::If { condition, body, else_body, .. } => {
+                    let yes = block(body, bindings, used.clone())?;
+                    let no = block(else_body, bindings, used.clone())?;
+                    used = yes.intersection(&no).cloned().collect();
+                    read(condition, &mut used);
+                }
+                Stmt::While { condition, body, .. } => {
+                    block(body, bindings, HashSet::new())?;
+                    read(condition, &mut used);
+                }
+                Stmt::For { iterable, body, .. } => {
+                    block(body, bindings, HashSet::new())?;
+                    read(iterable, &mut used);
+                }
+                Stmt::UnsafeBlock { body, .. } => used = block(body, bindings, used)?,
+                Stmt::Break(_) | Stmt::Continue(_) => used.clear(),
+                Stmt::Expression(e, _) | Stmt::Defer(e, _) | Stmt::Show(e, _)
+                | Stmt::CompoundAssignment { value: e, .. } => read(e, &mut used),
+                Stmt::PropertyAssignment { object, value, .. } => {
+                    read(object, &mut used); read(value, &mut used);
+                }
+                Stmt::IndexAssignment { object, index, value, .. } => {
+                    read(object, &mut used); read(index, &mut used); read(value, &mut used);
+                }
+                _ => {}
+            }
+        }
+        Ok(used)
+    }
+    if bindings.is_empty() { return Ok(()); }
+    let used = block(body, bindings, HashSet::new())?;
+    for param in parameters {
+        if bindings.contains(param) && !used.contains(param) {
+            return Err(crate::diagnose::vormerken("M-C000", 0,
+                format!("Unbenutztes ergebnis-Parameter '{param}': auf jedem Pfad prüfen, auspacken oder weitergeben")));
+        }
+    }
+    Ok(())
+}
+

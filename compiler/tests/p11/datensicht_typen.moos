@@ -1,0 +1,44 @@
+# Wireformate aus USB-MSC: CBW31, READ(10)10 und READ(16)16 Bytes.
+@gepackt
+struktur DatensichtCbw:
+    signatur: u32le
+    marke: u32le
+    laenge: u32le
+    flags: u8
+    lun: u8
+    breite: u8
+    cdb: [u8; 16]
+
+@gepackt
+struktur DatensichtCdb10:
+    op: u8
+    flags: u8
+    lba: u32be
+    gruppe: u8
+    anzahl: u16be
+    steuerung: u8
+
+@gepackt
+struktur DatensichtCdb16:
+    op: u8
+    flags: u8
+    lba: u64be
+    anzahl: u32be
+    gruppe: u8
+    steuerung: u8
+
+@gepackt
+struktur DatensichtRunde:
+    a: u16be
+    b: u16le
+    c: u32be
+    d: u32le
+    e: u64be
+    f: u64le
+
+struktur DatensichtSpeicher:
+    bytes: [u8; 64]
+
+@gepackt
+struktur DatensichtWort:
+    wert: u64le

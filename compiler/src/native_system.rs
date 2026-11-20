@@ -746,6 +746,7 @@ fn freigabe_nutzung(stmt: &Stmt, p: &str, frei: &dyn Fn(&str, usize) -> bool) ->
 pub(crate) fn flucht_verletzung(
     params: &[(String, STy)], body: &[Stmt], ist_struktur: &dyn Fn(&str) -> bool,
     behaelt: &dyn Fn(&str, usize) -> bool,
+    ergebnis_intrinsisch: &dyn Fn(&str) -> bool,
 ) -> Option<(&'static str, String, usize)> {
     let mut pruefung = FluchtPruefung {
         lokal: params.iter().map(|(n, _)| n.clone()).collect(),
@@ -753,16 +754,19 @@ pub(crate) fn flucht_verletzung(
         puffer: params.iter().filter(|(_, t)| matches!(t, STy::Buffer(_) | STy::StrukturPuffer(_)))
             .map(|(n, _)| n.clone()).collect(),
         geliehen: HashMap::new(),
+        erfolg_geliehen: HashMap::new(),
+        fehler_geliehen: HashMap::new(),
         ist_struktur,
         behaelt,
+        ergebnis_intrinsisch,
         adressiert: HashSet::new(),
     };
     pruefung.lokale(body);
     FluchtPruefung::adressen(body, &mut pruefung.adressiert);
     loop {
-        let vorher = pruefung.geliehen.len();
+        let vorher = pruefung.geliehen.len() + pruefung.erfolg_geliehen.len() + pruefung.fehler_geliehen.len();
         pruefung.markiere(body);
-        if pruefung.geliehen.len() == vorher { break; }
+        if pruefung.geliehen.len() + pruefung.erfolg_geliehen.len() + pruefung.fehler_geliehen.len() == vorher { break; }
     }
     let flucht = pruefung.pruefe(body);
     let behalten = pruefung.behalten_fluss(body, &mut HashMap::new()).map(|(g, z)| ("M-M004", g, z));
@@ -777,9 +781,12 @@ struct FluchtPruefung<'a> {
     zeiger: HashSet<String>,
     puffer: HashSet<String>,
     geliehen: HashMap<String, String>,
+    erfolg_geliehen: HashMap<String, String>,
+    fehler_geliehen: HashMap<String, String>,
     ist_struktur: &'a dyn Fn(&str) -> bool,
     /// P2-T98 S5: extern-Parameter mit @behaelt(n) (Name, 0-basiert).
     behaelt: &'a dyn Fn(&str, usize) -> bool,
+    ergebnis_intrinsisch: &'a dyn Fn(&str) -> bool,
     /// P2-T98 S5-Fix: Namen, deren Adresse genommen wird; sie koennen ueber den
     /// Zeiger ueberschrieben werden, M-M004 bleibt fuer sie still.
     adressiert: HashSet<String>,
@@ -859,6 +866,10 @@ impl FluchtPruefung<'_> {
                     if lokal { Some("Byteansicht zeigt in den Rahmen der Funktion".into()) }
                     else { args.iter().find_map(|a| self.quelle(a)) }
                 }
+                "ergebnis_wert" | "weitergeben" if (self.ergebnis_intrinsisch)(name) => args.first().and_then(|a| self.variantenquelle(a, true)),
+                "ergebnis_fehler" if (self.ergebnis_intrinsisch)(name) => args.first().and_then(|a| self.variantenquelle(a, false)),
+                "sicht" => args.first().and_then(|a| self.quelle(a)),
+                "erfolg" | "fehlschlag" if (self.ergebnis_intrinsisch)(name) => args.first().and_then(|a| self.quelle(a)),
                 "puffer_zeiger" | "buffer_pointer" => {
                     let p = args.first().and_then(Self::wurzel).unwrap_or("?");
                     Some(format!("puffer_zeiger({p}) ist nur waehrend des Aufrufs gepinnt"))
@@ -919,16 +930,62 @@ impl FluchtPruefung<'_> {
         }
     }
 
+    /// Ergebnisvarianten getrennt verfolgen: weitergeben kehrt nur mit der
+    /// Fehlernutzlast zurück, die Erfolgsnutzlast bleibt im aktuellen Rahmen.
+    fn variantenquelle(&self, expr: &Expr, erfolg: bool) -> Option<String> {
+        let stand = if erfolg { &self.erfolg_geliehen } else { &self.fehler_geliehen };
+        match expr {
+            Expr::Identifier(n) => stand.get(n).cloned(),
+            Expr::FunctionCall { name, args, .. } if (name == "erfolg" || name == "fehlschlag") && (self.ergebnis_intrinsisch)(name) => {
+                if (name == "erfolg") == erfolg { args.first().and_then(|a| self.quelle(a)) } else { None }
+            }
+            Expr::FunctionCall { name, args, .. } if (self.ist_struktur)(name) =>
+                args.iter().find_map(|a| self.variantenquelle(a, erfolg)),
+            Expr::FunctionCall { name, args, .. } if matches!(name.as_str(), "ergebnis_wert" | "ergebnis_fehler" | "weitergeben") && (self.ergebnis_intrinsisch)(name) =>
+                args.first().and_then(|a| self.quelle(a)),
+            Expr::PropertyAccess { object, .. } | Expr::IndexAccess { object, .. } =>
+                self.variantenquelle(object, erfolg),
+            _ => None,
+        }
+    }
+
+    fn weitergabe_flucht(&self, expr: &Expr) -> Option<String> {
+        let rec = |e: &Expr| self.weitergabe_flucht(e);
+        match expr {
+            Expr::FunctionCall { name, args, .. } => {
+                if name == "weitergeben" && (self.ergebnis_intrinsisch)(name) {
+                    if let Some(q) = args.first().and_then(|a| self.variantenquelle(a, false)) {
+                        return Some(format!("geliehener Zeiger entkommt per weitergeben-Fehlerpfad ({q})"));
+                    }
+                }
+                args.iter().find_map(rec)
+            }
+            Expr::MethodCall { object, args, .. } => rec(object).or_else(|| args.iter().find_map(rec)),
+            Expr::BinaryOp { left, right, .. } => rec(left).or_else(|| rec(right)),
+            Expr::UnaryOp { operand, .. } => rec(operand),
+            Expr::PropertyAccess { object, .. } => rec(object),
+            Expr::IndexAccess { object, index } => rec(object).or_else(|| rec(index)),
+            Expr::List(items) => items.iter().find_map(rec),
+            Expr::Ternary { condition, then_val, else_val } =>
+                rec(condition).or_else(|| rec(then_val)).or_else(|| rec(else_val)),
+            _ => None,
+        }
+    }
+
     fn markiere(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt {
                 Stmt::Assignment { name, value, .. } | Stmt::ConstAssignment { name, value, .. } => {
                     if let Some(q) = self.quelle(value) { self.geliehen.entry(name.clone()).or_insert(q); }
+                    if let Some(q) = self.variantenquelle(value, true) { self.erfolg_geliehen.entry(name.clone()).or_insert(q); }
+                    if let Some(q) = self.variantenquelle(value, false) { self.fehler_geliehen.entry(name.clone()).or_insert(q); }
                 }
                 Stmt::PropertyAssignment { object, value, .. } | Stmt::IndexAssignment { object, value, .. } => {
                     if let (Some(q), Some(wurzel)) = (self.quelle(value), Self::wurzel(object)) {
                         if self.eigener_speicher(wurzel) {
                             self.geliehen.entry(wurzel.to_string()).or_insert(q);
+                            if let Some(q) = self.variantenquelle(value, true) { self.erfolg_geliehen.entry(wurzel.to_string()).or_insert(q); }
+                            if let Some(q) = self.variantenquelle(value, false) { self.fehler_geliehen.entry(wurzel.to_string()).or_insert(q); }
                         }
                     }
                 }
@@ -943,8 +1000,11 @@ impl FluchtPruefung<'_> {
     /// flussunabhaengige Fixpunkt ist hier gewollt (E5 O2: streng).
     fn pruefe(&self, stmts: &[Stmt]) -> Option<(&'static str, String, usize)> {
         stmts.iter().find_map(|stmt| match stmt {
-            Stmt::If { body, else_body, .. } => self.pruefe(body).or_else(|| self.pruefe(else_body)),
-            Stmt::While { body, .. } | Stmt::For { body, .. } | Stmt::UnsafeBlock { body, .. } => self.pruefe(body),
+            Stmt::If { condition, body, else_body, .. } => self.weitergabe_flucht(condition)
+                .map(|g| ("M-M002", g, stmt.zeile())).or_else(|| self.pruefe(body)).or_else(|| self.pruefe(else_body)),
+            Stmt::While { condition, body, .. } | Stmt::For { iterable: condition, body, .. } =>
+                self.weitergabe_flucht(condition).map(|g| ("M-M002", g, stmt.zeile())).or_else(|| self.pruefe(body)),
+            Stmt::UnsafeBlock { body, .. } => self.pruefe(body),
             _ => self.pruefe_anweisung(stmt).map(|grund| ("M-M002", grund, stmt.zeile())),
         })
     }
@@ -1116,6 +1176,16 @@ impl FluchtPruefung<'_> {
     }
 
     fn pruefe_anweisung(&self, stmt: &Stmt) -> Option<String> {
+        let implicit = match stmt {
+            Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
+            | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Show(value, _)
+            | Stmt::CompoundAssignment { value, .. } => self.weitergabe_flucht(value),
+            Stmt::PropertyAssignment { object, value, .. } => self.weitergabe_flucht(object).or_else(|| self.weitergabe_flucht(value)),
+            Stmt::IndexAssignment { object, index, value, .. } => self.weitergabe_flucht(object)
+                .or_else(|| self.weitergabe_flucht(index)).or_else(|| self.weitergabe_flucht(value)),
+            _ => None,
+        };
+        if implicit.is_some() { return implicit; }
         match stmt {
             Stmt::Assignment { name, value, .. } if !self.lokal.contains(name) =>
                 self.quelle(value).map(|q| format!("geliehener Zeiger ({q}) wird in globalen Speicher '{name}' geschrieben, der den Aufruf ueberlebt")),
@@ -1282,7 +1352,7 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::FunctionCall { name, args, .. } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
-            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view")
+            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view" | "sicht")
                 || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
                 || k.fremd.contains(name.as_str())
                 || (!k.fremd.is_empty() && k.typen.contains_key(name.as_str()))
@@ -1481,12 +1551,12 @@ fn expr_baut_struktur(expr: &Expr, n: &NominalTypes) -> bool {
     let e = |x: &Expr| expr_baut_struktur(x, n);
     match expr {
         Expr::FunctionCall { name, args, .. } =>
-            n.contains_key(name) || crate::native_struct::vecmat_art_name(name).is_some() || args.iter().any(e),
+            n.contains_key(name) || matches!(name.as_str(), "sicht" | "erfolg" | "fehlschlag" | "ist_erfolg" | "ergebnis_wert" | "ergebnis_fehler" | "weitergeben") || crate::native_struct::vecmat_art_name(name).is_some() || args.iter().any(e),
         Expr::BinaryOp { left, right, .. } => e(left) || e(right),
         Expr::UnaryOp { operand, .. } => e(operand),
         // Direkte globale Felder/Arrays haben keinen lokalen Konstruktor,
         // brauchen aber ebenfalls den typisierten Speicherpfad.
-        Expr::PropertyAccess { .. } | Expr::IndexAccess { .. } => true,
+        Expr::PropertyAccess { .. } | Expr::IndexAccess { .. } | Expr::MethodCall { .. } => true,
         Expr::List(items) => items.iter().any(e),
         _ => false,
     }
@@ -1753,6 +1823,7 @@ struct Emitter<'a, 'ctx> {
     target: &'a TargetData,
     layouts: &'a NativeStructRegistry<'ctx>,
     nominals: &'a NominalTypes,
+    interfaces: &'a crate::native_interface::NativeInterfaces,
     triple: &'a str,
     x86: bool,
     /// Hosted Usermode (Linux/Windows): keine privilegierten oder MMIO-Builtins.
@@ -2230,6 +2301,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn cleanup_register(&mut self, action: &Expr, line: usize) -> Result<(), String> {
+        if self.infer(action).as_ref().is_some_and(|ty| Self::ergebnis_name(ty).is_some()) {
+            return Err(crate::diagnose::vormerken("M-C000", line, "Unbenutztes ergebnis im aufräumen-Ausdruck".into()));
+        }
         if self.cleanup_root.is_none() { return Err("Nativer Cleanup-Funktionsrahmen fehlt".into()); }
         // Anders als die Hochsprachenebene besitzen native Ausdruckswerte
         // keine owning MooValue-Heapresultate. Ein Callresultat wird verworfen.
@@ -2245,10 +2319,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let thunk = self.module.add_function(&name,
             self.context.void_type().fn_type(&[self.ptrt().into()], false),
             Some(inkwell::module::Linkage::Internal));
+        if self.function.get_name().to_string_lossy().starts_with("__moo_native.__simd.") {
+            crate::native_simd_dispatch::attribute(self.context, thunk,
+                crate::native_simd_dispatch::Profil::von_funktion(self.function));
+        }
         let entry = self.context.append_basic_block(thunk, "entry");
         let mut emitter = Emitter {
             context: self.context, module: self.module, target: self.target,
-            layouts: self.layouts, nominals: self.nominals, triple: self.triple,
+            layouts: self.layouts, nominals: self.nominals, interfaces: self.interfaces, triple: self.triple,
             x86: self.x86, hosted: self.hosted, function: thunk, entry,
             sret: None, builder: self.context.create_builder(), slots: HashMap::new(),
             globals: self.globals.clone(), loops: Vec::new(), loop_cleanups: Vec::new(),
@@ -2362,6 +2440,39 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// hinter freien Zeigern bleiben align 1 (gepackt, MMIO, fremder Speicher).
     fn struct_place(&mut self, expr: &Expr, ty: &STy, what: &str) -> Result<Place<'ctx>, String> {
         self.global_access(expr, false)?;
+        if let STy::Struct(NativeTypeId::Nominal { name: target, .. }) = ty {
+            if self.interfaces.is_dynamic(target) {
+                if let Some(STy::Ptr(NativeTypeId::Pointer { pointee, .. })) = self.infer(expr) {
+                    if let NativeTypeId::Nominal { name: source, .. } = pointee.as_ref() {
+                        let conversion = self.interfaces.conversion(target, source).ok_or_else(||
+                            format!("Systemkoerper: '{source}' implementiert '{target}' nicht"))?.to_string();
+                        let converted = Expr::FunctionCall { name: conversion, type_args: Vec::new(),
+                            args: vec![expr.clone()], zeile: self.zeile, spalten: (0,0) };
+                        return self.struct_place(&converted, ty, what);
+                    }
+                    return Err(format!("Systemkoerper: {target} benötigt einen typisierten Zeiger auf eine registrierte Implementierung"));
+                }
+            }
+        }
+        if let Expr::MethodCall { object, method, args } = expr {
+            let (name, mut inputs) = self.method_target(object, method)?;
+            inputs.extend(args.iter().cloned());
+            let call = Expr::FunctionCall { name, type_args: Vec::new(), args: inputs, zeile: self.zeile, spalten: (0,0) };
+            return self.struct_place(&call, ty, what);
+        }
+
+        if let Expr::FunctionCall { name, args, .. } = expr {
+            if !self.callees.contains_key(name) {
+                if matches!(name.as_str(), "erfolg" | "fehlschlag") {
+                    return self.ergebnis_bauen(ty, name == "erfolg", args);
+                }
+                if matches!(name.as_str(), "ergebnis_wert" | "ergebnis_fehler" | "weitergeben") {
+                    let (found, ort) = self.ergebnis_auspacken(name, args)?.ok_or("Ergebnisnutzwert ist void")?;
+                    if &found != ty { return Err(format!("{what} erwartet {}, erhalten {}", ty.name(), found.name())); }
+                    return Ok(ort);
+                }
+            }
+        }
         match expr {
             Expr::Identifier(name) => {
                 let slot = self.slot(name)
@@ -2427,6 +2538,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 Ok(Place { ptr, alignment, origin: Origin::Fresh })
             }
             _ => {
+                if let Some(art) = self.simd_art(ty) {
+                    if let Some((found, value)) = self.simd_rechnung(expr)? {
+                        if found != art { return Err(format!("{what}: {} erwartet, {} erhalten", art.name(), found.name())); }
+                        return self.simd_frisch(art, value);
+                    }
+                }
                 // P2-T16 E3: vecmat-Rechnungen direkt in einen frischen Ort
                 // (SSA-Vektoren, komponentenweise gespeichert; kein insertvalue).
                 if let Some(art) = self.vecmat_art(ty) {
@@ -2485,6 +2602,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             return Ok(());
         }
+        if let Some(art) = self.layouts.simd_art(name) {
+            if !(args.len() == 1 && matches!(&args[0], Expr::List(_))) {
+                return self.simd_konstruktor(art, args, target);
+            }
+        }
         if !layout.bitfelder.is_empty() {
             let bereiche = layout.bitfelder.clone();
             let basis = self.bitfeld_basis(name).ok_or("Bitfeld-Basis fehlt")?;
@@ -2508,7 +2630,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             ));
         }
         for (index, ((field_name, field_ref), expr)) in fields.iter().zip(args).enumerate() {
-            let field_ty = STy::from_type_ref(field_ref, self.nominals).map_err(|_| {
+            let field_ty = self.feld_werttyp(field_ref).map_err(|_| {
                 format!("Systemkoerper: '{name}.{field_name}' hat keinen nativen Werttyp")
             })?;
             let label = format!("{name}.{field_name}");
@@ -2527,6 +2649,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             } else {
                 let value = self.expr(expr, Some(&field_ty))?;
                 self.expect(&value, &field_ty, &label)?;
+                if let Some((nt, be)) = crate::native_struct::endian_feld(field_ref) {
+                    self.byte_roh(address, self.i64t().const_zero(), nt, be, Some(value.value.into_int_value()))?;
+                    continue;
+                }
                 self.builder.build_store(address, value.value).map_err(e)?
                     .set_alignment(alignment).map_err(e)?;
             }
@@ -2626,6 +2752,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn feld_info(&self, struktur: &str, feld: &str) -> Result<(u64, FieldKind), String> {
+        if struktur.starts_with("ergebnis[") {
+            return Err("ergebnis ist opak: ist_erfolg, ergebnis_wert/ergebnis_fehler oder weitergeben verwenden".into());
+        }
         let layout = self.layouts.layout(struktur)
             .ok_or_else(|| format!("Systemkoerper: Struktur '{struktur}' nicht gefunden"))?;
         if !layout.bitfelder.is_empty() {
@@ -2659,7 +2788,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let element = self.native_field_kind(element)?;
                 Ok(FieldKind::Array { element: Box::new(element), length, stride })
             }
-            _ => Ok(FieldKind::Value(STy::from_type_ref(field, self.nominals)?)),
+            _ => Ok(FieldKind::Value(self.feld_werttyp(field)?)),
         }
     }
 
@@ -2667,6 +2796,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// Vollstaendige Strukturwerte bleiben vorerst gesperrt, nur Felder sind
     /// als skalare Werte oder Zeiger les-/schreibbar.
     fn strukturfeld_info(&self, struktur: &str, feld: &str) -> Result<(u64, STy), String> {
+        if self.layouts.layout(struktur).and_then(|l| l.fields.iter().find(|(n, _)| n == feld))
+            .and_then(|(_, t)| crate::native_struct::endian_feld(t)).is_some() {
+            return Err("Endian-Felder über den typisierten direkten Feldzugriff lesen/schreiben".into());
+        }
         let (offset, kind) = self.feld_info(struktur, feld)?;
         match kind {
             FieldKind::Value(ty) => Ok((offset, ty)),
@@ -2890,6 +3023,162 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// Ein vorhandenes Bytearray leihen oder explizit unsicher einen RAM-Bereich
     /// beschreiben. Der Deskriptor besitzt/pinnt nichts; der Aufrufer bewahrt
     /// Gueltigkeit und Exklusivitaet. MMIO nutzt weiterhin volatile_*.
+    fn endian_property(&self, object: &Expr, property: &str) -> Option<(NType, bool)> {
+        let name = self.struct_name_from_expr(object)?;
+        let layout = self.layouts.layout(&name)?;
+        let (_, ty) = layout.fields.iter().find(|(n, _)| n == property)?;
+        crate::native_struct::endian_feld(ty)
+    }
+
+    fn feld_werttyp(&self, ty: &TypeRef) -> Result<STy, String> {
+        if let Some((nt, _)) = crate::native_struct::endian_feld(ty) { return Ok(STy::Int(nt)); }
+        STy::from_type_ref(ty, self.nominals)
+    }
+
+    /// Eine Sicht ist ein Strukturpuffer mit exakt einem Element; Indexzugriffe
+    /// und Lebensdauer verwenden dadurch die vorhandenen Pufferprüfungen.
+    fn datensicht(&mut self, args: &[Expr]) -> Result<SVal<'ctx>, String> {
+        let [bytes, Expr::Identifier(name), versatz] = args else {
+            return Err("sicht erwartet (puffer[u8], Strukturtyp, versatz)".into());
+        };
+        self.layouts.sicht_zulaessig(name)?;
+        let size = self.layouts.layout(name).ok_or("sicht: Layout fehlt")?.size;
+        let STy::Struct(identity) = self.struct_ty(name)? else { unreachable!() };
+        let pty = STy::Buffer(NType::U8);
+        let bytes = self.expr(bytes, Some(&pty))?;
+        self.expect(&bytes, &pty, "sicht Bytepuffer")?;
+        let value = bytes.value.into_struct_value();
+        let daten = self.builder.build_extract_value(value, 0, "sys.bytes.data").map_err(e)?.into_pointer_value();
+        let len = self.builder.build_extract_value(value, 1, "sys.bytes.len").map_err(e)?.into_int_value();
+        let offset = self.expr(versatz, Some(&STy::Int(NType::U64)))?;
+        self.expect(&offset, &STy::Int(NType::U64), "sicht Byteversatz")?;
+        let offset = offset.value.into_int_value();
+        let outside = self.builder.build_int_compare(IntPredicate::UGT, offset, len, "sys.bytes.offset").map_err(e)?;
+        let rest = self.builder.build_int_sub(len, offset, "sys.bytes.remaining").map_err(e)?;
+        let short = self.builder.build_int_compare(IntPredicate::ULT, rest, self.i64t().const_int(size, false), "sys.bytes.short").map_err(e)?;
+        let bad = self.builder.build_or(outside, short, "sys.bytes.bounds").map_err(e)?;
+        self.byte_pruefung(bad)?;
+        let daten = unsafe { self.builder.build_gep(self.context.i8_type(), daten, &[offset], "sys.bytes.sicht") }.map_err(e)?;
+        let ty = STy::StrukturPuffer(identity);
+        let llvm = ty.llvm(self.context, self.layouts)?.into_struct_type();
+        let value = self.builder.build_insert_value(llvm.get_undef(), daten, 0, "sys.sicht.data").map_err(e)?;
+        let value = self.builder.build_insert_value(value.into_struct_value(), self.i64t().const_int(1, false), 1, "sys.sicht.view").map_err(e)?;
+        Ok(SVal { ty, value: value.into_struct_value().into() })
+    }
+
+    fn ergebnis_name(ty: &STy) -> Option<&str> {
+        match ty {
+            STy::Struct(NativeTypeId::Nominal { name, .. }) if name.starts_with("ergebnis[") => Some(name),
+            _ => None,
+        }
+    }
+
+    fn ergebnis_feldtyp(&self, ty: &STy, erfolg: bool) -> Result<Option<(u64, STy)>, String> {
+        let name = Self::ergebnis_name(ty).ok_or("Ergebnistyp ergebnis[T, F] erwartet")?;
+        let layout = self.layouts.layout(name).ok_or("Ergebnislayout fehlt")?;
+        let label = if erfolg { "__wert" } else { "__fehler" };
+        let Some(index) = layout.fields.iter().position(|(n, _)| n == label) else { return Ok(None); };
+        Ok(Some((layout.offsets[index], STy::from_type_ref(&layout.fields[index].1, self.nominals)?)))
+    }
+
+    fn ergebnis_feldort(&mut self, ty: &STy, ort: &Place<'ctx>, erfolg: bool)
+        -> Result<Option<(STy, Place<'ctx>)>, String>
+    {
+        let Some((offset, field)) = self.ergebnis_feldtyp(ty, erfolg)? else { return Ok(None); };
+        let ptr = unsafe { self.builder.build_gep(self.context.i8_type(), ort.ptr,
+            &[self.i64t().const_int(offset, false)], "sys.ergebnis.feld") }.map_err(e)?;
+        Ok(Some((field, Place { ptr, alignment: field_alignment(ort.alignment, offset), origin: Origin::Memory })))
+    }
+
+    fn ergebnis_leer(&mut self, ty: &STy, erfolg: bool) -> Result<Place<'ctx>, String> {
+        Self::ergebnis_name(ty).ok_or("erfolg/fehlschlag benötigt einen erwarteten ergebnis[T, F]-Typ")?;
+        let (ptr, alignment) = self.entry_alloca(ty, "sys.ergebnis.neu")?;
+        self.builder.build_store(ptr, self.zero(ty)?).map_err(e)?.set_alignment(alignment).map_err(e)?;
+        self.builder.build_store(ptr, self.i64t().const_int(u64::from(!erfolg), false)).map_err(e)?
+            .set_alignment(alignment).map_err(e)?;
+        Ok(Place { ptr, alignment, origin: Origin::Fresh })
+    }
+
+    fn ergebnis_bauen(&mut self, ty: &STy, erfolg: bool, args: &[Expr]) -> Result<Place<'ctx>, String> {
+        let field = self.ergebnis_feldtyp(ty, erfolg)?;
+        if args.len() != usize::from(field.is_some()) {
+            return Err(format!("{} erwartet {} Nutzwert(e) im Typ {}", if erfolg { "erfolg" } else { "fehlschlag" },
+                usize::from(field.is_some()), ty.name()));
+        }
+        let ort = self.ergebnis_leer(ty, erfolg)?;
+        if let Some((field, to)) = self.ergebnis_feldort(ty, &ort, erfolg)? {
+            if field.ist_aggregat() {
+                let from = self.struct_place(&args[0], &field, "Ergebnisnutzwert")?;
+                self.copy_struct(&field, to, from)?;
+            } else {
+                let value = self.expr(&args[0], Some(&field))?;
+                self.expect(&value, &field, "Ergebnisnutzwert")?;
+                self.builder.build_store(to.ptr, value.value).map_err(e)?.set_alignment(to.alignment).map_err(e)?;
+            }
+        }
+        Ok(ort)
+    }
+
+    fn ergebnis_ort(&mut self, arg: &Expr) -> Result<(STy, Place<'ctx>), String> {
+        let ty = self.infer(arg).filter(|ty| Self::ergebnis_name(ty).is_some())
+            .ok_or("Typisiertes ergebnis[T, F] erwartet")?;
+        let ort = self.struct_place(arg, &ty, "Ergebnis")?;
+        Ok((ty, ort))
+    }
+
+    fn ergebnis_tag(&self, ort: &Place<'ctx>) -> Result<IntValue<'ctx>, String> {
+        let tag = self.builder.build_load(self.i64t(), ort.ptr, "sys.ergebnis.tag").map_err(e)?;
+        tag.as_instruction_value().ok_or("Ergebnistag-Load fehlt")?.set_alignment(ort.alignment).map_err(e)?;
+        Ok(tag.into_int_value())
+    }
+
+    fn ergebnis_auspacken(&mut self, name: &str, args: &[Expr])
+        -> Result<Option<(STy, Place<'ctx>)>, String>
+    {
+        let [arg] = args else { return Err(format!("{name} erwartet genau ein ergebnis[T, F]")); };
+        let (ty, ort) = self.ergebnis_ort(arg)?;
+        let tag = self.ergebnis_tag(&ort)?;
+        if name == "weitergeben" {
+            let target = self.result.clone().filter(|ty| Self::ergebnis_name(ty).is_some())
+                .ok_or("weitergeben braucht eine Funktion mit Rückgabetyp ergebnis[T, F]")?;
+            let source_error = self.ergebnis_feldtyp(&ty, false)?.map(|(_, t)| t);
+            let target_error = self.ergebnis_feldtyp(&target, false)?.map(|(_, t)| t);
+            if source_error != target_error {
+                return Err(format!("weitergeben: Fehlertyp stimmt nicht überein ({} -> {})", ty.name(), target.name()));
+            }
+            let bad = self.builder.build_int_compare(IntPredicate::NE, tag, self.i64t().const_zero(), "sys.ergebnis.fehler").map_err(e)?;
+            let failure = self.context.append_basic_block(self.function, "sys.ergebnis.weitergabe");
+            let success = self.context.append_basic_block(self.function, "sys.ergebnis.erfolg");
+            self.builder.build_conditional_branch(bad, failure, success).map_err(e)?;
+            self.builder.position_at_end(failure);
+            let output = self.ergebnis_leer(&target, false)?;
+            if let (Some((field, from)), Some((_, to))) =
+                (self.ergebnis_feldort(&ty, &ort, false)?, self.ergebnis_feldort(&target, &output, false)?)
+            {
+                if field.ist_aggregat() {
+                    self.copy_struct(&field, to, from)?;
+                } else {
+                    let value = self.builder.build_load(field.llvm(self.context, self.layouts)?, from.ptr, "sys.ergebnis.fehlerwert").map_err(e)?;
+                    value.as_instruction_value().ok_or("Ergebnisfehler-Load fehlt")?.set_alignment(from.alignment).map_err(e)?;
+                    self.builder.build_store(to.ptr, value).map_err(e)?.set_alignment(to.alignment).map_err(e)?;
+                }
+            }
+            let sret = self.sret.ok_or("Ergebnis-Weitergabe: sret-Puffer fehlt")?;
+            let alignment = self.struct_size_align(&target)?.1;
+            self.copy_struct(&target, Place { ptr: sret, alignment, origin: Origin::Fresh }, output)?;
+            self.cleanup_return()?;
+            self.builder.build_return(None).map_err(e)?;
+            self.builder.position_at_end(success);
+            self.ergebnis_feldort(&ty, &ort, true)
+        } else {
+            let erfolg = name == "ergebnis_wert";
+            let invalid = self.builder.build_int_compare(IntPredicate::NE, tag,
+                self.i64t().const_int(u64::from(!erfolg), false), "sys.ergebnis.falscher_zweig").map_err(e)?;
+            self.byte_pruefung(invalid)?;
+            self.ergebnis_feldort(&ty, &ort, erfolg)
+        }
+    }
+
     fn byteansicht(&mut self, args: &[Expr]) -> Result<SVal<'ctx>, String> {
         let (daten, laenge) = match args {
             [array] => {
@@ -2978,12 +3267,21 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let short = self.builder.build_int_compare(IntPredicate::ULT, rest, self.i64t().const_int(n, false), "sys.bytes.short").map_err(e)?;
         let bad = self.builder.build_or(outside, short, "sys.bytes.bounds").map_err(e)?;
         self.byte_pruefung(bad)?;
-        let llvm = ty.llvm_type(self.context).into_int_type();
         let raw = if schreiben {
             let value = self.expr(&args[2], Some(&STy::Int(ty)))?;
             self.expect(&value, &STy::Int(ty), name)?;
             Some(value.value.into_int_value())
         } else { None };
+        let result = self.byte_roh(daten, offset, ty, be, raw)?;
+        Ok(if schreiben { None } else { Some(SVal { ty: STy::Int(ty), value: result.into() }) })
+    }
+
+    /// Gemeinsamer Wireformat-Kern für Byteoperationen und Endian-Felder.
+    fn byte_roh(&mut self, daten: PointerValue<'ctx>, offset: IntValue<'ctx>,
+        ty: NType, be: bool, raw: Option<IntValue<'ctx>>) -> Result<IntValue<'ctx>, String>
+    {
+        let llvm = ty.llvm_type(self.context).into_int_type();
+        let n = u64::from(bits_of(ty) / 8);
         let mut result = llvm.const_zero();
         for i in 0..n {
             let index = self.builder.build_int_add(offset, self.i64t().const_int(i, false), "sys.bytes.index").map_err(e)?;
@@ -3002,13 +3300,15 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 result = self.builder.build_or(result, bits, "sys.bytes.word").map_err(e)?;
             }
         }
-        Ok(if schreiben { None } else { Some(SVal { ty: STy::Int(ty), value: result.into() }) })
+        Ok(result)
     }
+
 
     /// Indexiert einen typisierten RAM-Zeiger. Anders als volatile_* ist das
     /// ein normaler Zugriff; fuer MMIO ist ausdruecklich volatile_* zu nutzen.
     /// Der Aufrufer im unsicher-Block verantwortet Gueltigkeit und Grenzen.
     fn pointer_index(&mut self, object: &Expr, index: &Expr) -> Result<(PointerValue<'ctx>, STy), String> {
+        if let Some(art) = self.simd_von(object) { return self.simd_index(object, index, art); }
         // P2-T89 C: m[i] (Spalte von mat4/dmat4) und v[i] (Bahn von vecN/dvecN).
         if let Some(art) = self.vecmat_von(object) {
             return self.vecmat_index(object, index, art);
@@ -3424,6 +3724,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 let v = self.expr(value, Some(&ty))?;
                 self.expect(&v, &ty, property)?;
+                if let Some((nt, be)) = self.endian_property(object, property) {
+                    self.byte_roh(ptr, self.i64t().const_zero(), nt, be, Some(v.value.into_int_value()))?;
+                    return Ok(());
+                }
                 let store = self.builder.build_store(ptr, v.value).map_err(e)?;
                 // Freie Zeiger bleiben align 1; lokale Strukturfelder tragen
                 // die aus Slot-Ausrichtung und Offset bewiesene Ausrichtung.
@@ -3562,8 +3866,23 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 Ok(())
             }
+            Stmt::Expression(Expr::MethodCall { object, method, args }, _) => {
+                let (name, mut inputs) = self.method_target(object, method)?;
+                inputs.extend(args.iter().cloned());
+                self.call(&name, &inputs, None, true)?;
+                Ok(())
+            }
+            Stmt::Defer(Expr::MethodCall { object, method, args }, line) => {
+                let (name, mut inputs) = self.method_target(object, method)?;
+                inputs.extend(args.iter().cloned());
+                self.cleanup_register(&Expr::FunctionCall { name, type_args: Vec::new(),
+                    args: inputs, zeile: *line, spalten: (0,0) }, *line)
+            }
             Stmt::Defer(action, line) => self.cleanup_register(action, *line),
-            Stmt::Expression(Expr::FunctionCall { name, args, .. }, _) => {
+            Stmt::Expression(expr @ Expr::FunctionCall { name, args, .. }, _) => {
+                if self.infer(expr).as_ref().is_some_and(|ty| Self::ergebnis_name(ty).is_some()) {
+                    return Err(crate::diagnose::vormerken("M-C000", self.zeile, "Unbenutztes ergebnis eines Aufrufs".into()));
+                }
                 self.call(name, args, None, true)?;
                 Ok(())
             }
@@ -3633,8 +3952,28 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     /// Statischer Typ eines Ausdrucks ohne Kontext (Literale: None).
+    fn method_target(&self, object: &Expr, method: &str) -> Result<(String, Vec<Expr>), String> {
+        let ty = self.infer(object).ok_or_else(|| format!("Systemkoerper: Typ des Empfängers von '{method}' ist nicht bestimmbar"))?;
+        let receiver = match &ty {
+            STy::Ptr(NativeTypeId::Pointer { pointee, .. }) => match pointee.as_ref() {
+                NativeTypeId::Nominal { name, .. } => name.as_str(),
+                _ => return Err(format!("Systemkoerper: {} hat keine native Methode '{method}'", ty.name())),
+            },
+            STy::Struct(NativeTypeId::Nominal { name, .. }) if self.interfaces.is_dynamic(name) => name.as_str(),
+            _ => return Err(format!("Systemkoerper: native Methode '{method}' benötigt ptr[T] oder ptr[dyn S]")),
+        };
+        let name = self.interfaces.method(receiver, method).ok_or_else(||
+            format!("Systemkoerper: native Methode '{receiver}.{method}' ist nicht definiert"))?;
+        Ok((name.to_string(), vec![object.clone()]))
+    }
+
     fn infer(&self, expr: &Expr) -> Option<STy> {
         match expr {
+            Expr::MethodCall { object, method, .. } => {
+                let (name, _) = self.method_target(object, method).ok()?;
+                self.callees.get(&name)?.result.clone()
+            },
+
             Expr::Identifier(name) => self.slot(name).map(|slot| slot.ty.clone()),
             Expr::PropertyAccess { object, property } => {
                 if let Some((_, ty, _)) = self.bitfeld_info(object, property) { return Some(STy::Int(ty)); }
@@ -3646,6 +3985,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
             },
             Expr::IndexAccess { object, .. } => {
+                if let Some(art) = self.simd_von(object) { return Some(STy::Int(art.element())); }
                 if let Some(field) = self.array_kind_from_expr(expr) {
                     return match field {
                         FieldKind::Value(ty) => Some(ty),
@@ -3707,6 +4047,16 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         .and_then(|ty| registration_component(&ty, name == "rueckruf_zeiger"));
                 }
                 if !self.callees.contains_key(name) {
+                    if crate::native_simd::byte_operation(name) {
+                        let art = args.first().and_then(|arg| self.simd_von(arg))?;
+                        return self.struct_ty(art.name()).ok();
+                    }
+                    if name == "ist_erfolg" { return Some(STy::Bool); }
+                    if matches!(name.as_str(), "ergebnis_wert" | "ergebnis_fehler" | "weitergeben") {
+                        let input = args.first().and_then(|a| self.infer(a))?;
+                        return self.ergebnis_feldtyp(&input, name != "ergebnis_fehler").ok()?
+                            .map(|(_, ty)| ty);
+                    }
                     if name == "bitfeld_wert" {
                         return args.first().and_then(|a| self.struct_name_from_expr(a))
                             .and_then(|n| self.bitfeld_basis(&n)).map(STy::Int);
@@ -3775,6 +4125,14 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     };
                 }
                 if !self.callees.contains_key(name) {
+                    if name == "sicht" {
+                        return match args.get(1) {
+                            Some(Expr::Identifier(n)) => match self.struct_ty(n).ok()? {
+                                STy::Struct(id) => Some(STy::StrukturPuffer(id)), _ => None,
+                            },
+                            _ => None,
+                        };
+                    }
                     if matches!(name.as_str(), "byteansicht" | "byte_view") { return Some(STy::Buffer(NType::U8)); }
                     if let Some((schreiben, ty, _)) = byte_zugriff(name) {
                         return if schreiben { None } else { Some(STy::Int(ty)) };
@@ -3800,7 +4158,22 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
 
     fn expr(&mut self, expr: &Expr, expected: Option<&STy>) -> Result<SVal<'ctx>, String> {
         self.global_access(expr, false)?;
+        if self.function.get_name().to_string_lossy().starts_with("__moo_native.__simd.")
+            && (matches!(expected, Some(STy::Float(_))) || matches!(self.infer(expr), Some(STy::Float(_))))
+        {
+            return Err("@simd ist ein Ganzzahlbereich; Fließkommarechnung außerhalb des SIMD-Bereichs ausführen".into());
+        }
+        if matches!(expr, Expr::UnaryOp { .. }) && self.simd_von(expr).is_some() {
+            if let Some((art, value)) = self.simd_rechnung(expr)? { return self.simd_aggregat(art, value); }
+        }
         match expr {
+            Expr::MethodCall { object, method, args } => {
+                let (name, mut inputs) = self.method_target(object, method)?;
+                inputs.extend(args.iter().cloned());
+                self.call(&name, &inputs, expected, false)?
+                    .ok_or_else(|| format!("Systemkoerper: Methode '{method}' liefert keinen Wert"))
+            },
+
             Expr::NativeNumber { text, .. } => match expected {
                 Some(STy::Int(ty)) => self.literal(*ty, text, false),
                 Some(STy::Float(ty)) => self.float_literal(*ty, text, false),
@@ -3889,6 +4262,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 let alignment = self.local_field_alignment(object, property);
                 let (ptr, ty) = self.pointer_property(object, property)?;
                 self.normaler_speicherzugriff(&ty)?;
+                if let Some((nt, be)) = self.endian_property(object, property) {
+                    let value = self.byte_roh(ptr, self.i64t().const_zero(), nt, be, None)?;
+                    return Ok(SVal { ty, value: value.into() });
+                }
                 let value = self.builder.build_load(
                     ty.llvm(self.context, self.layouts)?, ptr, "sys.property.load",
                 ).map_err(e)?;
@@ -3958,7 +4335,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         // P2-T48 A4: Nullkonstruktor und Arrayfelder ueber den Speicherpfad
         // (construct_struct_into); reine Skalar-/Strukturfelder behalten ihr IR.
         let hat_array = fields.iter().any(|(_, field)| matches!(field.kind, TypeKind::Array { .. }));
-        if args.is_empty() || hat_array || !layout.bitfelder.is_empty() {
+        if args.is_empty() || hat_array || fields.iter().any(|(_, f)| crate::native_struct::endian_feld(f).is_some()) || !layout.bitfelder.is_empty() {
             let (ptr, alignment) = self.entry_alloca(&ty, "sys.struct.neu")?;
             let place = Place { ptr, alignment, origin: Origin::Fresh };
             self.construct_struct_into(name, args, &place)?;
@@ -3975,7 +4352,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         }
         let mut aggregate: inkwell::values::AggregateValueEnum<'ctx> = llvm.const_zero().into();
         for (index, ((field_name, field_ref), expr)) in fields.iter().zip(args).enumerate() {
-            let field_ty = STy::from_type_ref(field_ref, self.nominals).map_err(|_| {
+            let field_ty = self.feld_werttyp(field_ref).map_err(|_| {
                 format!("Systemkoerper: '{name}.{field_name}' hat keinen nativen Werttyp")
             })?;
             let value = self.expr(expr, Some(&field_ty))?;
@@ -3990,6 +4367,162 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     // ---- P2-T16 (Plan 3f03704a E3-E5): vec2/vec3/vec4/mat4 ----
 
     /// Art eines eingebauten Vektor-/Matrixtyps (gleichnamige eigene Struktur: None).
+    fn simd_art(&self, ty: &STy) -> Option<crate::native_simd::SimdArt> {
+        match ty {
+            STy::Struct(NativeTypeId::Nominal { name, .. }) => self.layouts.simd_art(name),
+            _ => None,
+        }
+    }
+    fn simd_von(&self, expr: &Expr) -> Option<crate::native_simd::SimdArt> {
+        self.infer(expr).as_ref().and_then(|ty| self.simd_art(ty))
+    }
+    fn simd_adresse(&self, ort: &Place<'ctx>, art: crate::native_simd::SimdArt, bahn: u32)
+        -> Result<(PointerValue<'ctx>, u32), String>
+    {
+        let offset = u64::from(bahn) * art.bytes() / u64::from(art.bahnen());
+        let ptr = unsafe { self.builder.build_gep(self.context.i8_type(), ort.ptr,
+            &[self.i64t().const_int(offset, false)], "simd.adresse") }.map_err(e)?;
+        Ok((ptr, field_alignment(ort.alignment, offset)))
+    }
+    fn simd_laden_ort(&self, ort: &Place<'ctx>, art: crate::native_simd::SimdArt)
+        -> Result<VectorValue<'ctx>, String>
+    {
+        if !self.hosted && !self.function.get_name().to_string_lossy().starts_with("__moo_native.__simd.") {
+            return Err("Ganzzahl-SIMD-Rechnung im Bare-/UEFI-Profil benötigt @simd zur Zustandssicherung".into());
+        }
+        let scalar = art.element().llvm_type(self.context).into_int_type();
+        let mut vector = art.llvm(self.context).get_undef();
+        for i in 0..art.bahnen() {
+            let (ptr, alignment) = self.simd_adresse(ort, art, i)?;
+            let value = self.builder.build_load(scalar, ptr, "simd.lade").map_err(e)?;
+            value.as_instruction_value().ok_or("SIMD-Load fehlt")?.set_alignment(alignment).map_err(e)?;
+            vector = self.builder.build_insert_element(vector, value.into_int_value(),
+                self.context.i32_type().const_int(u64::from(i), false), "simd.setze").map_err(e)?;
+        }
+        Ok(vector)
+    }
+    fn simd_wert(&mut self, expr: &Expr, art: crate::native_simd::SimdArt)
+        -> Result<VectorValue<'ctx>, String>
+    {
+        let ty = self.struct_ty(art.name())?;
+        let ort = self.struct_place(expr, &ty, "SIMD-Operand")?;
+        self.simd_laden_ort(&ort, art)
+    }
+    fn simd_frisch(&mut self, art: crate::native_simd::SimdArt, vector: VectorValue<'ctx>)
+        -> Result<Place<'ctx>, String>
+    {
+        if vector.get_type() != art.llvm(self.context) { return Err("SIMD-SSA-Typ stimmt nicht".into()); }
+        let ty = self.struct_ty(art.name())?;
+        let (ptr, alignment) = self.entry_alloca(&ty, "simd.neu")?;
+        let ort = Place { ptr, alignment, origin: Origin::Fresh };
+        for i in 0..art.bahnen() {
+            let value = self.builder.build_extract_element(vector,
+                self.context.i32_type().const_int(u64::from(i), false), "simd.hole").map_err(e)?;
+            let (ptr, alignment) = self.simd_adresse(&ort, art, i)?;
+            self.builder.build_store(ptr, value).map_err(e)?.set_alignment(alignment).map_err(e)?;
+        }
+        Ok(ort)
+    }
+    fn simd_aggregat(&mut self, art: crate::native_simd::SimdArt, vector: VectorValue<'ctx>)
+        -> Result<SVal<'ctx>, String>
+    {
+        let ort = self.simd_frisch(art, vector)?;
+        let ty = self.struct_ty(art.name())?;
+        let value = self.builder.build_load(ty.llvm(self.context, self.layouts)?, ort.ptr, "simd.wert").map_err(e)?;
+        value.as_instruction_value().ok_or("SIMD-Wert-Load fehlt")?.set_alignment(ort.alignment).map_err(e)?;
+        Ok(SVal { ty, value })
+    }
+    fn simd_binaer(&mut self, left: &Expr, op: &BinOp, right: &Expr)
+        -> Result<Option<(crate::native_simd::SimdArt, VectorValue<'ctx>)>, String>
+    {
+        if matches!(op, BinOp::Eq | BinOp::NotEq | BinOp::Less | BinOp::LessEq | BinOp::Greater | BinOp::GreaterEq) {
+            return Ok(None);
+        }
+        let Some(art) = self.simd_von(left).or_else(|| self.simd_von(right)) else { return Ok(None); };
+        let a = self.simd_wert(left, art)?;
+        let b = self.simd_wert(right, art)?;
+        let value = crate::native_simd::binaer(&self.builder, op, a, b)?;
+        Ok(Some((art, value)))
+    }
+    fn simd_rechnung(&mut self, expr: &Expr)
+        -> Result<Option<(crate::native_simd::SimdArt, VectorValue<'ctx>)>, String>
+    {
+        match expr {
+            Expr::FunctionCall { name, args, .. }
+                if !self.callees.contains_key(name) && crate::native_simd::byte_operation(name) =>
+            {
+                let [left, right] = args.as_slice() else {
+                    return Err(format!("{name} erwartet genau zwei Bytevektoren"));
+                };
+                let art = self.simd_von(left).ok_or_else(|| format!("{name} erwartet u8x16 oder u8x32"))?;
+                if art == crate::native_simd::SimdArt::U64x4 {
+                    return Err(format!("{name} erwartet u8x16 oder u8x32"));
+                }
+                let a = self.simd_wert(left, art)?;
+                let b = self.simd_wert(right, art)?;
+                let profile = crate::native_simd_dispatch::Profil::von_funktion(self.function);
+                let value = crate::native_simd::byte_rechnung(self.context, self.module, &self.builder,
+                    profile, name, a, b)?;
+                Ok(Some((art, value)))
+            }
+            Expr::BinaryOp { left, op, right } => self.simd_binaer(left, op, right),
+            Expr::UnaryOp { op, operand } => {
+                let Some(art) = self.simd_von(operand) else { return Ok(None); };
+                let value = self.simd_wert(operand, art)?;
+                let value = crate::native_simd::unaer(&self.builder, op, value)?;
+                Ok(Some((art, value)))
+            }
+            _ => Ok(None),
+        }
+    }
+    fn simd_konstruktor(&mut self, art: crate::native_simd::SimdArt, args: &[Expr], target: &Place<'ctx>)
+        -> Result<(), String>
+    {
+        if args.len() != 1 && args.len() != art.bahnen() as usize {
+            return Err(format!("{} erwartet einen Splatwert, eine Liste oder {} Bahnen", art.name(), art.bahnen()));
+        }
+        let ty = STy::Int(art.element());
+        let splat = if args.len() == 1 {
+            let value = self.expr(&args[0], Some(&ty))?;
+            self.expect(&value, &ty, art.name())?;
+            Some(value.value)
+        } else { None };
+        for i in 0..art.bahnen() {
+            let value = if let Some(value) = splat { value } else {
+                let value = self.expr(&args[i as usize], Some(&ty))?;
+                self.expect(&value, &ty, art.name())?;
+                value.value
+            };
+            let (ptr, alignment) = self.simd_adresse(target, art, i)?;
+            self.builder.build_store(ptr, value).map_err(e)?.set_alignment(alignment).map_err(e)?;
+        }
+        Ok(())
+    }
+    fn simd_index(&mut self, object: &Expr, index: &Expr, art: crate::native_simd::SimdArt)
+        -> Result<(PointerValue<'ctx>, STy), String>
+    {
+        let ty = self.struct_ty(art.name())?;
+        let ort = self.struct_place(object, &ty, "SIMD-Komponentenindex")?;
+        if let Some(text) = negatives_index_literal(index) {
+            return Err(crate::diagnose::vormerken("M-M001", self.zeile,
+                format!("SIMD-Index {text} liegt außerhalb von {} (gültig 0..{})", art.name(), art.bahnen()-1)));
+        }
+        let position = self.expr(index, Some(&STy::Int(NType::U64)))?;
+        self.expect(&position, &STy::Int(NType::U64), "SIMD-Komponentenindex")?;
+        let raw = position.value.into_int_value();
+        if raw.get_zero_extended_constant().is_some_and(|k| k >= u64::from(art.bahnen())) {
+            return Err(crate::diagnose::vormerken("M-M001", self.zeile,
+                format!("Konstanter SIMD-Index liegt außerhalb von {} (gültig 0..{})", art.name(), art.bahnen()-1)));
+        }
+        let invalid = self.builder.build_int_compare(IntPredicate::UGE, raw,
+            self.i64t().const_int(u64::from(art.bahnen()), false), "simd.index.ausserhalb").map_err(e)?;
+        self.byte_pruefung(invalid)?;
+        let offset = self.builder.build_int_mul(raw,
+            self.i64t().const_int(art.bytes()/u64::from(art.bahnen()), false), "simd.index.offset").map_err(e)?;
+        let ptr = unsafe { self.builder.build_gep(self.context.i8_type(), ort.ptr, &[offset], "simd.index") }.map_err(e)?;
+        Ok((ptr, STy::Int(art.element())))
+    }
+
     fn vecmat_art(&self, ty: &STy) -> Option<VecMatArt> {
         match ty {
             STy::Struct(NativeTypeId::Nominal { name, .. }) => self.layouts.vecmat_art(name),
@@ -4396,6 +4929,19 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             BinOp::Greater => Some(CompareOp::Gt), BinOp::GreaterEq => Some(CompareOp::Ge),
             _ => None,
         };
+        if let Some(art) = self.simd_von(left).or_else(|| self.simd_von(right)) {
+            if compare.is_some() {
+                if !matches!(op, BinOp::Eq | BinOp::NotEq) {
+                    return Err(format!("{} wird als Gesamtwert nur mit == oder != verglichen", art.name()));
+                }
+                let a = self.simd_wert(left, art)?;
+                let b = self.simd_wert(right, art)?;
+                let equal = crate::native_simd::gleich(self.context, &self.builder, a, b)?;
+                let value = if matches!(op, BinOp::NotEq) { self.builder.build_not(equal, "simd.ungleich").map_err(e)? } else { equal };
+                return Ok(SVal { ty: STy::Bool, value: value.into() });
+            }
+            if let Some((art, value)) = self.simd_binaer(left, op, right)? { return self.simd_aggregat(art, value); }
+        }
         // P2-T16 E4/E5: Vektor-/Matrixoperanden (== / != komponentenweise).
         if compare.is_some() {
             if let Some(art) = self.vecmat_von(left).or_else(|| self.vecmat_von(right)) {
@@ -4767,6 +5313,39 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn call(&mut self, name: &str, args: &[Expr], expected: Option<&STy>, statement: bool) -> Result<Option<SVal<'ctx>>, String> {
+        if statement && self.callees.get(name).and_then(|c| c.result.as_ref()).is_some_and(|ty| Self::ergebnis_name(ty).is_some()) {
+            return Err(crate::diagnose::vormerken("M-C000", self.zeile, format!("Unbenutztes ergebnis aus '{name}': prüfen, auspacken oder weitergeben")));
+        }
+        if !self.callees.contains_key(name) {
+            if matches!(name, "erfolg" | "fehlschlag") {
+                let ty = expected.filter(|ty| Self::ergebnis_name(ty).is_some())
+                    .ok_or("erfolg/fehlschlag benötigt einen erwarteten ergebnis[T, F]-Typ")?.clone();
+                let ort = self.ergebnis_bauen(&ty, name == "erfolg", args)?;
+                let value = self.builder.build_load(ty.llvm(self.context, self.layouts)?, ort.ptr, "sys.ergebnis.wert").map_err(e)?;
+                value.as_instruction_value().ok_or("Ergebnis-Load fehlt")?.set_alignment(ort.alignment).map_err(e)?;
+                return Ok(Some(SVal { ty, value }));
+            }
+            if name == "ist_erfolg" {
+                let [arg] = args else { return Err("ist_erfolg erwartet genau ein ergebnis[T, F]".into()); };
+                let (_, ort) = self.ergebnis_ort(arg)?;
+                let tag = self.ergebnis_tag(&ort)?;
+                let value = self.builder.build_int_compare(IntPredicate::EQ, tag, self.i64t().const_zero(), "sys.ergebnis.ist_erfolg").map_err(e)?;
+                return Ok(Some(SVal { ty: STy::Bool, value: value.into() }));
+            }
+            if matches!(name, "ergebnis_wert" | "ergebnis_fehler" | "weitergeben") {
+                let Some((ty, ort)) = self.ergebnis_auspacken(name, args)? else { return Ok(None); };
+                let value = self.builder.build_load(ty.llvm(self.context, self.layouts)?, ort.ptr, "sys.ergebnis.nutzwert").map_err(e)?;
+                value.as_instruction_value().ok_or("Ergebnisnutzwert-Load fehlt")?.set_alignment(ort.alignment).map_err(e)?;
+                return Ok(Some(SVal { ty, value }));
+            }
+        }
+        if crate::native_simd::byte_operation(name) && !self.callees.contains_key(name) {
+            let expr = Expr::FunctionCall { name: name.into(), type_args: Vec::new(), args: args.to_vec(),
+                zeile: self.zeile, spalten: (0, 0) };
+            let (art, value) = self.simd_rechnung(&expr)?.ok_or("SIMD-Operation fehlt")?;
+            return self.simd_aggregat(art, value).map(Some);
+        }
+        if name == "sicht" && !self.callees.contains_key(name) { return self.datensicht(args).map(Some); }
         let (register_name, register_op) = crate::native_hardware::register_write(name)
             .unwrap_or((name, crate::native_hardware::RegisterWrite::Value));
         // P2-T66: im hosted Usermode gibt es weder MMIO noch privilegierte
@@ -5383,6 +5962,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let mut values: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
         for (constraint, expr) in &spec.inputs {
             let tied = constraint.len() == 1 && constraint.parse::<usize>().is_ok_and(|n| n < outputs);
+            if constraint == "i" {
+                values.push(crate::native_hardware::immediate(self.context, expr)?.into());
+                constraints.push(constraint.clone());
+                continue;
+            }
             if !(constraint == "r" || crate::native_hardware::register_constraint(constraint) || tied) {
                 return Err(format!("assembler: ungültige Eingangs-Constraint '{constraint}' (r, {{reg}}, Ausgangsnummer)"));
             }
@@ -5419,6 +6003,7 @@ pub(crate) fn emit_system_function<'ctx>(
     target: &TargetData,
     layouts: &NativeStructRegistry<'ctx>,
     nominals: &NominalTypes,
+    interfaces: &crate::native_interface::NativeInterfaces,
     function: FunctionValue<'ctx>,
     signature: &SystemSignature,
     param_names: &[String],
@@ -5452,6 +6037,41 @@ pub(crate) fn emit_system_function<'ctx>(
     {
         return Err("Systemkoerper: inkonsistente native Signatur".into());
     }
+    let symbol = function.get_name().to_string_lossy();
+    let source = symbol.strip_prefix("__moo_native.").unwrap_or(&symbol);
+    if !source.starts_with("__simd.") {
+        if let Some(decorators) = global_declarations.iter().find_map(|stmt| match stmt {
+            Stmt::FunctionDef { name, decorators, .. } if name == source => Some(decorators),
+            _ => None,
+        }) {
+            if let Some(limit) = crate::native_simd_dispatch::marker(decorators)? {
+                if signature.params.iter().chain(signature.result.iter()).any(|t| matches!(t, STy::Float(_))) {
+                    return Err("@simd verwendet die GPR-/Speicher-ABI: Fließkommawerte in einer Struktur übergeben".into());
+                }
+                let mut parameter_attributes: Vec<(u32, Vec<Attribute>)> = Vec::new();
+                if let Some(ty @ STy::Struct(_)) = &signature.result {
+                    parameter_attributes.push((0, struct_pointer_attributes(
+                        context, ty.llvm(context, layouts)?, target, true)));
+                }
+                let offset = u32::from(signature.returns_struct());
+                for (index, ty) in signature.params.iter().enumerate() {
+                    if matches!(ty, STy::Struct(_)) {
+                        parameter_attributes.push((index as u32 + offset, struct_pointer_attributes(
+                            context, ty.llvm(context, layouts)?, target, false)));
+                    }
+                }
+                for (position, attributes) in &parameter_attributes {
+                    for attribute in attributes {
+                        function.add_attribute(AttributeLoc::Param(*position), *attribute);
+                    }
+                }
+                return crate::native_simd_dispatch::emit(context, module, function, limit, &parameter_attributes, |variant| {
+                    emit_system_function(context, module, target, layouts, nominals, interfaces, variant,
+                        signature, param_names, body, callees, externs, sicher, export, global_declarations)
+                });
+            }
+        }
+    }
     let mut seen = HashSet::new();
     if param_names.iter().any(|name| !seen.insert(name)) {
         return Err("Doppelter nativer Parametername".into());
@@ -5473,6 +6093,7 @@ pub(crate) fn emit_system_function<'ctx>(
     let name = name.strip_prefix("__moo_native.").unwrap_or(name);
     if let Some((code, grund, zeile)) = flucht_verletzung(
         &typisiert, body, &|n| layouts.layout(n).is_some(), &|f, i| externs.behaelt(f, i),
+        &|n| !callees.contains_key(n),
     ) {
         // P2-T98 S2/S5: M-M002 Flucht bzw. M-M004 @behaelt, mit Zeile.
         return Err(crate::diagnose::vormerken(code, zeile, format!("Systemkoerper '{name}': {grund}")));
@@ -5485,7 +6106,7 @@ pub(crate) fn emit_system_function<'ctx>(
     let entry_builder = context.create_builder();
     entry_builder.position_at_end(entry);
     let mut emitter = Emitter {
-        context, module, target, layouts, nominals, triple: &triple, x86, hosted, function, entry,
+        context, module, target, layouts, nominals, interfaces, triple: &triple, x86, hosted, function, entry,
         sret: None, builder: context.create_builder(), slots: HashMap::new(), globals: HashMap::new(), loops: Vec::new(),
         trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
         sicher, unsicher_tiefe: 0, export, zeile: 0,
@@ -5526,6 +6147,9 @@ pub(crate) fn emit_system_function<'ctx>(
         emitter.slots.insert(name.clone(), Slot { ty: ty.clone(), ptr, constant: false });
     }
     emitter.declare_locals(body, &entry_builder)?;
+    let ergebnis_bindings = emitter.slots.iter().filter(|(_, slot)| Emitter::ergebnis_name(&slot.ty).is_some())
+        .map(|(name, _)| name.clone()).collect();
+    crate::fehlerpfade::native_ergebnis_nutzung(body, &ergebnis_bindings, param_names)?;
     let mut pro_kern_index = 0u32;
     for stmt in global_declarations {
         if let Stmt::NativeConst { name, ty, decorators, .. } = stmt {

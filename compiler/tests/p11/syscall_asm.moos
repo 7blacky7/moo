@@ -1,0 +1,4 @@
+aus "syscall_asm_probe" importiere syscall_asm_test
+# FEHLERPFAD(M-F001): Regression muss bei unerwarteten nativen Fehlern abbrechen.
+unsicher:
+    zeige syscall_asm_test()

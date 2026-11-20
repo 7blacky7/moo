@@ -281,12 +281,26 @@ fn validate_function_value(ty: &TypeRef, names: &HashSet<String>, allow_void: bo
     }
 }
 
+/// Endianbezeichnungen sind Speicherfeldtypen, keine numerischen Casts.
+pub(crate) fn endian_feld(ty: &TypeRef) -> Option<(NType, bool)> {
+    let TypeKind::Name(name) = &ty.kind else { return None; };
+    Some(match name.as_str() {
+        "u16be" => (NType::U16, true), "u16le" => (NType::U16, false),
+        "u32be" => (NType::U32, true), "u32le" => (NType::U32, false),
+        "u64be" => (NType::U64, true), "u64le" => (NType::U64, false),
+        _ => return None,
+    })
+}
+
 /// Only by-value fields require an already materialized layout; pointer edges
 /// are checked for names/types, but do not participate in layout cycles.
 fn collect_value_dependencies(
     ty: &TypeRef, names: &HashSet<String>, dependencies: &mut HashSet<String>,
 ) -> Result<(), String> {
+    if endian_feld(ty).is_some() { return Ok(()); }
     match &ty.kind {
+        TypeKind::Array { element, .. } if endian_feld(element).is_some() =>
+            Err("Endian-Feldtypen gehören an benannte Strukturfelder, nicht unmittelbar in ein Array".into()),
         TypeKind::Name(name) if NType::from_name(name).is_some() => Ok(()),
         TypeKind::Name(name) if names.contains(name) => { dependencies.insert(name.clone()); Ok(()) },
         TypeKind::Name(name) => Err(format!("Unbekannter Strukturfeldtyp '{name}'")),
@@ -376,6 +390,11 @@ impl<'ctx> NativeStructRegistry<'ctx> {
         if self.eingebaut.contains(name) { vecmat_art_name(name) } else { None }
     }
 
+    /// Eigene gleichnamige Strukturen behalten ihre normalen Strukturregeln.
+    pub(crate) fn simd_art(&self, name: &str) -> Option<crate::native_simd::SimdArt> {
+        if self.eingebaut.contains(name) { crate::native_simd::art(name) } else { None }
+    }
+
     /// P2-T16: nach register_all die eingebauten Definitionen markieren.
     pub(crate) fn markiere_eingebaut(&mut self, name: &str) {
         self.eingebaut.insert(name.to_string());
@@ -432,6 +451,7 @@ impl<'ctx> NativeStructRegistry<'ctx> {
     pub(crate) fn field_type(
         &self, context: &'ctx Context, target: &TargetData, ty: &TypeRef,
     ) -> Result<BasicTypeEnum<'ctx>, String> {
+        if let Some((scalar, _)) = endian_feld(ty) { return Ok(scalar.llvm_type(context)); }
         match &ty.kind {
             TypeKind::Name(name) => {
                 if let Some(scalar) = NType::from_name(name) {
@@ -514,6 +534,26 @@ impl<'ctx> NativeStructRegistry<'ctx> {
             pending = remaining;
         }
         *self = staged;
+        Ok(())
+    }
+
+    /// Eine geprüfte Byteansicht darf keine ungültigen Bitmuster oder Besitz-
+    /// bzw. Zeigerwerte aus beliebigen Eingabebytes erzeugen.
+    pub(crate) fn sicht_zulaessig(&self, name: &str) -> Result<(), String> {
+        let layout = self.layout(name).ok_or_else(|| format!("sicht: unbekannte Struktur '{name}'"))?;
+        if self.ist_opak(name) || !layout.bitfelder.is_empty() {
+            return Err(format!("sicht: '{name}' ist kein vollständiger On-Disk-Strukturtyp"));
+        }
+        fn feld(reg: &NativeStructRegistry<'_>, ty: &TypeRef) -> Result<(), String> {
+            if endian_feld(ty).is_some() { return Ok(()); }
+            match &ty.kind {
+                TypeKind::Name(n) if matches!(n.as_str(), "u8" | "i8") => Ok(()),
+                TypeKind::Name(n) if reg.layout(n).is_some() => reg.sicht_zulaessig(n),
+                TypeKind::Array { element, .. } => feld(reg, element),
+                _ => Err("sicht erlaubt Bytefelder, Endian-Felder und eingebettete On-Disk-Strukturen; keine Zeiger, bool, atom[T] oder hostabhängigen Wortfelder".into()),
+            }
+        }
+        for (_, ty) in &layout.fields { feld(self, ty)?; }
         Ok(())
     }
 
@@ -687,6 +727,9 @@ impl<'ctx> NativeStructRegistry<'ctx> {
     }
 
     fn boxbar_tiefe(&self, name: &str, tiefe: u32) -> Result<(), String> {
+        if name.starts_with("ergebnis[") {
+            return Err("ergebnis[T, F] ist ein nativer Must-use-Wert und darf nicht implizit als MooValue geboxed werden".into());
+        }
         if self.opake.contains(name) {
             return Err(format!("'{name}' ist opak (nur als Zeigerziel ptr[{name}])"));
         }

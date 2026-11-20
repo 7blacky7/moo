@@ -212,6 +212,14 @@ pub(crate) fn register_constraint(constraint: &str) -> bool {
         && constraint[1..constraint.len() - 1].bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
+/// Immediate-Operanden erzeugen niemals Laufzeitcode, auch nicht in @nackt.
+pub(crate) fn immediate<'ctx>(context: &'ctx Context, expr: &Expr) -> Result<IntValue<'ctx>, String> {
+    let value = crate::native_const::literal_value(context, expr, NType::I64)
+        .or_else(|_| crate::native_const::literal_value(context, expr, NType::U64))
+        .map_err(|_| "assembler: i-Eingang muss eine Ganzzahlkonstante sein (kein Laufzeitwert)")?;
+    Ok(context.i64_type().const_int(value as u64, false))
+}
+
 /// Jeder Operandenverweis `$N` bzw. `${N...}` muss deklariert sein; `$$` ist ein `$`.
 pub(crate) fn check_operands(code: &str, count: usize) -> Result<(), String> {
     let bytes = code.as_bytes();
@@ -556,6 +564,13 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         for (constraint, expr) in &spec.inputs {
             let tied = constraint.len() == 1 && constraint.chars().all(|c| c.is_ascii_digit())
                 && constraint.parse::<usize>().is_ok_and(|n| n < outputs);
+            if constraint == "i" {
+                let value = immediate(self.context, expr)?;
+                types.push(value.get_type().into());
+                values.push(value.into());
+                constraints.push(constraint.clone());
+                continue;
+            }
             if !(constraint == "r" || register_constraint(constraint) || tied) {
                 return Err(format!("assembler: ungültige Eingangs-Constraint '{constraint}' (r, {{reg}}, Ausgangsnummer)"));
             }
@@ -823,8 +838,8 @@ pub(crate) fn emit_hardware_function<'ctx>(
             match intrinsic_stmt(stmt) {
                 Some((Intrinsic::Asm, args, false)) => {
                     let spec = AsmSpec::parse(args)?;
-                    if !spec.inputs.is_empty() || spec.output.is_some() {
-                        return Err("@nackt: assembler ohne eingaenge=/ausgang= (Parameter liegen in den ABI-Registern)".into());
+                    if spec.inputs.iter().any(|(constraint, _)| constraint != "i") || spec.output.is_some() {
+                        return Err("@nackt: assembler ohne eingaenge=/ausgang= für Laufzeitwerte (nur konstante i-Eingänge erlaubt; Parameter liegen in den ABI-Registern)".into());
                     }
                     emitter.intrinsic(Intrinsic::Asm, args, false)?;
                 }

@@ -1,0 +1,12 @@
+importiere "schnittstelle_definitionen"
+
+struktur Ohne:
+    basis: u64
+
+@nativ
+funktion ungueltige_probe() -> u64:
+    unsicher:
+        setze a: Ohne auf Ohne(1)
+        setze p: ptr[Ohne] auf zeiger(adresse_von(a))
+        setze objekt: ptr[dyn Speicher] auf p
+        gib_zurück objekt.lesen(0)

@@ -1,0 +1,200 @@
+@nativ
+@einstieg
+@simd("gfni128")
+funktion simd_orakel_16_gfni128(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze b: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x16 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x16 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = produkt[i]
+            ziel[i + 16] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("gfni128")
+funktion simd_orakel_32_gfni128(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze b: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x32 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x32 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = produkt[i]
+            ziel[i + 32] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("skalar")
+funktion simd_orakel_16_skalar(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze b: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x16 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x16 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = produkt[i]
+            ziel[i + 16] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion simd_orakel_16_ssse3(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze b: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x16 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x16 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = produkt[i]
+            ziel[i + 16] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion simd_orakel_16_avx2(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze b: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x16 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x16 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = produkt[i]
+            ziel[i + 16] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd
+funktion simd_orakel_16_auto(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze b: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x16 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x16 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = produkt[i]
+            ziel[i + 16] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("skalar")
+funktion simd_orakel_32_skalar(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze b: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x32 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x32 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = produkt[i]
+            ziel[i + 32] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion simd_orakel_32_ssse3(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze b: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x32 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x32 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = produkt[i]
+            ziel[i + 32] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion simd_orakel_32_avx2(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze b: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x32 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x32 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = produkt[i]
+            ziel[i + 32] = gemischt[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd
+funktion simd_orakel_32_auto(links: ptr[u8], rechts: ptr[u8], ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze b: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = links[i]
+            b[i] = rechts[i]
+            setze i auf i + 1
+        setze produkt: u8x32 auf simd_gf256_mal(a, b)
+        setze gemischt: u8x32 auf simd_mischen(a, b)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = produkt[i]
+            ziel[i + 32] = gemischt[i]
+            setze i auf i + 1
+

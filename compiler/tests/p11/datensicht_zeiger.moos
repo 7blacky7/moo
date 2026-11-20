@@ -1,0 +1,6 @@
+struktur DatensichtUnsicher:
+    adresse: ptr[u8]
+@nativ
+funktion datensicht_zeiger(bytes: puffer[u8]) -> u64:
+    setze p: puffer[DatensichtUnsicher] auf sicht(bytes, DatensichtUnsicher, 0)
+    gib_zurück 0

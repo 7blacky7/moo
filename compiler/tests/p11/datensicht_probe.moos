@@ -1,0 +1,61 @@
+importiere "datensicht_typen"
+
+@nativ
+funktion datensicht_cbw() -> bool:
+    setze speicher: DatensichtSpeicher auf 0
+    setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+    setze cbw: puffer[DatensichtCbw] auf sicht(bytes, DatensichtCbw, 1)
+    cbw[0].signatur = 0x43425355
+    cbw[0].marke = 0x01020304
+    cbw[0].laenge = 1024
+    cbw[0].flags = 128
+    cbw[0].breite = 10
+    setze cdb: puffer[DatensichtCdb10] auf sicht(bytes, DatensichtCdb10, 16)
+    cdb[0].op = 0x28
+    cdb[0].lba = 0x01020304
+    cdb[0].anzahl = 2
+    # Unabhängige Sollbytes für den bestehenden ms_cbw_bauen READ(10)-Fall.
+    setze soll: [u8; 31] auf [0x55, 0x53, 0x42, 0x43, 4, 3, 2, 1, 0, 4, 0, 0, 128, 0, 10, 0x28, 0, 1, 2, 3, 4, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]
+    setze i: u64 auf 0
+    solange i < 31:
+        wenn bytes[i + 1] != soll[i]:
+            gib_zurück falsch
+        setze i auf i + 1
+    wenn länge(cbw) != 1 oder cbw[0].signatur != 0x43425355 oder cdb[0].lba != 0x01020304:
+        gib_zurück falsch
+    cbw[0].breite = 16
+    setze cdb16: puffer[DatensichtCdb16] auf sicht(bytes, DatensichtCdb16, 16)
+    cdb16[0] = DatensichtCdb16(0x88, 0, 0x0102030405060708, 0x11223344, 0, 0)
+    wenn byte_lesen_be64(bytes, 18) != 0x0102030405060708 oder byte_lesen_be32(bytes, 26) != 0x11223344:
+        gib_zurück falsch
+    wenn bytes[16] != 0x88 oder cbw[0].breite != 16 oder bytes[0] != 0 oder bytes[32] != 0:
+        gib_zurück falsch
+    gib_zurück wahr
+
+@nativ
+funktion datensicht_runde() -> bool:
+    setze speicher: DatensichtSpeicher auf 0
+    setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+    setze p: puffer[DatensichtRunde] auf sicht(bytes, DatensichtRunde, 1)
+    p[0] = DatensichtRunde(0x1234, 0x5678, 0x11223344, 0x55667788, 0x0102030405060708, 0x1112131415161718)
+    wenn p[0].a != 0x1234 oder p[0].b != 0x5678 oder p[0].c != 0x11223344 oder p[0].d != 0x55667788:
+        gib_zurück falsch
+    wenn p[0].e != 0x0102030405060708 oder p[0].f != 0x1112131415161718:
+        gib_zurück falsch
+    wenn byte_lesen_be16(bytes, 1) != 0x1234 oder byte_lesen_le16(bytes, 3) != 0x5678:
+        gib_zurück falsch
+    wenn byte_lesen_be32(bytes, 5) != 0x11223344 oder byte_lesen_le32(bytes, 9) != 0x55667788:
+        gib_zurück falsch
+    wenn byte_lesen_be64(bytes, 13) != 0x0102030405060708 oder byte_lesen_le64(bytes, 21) != 0x1112131415161718:
+        gib_zurück falsch
+    p[0].a = 0xABCD
+    p[0].f = 0xA1A2A3A4A5A6A7A8
+    gib_zurück byte_lesen_be16(bytes, 1) == 0xABCD und byte_lesen_le64(bytes, 21) == 0xA1A2A3A4A5A6A7A8
+
+@nativ
+funktion datensicht_grenze(versatz: u64) -> u64:
+    setze bytes: [u8; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+    setze p: puffer[DatensichtWort] auf sicht(byteansicht(bytes), DatensichtWort, versatz)
+    p[0].wert = 0x01020304
+    gib_zurück p[0].wert
+

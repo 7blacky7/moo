@@ -1,0 +1,65 @@
+# SysV-Wertklassen: schmale Ganzzahlen, bool und Strukturwerte über die Vtable.
+struktur SignalPunkt:
+    x: f64
+    y: f64
+
+schnittstelle Signale:
+    funktion byte(selbst, x: u8) -> u8
+    funktion vorzeichen(selbst, x: i8) -> i8
+    funktion wahrheit(selbst, x: bool) -> bool
+    funktion punkt(selbst, p: SignalPunkt) -> SignalPunkt
+    funktion strukturzeiger(selbst, p: ptr[SignalPunkt]) -> SignalPunkt
+
+struktur SignalQuelle implementiert Signale:
+    bytewert: u8
+    vorzeichenwert: i8
+    schalter: bool
+    faktor: f64
+    funktion byte(selbst, x: u8) -> u8:
+        unsicher:
+            gib_zurück x + selbst.bytewert
+    funktion vorzeichen(selbst, x: i8) -> i8:
+        unsicher:
+            gib_zurück x - selbst.vorzeichenwert
+    funktion wahrheit(selbst, x: bool) -> bool:
+        unsicher:
+            gib_zurück x und selbst.schalter
+    funktion punkt(selbst, p: SignalPunkt) -> SignalPunkt:
+        unsicher:
+            gib_zurück SignalPunkt(p.x + selbst.faktor, p.y * selbst.faktor)
+    funktion strukturzeiger(selbst, p: ptr[SignalPunkt]) -> SignalPunkt:
+        unsicher:
+            gib_zurück SignalPunkt(p.x + selbst.faktor, p.y)
+
+@nativ
+@rueckruf
+@aufrufkonvention("win64")
+funktion struktur_rueckruf(kontext: ptr[u8], punkt: SignalPunkt) -> SignalPunkt:
+    unsicher:
+        gib_zurück SignalPunkt(punkt.y, punkt.x)
+
+@nativ
+funktion schnittstelle_abi_probe() -> u64:
+    unsicher:
+        setze quelle: SignalQuelle auf SignalQuelle(250, -3, wahr, 2.0)
+        setze p: ptr[SignalQuelle] auf zeiger(adresse_von(quelle))
+        setze objekt: ptr[dyn Signale] auf p
+        wenn objekt.byte(15) != 9 oder objekt.vorzeichen(-125) != -122:
+            gib_zurück 0
+        wenn nicht objekt.wahrheit(wahr) oder objekt.wahrheit(falsch):
+            gib_zurück 0
+        setze punkt: SignalPunkt auf objekt.punkt(SignalPunkt(1.5, 2.5))
+        wenn punkt.x != 3.5 oder punkt.y != 5.0:
+            gib_zurück 0
+        setze rueckruf: ptr[fn[win64](ptr[u8], SignalPunkt) -> SignalPunkt] auf struktur_rueckruf
+        setze vertauscht: SignalPunkt auf rueckruf(nichts, SignalPunkt(1.5, 2.5))
+        wenn vertauscht.x != 2.5 oder vertauscht.y != 1.5:
+            gib_zurück 0
+        setze adresse: ptr[SignalPunkt] auf zeiger(adresse_von(punkt))
+        setze gelesen: SignalPunkt auf objekt.strukturzeiger(adresse)
+        wenn gelesen.x != 5.5 oder gelesen.y != 5.0:
+            gib_zurück 0
+        gib_zurück 1
+
+unsicher:
+    zeige schnittstelle_abi_probe()

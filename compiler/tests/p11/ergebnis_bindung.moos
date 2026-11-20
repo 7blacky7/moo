@@ -1,0 +1,4 @@
+importiere "ergebnis_probe"
+@nativ
+funktion ergebnis_negativ(x: u64) -> void:
+    setze wert: ergebnis[u64, u32] auf ergebnis_blatt(1)

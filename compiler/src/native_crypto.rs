@@ -117,7 +117,7 @@ pub(crate) fn bytes<'ctx>(context: &'ctx Context, module: &Module<'ctx>, wipe: b
     Ok(f)
 }
 
-fn cpuid<'ctx>(context: &'ctx Context, b: &inkwell::builder::Builder<'ctx>, leaf: u64, reg: u32) -> Result<IntValue<'ctx>, String> {
+pub(crate) fn cpuid<'ctx>(context: &'ctx Context, b: &inkwell::builder::Builder<'ctx>, leaf: u64, reg: u32) -> Result<IntValue<'ctx>, String> {
     let t = context.i32_type();
     let result = context.struct_type(&[t.into(), t.into(), t.into(), t.into()], false);
     let ty = result.fn_type(&[t.into(), t.into()], false);

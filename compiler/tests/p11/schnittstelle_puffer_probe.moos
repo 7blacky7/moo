@@ -1,0 +1,53 @@
+schnittstelle PufferQuelle:
+    funktion fuellen(selbst, daten: puffer[u8], marke: u64) -> ergebnis[u64, u32]
+    funktion pruefen(selbst, daten: puffer[u8], a: u64, b: u64, c: u64, d: u64, e: u64) -> u64
+struktur PufferGeraet implementiert PufferQuelle:
+    wert: u8
+    funktion fuellen(selbst, daten: puffer[u8], marke: u64) -> ergebnis[u64, u32]:
+        unsicher:
+            wenn länge(daten) == 0:
+                gib_zurück fehlschlag(7)
+            daten[0] = selbst.wert
+            daten[länge(daten) - 1] = 99
+            gib_zurück erfolg(länge(daten) + marke)
+    funktion pruefen(selbst, daten: puffer[u8], a: u64, b: u64, c: u64, d: u64, e: u64) -> u64:
+        gib_zurück als(u64, daten[a]) + b + c + d + e
+
+struktur PufferProbeSpeicher:
+    bytes: [u8; 16]
+
+@nativ
+funktion schnittstelle_puffer_probe(index: u64) -> u64:
+    unsicher:
+        setze quelle: PufferGeraet auf PufferGeraet(37)
+        setze q: ptr[PufferGeraet] auf zeiger(adresse_von(quelle))
+        setze p: ptr[dyn PufferQuelle] auf q
+        setze speicher: PufferProbeSpeicher auf 0
+        setze daten: puffer[u8] auf byteansicht(speicher.bytes)
+        setze r: ergebnis[u64, u32] auf p.fuellen(daten, 8)
+        wenn nicht ist_erfolg(r):
+            gib_zurück 1
+        wenn ergebnis_wert(r) != 24 oder daten[0] != 37 oder daten[15] != 99:
+            gib_zurück 2
+        setze leer: ptr[u8] auf nichts
+        setze n: ergebnis[u64, u32] auf p.fuellen(byteansicht(leer, 0), 0)
+        wenn ist_erfolg(n):
+            gib_zurück 3
+        wenn ergebnis_fehler(n) != 7:
+            gib_zurück 4
+        gib_zurück p.pruefen(daten, index, 2, 3, 4, 5)
+
+@nativ
+statisch PUFFER_PROBE_FOLGE: atom[u64] auf 0
+
+@nativ
+funktion schnittstelle_puffer_fehler() -> u64:
+    unsicher:
+        setze wert: u64 auf schnittstelle_puffer_probe(16)
+        atom_speichern(PUFFER_PROBE_FOLGE, 1, ordnung=locker)
+        gib_zurück wert
+
+@nativ
+funktion schnittstelle_puffer_folge() -> u64:
+    unsicher:
+        gib_zurück atom_laden(PUFFER_PROBE_FOLGE, ordnung=locker)

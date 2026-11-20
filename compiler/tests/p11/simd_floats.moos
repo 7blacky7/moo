@@ -1,0 +1,4 @@
+@nativ
+@simd
+funktion simd_vertrag_probe(a: f64) -> f64:
+    gib_zurück a

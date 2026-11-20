@@ -15,6 +15,7 @@ mod native_control_flow;
 mod native_cleanup;
 mod native_crypto;
 mod native_struct;
+mod native_interface;
 mod ffi_abi;
 mod native_pointer;
 mod native_hardware;
@@ -23,6 +24,8 @@ mod native_system;
 mod native_type_id;
 mod lexer;
 mod native_vecmat;
+mod native_simd;
+mod native_simd_dispatch;
 mod parser;
 mod runtime_bindings;
 mod runtime_provider;
@@ -453,7 +456,20 @@ fn parse_file(file: &PathBuf) -> Result<ast::Program, String> {
         return Err(text);
     }
     let mut par = parser::Parser::new(tokens);
-    par.parse_alle().map_err(|fehler| {
+    par.parse_alle().map(|mut program| {
+        // Methoden bleiben bis zur Auflösung beim Strukturtyp; ihre Herkunft
+        // muss auch nach dem späteren nativen Absenken erhalten bleiben.
+        for stmt in &program.statements {
+            if let ast::Stmt::StructDef { name, methods, .. } = stmt {
+                for method in methods {
+                    if let ast::Stmt::FunctionDef { name: method_name, .. } = method {
+                        program.funktion_quellen.insert(ast::native_method_name(name, method_name), datei.clone());
+                    }
+                }
+            }
+        }
+        program
+    }).map_err(|fehler| {
         let text = format!("{datei}: {}", fehler[0]);
         for e in &fehler {
             diagnose::melden(e.diagnose().datei(datei.clone()));
@@ -1251,7 +1267,10 @@ impl QualiLaeufer<'_> {
             }
             S::Return(value, _) => { if let Some(v) = value { self.expr(v)?; } }
             S::Break(_) | S::Continue(_) | S::Import { .. } | S::Global(_, _) => {}
-            S::StructDef { fields, .. } => { for (_, t) in fields { self.typ(t)?; } }
+            S::StructDef { fields, methods, .. } => {
+                for (_, t) in fields { self.typ(t)?; }
+                self.stmts(methods)?;
+            }
             S::ClassDef { body, .. } => self.stmts(body)?,
             S::InterfaceDef { signatures, .. } => {
                 for sig in signatures.iter_mut().flatten() {

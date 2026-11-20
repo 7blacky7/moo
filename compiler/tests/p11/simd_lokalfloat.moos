@@ -1,0 +1,5 @@
+@nativ
+@simd
+funktion simd_vertrag_probe() -> u64:
+    setze zahlwert: f64 auf 1.5
+    gib_zurück als(u64, zahlwert)

@@ -137,6 +137,7 @@ Program {
                     value: Number(
                         16.0,
                     ),
+                    geteilt: false,
                 },
                 Return(
                     Some(

@@ -25,6 +25,8 @@ pub(crate) enum NativeTypeId {
     Registration { signature: Box<NativeTypeId> },
     /// Ganzzahlspeicher, der nur atomar gelesen oder geaendert wird.
     Atom(ScalarType),
+    /// Angehängt: disjunkte native Erfolgs-/Fehlerwerte ohne Heapbesitz.
+    Result { value: Box<NativeTypeId>, error: Box<NativeTypeId> },
 }
 
 /// Moo-Quellschreibweise fuer Diagnosen (P2-T21/T57: Rueckruf-Signaturvergleich).
@@ -38,6 +40,7 @@ impl std::fmt::Display for NativeTypeId {
                 ScalarType::F64 => "f64", ScalarType::Bool => "bool",
                 ScalarType::ISize => "isize", ScalarType::USize => "usize",
             }),
+            NativeTypeId::Result { value, error } => write!(f, "ergebnis[{value}, {error}]"),
             NativeTypeId::Void => f.write_str("void"),
             NativeTypeId::Pointer { pointee, .. } => write!(f, "ptr[{pointee}]"),
             NativeTypeId::Buffer { element } => write!(f, "puffer[{element}]"),
@@ -138,6 +141,23 @@ pub(crate) fn resolve_type(ty: &TypeRef, nominal: &NominalTypes) -> Result<Nativ
                 return Err(format!("Typ '{name}' hat keine kanonische Modulidentität"));
             }
             Ok(NativeTypeId::Nominal { module: module.clone(), name: declaration.clone() })
+        }
+        TypeKind::Generic { name, args } if name == "ergebnis" => {
+            let [value, error] = args.as_slice() else { return Err("ergebnis[T, F] benötigt genau Erfolgs- und Fehlertyp".into()); };
+            fn payload(ty: &NativeTypeId) -> bool {
+                match ty {
+                    NativeTypeId::Void | NativeTypeId::Scalar(_) | NativeTypeId::Nominal { .. }
+                    | NativeTypeId::Pointer { .. } => true,
+                    NativeTypeId::Result { value, error } => payload(value) && payload(error),
+                    _ => false,
+                }
+            }
+            let value = resolve_type(value, nominal)?;
+            let error = resolve_type(error, nominal)?;
+            if !payload(&value) || !payload(&error) {
+                return Err("ergebnis[T, F] braucht feste native Werttypen; Puffer, atom[T] und verwaltete Registrierungen sind nicht erlaubt".into());
+            }
+            Ok(NativeTypeId::Result { value: Box::new(value), error: Box::new(error) })
         }
         TypeKind::Generic { name, .. } if ist_atom_typ(name) => {
             match resolve_type(atom_element(ty)?, nominal)? {

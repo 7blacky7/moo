@@ -1,0 +1,33 @@
+aus "schnittstelle_fehler_probe" importiere schnittstelle_fehler_probe, schnittstelle_fehler_folge
+versuche:
+    unsicher:
+        zeige schnittstelle_fehler_probe(0, 64)
+    zeige "FALSCH"
+fange fehler:
+    zeige "fehler0"
+versuche:
+    unsicher:
+        zeige schnittstelle_fehler_probe(1, 64)
+    zeige "FALSCH"
+fange fehler:
+    zeige "fehler1"
+versuche:
+    unsicher:
+        zeige schnittstelle_fehler_probe(2, 64)
+    zeige "FALSCH"
+fange fehler:
+    zeige "fehler2"
+versuche:
+    unsicher:
+        zeige schnittstelle_fehler_probe(3, 64)
+    zeige "FALSCH"
+fange fehler:
+    zeige "fehler3"
+# Erfolgsproben sollen bei unerwartetem nativen Fehler abbrechen.
+unsicher:
+    zeige schnittstelle_fehler_folge()
+    zeige schnittstelle_fehler_probe(0, 1)
+    zeige schnittstelle_fehler_probe(1, 1)
+    zeige schnittstelle_fehler_probe(2, 1)
+    zeige schnittstelle_fehler_probe(3, 1)
+    zeige schnittstelle_fehler_folge()

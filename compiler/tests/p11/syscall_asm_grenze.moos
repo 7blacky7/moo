@@ -1,0 +1,4 @@
+aus "syscall_asm_probe" importiere ASM_DATEN
+@nativ
+funktion falsch_versatz() -> u64:
+    gib_zurück pro_kern_versatz(ASM_DATEN.bytes[4])

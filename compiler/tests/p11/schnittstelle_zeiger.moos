@@ -1,0 +1,7 @@
+schnittstelle Adresse:
+    funktion lesen(selbst, adresse: ptr[u8]) -> u8
+struktur Fehler implementiert Adresse:
+    basis: u64
+    funktion lesen(selbst, adresse: ptr[i8]) -> u8:
+        unsicher:
+            gib_zurück 0

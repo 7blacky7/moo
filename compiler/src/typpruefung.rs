@@ -1243,6 +1243,30 @@ fn kinder(e: &Expr) -> Vec<&Expr> {
     }
 }
 
+/// Sicher ausgewertete Lesezugriffe für native Must-use-Werte. Anders als
+/// die Annotationdominanz oben werden Aufrufargumente berücksichtigt; bei
+/// Kurzschluss/Ternaer zählen nur auf jedem Ausführungspfad gelesene Namen.
+pub(crate) fn native_gelesene_namen(expr: &Expr, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Identifier(n) => { out.insert(n.clone()); }
+        Expr::FunctionCall { args, .. } => for e in args { native_gelesene_namen(e, out); },
+        Expr::MethodCall { object, args, .. } => {
+            native_gelesene_namen(object, out);
+            for e in args { native_gelesene_namen(e, out); }
+        }
+        Expr::BinaryOp { left, op: BinOp::And | BinOp::Or, .. } =>
+            native_gelesene_namen(left, out),
+        Expr::Ternary { condition, then_val, else_val } => {
+            native_gelesene_namen(condition, out);
+            let mut yes = HashSet::new(); let mut no = HashSet::new();
+            native_gelesene_namen(then_val, &mut yes);
+            native_gelesene_namen(else_val, &mut no);
+            out.extend(yes.intersection(&no).cloned());
+        }
+        _ => for e in kinder(expr) { native_gelesene_namen(e, out); },
+    }
+}
+
 /// Funktionsnamen der Datei zaehlen (alle Tiefen ausser Methoden direkt im
 /// Klassenkoerper; extern-Funktionen zaehlen mit).
 fn funktionsnamen_zaehlen(stmts: &[Stmt], anzahl: &mut HashMap<String, usize>) {

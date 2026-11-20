@@ -1,0 +1,6 @@
+schnittstelle PufferRueckgabe:
+    funktion lesen(selbst, daten: puffer[u8]) -> puffer[u8]
+
+@nativ
+funktion puffer_rueckgabe(p: ptr[dyn PufferRueckgabe]) -> u64:
+    gib_zurück 0

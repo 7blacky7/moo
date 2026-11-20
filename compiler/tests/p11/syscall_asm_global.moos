@@ -1,0 +1,5 @@
+@nativ
+statisch GLOBAL: [u64; 2] auf 0
+@nativ
+funktion falsch_versatz() -> u64:
+    gib_zurück pro_kern_versatz(GLOBAL)

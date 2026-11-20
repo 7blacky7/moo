@@ -539,7 +539,7 @@ impl Parser {
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
-                            Some(TokenType::Colon)) => self.parse_struct_def(vec![]),
+                            Some(TokenType::Colon | TokenType::Implements)) => self.parse_struct_def(vec![]),
             TokenType::Identifier(kw) if kw == "bitfeld"
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type), Some(TokenType::Colon)) =>
@@ -1025,6 +1025,10 @@ impl Parser {
     }
 
     fn parse_decorated_function(&mut self) -> Result<Stmt, ParseError> {
+        self.parse_decorated_function_native(false)
+    }
+
+    fn parse_decorated_function_native(&mut self, native_default: bool) -> Result<Stmt, ParseError> {
         let mut decorators = Vec::new();
         while matches!(self.current_type(), TokenType::At) {
             self.pos += 1; // @
@@ -1153,6 +1157,9 @@ impl Parser {
                 ..ParseError::bei(self.current())
             });
         }
+        if native_default && !decorators.iter().any(|d| matches!(d.name.as_str(), "nativ" | "native")) {
+            decorators.push(crate::ast::Decorator { name: "nativ".into(), args: Vec::new() });
+        }
         self.parse_function_def_with_decorators(decorators)
     }
 
@@ -1231,7 +1238,7 @@ impl Parser {
             return Err(ParseError { message: "bitfeld braucht mindestens einen benannten Bereich".into(),
                 ..ParseError::bei(self.current()) });
         }
-        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder })
+        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder, interfaces: Vec::new(), methods: Vec::new() })
     }
 
     fn parse_bitposition(&mut self) -> Result<u32, ParseError> {
@@ -1247,22 +1254,31 @@ impl Parser {
     }
 
     fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
-        self.pos += 1; // kontextuelles struktur/struct
+        self.pos += 1;
         let name = self.eat_identifier()?;
-        // P2-T23/T53 (Plan 36aca1f2 E2): `@opak struktur Name` ohne Koerper -
-        // nur als Zeigerziel (ptr[Name]) fuer fremde Objekte nutzbar.
+        let mut interfaces = Vec::new();
+        if matches!(self.current_type(), TokenType::Implements) {
+            self.pos += 1;
+            interfaces.push(self.eat_identifier()?);
+            while matches!(self.current_type(), TokenType::Comma) {
+                self.pos += 1;
+                interfaces.push(self.eat_identifier()?);
+            }
+        }
         if decorators.iter().any(|d| d.name == "opak" || d.name == "opaque")
             && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
         {
-            return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators, bitfelder: Vec::new() });
+            return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators,
+                bitfelder: Vec::new(), interfaces, methods: Vec::new() });
         }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
         self.eat(&TokenType::Indent)?;
         let previous_native = self.native_context;
-        self.native_context = true; // Arraylängen bleiben als Rohlexem exakt.
+        self.native_context = true;
         let result = (|| {
             let mut fields = Vec::new();
+            let mut methods = Vec::new();
             loop {
                 self.skip_newlines();
                 match self.current_type() {
@@ -1271,6 +1287,24 @@ impl Parser {
                         message: "Strukturblock nicht abgeschlossen".to_string(),
                         ..ParseError::bei(self.current())
                     }),
+                    TokenType::Func | TokenType::At => {
+                        let line = self.current().line;
+                        let mut method = if matches!(self.current_type(), TokenType::At) {
+                            self.parse_decorated_function_native(true)?
+                        } else {
+                            self.parse_function_def_with_decorators(vec![crate::ast::Decorator {
+                                name: "nativ".into(), args: Vec::new(),
+                            }])?
+                        };
+                        match &mut method {
+                            Stmt::FunctionDef { zeile, .. } => *zeile = line,
+                            _ => return Err(ParseError {
+                                message: "Im Strukturblock sind Felder und native Methoden erlaubt".into(),
+                                ..ParseError::an(line, 1)
+                            }),
+                        }
+                        methods.push(method);
+                    }
                     _ => {
                         let field = self.eat_identifier()?;
                         self.eat(&TokenType::Colon)?;
@@ -1285,7 +1319,7 @@ impl Parser {
                     }
                 }
             }
-            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new() })
+            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new(), interfaces, methods })
         })();
         self.native_context = previous_native;
         result
@@ -1351,7 +1385,11 @@ impl Parser {
                     ..ParseError::bei(self.current())
                 }),
             };
-            if name == "fn" && matches!(self.current_type(), TokenType::LParen | TokenType::LBracket) {
+            if name == "dyn" && matches!(self.current_type(), TokenType::Identifier(_)) {
+                let target = self.parse_type()?;
+                let end = (target.end_line, target.end_column);
+                (TypeKind::Generic { name, args: vec![target] }, end.0, end.1)
+            } else if name == "fn" && matches!(self.current_type(), TokenType::LParen | TokenType::LBracket) {
                 // P7-T4 (7A): optionale Aufrufkonvention `fn[win64](...) -> T`.
                 let convention = if matches!(self.current_type(), TokenType::LBracket) {
                     self.pos += 1;
@@ -1416,7 +1454,16 @@ impl Parser {
     }
 
     fn parse_param(&mut self, params: &mut Vec<String>, param_types: &mut Vec<Option<crate::ast::TypeRef>>, defaults: &mut Vec<Option<Expr>>) -> Result<(), ParseError> {
-        let name = self.eat_identifier()?;
+        self.parse_param_receiver(params, param_types, defaults, self.native_context)
+    }
+
+    fn parse_param_receiver(&mut self, params: &mut Vec<String>, param_types: &mut Vec<Option<crate::ast::TypeRef>>, defaults: &mut Vec<Option<Expr>>, allow_receiver: bool) -> Result<(), ParseError> {
+        let name = if allow_receiver && params.is_empty() && matches!(self.current_type(), TokenType::This) {
+            self.pos += 1;
+            "selbst".to_string()
+        } else {
+            self.eat_identifier()?
+        };
         params.push(name);
         let ty = if matches!(self.current_type(), TokenType::Colon)
             && self.tokens.get(self.pos + 1).is_some_and(|t|
@@ -1495,7 +1542,7 @@ impl Parser {
                         let mut defaults = Vec::new();
                         if !matches!(self.current_type(), TokenType::RParen) {
                             loop {
-                                self.parse_param(&mut params, &mut param_types, &mut defaults)?;
+                                self.parse_param_receiver(&mut params, &mut param_types, &mut defaults, true)?;
                                 // P2-T60: parse_param uebernimmt den Typ nur bei Name/'['
                                 // nach ':'. Ein verbliebenes ':' ist eine Annotation ohne
                                 // gueltigen Typ; parse_type liefert die echte Typdiagnose.
@@ -2132,7 +2179,7 @@ impl Parser {
             }
             TokenType::This => {
                 self.pos += 1;
-                Ok(Expr::This)
+                if self.native_context { Ok(Expr::Identifier("selbst".into())) } else { Ok(Expr::This) }
             }
             TokenType::New => {
                 self.pos += 1;

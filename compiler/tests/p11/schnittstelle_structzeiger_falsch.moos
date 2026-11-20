@@ -1,0 +1,7 @@
+importiere "schnittstelle_abi"
+struktur AndererSignalPunkt:
+    x: f64
+    y: f64
+@nativ
+funktion falscher_strukturzeiger(objekt: ptr[dyn Signale], adresse: ptr[AndererSignalPunkt]) -> SignalPunkt:
+    gib_zurück objekt.strukturzeiger(adresse)

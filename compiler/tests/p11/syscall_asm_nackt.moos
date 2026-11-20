@@ -1,0 +1,22 @@
+aus "syscall_asm_probe" importiere ASM_DATEN
+@nativ
+@nackt
+@einstieg
+funktion syscall_asm_scratch() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %r10, %gs:${0:c}; retq", eingaenge={"i": pro_kern_versatz(ASM_DATEN.register)}, clobber=["memory"])
+
+
+@nativ
+@einstieg
+funktion syscall_asm_konstant() -> u64:
+    unsicher:
+        gib_zurück assembler(ziel="x86_64", code="movq $1, $0", ausgang="=r", eingaenge={"i": 7}, clobber=[])
+
+@nativ
+@einstieg
+funktion syscall_asm_system() -> u64:
+    unsicher:
+        setze wert: u64 auf 0
+        setze wert auf assembler(ziel="x86_64", code="movq $1, $0", ausgang="=r", eingaenge={"i": 7}, clobber=[])
+        gib_zurück wert

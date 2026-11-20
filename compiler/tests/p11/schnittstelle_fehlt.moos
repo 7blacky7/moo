@@ -1,0 +1,7 @@
+importiere "schnittstelle_definitionen"
+
+struktur Fehler implementiert Speicher:
+    basis: u64
+    funktion lesen(selbst, index: u64) -> u64:
+        unsicher:
+            gib_zurück selbst.basis + index

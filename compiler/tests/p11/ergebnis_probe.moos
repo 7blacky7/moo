@@ -1,0 +1,142 @@
+struktur ErgebnisPunkt:
+    wert: u64
+
+struktur ErgebnisZaehler:
+    wert: u64
+
+@nativ
+statisch ERG_CLEAN: ErgebnisZaehler auf 0
+
+@nativ
+funktion ergebnis_cleanup() -> void:
+    unsicher:
+        ERG_CLEAN.wert = ERG_CLEAN.wert + 1
+
+@nativ
+funktion ergebnis_blatt(x: u64) -> ergebnis[u64, u32]:
+    aufräumen: ergebnis_cleanup()
+    wenn x == 0:
+        gib_zurück fehlschlag(7)
+    gib_zurück erfolg(x + 2)
+
+@nativ
+funktion ergebnis_mitte(x: u64) -> ergebnis[ErgebnisPunkt, u32]:
+    aufräumen: ergebnis_cleanup()
+    setze wert: u64 auf weitergeben(ergebnis_blatt(x))
+    gib_zurück erfolg(ErgebnisPunkt(wert))
+
+@nativ
+funktion ergebnis_leer(x: u64) -> ergebnis[void, u32]:
+    wenn x == 0:
+        gib_zurück fehlschlag(9)
+    gib_zurück erfolg()
+
+@nativ
+funktion ergebnis_leer_weiter(x: u64) -> ergebnis[u64, u32]:
+    aufräumen: ergebnis_cleanup()
+    weitergeben(ergebnis_leer(x))
+    gib_zurück erfolg(42)
+
+schnittstelle ErgebnisQuelle:
+    funktion lesen(selbst, x: u64) -> ergebnis[u64, u32]
+
+struktur ErgebnisGeraet implementiert ErgebnisQuelle:
+    basis: u64
+    funktion lesen(selbst, x: u64) -> ergebnis[u64, u32]:
+        wenn x == 0:
+            gib_zurück fehlschlag(11)
+        unsicher:
+            gib_zurück erfolg(selbst.basis + x)
+
+@nativ
+funktion ergebnis_virtuell(p: ptr[dyn ErgebnisQuelle], x: u64) -> ergebnis[u64, u32]:
+    gib_zurück p.lesen(x)
+
+@nativ
+@rueckruf
+@aufrufkonvention("sysv64")
+funktion ergebnis_klein(x: u32) -> ergebnis[u32, u32]:
+    wenn x == 0:
+        gib_zurück fehlschlag(5)
+    gib_zurück erfolg(x)
+
+@nativ
+@rueckruf
+@aufrufkonvention("win64")
+funktion ergebnis_win64(x: u32) -> ergebnis[u32, u32]:
+    gib_zurück erfolg(x)
+
+@nativ
+funktion ergebnis_lokal_leihen() -> ergebnis[u64, u32]:
+    unsicher:
+        setze wert: u64 auf 13
+        setze p: ptr[u64] auf zeiger(adresse_von(wert))
+        setze r: ergebnis[ptr[u64], u32] auf erfolg(p)
+        setze q: ptr[u64] auf weitergeben(r)
+        gib_zurück erfolg(q[0])
+
+@nativ
+funktion ergebnis_strukturfehler() -> ergebnis[u64, ErgebnisPunkt]:
+    gib_zurück fehlschlag(ErgebnisPunkt(88))
+
+@nativ
+funktion ergebnis_strukturfehler_weiter() -> ergebnis[void, ErgebnisPunkt]:
+    setze wert: u64 auf weitergeben(ergebnis_strukturfehler())
+    gib_zurück erfolg()
+
+@nativ
+funktion ergebnis_punkt_weiter(x: u64) -> ergebnis[u64, u32]:
+    setze punkt: ErgebnisPunkt auf weitergeben(ergebnis_mitte(x))
+    gib_zurück erfolg(punkt.wert)
+
+@nativ
+funktion ergebnis_probe() -> u64:
+    unsicher:
+        ERG_CLEAN.wert = 0
+    setze gut: ergebnis[ErgebnisPunkt, u32] auf ergebnis_mitte(5)
+    wenn nicht ist_erfolg(gut):
+        gib_zurück 1
+    setze punkt: ErgebnisPunkt auf ergebnis_wert(gut)
+    wenn punkt.wert != 7:
+        gib_zurück 2
+    setze schlecht: ergebnis[ErgebnisPunkt, u32] auf ergebnis_mitte(0)
+    wenn ist_erfolg(schlecht):
+        gib_zurück 3
+    wenn ergebnis_fehler(schlecht) != 7:
+        gib_zurück 4
+    setze leer_gut: ergebnis[u64, u32] auf ergebnis_leer_weiter(1)
+    wenn ergebnis_wert(leer_gut) != 42:
+        gib_zurück 5
+    setze leer_fehler: ergebnis[u64, u32] auf ergebnis_leer_weiter(0)
+    wenn ergebnis_fehler(leer_fehler) != 9:
+        gib_zurück 6
+    unsicher:
+        wenn ERG_CLEAN.wert != 6:
+            gib_zurück 7
+        setze geraet: ErgebnisGeraet auf ErgebnisGeraet(100)
+        setze p: ptr[ErgebnisGeraet] auf zeiger(adresse_von(geraet))
+        setze quelle: ptr[dyn ErgebnisQuelle] auf p
+        setze gelesen: ergebnis[u64, u32] auf ergebnis_virtuell(quelle, 5)
+        wenn ergebnis_wert(gelesen) != 105:
+            gib_zurück 8
+        setze fehler: ergebnis[u64, u32] auf ergebnis_virtuell(quelle, 0)
+        wenn ergebnis_fehler(fehler) != 11:
+            gib_zurück 9
+        setze f: ptr[fn[sysv64](u32) -> ergebnis[u32, u32]] auf ergebnis_klein
+        setze klein: ergebnis[u32, u32] auf f(9)
+        wenn ergebnis_wert(klein) != 9:
+            gib_zurück 10
+        setze w: ptr[fn[win64](u32) -> ergebnis[u32, u32]] auf ergebnis_win64
+        setze windows: ergebnis[u32, u32] auf w(17)
+        wenn ergebnis_wert(windows) != 17:
+            gib_zurück 12
+    setze lokal: ergebnis[u64, u32] auf ergebnis_lokal_leihen()
+    wenn ergebnis_wert(lokal) != 13:
+        gib_zurück 11
+    setze strukturfehler: ergebnis[void, ErgebnisPunkt] auf ergebnis_strukturfehler_weiter()
+    wenn ergebnis_fehler(strukturfehler).wert != 88:
+        gib_zurück 13
+    setze strukturwert: ergebnis[u64, u32] auf ergebnis_punkt_weiter(5)
+    wenn ergebnis_wert(strukturwert) != 7:
+        gib_zurück 14
+    gib_zurück 0

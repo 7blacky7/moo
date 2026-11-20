@@ -1,0 +1,10 @@
+importiere "schnittstelle_definitionen"
+
+struktur Fehler implementiert Speicher:
+    basis: u64
+    funktion lesen(selbst: ptr[PlusSpeicher], index: u64) -> u64:
+        unsicher:
+            gib_zurück selbst.basis + index
+    funktion schreiben(selbst, index: u64, wert: u64) -> void:
+        unsicher:
+            selbst.basis = wert

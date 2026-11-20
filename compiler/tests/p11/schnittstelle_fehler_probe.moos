@@ -1,0 +1,66 @@
+struktur SchnittFehlerKlein:
+    a: u64
+    b: u64
+struktur SchnittFehlerGross:
+    a: u64
+    b: u64
+    c: u64
+struktur SchnittFehlerCode:
+    code: u32
+    detail: u32
+schnittstelle SchnittFehler:
+    funktion klein(selbst, shift: u64) -> SchnittFehlerKlein
+    funktion gross(selbst, shift: u64) -> SchnittFehlerGross
+    funktion leer(selbst, shift: u64) -> ergebnis[void, SchnittFehlerCode]
+    funktion wert(selbst, shift: u64) -> ergebnis[u64, SchnittFehlerCode]
+struktur SchnittFehlerQuelle implementiert SchnittFehler:
+    basis: u64
+    funktion klein(selbst, shift: u64) -> SchnittFehlerKlein:
+        setze zahl: u64 auf 1 << shift
+        gib_zurück SchnittFehlerKlein(zahl, 2)
+    funktion gross(selbst, shift: u64) -> SchnittFehlerGross:
+        setze zahl: u64 auf 1 << shift
+        gib_zurück SchnittFehlerGross(zahl, 2, 3)
+    funktion leer(selbst, shift: u64) -> ergebnis[void, SchnittFehlerCode]:
+        setze zahl: u64 auf 1 << shift
+        wenn zahl == 2:
+            gib_zurück fehlschlag(SchnittFehlerCode(7, 8))
+        gib_zurück erfolg()
+    funktion wert(selbst, shift: u64) -> ergebnis[u64, SchnittFehlerCode]:
+        setze zahl: u64 auf 1 << shift
+        gib_zurück erfolg(zahl)
+
+@nativ
+statisch SCHNITT_FEHLER_FOLGE: atom[u64] auf 0
+
+@nativ
+funktion schnittstelle_fehler_probe(art: u64, shift: u64) -> u64:
+    unsicher:
+        setze quelle: SchnittFehlerQuelle auf SchnittFehlerQuelle(0)
+        setze q: ptr[SchnittFehlerQuelle] auf zeiger(adresse_von(quelle))
+        setze p: ptr[dyn SchnittFehler] auf q
+        setze zahl: u64 auf 0
+        wenn art == 0:
+            setze klein: SchnittFehlerKlein auf p.klein(shift)
+            setze zahl auf klein.a
+        sonst wenn art == 1:
+            setze gross: SchnittFehlerGross auf p.gross(shift)
+            setze zahl auf gross.a
+        sonst wenn art == 2:
+            setze leer: ergebnis[void, SchnittFehlerCode] auf p.leer(shift)
+            wenn ist_erfolg(leer):
+                setze zahl auf 1
+            sonst:
+                setze code: SchnittFehlerCode auf ergebnis_fehler(leer)
+                setze zahl auf u64(code.code)
+        sonst:
+            setze wert: ergebnis[u64, SchnittFehlerCode] auf p.wert(shift)
+            setze zahl auf ergebnis_wert(wert)
+        setze vorher: u64 auf atom_laden(SCHNITT_FEHLER_FOLGE, ordnung=locker)
+        atom_speichern(SCHNITT_FEHLER_FOLGE, vorher + 1, ordnung=locker)
+        gib_zurück zahl
+
+@nativ
+funktion schnittstelle_fehler_folge() -> u64:
+    unsicher:
+        gib_zurück atom_laden(SCHNITT_FEHLER_FOLGE, ordnung=locker)

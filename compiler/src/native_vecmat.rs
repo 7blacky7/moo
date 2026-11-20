@@ -239,7 +239,7 @@ struct Bedarf {
 
 impl Bedarf {
     fn name(&mut self, name: &str) {
-        if let Some(eingebaut) = VECMAT_NAMEN.iter().find(|n| **n == name) {
+        if let Some(eingebaut) = VECMAT_NAMEN.iter().chain(crate::native_simd::NAMEN.iter()).find(|n| **n == name) {
             self.gefunden.insert(eingebaut);
         }
     }

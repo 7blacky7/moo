@@ -1,0 +1,6 @@
+@nativ
+@simd
+funktion simd_vertrag_probe() -> u8x16:
+    setze a: u8x16 auf u8x16(1)
+    setze b: u8x32 auf u8x32(2)
+    gib_zurück a + b

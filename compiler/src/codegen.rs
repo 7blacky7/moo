@@ -98,6 +98,7 @@ pub struct CodeGen<'ctx> {
     runtime_windows_abi: bool,
     target_data: Option<inkwell::targets::TargetData>,
     native_structs: crate::native_struct::NativeStructRegistry<'ctx>,
+    native_interfaces: crate::native_interface::NativeInterfaces,
     extern_c_names: std::collections::HashSet<String>,
     extern_bindings: crate::ffi_types::ExternRegistry<'ctx>,
     native_functions: HashMap<String, FunctionValue<'ctx>>,
@@ -272,6 +273,7 @@ impl<'ctx> CodeGen<'ctx> {
             runtime_windows_abi: windows_x64_abi,
             target_data,
             native_structs: crate::native_struct::NativeStructRegistry::new(),
+            native_interfaces: crate::native_interface::NativeInterfaces::default(),
             extern_c_names: std::collections::HashSet::new(),
             extern_bindings: crate::ffi_types::ExternRegistry::default(),
             native_functions: HashMap::new(),
@@ -788,7 +790,7 @@ impl<'ctx> CodeGen<'ctx> {
             .collect();
         for stmt in &program.statements {
             if let Stmt::StructDef { name, .. } = stmt {
-                if crate::native_struct::vecmat_art_name(name).is_some() {
+                if crate::native_struct::vecmat_art_name(name).is_some() || crate::native_simd::art(name).is_some() {
                     let warnung = self.diag_ort(crate::diagnose::Diagnose::hinweis("M-H002",
                         format!("eigene struktur '{name}' ueberdeckt den eingebauten Typ {name} (ohne eingebaute Operatoren)")));
                     if !self.warnings.iter().any(|w| w.meldung == warnung.meldung) { self.warnings.push(warnung); }
@@ -798,7 +800,7 @@ impl<'ctx> CodeGen<'ctx> {
         let eingebaute: Vec<(&'static str, Vec<(String, TypeRef)>)> = crate::native_vecmat::bedarf(&program.statements)
             .into_iter()
             .filter(|name| !eigene.contains(name))
-            .filter_map(|name| crate::native_struct::vecmat_felder(name).map(|felder| (name, felder)))
+            .filter_map(|name| crate::native_struct::vecmat_felder(name).or_else(|| crate::native_simd::felder(name)).map(|felder| (name, felder)))
             .collect();
         if eingebaute.iter().any(|(name, _)| *name == "mat4") && eigene.contains("vec4") {
             return Err("eingebauter Typ mat4 braucht den eingebauten Typ vec4; eine eigene Definition 'vec4' verdeckt ihn".into());
@@ -926,6 +928,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_program_kern(&mut self, program: &Program) -> Result<(), String> {
+        let (prepared, interfaces) = crate::native_interface::prepare(program)?;
+        self.native_interfaces = interfaces;
+        let program = &prepared;
         self.native_thread_runtime = crate::runtime_provider::enabled(program);
         if self.native_thread_runtime { self.bare_runtime_refcounts = true; }
         self.funktion_quellen = program.funktion_quellen.clone();
@@ -1136,11 +1141,17 @@ impl<'ctx> CodeGen<'ctx> {
             }
             let convention = crate::ffi_types::decorator_call_convention(decorators, &triple)?;
             let vertrag = if hosted && callee.fehlbar {
-                if matches!(&result.kind, TypeKind::Name(n) if self.native_structs.layout(n).is_some()) {
+                let struktur = matches!(&result.kind, TypeKind::Name(n) if self.native_structs.layout(n).is_some());
+                if struktur && !self.native_interfaces.is_adapter(name) {
                     return Err(format!("Rückruf '{name}' kann fehlschlagen und liefert eine Struktur: kein darstellbarer Fehlerwert (Fehler durch Vorprüfung ausschließen)"));
                 }
-                let fehlerwert = if result_void { None } else {
-                    Some(crate::ffi_types::rueckruf_fehlerwert(self.context, &result, deko.args.first(), name)?)
+                // Interne Vtable-Aufrufe prüfen wie native Fremdaufrufe das
+                // Moo-Fehlerflag, bevor sie das Resultat verwenden. Nur dort
+                // darf ein definierter Nullwert als Platzhalter zurückkehren.
+                let fehlerwert = if result_void || struktur { None } else {
+                    let null = crate::ast::DecoratorArg::Zahl(0.0);
+                    let wert = if self.native_interfaces.is_adapter(name) { Some(&null) } else { deko.args.first() };
+                    Some(crate::ffi_types::rueckruf_fehlerwert(self.context, &result, wert, name)?)
                 };
                 Some(crate::ffi_types::RueckrufVertrag { name: name.clone(), fehlerwert })
             } else {
@@ -1262,7 +1273,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // P2-T23/T53: @verbraucht(n) - Pruefung beim dyn-Adapter.
                         || matches!(d.name.as_str(), "verbraucht" | "consumes")
                         // P2-T83: @liest(n) - Pruefung beim dyn-Adapter.
-                        || matches!(d.name.as_str(), "liest" | "reads")
+                        || matches!(d.name.as_str(), "liest" | "reads" | "simd")
                         || crate::ffi_types::is_call_convention_decorator(d))
                     || program.statements.iter().filter(|s| matches!(s, Stmt::FunctionDef { name: other, .. } if other == name)).count() != 1
                     || self.module.get_function(name).is_some()
@@ -1276,6 +1287,7 @@ impl<'ctx> CodeGen<'ctx> {
                     crate::ffi_types::decorator_call_convention(decorators, &triple)
                         .map_err(|e| format!("Native Funktion '{name}': {e}"))?
                 };
+                let simd = crate::native_simd_dispatch::marker(decorators)?;
                 // P7-T4 (3A): @nackt nur fuer reine Assemblerkoerper (Pruefung im Emitter).
                 let naked = decorators.iter().any(|d| d.name == "nackt" || d.name == "naked");
                 if !naked && decorators.iter().any(|d| matches!(d.name.as_str(), "verschiebbar" | "relocatable")) {
@@ -1304,7 +1316,8 @@ impl<'ctx> CodeGen<'ctx> {
                     return Err(crate::diagnose::vormerken_span("M-M005", zeile, spalten, format!(
                         "Native Funktion '{name}': Aufruf '{roh}' ist nur innerhalb von unsicher: erlaubt (Rohzugriff erfordert unsicher); Vorschlag: den Rohzugriff '{roh}(...)' in eine eigene, passend typisierte Variable innerhalb eines engen unsicher:-Blocks herausziehen und diese Variable im umgebenden Ausdruck verwenden")));
                 }
-                match crate::native_hardware::classify_body(body) {
+                match if simd.is_some() { crate::native_hardware::BodyKind::Other }
+                    else { crate::native_hardware::classify_body(body) } {
                     crate::native_hardware::BodyKind::MissingUnsafe(zeile) => {
                         // P2-T98 S3: M-M005 mit Zeile des ersten Hardwarezugriffs.
                         return Err(crate::diagnose::vormerken("M-M005", zeile, format!(
@@ -1462,20 +1475,20 @@ impl<'ctx> CodeGen<'ctx> {
                     && !(self.bare_mode && (returns_struct || ((has_pointer || returns_pointer) && !lokaler_speicher)))
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct || has_buffer))
-                    || hosted_system || sicher_system
+                    || hosted_system || sicher_system || simd.is_some()
                 {
                     let sig = crate::native_system::SystemSignature::from_annotations(
                         param_types, return_type.as_ref(), &native_nominals,
                     ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                     if sig.uses_struct_values() {
-                        // P2-T19/T56 D1: C-Exporte (@einstieg) mit Strukturwerten
-                        // bekommen einen C-ABI-Thunk (ffi_types::emit_abi_export);
-                        // die interne Funktion behaelt die Moo-Konvention. Eine
-                        // fremde Aufrufkonvention ohne Export hat keinen C-Aufrufer.
+                        // C-Exporte und Rueckrufe erhalten einen typisierten
+                        // C-ABI-Thunk (ffi_types::emit_abi_export). Die interne
+                        // Funktion verwendet weiterhin die Moo-Speicher-ABI.
+                        // Ohne diesen Thunk sind fremde Strukturwert-ABIs unzulaessig.
                         if convention != 0 && !decorators.iter().any(|d|
-                            matches!(d.name.as_str(), "einstieg" | "entry")) {
+                            matches!(d.name.as_str(), "einstieg" | "entry" | "rueckruf" | "rückruf" | "callback")) {
                             return Err(format!(
-                                "Native Funktion '{name}': Strukturwerte mit @aufrufkonvention nur als @einstieg-Export (C-ABI-Thunk)"
+                                "Native Funktion '{name}': Strukturwerte mit @aufrufkonvention nur als @einstieg-Export oder @rueckruf (C-ABI-Thunk)"
                             ));
                         }
                     }
@@ -1502,7 +1515,9 @@ impl<'ctx> CodeGen<'ctx> {
                         ).map_err(|e| format!("Native Funktion '{name}': {e}"))?;
                     }
                     self.native_functions.insert(name.clone(), fun);
-                    if sicher_system { self.safe_native_functions.insert(name.clone()); }
+                    if sicher_system || (simd.is_some() && !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])) {
+                        self.safe_native_functions.insert(name.clone());
+                    }
                     // P2-T43: Bare-Systemkoerper ebenfalls registrieren; die
                     // Aufrufstelle laesst im Bare-Profil nur runtime-freie
                     // Literal-Argumente zu (hosted_system_functions wird sonst
@@ -1517,6 +1532,11 @@ impl<'ctx> CodeGen<'ctx> {
                         // P2-T49 (Plan 38c59c64 E5): Strukturwerte nur hosted und boxbar;
                         // sonst bleibt die Funktion intern aufrufbar, die Aufrufstelle nennt den Grund.
                         let mut dyn_form = sig.dyn_signature();
+                        if param_types.iter().flatten().chain(return_type.iter()).any(|t|
+                            matches!(&t.kind, TypeKind::Name(n) if n.starts_with("ergebnis["))) {
+                            dyn_form = None;
+                            self.native_dyn_sperre.insert(name.clone(), "ergebnis[T, F] ist nur im typisierten @nativ-Körper nutzbar".into());
+                        }
                         if let Some((_, puffer, ergebnis)) = &dyn_form {
                             let mut strukturen: Vec<String> = puffer.iter().filter_map(|p| match p {
                                 Some(crate::native_system::PufferArt::Wert(s)) => Some(s.clone()),
@@ -1706,8 +1726,16 @@ impl<'ctx> CodeGen<'ctx> {
             self.apply_native_layout_decorators(export.as_global_value(), decorators, true, 1, &format!("Native Funktion '{name}'"))?;
         }
         crate::codegen_native::validate_pure_call_graph(&pure_bodies)?;
+        // Gewöhnliche Konstanten behalten ihre bisherige Deklarationsreihenfolge.
+        // Nur die neu erzeugten Vtables benötigen bereits definierte ABI-Thunks.
+        let early_constants = if self.native_interfaces.has_vtables() {
+            let mut early = program.clone();
+            early.statements.retain(|s| !matches!(s, Stmt::NativeConst { name, .. }
+                if self.native_interfaces.is_vtable(name)));
+            Some(early)
+        } else { None };
         crate::native_const::emit_constants(
-            program, self.context, &self.module, self.target_data.as_ref(),
+            early_constants.as_ref().unwrap_or(program), self.context, &self.module, self.target_data.as_ref(),
             &self.native_structs, &self.native_functions,
         )?;
         // P7-T5: Aufrufziele fuer Systemkoerper (alle nativen Funktionsarten).
@@ -1767,7 +1795,11 @@ impl<'ctx> CodeGen<'ctx> {
                         && decorators.iter().any(|d| matches!(d.name.as_str(), "rückruf" | "rueckruf" | "callback"))));
             if fehlbarer_rueckruf && !self.bare_mode {
                 fremd_fehlbar = true;
-                let fremd: std::collections::HashSet<String> = self.extern_c_names.iter().cloned().collect();
+                let mut fremd: std::collections::HashSet<String> = self.extern_c_names.iter().cloned().collect();
+                // Vtable-Ziele sind interne C-ABI-Aufrufe, auch ohne extern-C-
+                // Deklaration im Programm. Ihr Fehlerflag muss bis zum nativen
+                // Aufrufer propagieren, bevor dieser Folgeaktionen ausführt.
+                fremd.extend(self.native_interfaces.dispatch_targets().cloned());
                 fehlbar = crate::native_system::fehlbare_funktionen(&defs, &fremd, &bitfelder);
             }
             for (name, callee) in native_callees.iter_mut() {
@@ -1776,6 +1808,15 @@ impl<'ctx> CodeGen<'ctx> {
             // P2-T21/T57 B2 (Plan f4655d20): @rückruf-Thunks nach der Fehlbar-Analyse
             // und vor der Koerper-Emission (Batch C sieht den Thunk im NativeCallee).
             self.rueckruf_thunks(program, &mut native_callees, &native_nominals)?;
+        }
+        if self.native_interfaces.has_vtables() {
+            let mut tables = program.clone();
+            tables.statements.retain(|s| matches!(s, Stmt::NativeConst { name, .. }
+                if self.native_interfaces.is_vtable(name)));
+            crate::native_const::emit_constants(
+                &tables, self.context, &self.module, self.target_data.as_ref(),
+                &self.native_structs, &self.native_functions,
+            )?;
         }
         for stmt in &program.statements {
             match stmt {
@@ -1787,7 +1828,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .ok_or("Ziel-Datenlayout für Systemkörper fehlt")?;
                             crate::native_system::emit_system_function(
                                 self.context, &self.module, target, &self.native_structs,
-                                &native_nominals, *fun, sig, params, body,
+                                &native_nominals, &self.native_interfaces, *fun, sig, params, body,
                                 &native_callees, &self.extern_bindings,
                                 self.safe_native_functions.contains(name),
                                 decorators.iter().any(|d| matches!(d.name.as_str(), "einstieg" | "entry")),
@@ -2108,7 +2149,8 @@ impl<'ctx> CodeGen<'ctx> {
                 let native: std::collections::HashSet<_> = self.native_functions.values()
                     .map(|f| f.as_value_ref()).collect();
                 for fun in self.module.get_functions() {
-                    if fun.count_basic_blocks() == 0 || native.contains(&fun.as_value_ref()) { continue; }
+                    if fun.count_basic_blocks() == 0 || native.contains(&fun.as_value_ref())
+                        || crate::native_simd_dispatch::ist_helfer(fun) { continue; }
                     let mut added = [false; 2];
                     for (i, kind) in shield_kinds.iter().enumerate() {
                         if fun.get_enum_attribute(AttributeLoc::Function, *kind).is_none() {

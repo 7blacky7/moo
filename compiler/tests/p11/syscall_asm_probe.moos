@@ -1,0 +1,20 @@
+struktur SysAsmDaten:
+    kopf: u8
+    register: u64
+    bytes: [u8; 4]
+@pro_kern
+statisch ASM_PAD: u8 auf 0
+@pro_kern
+statisch ASM_DATEN: SysAsmDaten auf 0
+@pro_kern
+statisch ASM_ENDE: u32 auf 0
+
+@nativ
+funktion syscall_asm_test() -> u64:
+    unsicher:
+        setze basis: u64 auf pro_kern_versatz(ASM_DATEN)
+        wenn basis != 8 oder pro_kern_versatz(ASM_PAD) != 0 oder pro_kern_versatz(ASM_ENDE) != 32:
+            gib_zurück 1
+        wenn pro_kern_versatz(ASM_DATEN.register) != 16 oder pro_kern_versatz(ASM_DATEN.bytes[3]) != 27:
+            gib_zurück 2
+        gib_zurück 0

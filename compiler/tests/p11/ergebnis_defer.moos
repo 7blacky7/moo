@@ -1,0 +1,4 @@
+importiere "ergebnis_probe"
+@nativ
+funktion ergebnis_negativ(x: u64) -> void:
+    aufräumen: ergebnis_blatt(1)

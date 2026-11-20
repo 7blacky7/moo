@@ -1,0 +1,5 @@
+@nativ
+funktion falsch_asm(a: u64) -> u64:
+    unsicher:
+        setze ausgabe: u64 auf assembler(ziel="x86_64", code="movq $1, $0", ausgang="=r", eingaenge={"i": a}, clobber=[])
+        gib_zurück ausgabe

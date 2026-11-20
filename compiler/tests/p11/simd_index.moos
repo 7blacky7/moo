@@ -1,0 +1,4 @@
+@nativ
+@simd
+funktion simd_vertrag_probe(a: u8x16) -> u8:
+    gib_zurück a[16]

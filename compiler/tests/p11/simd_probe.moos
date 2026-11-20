@@ -1,0 +1,91 @@
+# Der native Selbsttest soll bei einem unerwarteten Fehler abbrechen.
+@nativ
+statisch SIMD_CLEANUP_WERT: atom[u64] auf 0
+
+@nativ
+funktion simd_cleanup_senke(v: u8x16) -> void:
+    unsicher:
+        atom_speichern(SIMD_CLEANUP_WERT, als(u64, v[3]), ordnung=locker)
+
+@nativ
+@simd
+funktion simd_cleanup_probe(frueh: bool) -> u64:
+    aufräumen: simd_cleanup_senke(u8x16(1) + u8x16(2))
+    wenn frueh:
+        gib_zurück 1
+    gib_zurück 0
+
+@nativ
+@simd
+funktion simd_ergebnis_blatt(x: u8) -> ergebnis[u8x16, u32]:
+    wenn x == 0:
+        gib_zurück fehlschlag(9)
+    gib_zurück erfolg(u8x16(x))
+
+@nativ
+@simd
+funktion simd_ergebnis_weiter(x: u8) -> ergebnis[u8x16, u32]:
+    setze v: u8x16 auf weitergeben(simd_ergebnis_blatt(x))
+    gib_zurück erfolg(v + u8x16(1))
+
+@nativ
+@simd
+funktion simd_probe() -> u64:
+    setze a: u8x16 auf u8x16(250)
+    setze b: u8x16 auf u8x16(9)
+    setze summe: u8x16 auf a + b
+    wenn summe[0] != 3 oder summe[15] != 3:
+        gib_zurück 1
+    setze produkt: u8x16 auf a * b
+    wenn produkt[7] != 202:
+        gib_zurück 2
+    setze invertiert: u8x16 auf ~a
+    wenn invertiert[3] != 5:
+        gib_zurück 3
+    setze quelle: u8x32 auf u8x32([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31])
+    setze maske: u8x32 auf u8x32(255)
+    setze i: u64 auf 0
+    solange i < 32:
+        maske[i] = als(u8, 31 - i)
+        setze i auf i + 1
+    maske[0] = 128
+    setze gemischt: u8x32 auf simd_mischen(quelle, maske)
+    wenn gemischt[0] != 0 oder gemischt[1] != 14 oder gemischt[16] != 31 oder gemischt[31] != 16:
+        gib_zurück 4
+    setze x: u64x4 auf u64x4(18446744073709551615)
+    setze y: u64x4 auf u64x4(1)
+    setze z: u64x4 auf x + y
+    wenn z[0] != 0 oder z[3] != 0:
+        gib_zurück 5
+    wenn a == b oder a != a:
+        gib_zurück 6
+    setze links: u8x32 auf u8x32(128)
+    setze rechts: u8x32 auf u8x32(2)
+    setze gf: u8x32 auf simd_gf256_mal(links, rechts)
+    wenn gf[0] != 29 oder gf[31] != 29:
+        gib_zurück 7
+    setze gut: ergebnis[u8x16, u32] auf simd_ergebnis_weiter(2)
+    wenn nicht ist_erfolg(gut):
+        gib_zurück 8
+    setze nutzwert: u8x16 auf ergebnis_wert(gut)
+    wenn nutzwert[15] != 3:
+        gib_zurück 9
+    setze schlecht: ergebnis[u8x16, u32] auf simd_ergebnis_weiter(0)
+    wenn ist_erfolg(schlecht):
+        gib_zurück 10
+    wenn ergebnis_fehler(schlecht) != 9:
+        gib_zurück 11
+    unsicher:
+        atom_speichern(SIMD_CLEANUP_WERT, 0, ordnung=locker)
+    wenn simd_cleanup_probe(wahr) != 1:
+        gib_zurück 12
+    unsicher:
+        wenn atom_laden(SIMD_CLEANUP_WERT, ordnung=locker) != 3:
+            gib_zurück 13
+        atom_speichern(SIMD_CLEANUP_WERT, 0, ordnung=locker)
+    wenn simd_cleanup_probe(falsch) != 0:
+        gib_zurück 14
+    unsicher:
+        wenn atom_laden(SIMD_CLEANUP_WERT, ordnung=locker) != 3:
+            gib_zurück 15
+    gib_zurück 0

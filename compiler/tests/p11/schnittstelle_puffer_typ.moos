@@ -1,0 +1,6 @@
+schnittstelle AndererPuffer:
+    funktion lesen(selbst, daten: puffer[u16]) -> u64
+
+@nativ
+funktion anderer_puffer(p: ptr[dyn AndererPuffer]) -> u64:
+    gib_zurück 0

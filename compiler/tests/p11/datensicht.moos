@@ -1,0 +1,18 @@
+importiere "datensicht_probe"
+# Proben dürfen bei einem unerwarteten nativen Fehler abbrechen.
+unsicher:
+    zeige datensicht_cbw()
+    zeige datensicht_runde()
+    zeige datensicht_grenze(0)
+versuche:
+    unsicher:
+        zeige datensicht_grenze(1)
+    zeige "FALSCH"
+fange fehler:
+    zeige "grenze"
+versuche:
+    unsicher:
+        zeige datensicht_grenze(18446744073709551615)
+    zeige "FALSCH"
+fange fehler:
+    zeige "ueberlauf"

@@ -1,0 +1,6 @@
+@nativ
+funktion ergebnis_flucht() -> ergebnis[ptr[u64], u32]:
+    unsicher:
+        setze wert: u64 auf 1
+        setze p: ptr[u64] auf zeiger(adresse_von(wert))
+        gib_zurück erfolg(p)

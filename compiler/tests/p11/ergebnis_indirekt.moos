@@ -1,0 +1,6 @@
+importiere "ergebnis_probe"
+@nativ
+funktion ergebnis_indirekt_verworfen() -> void:
+    unsicher:
+        setze f: ptr[fn[sysv64](u32) -> ergebnis[u32, u32]] auf ergebnis_klein
+        f(3)

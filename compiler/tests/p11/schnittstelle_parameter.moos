@@ -1,0 +1,10 @@
+importiere "schnittstelle_definitionen"
+
+struktur Fehler implementiert Speicher:
+    basis: u64
+    funktion lesen(selbst, index: i64) -> u64:
+        unsicher:
+            gib_zurück u64(index)
+    funktion schreiben(selbst, index: u64, wert: u64) -> void:
+        unsicher:
+            selbst.basis = wert

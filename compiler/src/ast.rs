@@ -386,6 +386,9 @@ pub enum Stmt {
         fields: Vec<(std::string::String, TypeRef)>,
         decorators: Vec<Decorator>,
         bitfelder: Vec<BitfeldBereich>,
+        /// Native Methodentabellen werden nach der Modulauflösung geprüft.
+        interfaces: Vec<std::string::String>,
+        methods: Vec<Stmt>,
     },
     ClassDef {
         zeile: usize,
@@ -456,6 +459,11 @@ pub enum Stmt {
     },
     /// Erwarte-Statement: erwarte expr (assertion)
     Expect(Expr, usize),
+}
+
+/// Interner, im Quelltext nicht deklarierbarer Name einer Strukturmethode.
+pub(crate) fn native_method_name(ty: &str, method: &str) -> std::string::String {
+    format!("__moo_methode.{ty}.{method}")
 }
 
 #[derive(Debug, Clone)]

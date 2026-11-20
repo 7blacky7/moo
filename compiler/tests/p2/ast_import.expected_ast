@@ -48,7 +48,12 @@ Program {
         Show(
             FunctionCall {
                 zeile: 3,
+                spalten: (
+                    7,
+                    14,
+                ),
                 name: "wert",
+                type_args: [],
                 args: [
                     Number(
                         7.0,

@@ -1,0 +1,6 @@
+importiere "schnittstelle_definitionen"
+
+@nativ
+funktion ungueltige_probe(p: ptr[dyn PlusSpeicher]) -> u64:
+    unsicher:
+        gib_zurück 0

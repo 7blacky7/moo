@@ -645,7 +645,7 @@ pub(crate) fn emit_indirect_abi_call<'ctx>(
         if &arg.identity != expected { return Err("Indirekter Aufruf: Argumentidentitaet stimmt nicht".into()); }
         let llvm = match &source.kind {
             TypeKind::Name(name) if layouts.layout(name).is_some() => layouts.layout(name).ok_or("Strukturlayout fehlt")?.llvm_type.into(),
-            _ => value_type(source)?.llvm_type(context),
+            _ => value_type_in(source, &|n| layouts.layout(n).is_some())?.llvm_type(context),
         };
         if arg.value.get_type() != llvm { return Err("Indirekter Aufruf: Argumentlayout stimmt nicht".into()); }
     }
@@ -1031,9 +1031,23 @@ fn emit_abi_export_impl<'ctx>(
     }
     if let (Some(fehler), Some(vertrag)) = (rueckruf_fehler, &rueckruf) {
         builder.position_at_end(fehler);
-        match vertrag.fehlerwert {
-            Some(wert) => { builder.build_return(Some(&wert)).map_err(e)?; }
-            None => { builder.build_return(None).map_err(e)?; }
+        match (vertrag.fehlerwert, form.result_struct) {
+            (Some(wert), _) => { builder.build_return(Some(&wert)).map_err(e)?; }
+            (None, Some((layout, align, _))) => {
+                // Nur interne Vtable-Adapter haben einen Struktur-Fehlervertrag.
+                // Das Fehlerflag bleibt gesetzt; kein uninitialisierter ABI-Wert
+                // darf durch Register oder den geliehenen SRET-Puffer entweichen.
+                if matches!(form.plan.rueckgabe, Some(Uebergabe::Sret)) {
+                    builder.build_store(param(0)?.into_pointer_value(), layout.const_zero())
+                        .map_err(e)?.set_alignment(align).map_err(ea)?;
+                    builder.build_return(None).map_err(e)?;
+                } else {
+                    let null = form.function_type.get_return_type()
+                        .ok_or("Interner Vtable-Strukturfehler: ABI-Rückgabetyp fehlt")?.const_zero();
+                    builder.build_return(Some(&null)).map_err(e)?;
+                }
+            }
+            (None, None) => { builder.build_return(None).map_err(e)?; }
         }
     }
     Ok(thunk)

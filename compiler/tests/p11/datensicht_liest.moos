@@ -1,0 +1,7 @@
+importiere "datensicht_typen"
+@nativ
+@liest(1)
+funktion datensicht_lesevertrag(bytes: puffer[u8]) -> u64:
+    setze p: puffer[DatensichtWort] auf sicht(bytes, DatensichtWort, 0)
+    p[0].wert = 1
+    gib_zurück 0

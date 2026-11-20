@@ -1,0 +1,12 @@
+aus "schnittstelle_puffer_probe" importiere schnittstelle_puffer_probe, schnittstelle_puffer_fehler, schnittstelle_puffer_folge
+# Erfolgsprobe soll bei unerwarteten nativen Fehlern abbrechen.
+unsicher:
+    zeige schnittstelle_puffer_probe(0)
+versuche:
+    unsicher:
+        zeige schnittstelle_puffer_fehler()
+    zeige "FALSCH"
+fange fehler:
+    zeige "grenze"
+unsicher:
+    zeige schnittstelle_puffer_folge()

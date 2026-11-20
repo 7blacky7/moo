@@ -1,0 +1,4 @@
+@nativ
+@simd
+funktion simd_vertrag_probe(a: u64x4) -> u64x4:
+    gib_zurück simd_gf256_mal(a, a)

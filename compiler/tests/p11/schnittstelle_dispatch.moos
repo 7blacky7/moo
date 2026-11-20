@@ -1,0 +1,31 @@
+importiere "schnittstelle_definitionen"
+
+@nativ
+funktion schnittstelle_dynamisch(p: ptr[dyn Speicher], index: u64) -> u64:
+    unsicher:
+        gib_zurück p.lesen(index)
+
+@nativ
+funktion schnittstelle_direkt(p: ptr[PlusSpeicher], index: u64) -> u64:
+    unsicher:
+        gib_zurück p.lesen(index)
+
+@nativ
+funktion schnittstelle_probe() -> u64:
+    unsicher:
+        setze a: PlusSpeicher auf PlusSpeicher(20)
+        setze b: XorSpeicher auf XorSpeicher(30)
+        setze pa: ptr[PlusSpeicher] auf zeiger(adresse_von(a))
+        setze pb: ptr[XorSpeicher] auf zeiger(adresse_von(b))
+        setze p: ptr[dyn Speicher] auf pa
+        setze summe: u64 auf p.lesen(5)
+        setze p auf pb
+        setze summe auf summe + p.lesen(5)
+        p.schreiben(2, 40)
+        setze summe auf summe + p.lesen(2)
+        setze summe auf summe + schnittstelle_dynamisch(pa, 3)
+        setze summe auf summe + schnittstelle_direkt(pa, 4)
+        gib_zurück summe
+
+unsicher:
+    zeige schnittstelle_probe()
