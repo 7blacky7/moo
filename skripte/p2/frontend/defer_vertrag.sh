@@ -34,11 +34,13 @@ done
 
 # Linux: derselbe erzeugte Code unter LeakSanitizer. Die C++-Gegenstelle
 # allokiert nichts; native_heap stresst verworfene owning Ergebnisse.
+# Nur das Prüfprogramm instrumentieren: ein vorangestelltes LD_PRELOAD würde
+# auch timeout selbst prüfen (Ubuntu: Rust-coreutils mit eigenen Allokationen).
 asan="$(gcc -print-file-name=libasan.so 2>/dev/null || true)"
 if [ "$(uname -s)" = Linux ] && [ -f "$asan" ]; then
   for name in native_ffi native_heap; do
     out="build/p2-frontend/defer_vertrag/$name"
-    if LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 timeout 60s "$out" > "$out.lsan.out" 2> "$out.lsan.err" \
+    if timeout 60s env LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 "$out" > "$out.lsan.out" 2> "$out.lsan.err" \
        && cmp -s "compiler/tests/p2/defer_vertrag_${name}.expected" "$out.lsan.out"; then
       echo "PASS $name: LSan"
     else

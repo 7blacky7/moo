@@ -66,9 +66,10 @@ fi
 
 # Leckprobe: map/filter mit nativem Funktionswert unter LSan (nur wenn libasan
 # vorhanden; der Runtime-Bestand allein ist in dieser Probe leckfrei).
+# LD_PRELOAD erst hinter timeout setzen, damit LSan nur das Prüfprogramm prüft.
 asan="$(gcc -print-file-name=libasan.so 2>/dev/null || true)"
 if [ -n "$asan" ] && [ -f "$asan" ]; then
-  if LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 timeout 60s "$out/leck" > "$out/leck.lsan.log" 2>&1; then
+  if timeout 60s env LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 "$out/leck" > "$out/leck.lsan.log" 2>&1; then
     echo "PASS leck: LSan ohne Befund"
   else
     echo "FAIL leck: LSan meldet Lecks (siehe $out/leck.lsan.log)"; failed=1
@@ -76,7 +77,7 @@ if [ -n "$asan" ] && [ -f "$asan" ]; then
   # Funktionswerte in map/filter und starte (alle Arten): Ausgabe und LSan.
   for name in funktionswert_leck_map funktionswert_leck_thread native_wert_grenzen; do
     if timeout 60s "$compiler" compile "compiler/tests/p2/$name.moos" -o "$out/$name" > "$out/$name.log" 2>&1 \
-       && LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 timeout 60s "$out/$name" > "$out/$name.lsan.log" 2>&1 \
+       && timeout 60s env LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 "$out/$name" > "$out/$name.lsan.log" 2>&1 \
        && timeout 30s "$out/$name" > "$out/$name.out" 2>&1 \
        && cmp -s "compiler/tests/p2/$name.expected" "$out/$name.out"; then
       echo "PASS $name: Ausgabe + LSan ohne Befund"
@@ -86,7 +87,7 @@ if [ -n "$asan" ] && [ -f "$asan" ]; then
   done
   # Thread-Start mit Arityfehler: Fehlerpfad gibt Funktion und Argument frei.
   if timeout 60s "$compiler" compile compiler/tests/p2/native_wert_thread_leck.moos -o "$out/thread_leck" > "$out/thread_leck.log" 2>&1 \
-     && LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 timeout 60s "$out/thread_leck" > "$out/thread_leck.lsan.log" 2>&1 \
+     && timeout 60s env LD_PRELOAD="$asan" ASAN_OPTIONS=detect_leaks=1 "$out/thread_leck" > "$out/thread_leck.lsan.log" 2>&1 \
      && rg -q -F "erwartet 2 Argumente, bekommen 1" "$out/thread_leck.lsan.log"; then
     echo "PASS thread_leck: LSan ohne Befund"
   else
