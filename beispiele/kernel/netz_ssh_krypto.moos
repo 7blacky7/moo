@@ -1,7 +1,7 @@
-# SSH-Krypto-Zustand fuer den einzelnen TCP-Slot. Die Primitive und der
-# Tag-/Signaturvergleich werden ueber die vorhandenen C-Provider aufgerufen.
-aus "krypto_drbg" importiere drbg_zufall, crypto_wipe
-aus "../uefi/netz_geraet" importiere nt_b32, nt_kopiere
+# SSH-Krypto-Zustand fuer den einzelnen TCP-Slot. Die C-Provider liefern
+# die Byte- und Signaturprimitive fuer die native Protokolllogik.
+aus "krypto_drbg" importiere drbg_zufall, krypto_ct_gleich, krypto_loeschen
+aus "../uefi/netz_geraet" importiere nt_b32, nt_kopiere, nt_r32
 
 extern "C" funktion moo_krypto_sha256(daten: ptr[u8], laenge: u64, ausgabe: ptr[u8]) -> void
 extern "C" funktion moo_krypto_sha256_init(ctx: ptr[u8]) -> void
@@ -12,14 +12,14 @@ extern "C" funktion moo_krypto_x25519(gemeinsam: ptr[u8], skalar: ptr[u8], gegen
 extern "C" funktion moo_mlkem768_enc_derand(ciphertext: ptr[u8], secret: ptr[u8], pk: ptr[u8], coins: ptr[u8]) -> i32
 extern "C" funktion crypto_ed25519_key_pair(secret: ptr[u8], public_key: ptr[u8], seed: ptr[u8]) -> void
 extern "C" funktion crypto_ed25519_sign(signatur: ptr[u8], secret: ptr[u8], daten: ptr[u8], laenge: u64) -> void
-extern "C" funktion moo_bare_ssh_encode_k(ausgabe: ptr[u8], x25519: ptr[u8]) -> u64
-extern "C" funktion moo_bare_ssh_paketlaenge(key: ptr[u8], paket: u64, seq: u64) -> u64
-extern "C" funktion moo_bare_ssh_paket_seal(key: ptr[u8], paket: u64, laenge: u64, seq: u64) -> u64
-extern "C" funktion moo_bare_ssh_paket_open(key: ptr[u8], paket: u64, laenge: u64, seq: u64) -> u64
-extern "C" funktion moo_bare_ssh_session_userauth(id: ptr[u8], zustand: u64, erlaubt: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64
+extern "C" funktion moo_krypto_chacha20_xor(key: ptr[u8], zaehler: u32, nonce: ptr[u8], quelle: ptr[u8], ziel: ptr[u8], n: u64) -> void
+extern "C" funktion moo_krypto_chacha20_poly1305_keygen(key: ptr[u8], nonce: ptr[u8], poly_key: ptr[u8]) -> void
+extern "C" funktion moo_krypto_poly1305(key: ptr[u8], daten: ptr[u8], n: u64, tag: ptr[u8]) -> void
+extern "C" funktion crypto_ed25519_check(signatur: ptr[u8], public_key: ptr[u8], daten: ptr[u8], laenge: u64) -> i32
+extern "C" funktion moo_bare_mlkem_kat() -> u64
 
 # Kontextgroesse und providerseitige ML-KEM-Groessen werden in
-# moo_bare_ssh_krypto.c zur Compile-Zeit geprueft.
+# moo_bare_krypto_test.c zur Compile-Zeit geprueft.
 @nativ
 konstante SSH_HASH_BYTES: u64 auf 112
 @nativ
@@ -56,7 +56,7 @@ funktion moo_bare_ssh_boot() -> u64:
         wenn ok:
             crypto_ed25519_key_pair(zeiger(adresse_von(SSH_HOST_SECRET)), zeiger(adresse_von(SSH_HOST_PUBLIC)), zeiger(p))
             speicher_schreiben(adresse_von(SSH_HOST_BEREIT), 1, 8)
-        crypto_wipe(zeiger(p), 32)
+        krypto_loeschen(p, 32)
         wenn ok:
             gib_zurück 1
         gib_zurück 0
@@ -76,10 +76,10 @@ funktion moo_bare_ssh_random(ziel: u64, laenge: u64) -> u64:
 @nativ
 funktion moo_bare_ssh_clear() -> void:
     unsicher:
-        crypto_wipe(zeiger(adresse_von(SSH_EXCHANGE_HASH)), SSH_HASH_BYTES)
-        crypto_wipe(zeiger(adresse_von(SSH_SENDE_KEY)), 64)
-        crypto_wipe(zeiger(adresse_von(SSH_EMPFANGS_KEY)), 64)
-        crypto_wipe(zeiger(adresse_von(SSH_SESSION_ID)), 32)
+        krypto_loeschen(adresse_von(SSH_EXCHANGE_HASH), SSH_HASH_BYTES)
+        krypto_loeschen(adresse_von(SSH_SENDE_KEY), 64)
+        krypto_loeschen(adresse_von(SSH_EMPFANGS_KEY), 64)
+        krypto_loeschen(adresse_von(SSH_SESSION_ID), 32)
         speicher_schreiben(adresse_von(SSH_KEYS_BEREIT), 0, 8)
 
 @nativ
@@ -122,10 +122,31 @@ funktion ssh_key_ableiten(ausgabe: u64, k: u64, k_n: u64, h: u64, kennung: u8) -
         moo_krypto_sha256_update(zeiger(ctx), zeiger(h), 32)
         moo_krypto_sha256_update(zeiger(ctx), zeiger(ausgabe), 32)
         moo_krypto_sha256_final(zeiger(ctx), zeiger(ausgabe + 32))
-        crypto_wipe(zeiger(ctx), SSH_HASH_BYTES)
+        krypto_loeschen(ctx, SSH_HASH_BYTES)
 
 # Antwortpuffer: Server-Blob mit anschliessender roher Ed25519-Signatur.
 # Hybrid-Layout: draft-ietf-sshm-mlkem-hybrid-kex-10, 2.2–2.5.
+# RFC 8731 3.1/3.2: Die X25519-Oktette ergeben den Big-Endian-Betrag
+# des SSH-mpint. Die Suche nach dem ersten Oktett liest alle 32 Bytes.
+@nativ
+funktion ssh_mpint_x25519(ziel: u64, x25519: u64) -> u64:
+    unsicher:
+        setze erster: u64 auf 32
+        setze kopf: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 32:
+            setze b: u64 auf als(u64, speicher_lesen(x25519 + i, 1))
+            setze waehlen: bool auf (als(u64, erster == 32) & als(u64, b != 0)) != 0
+            setze erster auf konstantzeit_auswahl(waehlen, i, erster)
+            setze kopf auf konstantzeit_auswahl(waehlen, b, kopf)
+            setze i auf i + 1
+        setze n: u64 auf 32 - erster
+        setze pad: u64 auf kopf >> 7
+        nt_b32(ziel, 0, n + pad)
+        speicher_schreiben(ziel + 4, 0, 1)
+        nt_kopiere(ziel + 4 + pad, x25519 + erster, n)
+        gib_zurück 4 + pad + n
+
 @nativ
 funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_n: u64, antwort: u64) -> u64:
     unsicher:
@@ -159,7 +180,7 @@ funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_
                 moo_krypto_sha256(zeiger(adresse_von(shared)), 64, zeiger(k + 4))
         wenn ok:
             wenn nicht hybrid:
-                setze k_n auf moo_bare_ssh_encode_k(zeiger(k), zeiger(shared_x))
+                setze k_n auf ssh_mpint_x25519(k, shared_x)
             ssh_hash_string(ctx, host_blob, host_n)
             ssh_hash_string(ctx, client, client_n)
             ssh_hash_string(ctx, antwort, server_n)
@@ -171,40 +192,253 @@ funktion moo_bare_ssh_exchange(client: u64, client_n: u64, host_blob: u64, host_
             ssh_key_ableiten(adresse_von(SSH_SENDE_KEY), k, k_n, h, 68) # 'D', Server -> Client
             speicher_schreiben(adresse_von(SSH_KEYS_BEREIT), 1, 8)
 
-        crypto_wipe(zeiger(adresse_von(skalar)), 32)
-        crypto_wipe(zeiger(adresse_von(coins)), 32)
-        crypto_wipe(zeiger(adresse_von(shared)), 64)
-        crypto_wipe(zeiger(k), 40)
-        crypto_wipe(zeiger(h), 32)
-        crypto_wipe(zeiger(ctx), SSH_HASH_BYTES)
+        krypto_loeschen(adresse_von(skalar), 32)
+        krypto_loeschen(adresse_von(coins), 32)
+        krypto_loeschen(adresse_von(shared), 64)
+        krypto_loeschen(k, 40)
+        krypto_loeschen(h, 32)
+        krypto_loeschen(ctx, SSH_HASH_BYTES)
         wenn ok:
             gib_zurück 1
         gib_zurück 0
+
+@nativ
+konstante SSH_KRYPTO_PACKET_MAX: u64 auf 35000
+@nativ
+konstante SSH_KRYPTO_TAG: u64 auf 16
+@nativ
+konstante SSH_KRYPTO_SEQ_MAX: u64 auf 0xFFFFFFFF
+@nativ
+konstante SSH_AUTH_PRAEFIX_MAX: u64 auf 128
+@nativ
+konstante SSH_CREDENTIAL_AKTIV: u64 auf 2
+
+# OpenSSH cipher-chachapoly.c. Die ersten vier Nonce-Oktette sind das
+# hohe Counter-Wort im IETF-Provider. Der Rest ist die Big-Endian-Seq.
+@nativ
+funktion ssh_nonce(nonce: u64, seq: u64) -> void:
+    unsicher:
+        speicher_schreiben(nonce, 0, 4)
+        nt_b32(nonce, 4, seq >> 32)
+        nt_b32(nonce, 8, seq & SSH_KRYPTO_SEQ_MAX)
+
+@nativ
+funktion ssh_paket_xor(key: u64, nonce: u64, paket: u64, n: u64) -> void:
+    unsicher:
+        moo_krypto_chacha20_xor(zeiger(key + 32), 0, zeiger(nonce), zeiger(paket), zeiger(paket), 4)
+        moo_krypto_chacha20_xor(zeiger(key), 1, zeiger(nonce), zeiger(paket + 4), zeiger(paket + 4), n - 4)
+
+@nativ
+funktion ssh_paket_grenzen(paket: u64, n: u64, seq: u64) -> bool:
+    gib_zurück paket != 0 und n >= 12 und n <= SSH_KRYPTO_PACKET_MAX - SSH_KRYPTO_TAG und seq <= SSH_KRYPTO_SEQ_MAX
+
+@nativ
+funktion ssh_paket_laenge(key: u64, paket: u64, seq: u64) -> u64:
+    unsicher:
+        wenn paket == 0 oder seq > SSH_KRYPTO_SEQ_MAX:
+            gib_zurück 0
+        setze nonce: [u64; 2] auf [0, 0]
+        setze laenge: [u64; 1] auf [0]
+        setze iv: u64 auf adresse_von(nonce)
+        setze p: u64 auf adresse_von(laenge)
+        ssh_nonce(iv, seq)
+        moo_krypto_chacha20_xor(zeiger(key + 32), 0, zeiger(iv), zeiger(paket), zeiger(p), 4)
+        gib_zurück nt_r32(p, 0)
+
+@nativ
+funktion ssh_paket_seal(key: u64, paket: u64, n: u64, seq: u64) -> u64:
+    unsicher:
+        wenn nicht ssh_paket_grenzen(paket, n, seq):
+            gib_zurück 0
+        setze nonce: [u64; 2] auf [0, 0]
+        setze poly: [u64; 4] auf [0, 0, 0, 0]
+        setze iv: u64 auf adresse_von(nonce)
+        setze poly_key: u64 auf adresse_von(poly)
+        ssh_nonce(iv, seq)
+        moo_krypto_chacha20_poly1305_keygen(zeiger(key), zeiger(iv), zeiger(poly_key))
+        ssh_paket_xor(key, iv, paket, n)
+        moo_krypto_poly1305(zeiger(poly_key), zeiger(paket), n, zeiger(paket + n))
+        krypto_loeschen(poly_key, 32)
+        gib_zurück 1
+
+@nativ
+funktion ssh_paket_open(key: u64, paket: u64, n: u64, seq: u64) -> u64:
+    unsicher:
+        wenn nicht ssh_paket_grenzen(paket, n, seq):
+            gib_zurück 0
+        setze nonce: [u64; 2] auf [0, 0]
+        setze poly: [u64; 4] auf [0, 0, 0, 0]
+        setze tag: [u64; 2] auf [0, 0]
+        setze iv: u64 auf adresse_von(nonce)
+        setze poly_key: u64 auf adresse_von(poly)
+        setze berechnet: u64 auf adresse_von(tag)
+        ssh_nonce(iv, seq)
+        moo_krypto_chacha20_poly1305_keygen(zeiger(key), zeiger(iv), zeiger(poly_key))
+        moo_krypto_poly1305(zeiger(poly_key), zeiger(paket), n, zeiger(berechnet))
+        setze ok: bool auf krypto_ct_gleich(berechnet, paket + n, SSH_KRYPTO_TAG)
+        krypto_loeschen(poly_key, 32)
+        krypto_loeschen(berechnet, SSH_KRYPTO_TAG)
+        wenn ok:
+            ssh_paket_xor(key, iv, paket, n)
+            gib_zurück 1
+        gib_zurück 0
+
+@nativ
+funktion ssh_credential_key(zustand: u64, gespeichert: u64, gespeichert_n: u64, angeboten: u64, angeboten_n: u64) -> bool:
+    wenn zustand != SSH_CREDENTIAL_AKTIV oder gespeichert_n != 32 oder angeboten_n != 32 oder gespeichert == 0 oder angeboten == 0:
+        gib_zurück falsch
+    unsicher:
+        gib_zurück krypto_ct_gleich(gespeichert, angeboten, 32)
+
+@nativ
+funktion ssh_credential_bestaetigen(zustand: u64, gespeichert: u64, gespeichert_n: u64, angeboten: u64, angeboten_n: u64, signatur_n: u64, ergebnis: i32) -> bool:
+    wenn signatur_n != 64 oder ergebnis != 0:
+        gib_zurück falsch
+    unsicher:
+        gib_zurück ssh_credential_key(zustand, gespeichert, gespeichert_n, angeboten, angeboten_n)
+
+# Der unsignierte Key-Test liefert die Entscheidung fuer PK_OK.
+@nativ
+funktion moo_bare_ssh_key_erlaubt(zustand: u64, erwartet: u64, angeboten: u64) -> u64:
+    unsicher:
+        gib_zurück als(u64, ssh_credential_key(zustand, erwartet, 32, angeboten, 32))
+
+# RFC 4252 7: SSH string(session_id), gefolgt vom signierten Praefix.
+@nativ
+funktion ssh_sitzung_auth(id: u64, zustand: u64, gespeichert: u64, angeboten: u64, praefix: u64, n: u64, signatur: u64, signatur_n: u64) -> bool:
+    unsicher:
+        wenn zustand != SSH_CREDENTIAL_AKTIV oder id == 0 oder gespeichert == 0 oder angeboten == 0 oder praefix == 0 oder n == 0 oder n > SSH_AUTH_PRAEFIX_MAX oder signatur == 0 oder signatur_n != 64:
+            gib_zurück falsch
+        setze daten: [u64; 21] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze p: u64 auf adresse_von(daten)
+        nt_b32(p, 0, 32)
+        nt_kopiere(p + 4, id, 32)
+        nt_kopiere(p + 36, praefix, n)
+        setze status: i32 auf crypto_ed25519_check(zeiger(signatur), zeiger(angeboten), zeiger(p), 36 + n)
+        krypto_loeschen(p, 168)
+        gib_zurück ssh_credential_bestaetigen(zustand, gespeichert, 32, angeboten, 32, signatur_n, status)
 
 @nativ
 funktion moo_bare_ssh_length(paket: u64, seq: u64) -> u64:
     unsicher:
         wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
             gib_zurück 0
-        gib_zurück moo_bare_ssh_paketlaenge(zeiger(adresse_von(SSH_EMPFANGS_KEY)), paket, seq)
+        gib_zurück ssh_paket_laenge(adresse_von(SSH_EMPFANGS_KEY), paket, seq)
 
 @nativ
 funktion moo_bare_ssh_seal(paket: u64, laenge: u64, seq: u64) -> u64:
     unsicher:
         wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
             gib_zurück 0
-        gib_zurück moo_bare_ssh_paket_seal(zeiger(adresse_von(SSH_SENDE_KEY)), paket, laenge, seq)
+        gib_zurück ssh_paket_seal(adresse_von(SSH_SENDE_KEY), paket, laenge, seq)
 
 @nativ
 funktion moo_bare_ssh_open(paket: u64, laenge: u64, seq: u64) -> u64:
     unsicher:
         wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
             gib_zurück 0
-        gib_zurück moo_bare_ssh_paket_open(zeiger(adresse_von(SSH_EMPFANGS_KEY)), paket, laenge, seq)
+        gib_zurück ssh_paket_open(adresse_von(SSH_EMPFANGS_KEY), paket, laenge, seq)
 
 @nativ
 funktion moo_bare_ssh_userauth(zustand: u64, erwartet: u64, angeboten: u64, praefix: u64, laenge: u64, signatur: u64) -> u64:
     unsicher:
         wenn speicher_lesen(adresse_von(SSH_KEYS_BEREIT), 8) == 0:
             gib_zurück 0
-        gib_zurück moo_bare_ssh_session_userauth(zeiger(adresse_von(SSH_SESSION_ID)), zustand, erwartet, angeboten, praefix, laenge, signatur)
+        gib_zurück als(u64, ssh_sitzung_auth(adresse_von(SSH_SESSION_ID), zustand, erwartet, angeboten, praefix, laenge, signatur, 64))
+
+@nativ
+konstante SSH_KAT_PRAEFIX: [u8; _] auf "moo-auth-kat"
+
+@nativ
+funktion ssh_userauth_kat() -> bool:
+    unsicher:
+        setze id: [u64; 4] auf [0x4D, 0, 0, 0]
+        setze andere_id: [u64; 4] auf [0x53, 0, 0, 0]
+        setze seed: [u64; 4] auf [0x73, 0, 0, 0]
+        setze public_key: [u64; 4] auf [0, 0, 0, 0]
+        setze geheim: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze signatur: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze falsch_signiert: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze daten: [u64; 6] auf [0, 0, 0, 0, 0, 0]
+        setze p: u64 auf adresse_von(daten)
+        setze session_id: u64 auf adresse_von(id)
+        setze key: u64 auf adresse_von(public_key)
+        setze sig: u64 auf adresse_von(signatur)
+        setze fehler: u64 auf adresse_von(falsch_signiert)
+        setze praefix: u64 auf adresse_von(SSH_KAT_PRAEFIX)
+        nt_b32(p, 0, 32)
+        nt_kopiere(p + 4, session_id, 32)
+        nt_kopiere(p + 36, praefix, 12)
+        crypto_ed25519_key_pair(zeiger(adresse_von(geheim)), zeiger(key), zeiger(adresse_von(seed)))
+        crypto_ed25519_sign(zeiger(sig), zeiger(adresse_von(geheim)), zeiger(p), 48)
+        krypto_loeschen(adresse_von(geheim), 64)
+        krypto_loeschen(adresse_von(seed), 32)
+        krypto_loeschen(p, 48)
+        nt_kopiere(fehler, sig, 64)
+        speicher_schreiben(fehler, speicher_lesen(fehler, 1) ^ 1, 1)
+        gib_zurück (ssh_sitzung_auth(session_id, SSH_CREDENTIAL_AKTIV, key, key, praefix, 12, sig, 64) und
+            nicht ssh_sitzung_auth(session_id, SSH_CREDENTIAL_AKTIV, key, key, praefix, 12, fehler, 64) und
+            nicht ssh_sitzung_auth(adresse_von(andere_id), SSH_CREDENTIAL_AKTIV, key, key, praefix, 12, sig, 64) und
+            nicht ssh_sitzung_auth(session_id, 1, key, key, praefix, 12, sig, 64) und
+            nicht ssh_sitzung_auth(session_id, SSH_CREDENTIAL_AKTIV, key, key, praefix, 12, sig, 65) und
+            nicht ssh_sitzung_auth(session_id, SSH_CREDENTIAL_AKTIV, key, key, praefix, 0xFFFFFFFFFFFFFFFF, sig, 64))
+
+@nativ
+funktion ssh_credential_kat() -> bool:
+    unsicher:
+        setze referenz: [u64; 4] auf [1, 0, 0, 0]
+        setze ungleich: [u64; 4] auf [1, 0, 0, 0x0100000000000000]
+        setze gross: [u64; 33] auf [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze sentinel: [u8; 1] auf [42]
+        setze key: u64 auf adresse_von(referenz)
+        setze anders: u64 auf adresse_von(ungleich)
+        setze lang: u64 auf adresse_von(gross)
+        setze gesperrt: u64 auf adresse_von(sentinel)
+        setze aktiv: u64 auf SSH_CREDENTIAL_AKTIV
+        gib_zurück (ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, anders, 32, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 31, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, lang, 72, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, lang, 257, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, lang, 257, key, 32, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 63, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 65, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 0xFFFFFFFFFFFFFFFF, 0) und
+            nicht ssh_credential_bestaetigen(1, gesperrt, 1, gesperrt, 1, 64, 0) und
+            nicht ssh_credential_bestaetigen(1, key, 32, key, 32, 64, 0) und
+            nicht ssh_credential_bestaetigen(0, 0, 0, 0, 0, 64, 0) und
+            nicht ssh_credential_bestaetigen(0, key, 32, key, 32, 64, 0) und
+            nicht ssh_credential_bestaetigen(aktiv, gesperrt, 1, gesperrt, 1, 64, -1) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 64, -1) und
+            nicht ssh_credential_bestaetigen(aktiv, key, 32, key, 32, 64, 1))
+
+@nativ
+funktion ssh_tag_kat() -> bool:
+    unsicher:
+        setze schluessel: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze klar: [u64; 2] auf [0x0302010408000000, 0x07060504]
+        setze paket: [u64; 4] auf [0, 0, 0, 0]
+        setze gefaelscht: [u64; 4] auf [0, 0, 0, 0]
+        # Vertragstest mit getrennten Keys. Referenz aus dem C-Pfad.
+        setze erwartet: [u64; 4] auf [0x392ba158e14b977e, 0x4f89a7607ce55077, 0x576ef727d9719685, 0x000000008fcf713e]
+        setze key: u64 auf adresse_von(schluessel)
+        setze p: u64 auf adresse_von(paket)
+        setze f: u64 auf adresse_von(gefaelscht)
+        setze seq: u64 auf 0xF2345678
+        setze i: u64 auf 0
+        solange i < 64:
+            speicher_schreiben(key + i, als(u8, i + 1), 1)
+            setze i auf i + 1
+        nt_kopiere(p, adresse_von(klar), 12)
+        wenn ssh_paket_seal(key, p, 12, seq) != 1 oder nicht krypto_ct_gleich(p, adresse_von(erwartet), 28) oder ssh_paket_laenge(key, p, seq) != 8:
+            gib_zurück falsch
+        speicher_schreiben(p + 27, speicher_lesen(p + 27, 1) ^ 1, 1)
+        nt_kopiere(f, p, 28)
+        setze abgelehnt: bool auf ssh_paket_open(key, p, 12, seq) == 0 und krypto_ct_gleich(p, f, 28)
+        speicher_schreiben(p + 27, speicher_lesen(p + 27, 1) ^ 1, 1)
+        gib_zurück abgelehnt und ssh_paket_open(key, p, 12, seq) == 1 und krypto_ct_gleich(p, adresse_von(klar), 12)
+
+@nativ
+funktion moo_bare_ssh_sicherheit_pruefen() -> u64:
+    unsicher:
+        gib_zurück als(u64, ssh_credential_kat()) | (als(u64, ssh_tag_kat()) << 1) | (als(u64, ssh_userauth_kat()) << 2) | (moo_bare_mlkem_kat() << 3)

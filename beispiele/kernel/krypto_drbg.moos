@@ -3,12 +3,8 @@
 # Buffers bleiben beim Aufrufer. Seed und Ausgabe duerfen den Zustand nicht ueberlappen.
 
 extern "C" funktion crypto_sha512_hmac(ausgabe: ptr[u8], key: ptr[u8], key_n: u64, daten: ptr[u8], n: u64) -> void
-extern "C" funktion crypto_verify32(a: ptr[u8], b: ptr[u8]) -> i32
-extern "C" funktion crypto_verify64(a: ptr[u8], b: ptr[u8]) -> i32
-extern "C" funktion crypto_wipe(daten: ptr[u8], n: u64) -> void
 extern "C" funktion memcpy(ziel: ptr[u8], quelle: ptr[u8], n: u64) -> ptr[u8]
 extern "C" funktion memset(ziel: ptr[u8], wert: i32, n: u64) -> ptr[u8]
-extern "C" funktion moo_bare_entropie_seed(seed: ptr[u8]) -> u64
 
 @nativ
 konstante DRBG_DIGEST: u64 auf 64
@@ -26,6 +22,137 @@ konstante DRBG_MAX_BYTES: u64 auf 65536
 # Ein RNG fuer den Bare-SSH-Dienst. Dessen TCP-Slot serialisiert Aufrufe.
 @nativ
 statisch BARE_DRBG: [u64; 17] auf 0
+
+# CPU-Entropie. Die Instruktions-Primitiven pruefen CPUID und liefern CF.
+@nativ
+konstante ENTROPIE_FEHLT: u64 auf 0
+@nativ
+konstante ENTROPIE_OK: u64 auf 1
+@nativ
+konstante ENTROPIE_ERSCHOEPFT: u64 auf 2
+@nativ
+konstante ENTROPIE_WIEDERHOLT: u64 auf 3
+@nativ
+konstante ENTROPIE_RDSEED: u64 auf 1
+@nativ
+konstante ENTROPIE_RDRAND: u64 auf 2
+@nativ
+konstante ENTROPIE_KAT_RETRY: u64 auf 3
+@nativ
+konstante ENTROPIE_KAT_ZYKLUS: u64 auf 4
+@nativ
+konstante ENTROPIE_KAT_ERSCHOEPFT: u64 auf 5
+
+@nativ
+funktion krypto_ct_gleich(a: u64, b: u64, n: u64) -> bool:
+    unsicher:
+        setze pa: ptr[u8] auf zeiger(a)
+        setze pb: ptr[u8] auf zeiger(b)
+        gib_zurück konstantzeit_gleich(byteansicht(pa, n), byteansicht(pb, n))
+
+@nativ
+funktion krypto_loeschen(adresse: u64, n: u64) -> void:
+    unsicher:
+        setze bytes: ptr[u8] auf zeiger(adresse)
+        loeschen_sicher(byteansicht(bytes, n))
+
+@nativ
+funktion entropie_lese_wort(leser: u64, versuch: u64, wort: ptr[u64]) -> bool:
+    unsicher:
+        wenn leser == ENTROPIE_RDSEED:
+            gib_zurück rdseed64(wort)
+        wenn leser == ENTROPIE_RDRAND:
+            gib_zurück rdrand64(wort)
+        # Die folgenden Leser werden durch drbg_entropie_kat ausgewählt.
+        wenn leser == ENTROPIE_KAT_RETRY und (versuch & 1) == 0:
+            setze wort[0] auf versuch
+            gib_zurück wahr
+        wenn leser == ENTROPIE_KAT_ZYKLUS:
+            setze wort[0] auf versuch & 1
+            gib_zurück wahr
+        gib_zurück falsch
+
+# Acht gueltige Woerter ohne Wiederholung. Zwei Woerter dienen der
+# Gesundheitsprobe, die restlichen sechs bilden Seed und Nonce.
+@nativ
+funktion entropie_sammeln(verfuegbar: bool, leser: u64, retries: u64, seed: u64, versuche: ptr[u64]) -> u64:
+    unsicher:
+        setze versuche[0] auf 0
+        wenn nicht verfuegbar:
+            gib_zurück ENTROPIE_FEHLT
+        setze proben: [u64; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze p: u64 auf adresse_von(proben)
+        setze status: u64 auf ENTROPIE_OK
+        setze i: u64 auf 0
+        solange i < 8 und status == ENTROPIE_OK:
+            setze gueltig: bool auf falsch
+            setze wiederholungen: u64 auf 0
+            setze wort: ptr[u64] auf zeiger(p + i * 8)
+            solange wiederholungen < retries und nicht gueltig:
+                setze versuche[0] auf versuche[0] + 1
+                setze gueltig auf entropie_lese_wort(leser, versuche[0], wort)
+                wenn nicht gueltig:
+                    assembler(ziel="x86_64", code="pause", clobber=[])
+                setze wiederholungen auf wiederholungen + 1
+            wenn nicht gueltig:
+                setze status auf ENTROPIE_ERSCHOEPFT
+            sonst:
+                setze j: u64 auf 0
+                solange j < i und status == ENTROPIE_OK:
+                    wenn speicher_lesen(p + j * 8, 8) == wort[0]:
+                        setze status auf ENTROPIE_WIEDERHOLT
+                    setze j auf j + 1
+            setze i auf i + 1
+        wenn status == ENTROPIE_OK:
+            memcpy(zeiger(seed), zeiger(p + 16), DRBG_SEED)
+        krypto_loeschen(p, 64)
+        gib_zurück status
+
+@nativ
+funktion entropie_quelle(seed_status: u64, rand_status: u64) -> u64:
+    wenn seed_status == ENTROPIE_WIEDERHOLT oder rand_status == ENTROPIE_WIEDERHOLT:
+        gib_zurück 0
+    wenn seed_status == ENTROPIE_OK:
+        gib_zurück ENTROPIE_RDSEED
+    wenn rand_status == ENTROPIE_OK:
+        gib_zurück ENTROPIE_RDRAND
+    gib_zurück 0
+
+@nativ
+funktion entropie_seed(seed: u64) -> u64:
+    unsicher:
+        setze fallback: [u64; 6] auf [0, 0, 0, 0, 0, 0]
+        setze zaehler: [u64; 1] auf [0]
+        setze versuche: ptr[u64] auf zeiger(adresse_von(zaehler))
+        setze rand_seed: u64 auf adresse_von(fallback)
+        setze seed_status: u64 auf entropie_sammeln(rdseed_verfuegbar(), ENTROPIE_RDSEED, 64, seed, versuche)
+        setze rand_status: u64 auf entropie_sammeln(rdrand_verfuegbar(), ENTROPIE_RDRAND, 10, rand_seed, versuche)
+        setze quelle: u64 auf entropie_quelle(seed_status, rand_status)
+        wenn quelle == ENTROPIE_RDRAND:
+            memcpy(zeiger(seed), zeiger(rand_seed), DRBG_SEED)
+        wenn quelle == 0:
+            krypto_loeschen(seed, DRBG_SEED)
+        krypto_loeschen(rand_seed, DRBG_SEED)
+        gib_zurück seed_status | (rand_status << 4) | (quelle << 8)
+
+@nativ
+funktion drbg_entropie_kat() -> u64:
+    unsicher:
+        setze seed: [u64; 6] auf [0, 0, 0, 0, 0, 0]
+        setze zaehler: [u64; 1] auf [0]
+        setze versuche: ptr[u64] auf zeiger(adresse_von(zaehler))
+        setze p: u64 auf adresse_von(seed)
+        setze ok: bool auf entropie_sammeln(falsch, ENTROPIE_KAT_RETRY, 10, p, versuche) == ENTROPIE_FEHLT und versuche[0] == 0
+        setze ok auf entropie_sammeln(wahr, ENTROPIE_KAT_RETRY, 10, p, versuche) == ENTROPIE_OK und versuche[0] == 16 und seed[0] == 6 und seed[5] == 16 und ok
+        setze ok auf entropie_sammeln(wahr, ENTROPIE_KAT_ZYKLUS, 10, p, versuche) == ENTROPIE_WIEDERHOLT und versuche[0] == 3 und seed[0] == 6 und ok
+        setze ok auf entropie_sammeln(wahr, ENTROPIE_KAT_ERSCHOEPFT, 10, p, versuche) == ENTROPIE_ERSCHOEPFT und versuche[0] == 10 und seed[0] == 6 und ok
+        krypto_loeschen(p, DRBG_SEED)
+        gib_zurück als(u64, ok und entropie_quelle(ENTROPIE_OK, ENTROPIE_OK) == ENTROPIE_RDSEED und
+            entropie_quelle(ENTROPIE_ERSCHOEPFT, ENTROPIE_OK) == ENTROPIE_RDRAND und
+            entropie_quelle(ENTROPIE_FEHLT, ENTROPIE_OK) == ENTROPIE_RDRAND und
+            entropie_quelle(ENTROPIE_WIEDERHOLT, ENTROPIE_OK) == 0 und
+            entropie_quelle(ENTROPIE_OK, ENTROPIE_WIEDERHOLT) == 0 und
+            entropie_quelle(ENTROPIE_FEHLT, ENTROPIE_FEHLT) == 0)
 
 @nativ
 funktion drbg_update(zustand: u64, seed: u64) -> void:
@@ -47,7 +174,7 @@ funktion drbg_update(zustand: u64, seed: u64) -> void:
             crypto_sha512_hmac(zeiger(zustand), zeiger(zustand), DRBG_DIGEST, zeiger(p), laenge)
             crypto_sha512_hmac(zeiger(v), zeiger(zustand), DRBG_DIGEST, zeiger(v), DRBG_DIGEST)
             setze kennbyte auf kennbyte + 1
-        crypto_wipe(zeiger(p), 120)
+        krypto_loeschen(p, 120)
 
 @nativ
 funktion drbg_instanz(zustand: u64, seed: u64) -> void:
@@ -81,12 +208,12 @@ funktion drbg_start(zustand: u64) -> u64:
     unsicher:
         setze seed: [u64; 6] auf [0, 0, 0, 0, 0, 0]
         setze p: u64 auf adresse_von(seed)
-        setze bericht: u64 auf moo_bare_entropie_seed(zeiger(p))
+        setze bericht: u64 auf entropie_seed(p)
         wenn (bericht >> 8) != 0:
             drbg_instanz(zustand, p)
         sonst:
-            crypto_wipe(zeiger(zustand), DRBG_ZUSTAND_BYTES)
-        crypto_wipe(zeiger(p), DRBG_SEED)
+            krypto_loeschen(zustand, DRBG_ZUSTAND_BYTES)
+        krypto_loeschen(p, DRBG_SEED)
         gib_zurück bericht
 
 @nativ
@@ -107,11 +234,11 @@ funktion drbg_entropie_selbsttest() -> u64:
         setze zustand: u64 auf adresse_von(rng)
         setze bericht: u64 auf drbg_start(zustand)
         wenn (bericht >> 8) != 0:
-            wenn nicht (drbg_generieren(zustand, adresse_von(a), 32) und drbg_generieren(zustand, adresse_von(b), 32) und crypto_verify32(zeiger(adresse_von(a)), zeiger(adresse_von(b))) != 0):
+            wenn nicht (drbg_generieren(zustand, adresse_von(a), 32) und drbg_generieren(zustand, adresse_von(b), 32) und nicht krypto_ct_gleich(adresse_von(a), adresse_von(b), 32)):
                 setze bericht auf bericht & 255
-        crypto_wipe(zeiger(zustand), DRBG_ZUSTAND_BYTES)
-        crypto_wipe(zeiger(adresse_von(a)), 32)
-        crypto_wipe(zeiger(adresse_von(b)), 32)
+        krypto_loeschen(zustand, DRBG_ZUSTAND_BYTES)
+        krypto_loeschen(adresse_von(a), 32)
+        krypto_loeschen(adresse_von(b), 32)
         gib_zurück bericht
 
 # NIST CAVP drbgvectors_no_reseed/HMAC_DRBG.rsp, SHA-512 COUNT 0.
@@ -160,9 +287,9 @@ funktion drbg_grenzen_kat() -> bool:
         setze ok auf speicher_lesen(a + DRBG_ZAEHLER, 8) == 1 und speicher_lesen(out_a, 8) == 0xA5A5A5A5A5A5A5A5 und ok
         setze ok auf drbg_generieren(a, out_a, 32) und drbg_generieren(b, out_b, 32) und ok
         setze ok auf nicht drbg_generieren(a, out_a, 32) und speicher_lesen(b + DRBG_ZAEHLER, 8) == DRBG_MAX_ANFRAGEN - 1 und ok
-        setze ok auf crypto_verify32(zeiger(out_a), zeiger(out_b)) == 0 und ok
-        crypto_wipe(zeiger(a), 2 * DRBG_ZUSTAND_BYTES)
-        crypto_wipe(zeiger(out_a), 64)
+        setze ok auf krypto_ct_gleich(out_a, out_b, 32) und ok
+        krypto_loeschen(a, 2 * DRBG_ZUSTAND_BYTES)
+        krypto_loeschen(out_a, 64)
         setze offset: u64 auf 0
         solange offset < 2 * DRBG_ZUSTAND_BYTES:
             setze ok auf speicher_lesen(a + offset, 8) == 0 und ok
@@ -183,10 +310,10 @@ funktion drbg_selbsttest() -> u64:
         setze ok: bool auf drbg_generieren(z, ziel, 256) und drbg_generieren(z, ziel, 256)
         setze offset: u64 auf 0
         solange offset < 256:
-            setze ok auf crypto_verify64(zeiger(ziel + offset), zeiger(adresse_von(DRBG_NIST_AUSGABE) + offset)) == 0 und ok
+            setze ok auf krypto_ct_gleich(ziel + offset, adresse_von(DRBG_NIST_AUSGABE) + offset, 64) und ok
             setze offset auf offset + 64
-        crypto_wipe(zeiger(z), DRBG_ZUSTAND_BYTES)
-        crypto_wipe(zeiger(ziel), 256)
+        krypto_loeschen(z, DRBG_ZUSTAND_BYTES)
+        krypto_loeschen(ziel, 256)
         wenn ok und drbg_grenzen_kat():
             gib_zurück 1
         gib_zurück 0

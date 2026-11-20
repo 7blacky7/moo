@@ -7,8 +7,7 @@ aus "netz_ssh_shell" importiere SSH_SHELL_FENSTER, ssh_info_schreiben, ssh_shell
 
 aus "netz_ssh_krypto" importiere moo_bare_ssh_boot, moo_bare_ssh_public, moo_bare_ssh_random, moo_bare_ssh_clear, moo_bare_ssh_versions, moo_bare_ssh_inits, moo_bare_ssh_exchange, moo_bare_ssh_length, moo_bare_ssh_seal, moo_bare_ssh_open, moo_bare_ssh_userauth, SSH_HYBRID_CLIENT_BYTES, SSH_HYBRID_REPLY_BYTES
 
-extern "C" funktion moo_bare_ssh_sicherheit_pruefen() -> u64
-extern "C" funktion moo_bare_ssh_key_erlaubt(zustand: u64, erwartet: u64, angeboten: u64) -> u64
+aus "netz_ssh_krypto" importiere moo_bare_ssh_sicherheit_pruefen, moo_bare_ssh_key_erlaubt
 
 @nativ
 konstante SSH_EINGANG_MAX: u64 auf 35000

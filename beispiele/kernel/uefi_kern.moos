@@ -31,7 +31,7 @@ aus "netz_ipv6" importiere netz_ipv6_port_an, netz_ipv6_wartung, netz_ipv6_link_
 aus "pci_ecam" importiere pci_ecam_starten
 aus "netz_tcp" importiere netz_tcp_wartung
 aus "netz_ssh" importiere ssh_booten, ssh_bereit
-aus "krypto_drbg" importiere drbg_selbsttest, drbg_entropie_selbsttest
+aus "krypto_drbg" importiere drbg_selbsttest, drbg_entropie_selbsttest, drbg_entropie_kat
 aus "netz_ssh_shell" importiere ssh_shell_kern, ssh_shell_pci_eintrag, ssh_shell_pci_anzahl
 aus "test_neustart" importiere testlauf_starten, testlauf_poll, testlauf_rueckfall, testlauf_konfig, testlauf_neustart
 aus "../uefi/hardware_pci" importiere takt, nt_cfg_lese32
@@ -2252,7 +2252,7 @@ funktion sammel_krypto(log: u64) -> void:
     unsicher:
         meldung(adresse_von(SAM_K_START), 1)
         sammel_wartung(log)
-        setze kat: u64 auf moo_bare_krypto_provider_kat() | (drbg_selbsttest() << 7)
+        setze kat: u64 auf moo_bare_krypto_provider_kat() | (drbg_selbsttest() << 7) | (drbg_entropie_kat() << 8)
         meldung(adresse_von(SAM_K_SHA256), (kat >> 0) & 1)
         meldung(adresse_von(SAM_K_SHA512), (kat >> 1) & 1)
         meldung(adresse_von(SAM_K_HMAC_SHA256), (kat >> 2) & 1)

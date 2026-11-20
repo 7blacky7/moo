@@ -1,7 +1,17 @@
 #include "moo_bare_krypto.h"
+#include "mlkem-native/mlkem_native.h"
 
 #include <stdbool.h>
 #include <string.h>
+
+#include "moo_bare_ssh_mlkem_kat.inc"
+
+/* Der Moo-Orchestrator reserviert 14 u64 fuer einen SHA-256-Kontext und
+ * verwendet die SSH-Drahtlaengen aus dem ML-KEM-768-Provider. */
+_Static_assert(sizeof(MooSha256Ctx) == 112 && _Alignof(MooSha256Ctx) <= 8,
+               "Moo SSH SHA-256 context ABI");
+_Static_assert(MLKEM768_PUBLICKEYBYTES == 1184 && MLKEM768_CIPHERTEXTBYTES == 1088 &&
+               MLKEM768_BYTES == 32 && MLKEM_SYMBYTES == 32, "Moo SSH ML-KEM-768 lengths");
 
 /* Ausschliesslich oeffentliche Known-Answer-Vektoren. Rueckgabe ist
  * ein Ergebnisbit je Test. Schluessel, Klartexte und Digests verlassen
@@ -312,5 +322,27 @@ uint64_t moo_bare_krypto_provider_kat(void)
                       kat_sha512_digest(sha512_msg, sizeof(sha512_msg), sha512_out);
     return sha256 | (sha512 << 1) | (kat_hmac_both() << 2) |
            ((uint64_t)kat_x25519() << 4) | ((uint64_t)kat_ed25519() << 5) |
-           ((uint64_t)kat_aead() << 6) | (moo_bare_entropie_kat() << 8);
+           ((uint64_t)kat_aead() << 6);
+}
+
+uint64_t moo_bare_mlkem_kat(void)
+{
+    uint8_t ciphertext[MLKEM768_CIPHERTEXTBYTES], secret[MLKEM768_BYTES];
+
+    bool ok = moo_mlkem768_enc_derand(ciphertext, secret, nist_tg2_tc26_ek,
+                                     nist_tg2_tc26_m) == 0 &&
+              crypto_verify32(secret, nist_tg2_tc26_k) == 0;
+    if (ok) {
+        unsigned difference = 0;
+        for (size_t i = 0; i < sizeof(ciphertext); i++)
+            difference |= ciphertext[i] ^ nist_tg2_tc26_c[i];
+
+        ok = difference == 0 &&
+             moo_mlkem768_check_pk(nist_tg10_tc137_ek) == MLK_ERR_INVALID_PK &&
+             moo_mlkem768_enc_derand(ciphertext, secret, nist_tg10_tc137_ek,
+                                    nist_tg2_tc26_m) == MLK_ERR_INVALID_PK;
+    }
+    crypto_wipe(secret, sizeof(secret));
+    crypto_wipe(ciphertext, sizeof(ciphertext));
+    return ok;
 }
