@@ -598,6 +598,8 @@ echo 'PASS Registerwrites: C++-Orakel, drei Ziele, Portfolge und Negativfaelle'
 
 [tasks.pro-kern]
 description = "P10-T4: CPU-lokales ABI-Bild, GS/UEFI-IR und getrennte Hosted-Threads"
+# Die Kerneladressen liegen oberhalb von INT64_MAX; Bash rechnet modulo 2^64.
+shell = "bash -c"
 run = '''
 set -eu
 cd ../../..
