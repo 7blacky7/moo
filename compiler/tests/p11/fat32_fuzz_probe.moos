@@ -1,0 +1,157 @@
+aus "fat32_probe" importiere FAT_TEST_PLATTE
+aus ds_fat importiere FatVolume, FatSektor, FatLayout, FatName, FatDatei, fat_formatieren, fat_oeffnen, fat_bpb_pruefen, fat_name_lesen, fat_anlegen, fat_suchen, fat_kettenlaenge, fat_synchronisieren, fat_sektor_io
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_EA
+
+struktur FatFehlerTransport implementiert FatTransport:
+    ram: ptr[FatRam]
+    anzahl: u64
+    scheitern: u64
+    getroffen: bool
+    geschrieben: u64
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.ram.geometrie()
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze selbst.anzahl auf selbst.anzahl + 1
+            wenn selbst.anzahl == selbst.scheitern:
+                setze selbst.getroffen auf wahr
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 77))
+            wenn art == BLOCK_SCHREIBEN:
+                setze selbst.geschrieben auf selbst.geschrieben + 1
+            gib_zurück selbst.ram.uebertragen(art, lba, anzahl, puffer, bytes)
+
+@nativ
+funktion fat_fuzz_zahl(seed: u64) -> u64:
+    gib_zurück seed * 6364136223846793005 + 1442695040888963407
+
+@nativ
+funktion fat32_fuzz_ablauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze ram: FatRam auf 0
+        setze r: ptr[FatRam] auf zeiger(adresse_von(ram))
+        weitergeben(fat_ram_einrichten(r, adresse_von(FAT_TEST_PLATTE.bytes[0]), 67108864, 512, falsch))
+        setze t: ptr[dyn FatTransport] auf r
+        weitergeben(fat_formatieren(t, 0xCAFEBABE))
+        setze volume: FatVolume auf 0
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(volume))
+        weitergeben(fat_oeffnen(v, t))
+        setze vorlage: FatSektor auf 0
+        weitergeben(fat_sektor_io(v, BLOCK_LESEN, 0, byteansicht(vorlage.bytes)))
+        setze seed: u64 auf 0xA6B5C4D3E2F10123
+        setze lauf: u64 auf 0
+        solange lauf < 100000:
+            setze kopie: FatSektor auf vorlage
+            setze bytes: puffer[u8] auf byteansicht(kopie.bytes)
+            setze seed auf fat_fuzz_zahl(seed)
+            setze anzahl: u64 auf 1 + (seed / 256) % 8
+            setze i: u64 auf 0
+            solange i < anzahl:
+                setze seed auf fat_fuzz_zahl(seed)
+                setze pos: u64 auf (seed / 65536) % 512
+                bytes[pos] = als_wrap(u8, seed / 1048576)
+                setze i auf i + 1
+            setze bpb: ergebnis[FatLayout, BlockFehler] auf fat_bpb_pruefen(r.geo, bytes)
+            wenn ist_erfolg(bpb):
+                setze layout: FatLayout auf ergebnis_wert(bpb)
+                wenn layout.sektor_bytes != 512 oder layout.cluster_anzahl < 65525 oder layout.wurzel < 2 oder layout.wurzel > layout.cluster_anzahl + 1 oder layout.daten_start >= layout.sektoren oder layout.sektoren > r.geo.bloecke:
+                    gib_zurück erfolg(1)
+            setze lauf auf lauf + 1
+        setze namen_speicher: FatSektor auf 0
+        setze np: ptr[u8] auf zeiger(adresse_von(namen_speicher.bytes[0]))
+        setze lauf auf 0
+        solange lauf < 100000:
+            setze seed auf fat_fuzz_zahl(seed)
+            setze laenge: u64 auf (seed / 256) % 1021
+            setze j: u64 auf 0
+            solange j < laenge:
+                setze seed auf fat_fuzz_zahl(seed)
+                namen_speicher.bytes[j] = als_wrap(u8, seed / 1048576)
+                setze j auf j + 1
+            setze name_r: ergebnis[FatName, BlockFehler] auf fat_name_lesen(byteansicht(np, laenge))
+            wenn ist_erfolg(name_r):
+                setze name: FatName auf ergebnis_wert(name_r)
+                wenn name.anzahl == 0 oder name.anzahl > 255:
+                    gib_zurück erfolg(2)
+                setze k: u64 auf 0
+                solange k < name.anzahl:
+                    wenn name.einheiten[k] == 0 oder name.einheiten[k] == 0xFFFF:
+                        gib_zurück erfolg(3)
+                    setze k auf k + 1
+            setze lauf auf lauf + 1
+        setze langname: [u8; 39] auf [70, 117, 122, 122, 32, 112, 114, 117, 101, 102, 116, 32, 101, 105, 110, 101, 110, 32, 108, 97, 110, 103, 101, 110, 32, 68, 97, 116, 101, 105, 110, 97, 109, 101, 110, 46, 116, 120, 116]
+        setze datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(langname), falsch))
+        setze wurzel_lba: u64 auf v.layout.daten_start
+        setze original: FatSektor auf 0
+        weitergeben(fat_sektor_io(v, BLOCK_LESEN, wurzel_lba, byteansicht(original.bytes)))
+        setze roh: ptr[u8] auf zeiger(r.basis + wurzel_lba * 512)
+        setze lauf auf 0
+        solange lauf < 10000:
+            setze mutiert: FatSektor auf original
+            setze seed auf fat_fuzz_zahl(seed)
+            setze wo: u64 auf (seed / 65536) % (datei.lfn_anzahl * 32)
+            mutiert.bytes[wo] = als_wrap(u8, seed / 1048576)
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, wurzel_lba, byteansicht(mutiert.bytes)))
+            setze suche: ergebnis[FatDatei, BlockFehler] auf fat_suchen(v, v.layout.wurzel, byteansicht(langname))
+            wenn ist_erfolg(suche):
+                setze gefunden: FatDatei auf ergebnis_wert(suche)
+                wenn gefunden.eintrag != datei.eintrag oder gefunden.cluster != 0:
+                    gib_zurück erfolg(4)
+            setze lauf auf lauf + 1
+        weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, wurzel_lba, byteansicht(original.bytes)))
+        setze fat_adr: ptr[u8] auf zeiger(r.basis + v.layout.fat_start * 512 + 12)
+        setze fat_bytes: puffer[u8] auf byteansicht(fat_adr, 256)
+        setze lauf auf 0
+        solange lauf < 10000:
+            setze eintrag: u64 auf 0
+            solange eintrag < 64:
+                setze seed auf fat_fuzz_zahl(seed)
+                setze wert: u64 auf (seed / 65536) % 69
+                wenn wert == 66:
+                    setze wert auf 0x0FFFFFFF
+                sonst wenn wert == 67:
+                    setze wert auf 0x0FFFFFF7
+                sonst wenn wert == 68:
+                    setze wert auf v.layout.cluster_anzahl + 2
+                byte_schreiben_le32(fat_bytes, eintrag * 4, u32(wert))
+                setze eintrag auf eintrag + 1
+            setze kette: ergebnis[u64, BlockFehler] auf fat_kettenlaenge(v, 3)
+            wenn ist_erfolg(kette):
+                wenn ergebnis_wert(kette) == 0 oder ergebnis_wert(kette) > 65:
+                    gib_zurück erfolg(5)
+            setze lauf auf lauf + 1
+        # Jeden der ersten 80 Transportaufrufe des vollständigen Anlege-/Sync-
+        # Pfads einzeln mit EIO unterbrechen. Danach sind weitere Writes gesperrt.
+        setze fehler_index: u64 auf 1
+        solange fehler_index <= 80:
+            weitergeben(fat_formatieren(t, 1))
+            setze adapter: FatFehlerTransport auf FatFehlerTransport(r, 0, 0, falsch, 0)
+            setze ap: ptr[FatFehlerTransport] auf zeiger(adresse_von(adapter))
+            setze ft: ptr[dyn FatTransport] auf ap
+            weitergeben(fat_oeffnen(v, ft))
+            setze adapter.scheitern auf adapter.anzahl + fehler_index
+            setze angelegt: ergebnis[FatDatei, BlockFehler] auf fat_anlegen(v, v.layout.wurzel, byteansicht(langname), wahr)
+            setze sync: ergebnis[void, BlockFehler] auf fat_synchronisieren(v)
+            setze angelegt_gut: bool auf ist_erfolg(angelegt)
+            setze sync_gut: bool auf ist_erfolg(sync)
+            wenn adapter.getroffen:
+                wenn angelegt_gut und sync_gut:
+                    gib_zurück erfolg(6)
+                wenn nicht v.nur_lesend:
+                    gib_zurück erfolg(7)
+                setze vorher: u64 auf adapter.geschrieben
+                setze nochmals: ergebnis[FatDatei, BlockFehler] auf fat_anlegen(v, v.layout.wurzel, byteansicht(langname), falsch)
+                wenn ist_erfolg(nochmals) oder adapter.geschrieben != vorher:
+                    gib_zurück erfolg(8)
+            setze fehler_index auf fehler_index + 1
+        gib_zurück erfolg(0)
+
+@nativ
+funktion fat32_fuzz_probe() -> u64:
+    setze r: ergebnis[u64, BlockFehler] auf fat32_fuzz_ablauf()
+    wenn nicht ist_erfolg(r):
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück 1000000 + als(u64, f.code) * 100 + als(u64, f.geraete_status)
+    gib_zurück ergebnis_wert(r)

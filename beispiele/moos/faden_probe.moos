@@ -56,7 +56,7 @@ funktion benutzer_haupt() -> u64:
             gib_zurück 3
         wenn moos_futex_warten(1, 0) != 0xFFFFFFFFFFFFFFEA oder moos_futex_warten(0, 0) != 0xFFFFFFFFFFFFFFF2:
             gib_zurück 4
-        wenn moos_futex_warten(adresse_von(p.los), 1) != 0xFFFFFFFFFFFFFFF5 oder moos_aufruf(8, 0, 0) != 0xFFFFFFFFFFFFFFDA:
+        wenn moos_futex_warten(adresse_von(p.los), 1) != 0xFFFFFFFFFFFFFFF5 oder moos_aufruf(0xFFFF, 0, 0) != 0xFFFFFFFFFFFFFFDA:
             gib_zurück 5
         wenn moos_futex_wecken(adresse_von(benutzer_arbeiter) & 0xFFFFFFFFFFFFFFFC, 1) != 0xFFFFFFFFFFFFFFF2:
             gib_zurück 6

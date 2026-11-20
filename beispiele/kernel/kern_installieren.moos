@@ -1,0 +1,340 @@
+# P11-T15: Installation über eine vom Kernel vergebene Blockgeräte-Berechtigung.
+aus moos_install_abi importiere InstallInfo, InstallBlock, INSTALL_INFO, INSTALL_ANLEGEN, INSTALL_KOPIEREN, INSTALL_VEROEFFENTLICHEN, INSTALL_BLOCK_LESEN, INSTALL_BLOCK_SCHREIBEN, INSTALL_BLOCK_FLUSH, INSTALL_QUELLE, INSTALL_ESP
+aus ds_fat importiere FatVolume, FatDatei, fat_oeffnen, fat_formatieren, fat_suchen, fat_anlegen, fat_lesen, fat_schreiben, fat_synchronisieren
+aus ds_fat_transport importiere FatTransport
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus "speicher_gpt_block" importiere GptMedium, GptGuid, GptEintrag, GptPartition, GPT_TABELLE_BYTES, gpt_oeffnen, gpt_schreiben, gpt_partition_registrieren
+aus "kern_blockcache" importiere BlockCache, blockcache_einrichten
+aus "kern_block" importiere BlockAnfrage, BlockFehler, BlockGeometrie, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_NUR_LESEN, BLOCK_GEOMETRIE, BLOCK_PUFFER, BLOCK_BEREICH, BLOCK_VOLL, BLOCK_NICHT_BEREIT, block_geometrie, block_anfordern
+aus "kern_syscall" importiere BenutzerProzess, syscall_install_handler
+aus "kern_adressraum" importiere Adressraum, ar_benutzer_kopieren, ar_benutzer_zurueckkopieren, ar_rahmen_nehmen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "netz_ssh_krypto" importiere moo_krypto_sha256, moo_krypto_sha256_init, moo_krypto_sha256_update, moo_krypto_sha256_final
+aus "../uefi/netz_geraet" importiere nt_kopiere
+
+@nativ
+konstante INST_FORMAT: u32 auf 0x30000
+@nativ
+konstante INST_PRUEFUNG: u32 auf 0x30001
+@nativ
+konstante INST_ESP_BYTES: u64 auf 536870912
+@nativ
+konstante INST_ARRAY_BYTES: u64 auf 16777216
+@nativ
+konstante INST_IO_BYTES: u64 auf 65536
+
+struktur InstallGptEntwurf:
+    eintraege: [GptEintrag; 2]
+
+struktur InstallSitzung:
+    info: InstallInfo
+    quell_kennung: u64
+    ziel_kennung: u64
+    esp_kennung: u64
+    arbeit: u64
+    stand: u64
+    callback: u64
+    ziel_cache: BlockCache
+    quell_part: GptPartition
+    esp_part: GptPartition
+    pruef_part: GptPartition
+    quell_transport: FatKernTransport
+    ziel_transport: FatKernTransport
+    pruef_transport: FatKernTransport
+    quell_fat: FatVolume
+    ziel_fat: FatVolume
+    pruef_fat: FatVolume
+    quell_kern: FatDatei
+    quell_lader: FatDatei
+    moo_dir: u64
+    boot_dir: u64
+
+@nativ
+statisch INSTALL_SITZUNG: InstallSitzung auf 0
+@nativ
+statisch INSTALL_BESITZER: atom[u64] auf 0
+@nativ
+statisch INSTALL_MUTEX: KernMutex auf 0
+@nativ
+konstante INST_T_STAND: [u8; _] auf "MOO-INSTALL STUFE "
+@nativ
+konstante INST_T_FEHLER: [u8; _] auf "MOO-INSTALL FEHLER CODE STATUS "
+@nativ
+konstante INST_T_SHA: [u8; _] auf "MOO-INSTALL SHA256 DATEI "
+@nativ
+konstante INST_T_RECHT: [u8; _] auf "MOO-INSTALL RECHT ABGELEHNT "
+
+@nativ
+funktion install_meldung(s: ptr[InstallSitzung], text_adr: u64, wert: u64) -> void:
+    unsicher:
+        wenn s.callback != 0:
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(s.callback)
+            log(text_adr, wert)
+
+@nativ
+funktion install_quelle_oeffnen(s: ptr[InstallSitzung], quelle: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze medium: ptr[GptMedium] auf weitergeben(gpt_oeffnen(quelle))
+        setze part: ptr[GptPartition] auf zeiger(adresse_von(s.quell_part))
+        setze id: u64 auf weitergeben(gpt_partition_registrieren(medium, part, 1, wahr))
+        setze adapter: ptr[FatKernTransport] auf zeiger(adresse_von(s.quell_transport))
+        weitergeben(fat_kern_transport_einrichten(adapter, id))
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(s.quell_fat))
+        setze transport: ptr[dyn FatTransport] auf adapter
+        weitergeben(fat_oeffnen(v, transport))
+        setze moo_name: [u8; 3] auf [77, 79, 79]
+        setze install_name: [u8; 7] auf [73, 78, 83, 84, 65, 76, 76]
+        setze kern_name: [u8; 8] auf [75, 69, 82, 78, 46, 69, 76, 70]
+        setze lader_name: [u8; 11] auf [66, 79, 79, 84, 88, 54, 52, 46, 69, 70, 73]
+        setze moo_ordner: FatDatei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(moo_name)))
+        setze ordner: FatDatei auf weitergeben(fat_suchen(v, moo_ordner.cluster, byteansicht(install_name)))
+        setze s.quell_kern auf weitergeben(fat_suchen(v, ordner.cluster, byteansicht(kern_name)))
+        setze s.quell_lader auf weitergeben(fat_suchen(v, ordner.cluster, byteansicht(lader_name)))
+        wenn (moo_ordner.attribute & 16) == 0 oder (ordner.attribute & 16) == 0 oder s.quell_kern.bytes < 64 oder s.quell_lader.bytes < 64:
+            gib_zurück fehlschlag(BlockFehler(INST_FORMAT, 1))
+        wenn s.quell_kern.bytes + s.quell_lader.bytes >= INST_ESP_BYTES:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze kern: ptr[FatDatei] auf zeiger(adresse_von(s.quell_kern))
+        setze lader: ptr[FatDatei] auf zeiger(adresse_von(s.quell_lader))
+        setze roh: [u8; 4] auf [0, 0, 0, 0]
+        weitergeben(fat_lesen(v, kern, 0, byteansicht(roh)))
+        wenn byte_lesen_le32(byteansicht(roh), 0) != 0x464C457F:
+            gib_zurück fehlschlag(BlockFehler(INST_FORMAT, 2))
+        weitergeben(fat_lesen(v, lader, 0, byteansicht(roh)))
+        wenn byte_lesen_le16(byteansicht(roh), 0) != 0x5A4D:
+            gib_zurück fehlschlag(BlockFehler(INST_FORMAT, 3))
+        setze s.quell_kennung auf id
+        gib_zurück erfolg()
+
+# Eine native Startkonfiguration liefert die bereits gebundene Zielkennung und
+# deren vollständige Seriennummer. Nutzerkoordinaten sind nie Blockkennungen.
+@nativ
+funktion install_sitzung_starten(prozess: ptr[BenutzerProzess], quelle: u64, ziel: u64, serie: u64, serien_bytes: u64, callback: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze s: ptr[InstallSitzung] auf zeiger(adresse_von(INSTALL_SITZUNG))
+        wenn u64(prozess) == 0 oder s.arbeit != 0 oder quelle == ziel oder serie == 0 oder serien_bytes == 0 oder serien_bytes > 24:
+            gib_zurück fehlschlag(BlockFehler(INST_FORMAT, 4))
+        setze qgeo: BlockGeometrie auf weitergeben(block_geometrie(quelle))
+        setze zgeo: BlockGeometrie auf weitergeben(block_geometrie(ziel))
+        wenn nicht qgeo.nur_lesend oder zgeo.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        wenn zgeo.block_bytes < 512 oder zgeo.block_bytes > 4096 oder (zgeo.block_bytes & (zgeo.block_bytes - 1)) != 0 oder zgeo.bloecke <= (1048576 + INST_ESP_BYTES + INST_ARRAY_BYTES) / zgeo.block_bytes + GPT_TABELLE_BYTES / zgeo.block_bytes:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze s.callback auf callback
+        weitergeben(install_quelle_oeffnen(s, quelle))
+        setze s.arbeit auf ar_rahmen_nehmen(INST_IO_BYTES / 4096)
+        wenn s.arbeit == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze s.ziel_kennung auf ziel
+        setze s.info.quell_sektoren auf s.quell_part.geo.bloecke
+        setze s.info.quell_block_bytes auf s.quell_part.geo.block_bytes
+        setze s.info.ziel_sektoren auf zgeo.bloecke
+        setze s.info.ziel_block_bytes auf zgeo.block_bytes
+        setze s.info.serien_bytes auf serien_bytes
+        nt_kopiere(adresse_von(s.info.serie), serie, serien_bytes)
+        syscall_install_handler(adresse_von(install_syscall))
+        atom_speichern(INSTALL_BESITZER, u64(prozess), ordnung=freigeben)
+        gib_zurück erfolg()
+
+@nativ
+funktion install_sitzung_ende() -> void:
+    unsicher:
+        atom_speichern(INSTALL_BESITZER, 0, ordnung=freigeben)
+        syscall_install_handler(0)
+
+# Stabiler GPT-Identifier aus der während der Treiberbindung geprüften Serie.
+@nativ
+funktion install_guid(s: ptr[InstallSitzung], rolle_nr: u64) -> GptGuid:
+    unsicher:
+        setze stempel: [u64; 4] auf [0, 0, 0, 0]
+        setze roh: [u64; 4] auf [0, 0, 0, 0]
+        nt_kopiere(adresse_von(stempel), adresse_von(s.info.serie), s.info.serien_bytes)
+        setze stempel[3] auf 0x4D4F4F494E530000 | rolle_nr
+        moo_krypto_sha256(zeiger(adresse_von(stempel)), 32, zeiger(adresse_von(roh)))
+        gib_zurück GptGuid((roh[0] & 0x0FFFFFFFFFFFFFFF) | 0x8000000000000000, (roh[1] & 0xFFFFFFFFFFFFFF3F) | 0x80)
+
+@nativ
+funktion install_anlegen(s: ptr[InstallSitzung]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze cache: ptr[BlockCache] auf zeiger(adresse_von(s.ziel_cache))
+        setze cache_id: u64 auf weitergeben(blockcache_einrichten(cache, s.ziel_kennung, 32))
+        setze medium: ptr[GptMedium] auf weitergeben(gpt_oeffnen(cache_id))
+        setze bytes: u64 auf s.info.ziel_block_bytes
+        setze anfang: u64 auf 1048576 / bytes
+        setze metadaten: u64 auf anfang + INST_ESP_BYTES / bytes
+        setze entwurf: InstallGptEntwurf auf 0
+        # EFI-Systempartition C12A7328-F81F-11D2-BA4B-00A0C93EC93B.
+        setze entwurf.eintraege[0].typ_guid auf GptGuid(0x11D2F81FC12A7328, 0x3BC93EC9A0004BBA)
+        setze entwurf.eintraege[0].teil_guid auf install_guid(s, 1)
+        setze entwurf.eintraege[0].erster auf anfang
+        setze entwurf.eintraege[0].letzter auf metadaten - 1
+        entwurf.eintraege[0].name_utf16le[0] = 69
+        entwurf.eintraege[0].name_utf16le[1] = 83
+        entwurf.eintraege[0].name_utf16le[2] = 80
+        # Projekttyp für die separate Array-Metadatenpartition.
+        setze entwurf.eintraege[1].typ_guid auf GptGuid(0x41CF8D8CB98A8D36, 0x011521DC10DE319A)
+        setze entwurf.eintraege[1].teil_guid auf install_guid(s, 2)
+        setze entwurf.eintraege[1].erster auf metadaten
+        setze entwurf.eintraege[1].letzter auf metadaten + INST_ARRAY_BYTES / bytes - 1
+        entwurf.eintraege[1].name_utf16le[0] = 77
+        entwurf.eintraege[1].name_utf16le[1] = 79
+        entwurf.eintraege[1].name_utf16le[2] = 79
+        setze guid: GptGuid auf install_guid(s, 0)
+        weitergeben(gpt_schreiben(medium, guid, zeiger(adresse_von(entwurf.eintraege[0])), 2))
+        setze part: ptr[GptPartition] auf zeiger(adresse_von(s.esp_part))
+        setze s.esp_kennung auf weitergeben(gpt_partition_registrieren(medium, part, 1, falsch))
+        setze adapter: ptr[FatKernTransport] auf zeiger(adresse_von(s.ziel_transport))
+        weitergeben(fat_kern_transport_einrichten(adapter, s.esp_kennung))
+        setze transport: ptr[dyn FatTransport] auf adapter
+        weitergeben(fat_formatieren(transport, u32(guid.lo & 0xFFFFFFFF)))
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(s.ziel_fat))
+        weitergeben(fat_oeffnen(v, transport))
+        setze efi_name: [u8; 3] auf [69, 70, 73]
+        setze boot_name: [u8; 4] auf [66, 79, 79, 84]
+        setze moo_name: [u8; 3] auf [77, 79, 79]
+        setze efi: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(efi_name), wahr))
+        setze boot: FatDatei auf weitergeben(fat_anlegen(v, efi.cluster, byteansicht(boot_name), wahr))
+        setze moo: FatDatei auf weitergeben(fat_anlegen(v, efi.cluster, byteansicht(moo_name), wahr))
+        setze s.boot_dir auf boot.cluster
+        setze s.moo_dir auf moo.cluster
+        weitergeben(fat_synchronisieren(v))
+        # Separater Leseweg direkt am Medium hinter den Cache-Barrieren.
+        setze roh: ptr[GptMedium] auf weitergeben(gpt_oeffnen(s.ziel_kennung))
+        setze pruef_id: u64 auf weitergeben(gpt_partition_registrieren(roh, zeiger(adresse_von(s.pruef_part)), 1, wahr))
+        weitergeben(fat_kern_transport_einrichten(zeiger(adresse_von(s.pruef_transport)), pruef_id))
+        gib_zurück erfolg()
+
+@nativ
+funktion install_datei(s: ptr[InstallSitzung], quelle: ptr[FatDatei], dir: u64, name: puffer[u8], nr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze q: ptr[FatVolume] auf zeiger(adresse_von(s.quell_fat))
+        setze z: ptr[FatVolume] auf zeiger(adresse_von(s.ziel_fat))
+        setze zieldatei: FatDatei auf weitergeben(fat_anlegen(z, dir, name, falsch))
+        setze ziel_ptr: ptr[FatDatei] auf zeiger(adresse_von(zieldatei))
+        setze pos: u64 auf 0
+        setze laenge: u64 auf quelle.bytes
+        setze teil: u64 auf 0
+        setze p: ptr[u8] auf zeiger(s.arbeit)
+        setze ctx: [u64; 16] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze quell_hash: [u64; 4] auf [0, 0, 0, 0]
+        setze ziel_hash: [u64; 4] auf [0, 0, 0, 0]
+        setze hash_ctx: ptr[u8] auf zeiger(adresse_von(ctx))
+        moo_krypto_sha256_init(hash_ctx)
+        solange pos < laenge:
+            setze teil auf laenge - pos
+            wenn teil > INST_IO_BYTES:
+                setze teil auf INST_IO_BYTES
+            setze daten: puffer[u8] auf byteansicht(p, teil)
+            weitergeben(fat_lesen(q, quelle, pos, daten))
+            moo_krypto_sha256_update(hash_ctx, p, teil)
+            weitergeben(fat_schreiben(z, ziel_ptr, pos, daten))
+            setze pos auf pos + teil
+        moo_krypto_sha256_final(hash_ctx, zeiger(adresse_von(quell_hash)))
+        weitergeben(fat_synchronisieren(z))
+        setze pruef: ptr[FatVolume] auf zeiger(adresse_von(s.pruef_fat))
+        setze adapter: ptr[FatKernTransport] auf zeiger(adresse_von(s.pruef_transport))
+        setze transport: ptr[dyn FatTransport] auf adapter
+        weitergeben(fat_oeffnen(pruef, transport))
+        setze zieldatei auf weitergeben(fat_suchen(pruef, dir, name))
+        wenn zieldatei.bytes != laenge:
+            gib_zurück fehlschlag(BlockFehler(INST_PRUEFUNG, u32(nr)))
+        setze pos auf 0
+        moo_krypto_sha256_init(hash_ctx)
+        solange pos < laenge:
+            setze teil auf laenge - pos
+            wenn teil > INST_IO_BYTES:
+                setze teil auf INST_IO_BYTES
+            setze pruefdaten: puffer[u8] auf byteansicht(p, teil)
+            weitergeben(fat_lesen(pruef, ziel_ptr, pos, pruefdaten))
+            moo_krypto_sha256_update(hash_ctx, p, teil)
+            setze pos auf pos + teil
+        moo_krypto_sha256_final(hash_ctx, zeiger(adresse_von(ziel_hash)))
+        wenn quell_hash[0] != ziel_hash[0] oder quell_hash[1] != ziel_hash[1] oder quell_hash[2] != ziel_hash[2] oder quell_hash[3] != ziel_hash[3]:
+            gib_zurück fehlschlag(BlockFehler(INST_PRUEFUNG, u32(nr)))
+        install_meldung(s, adresse_von(INST_T_SHA), nr)
+        gib_zurück erfolg()
+
+# Geschriebene Verzeichniscluster stammen aus dem jetzt abgeglichenen FAT.
+# Die Prüfroutine öffnet den Datenträger neu, d. h. einen sauberen FAT-Stand.
+@nativ
+funktion install_schritt(s: ptr[InstallSitzung], aktion: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn aktion != s.stand + 1 oder aktion > INSTALL_VEROEFFENTLICHEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 0))
+        # Eine nur teilweise ausgeführte Stufe bleibt gesperrt.
+        setze s.stand auf 0xFFFFFFFF
+        wenn aktion == INSTALL_ANLEGEN:
+            weitergeben(install_anlegen(s))
+        sonst wenn aktion == INSTALL_KOPIEREN:
+            setze n: [u8; 8] auf [75, 69, 82, 78, 46, 69, 76, 70]
+            weitergeben(install_datei(s, zeiger(adresse_von(s.quell_kern)), s.moo_dir, byteansicht(n), 1))
+        sonst:
+            # Erst ein geprüfter Kern, dann der UEFI-Fallback-Loader.
+            setze name: [u8; 11] auf [66, 79, 79, 84, 88, 54, 52, 46, 69, 70, 73]
+            weitergeben(install_datei(s, zeiger(adresse_von(s.quell_lader)), s.boot_dir, byteansicht(name), 2))
+        setze s.stand auf aktion
+        install_meldung(s, adresse_von(INST_T_STAND), aktion)
+        gib_zurück erfolg()
+
+# Maximal 4 KiB pro direktem Blockaufruf. Der Treiber sieht nur den Kernpuffer.
+@nativ
+funktion install_block(s: ptr[InstallSitzung], raum: ptr[Adressraum], aktion: u64, adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze b: InstallBlock auf 0
+        wenn nicht ar_benutzer_kopieren(raum, adresse_von(b), adr, groesse_von(InstallBlock)):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze id: u64 auf s.quell_kennung
+        wenn b.medium == INSTALL_ESP und s.stand == INSTALL_ANLEGEN:
+            setze id auf s.esp_kennung
+        sonst wenn b.medium != INSTALL_QUELLE:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 0))
+        wenn b.bytes > 4096:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze req: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(req))
+        wenn aktion == INSTALL_BLOCK_FLUSH:
+            gib_zurück block_anfordern(id, a, BLOCK_FLUSH, b.lba, b.anzahl, b.puffer, b.bytes)
+        wenn aktion == INSTALL_BLOCK_SCHREIBEN:
+            wenn b.medium == INSTALL_QUELLE:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+            wenn nicht ar_benutzer_kopieren(raum, s.arbeit, b.puffer, b.bytes):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+            gib_zurück block_anfordern(id, a, BLOCK_SCHREIBEN, b.lba, b.anzahl, s.arbeit, b.bytes)
+        weitergeben(block_anfordern(id, a, BLOCK_LESEN, b.lba, b.anzahl, s.arbeit, b.bytes))
+        wenn nicht ar_benutzer_zurueckkopieren(raum, b.puffer, s.arbeit, b.bytes):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion install_aktion(s: ptr[InstallSitzung], raum: ptr[Adressraum], aktion: u64, adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn aktion == INSTALL_INFO:
+            wenn nicht ar_benutzer_zurueckkopieren(raum, adr, adresse_von(s.info), groesse_von(InstallInfo)):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+            gib_zurück erfolg()
+        wenn aktion >= INSTALL_BLOCK_LESEN und aktion <= INSTALL_BLOCK_FLUSH:
+            gib_zurück install_block(s, raum, aktion, adr)
+        gib_zurück install_schritt(s, aktion)
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion install_syscall(prozess_adr: u64, aktion: u64, adr: u64) -> u64:
+    unsicher:
+        setze s: ptr[InstallSitzung] auf zeiger(adresse_von(INSTALL_SITZUNG))
+        wenn prozess_adr == 0 oder prozess_adr != atom_laden(INSTALL_BESITZER, ordnung=erwerben):
+            install_meldung(s, adresse_von(INST_T_RECHT), aktion)
+            gib_zurück 0xFFFFFFFFFFFFFFFF
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(INSTALL_MUTEX))
+        mutex_nimm(smp_planer(), sperre)
+        wenn prozess_adr != atom_laden(INSTALL_BESITZER, ordnung=erwerben):
+            mutex_gib(smp_planer(), sperre)
+            gib_zurück 0xFFFFFFFFFFFFFFFF
+        setze prozess: ptr[BenutzerProzess] auf zeiger(prozess_adr)
+        setze r: ergebnis[void, BlockFehler] auf install_aktion(s, zeiger(prozess.bp_raum), aktion, adr)
+        mutex_gib(smp_planer(), sperre)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            install_meldung(s, adresse_von(INST_T_FEHLER), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück 0xFFFFFFFFFFFFFFFB
+        gib_zurück 0

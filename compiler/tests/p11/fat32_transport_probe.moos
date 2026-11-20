@@ -1,0 +1,52 @@
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_BEREICH, BLOCK_NUR_LESEN
+
+struktur FatTransportSpeicher:
+    bytes: [u8; 2048]
+
+struktur FatTransportDaten:
+    bytes: [u8; 512]
+
+@nativ
+funktion fat32_transport_probe() -> u64:
+    unsicher:
+        setze speicher: FatTransportSpeicher auf 0
+        setze ram: FatRam auf 0
+        setze pr: ptr[FatRam] auf zeiger(adresse_von(ram))
+        setze init: ergebnis[void, BlockFehler] auf fat_ram_einrichten(pr, adresse_von(speicher.bytes[0]), 2048, 512, falsch)
+        wenn nicht ist_erfolg(init):
+            gib_zurück 1
+        setze t: ptr[dyn FatTransport] auf pr
+        setze testdaten: FatTransportDaten auf 0
+        setze daten: puffer[u8] auf byteansicht(testdaten.bytes)
+        daten[0] = 0x37
+        daten[511] = 0xA9
+        setze wr: ergebnis[void, BlockFehler] auf t.uebertragen(BLOCK_SCHREIBEN, 1, 1, adresse_von(daten[0]), 512)
+        wenn nicht ist_erfolg(wr):
+            gib_zurück 2
+        wenn speicher.bytes[512] != 0x37 oder speicher.bytes[1023] != 0xA9:
+            gib_zurück 3
+        daten[0] = 0
+        setze rd: ergebnis[void, BlockFehler] auf t.uebertragen(BLOCK_LESEN, 1, 1, adresse_von(daten[0]), 512)
+        wenn nicht ist_erfolg(rd):
+            gib_zurück 4
+        wenn daten[0] != 0x37:
+            gib_zurück 5
+        setze grenze: ergebnis[void, BlockFehler] auf t.uebertragen(BLOCK_LESEN, 4, 1, adresse_von(daten[0]), 512)
+        wenn ist_erfolg(grenze):
+            gib_zurück 6
+        setze fehler: BlockFehler auf ergebnis_fehler(grenze)
+        wenn fehler.code != BLOCK_BEREICH:
+            gib_zurück 7
+        setze ram.geo.nur_lesend auf wahr
+        setze ro: ergebnis[void, BlockFehler] auf t.uebertragen(BLOCK_SCHREIBEN, 0, 1, adresse_von(daten[0]), 512)
+        wenn ist_erfolg(ro):
+            gib_zurück 8
+        setze fehler auf ergebnis_fehler(ro)
+        wenn fehler.code != BLOCK_NUR_LESEN:
+            gib_zurück 9
+        setze fl: ergebnis[void, BlockFehler] auf t.uebertragen(BLOCK_FLUSH, 0, 0, 0, 0)
+        wenn nicht ist_erfolg(fl):
+            gib_zurück 10
+        gib_zurück 0

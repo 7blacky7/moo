@@ -1,0 +1,199 @@
+# Privates QEMU-Profil: drei SATA-Ports und ein AHCI-HBA im PCIe-Hotplug-Slot.
+aus "ahci" importiere AhciHba, AhciHbaZiel, AhciPort, AhciPortZiel, AHCI_DMA_SEITEN, AHCI_PCI, ahci_hba_einrichten, ahci_hba_stoppen, ahci_port_einrichten, ahci_port_ort, ahci_pci_da, ahci_fehler_protokoll
+aus "kern_block" importiere BlockAnfrage, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_NICHT_BEREIT, block_anfordern, block_geometrie
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_smp" importiere smp_kern, smp_nummer
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt, nt_null
+aus "../uefi/netz_geraet" importiere pci_lese32, pci_schreibe32
+
+@nativ
+statisch AHCI_PROBE_HBAS: [AhciHba; 2] auf 0
+@nativ
+konstante AHCI_PROBE_SERIE_0: [u8; _] auf "MOOP11-AHCI-ATA-0001"
+@nativ
+konstante AHCI_PROBE_SERIE_1: [u8; _] auf "MOOP11-AHCI-ATA-0002"
+@nativ
+konstante AHCI_PROBE_SERIE_2: [u8; _] auf "MOOP11-AHCI-ATA-0003"
+@nativ
+konstante AHCI_PROBE_SERIE_3: [u8; _] auf "MOOP11-AHCI-ATA-0004"
+
+@nativ
+konstante AHCI_PROBE_SLOT: u64 auf 0x60
+@nativ
+konstante AHCI_PROBE_T_HBA_FEHLER: [u8; _] auf "MOO-AHCI-PROBE HBA FEHLER "
+@nativ
+konstante AHCI_PROBE_T_PORT_FEHLER: [u8; _] auf "MOO-AHCI-PROBE PORT FEHLER "
+@nativ
+konstante AHCI_PROBE_T_TREFFER: [u8; _] auf "MOO-AHCI-PROBE PLATTE "
+@nativ
+konstante AHCI_PROBE_T_IRQS: [u8; _] auf "MOO-AHCI-PROBE IRQS "
+@nativ
+konstante AHCI_PROBE_T_HOT_START: [u8; _] auf "MOO-AHCI-PROBE HOTPLUG START "
+@nativ
+konstante AHCI_PROBE_T_SLOT: [u8; _] auf "MOO-AHCI-PROBE SLOTSTATUS "
+@nativ
+konstante AHCI_PROBE_T_HOT_FERTIG: [u8; _] auf "MOO-AHCI-PROBE HOTPLUG OFFLINE "
+
+@nativ
+funktion ahci_probe_serie(nummer: u64) -> u64:
+    unsicher:
+        wenn nummer == 0:
+            gib_zurück adresse_von(AHCI_PROBE_SERIE_0)
+        wenn nummer == 1:
+            gib_zurück adresse_von(AHCI_PROBE_SERIE_1)
+        wenn nummer == 2:
+            gib_zurück adresse_von(AHCI_PROBE_SERIE_2)
+        gib_zurück adresse_von(AHCI_PROBE_SERIE_3)
+
+@nativ
+funktion ahci_probe_muster(p: ptr[u64], nummer: u64, bytes: u64, fuellen: bool) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < bytes / 8:
+            setze wert: u64 auf ((0x70 + nummer) << 56) | i
+            wenn fuellen:
+                volatile_schreiben(p, i, wert)
+            sonst wenn volatile_lesen(p, i) != wert:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion ahci_probe_lesen(kennung: u64, nummer: u64, anfrage: ptr[BlockAnfrage], p: ptr[u64]) -> bool:
+    unsicher:
+        nt_null(u64(p), 81920)
+        wenn nicht ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_LESEN, 16 + nummer * 64, 160, u64(p), 81920)):
+            gib_zurück falsch
+        gib_zurück ahci_probe_muster(p, nummer, 81920, falsch)
+
+@nativ
+funktion ahci_probe_port(hba: ptr[AhciHba], port_nr: u64, nummer: u64, anfrage: ptr[BlockAnfrage], p: ptr[u64], log_adr: u64) -> u64:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze ziel: AhciPortZiel auf AhciPortZiel(port_nr, ar_rahmen_nehmen(AHCI_DMA_SEITEN), ahci_probe_serie(nummer), wahr, nummer != 3)
+        setze registriert: ergebnis[u64, BlockFehler] auf ahci_port_einrichten(hba, zeiger(adresse_von(ziel)))
+        wenn nicht ist_erfolg(registriert):
+            setze f: BlockFehler auf ergebnis_fehler(registriert)
+            log(adresse_von(AHCI_PROBE_T_PORT_FEHLER), (nummer << 48) | (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück 0
+        setze kennung: u64 auf ergebnis_wert(registriert)
+        setze info: ergebnis[BlockGeometrie, BlockFehler] auf block_geometrie(kennung)
+        wenn nicht ist_erfolg(info):
+            gib_zurück 0
+        setze port: ptr[AhciPort] auf ahci_port_ort(hba, port_nr)
+        setze geometrie: BlockGeometrie auf ergebnis_wert(info)
+        wenn geometrie.bloecke != 131072 oder geometrie.block_bytes != 512 oder geometrie.nur_lesend oder port.ncq != (nummer != 3):
+            gib_zurück 0
+        ahci_probe_muster(p, nummer, 81920, wahr)
+        wenn nicht ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_SCHREIBEN, 16 + nummer * 64, 160, u64(p), 81920)):
+            gib_zurück 0
+        wenn nicht ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_FLUSH, 0, 0, 0, 0)):
+            gib_zurück 0
+        wenn nicht ahci_probe_lesen(kennung, nummer, anfrage, p):
+            gib_zurück 0
+        ahci_fehler_protokoll(port)
+        setze irqs: u64 auf atom_laden(port.irq_anzahl, ordnung=erwerben)
+        log(adresse_von(AHCI_PROBE_T_IRQS), irqs)
+        wenn irqs < 6:
+            gib_zurück 0
+        log(adresse_von(AHCI_PROBE_T_TREFFER), nummer + 1)
+        gib_zurück kennung
+
+# Native PCIe-Slot-Quittierung im QEMU-Profil, PCI Express Capability 0x10.
+@nativ
+funktion ahci_probe_pcie(pci: u64) -> u64:
+    unsicher:
+        setze cap: u64 auf pci_lese32(pci, AHCI_PROBE_SLOT, 0x34) & 0xFC
+        setze i: u64 auf 0
+        solange i < 48 und cap >= 0x40 und cap <= 0xE4:
+            setze kopf: u64 auf pci_lese32(pci, AHCI_PROBE_SLOT, cap)
+            wenn (kopf & 255) == 0x10 und (kopf & 0x01000000) != 0:
+                gib_zurück cap
+            setze cap auf (kopf >> 8) & 0xFC
+            setze i auf i + 1
+        gib_zurück 0
+
+@nativ
+funktion ahci_probe_entfernen(hba: ptr[AhciHba], kennung: u64, anfrage: ptr[BlockAnfrage], p: ptr[u64], tsc: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze pci: u64 auf adresse_von(AHCI_PCI)
+        setze cap: u64 auf ahci_probe_pcie(pci)
+        wenn cap == 0:
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(AHCI_PROBE_T_HOT_START), 1)
+        setze start: u64 auf takt()
+        solange takt() - start < tsc * 8000000:
+            setze wort: u64 auf pci_lese32(pci, AHCI_PROBE_SLOT, cap + 0x18)
+            wenn (wort & 0x00410000) == 0x00410000:
+                log(adresse_von(AHCI_PROBE_T_SLOT), wort >> 16)
+                # Slot Control PCC=off, Power Indicator=off. Statusbits bleiben
+                # beim DWORD-Schreiben Null und werden nicht W1C-quittiert.
+                pci_schreibe32(pci, AHCI_PROBE_SLOT, cap + 0x18, (wort & 0xFCFF) | 0x700)
+                setze ende: u64 auf takt()
+                solange ahci_pci_da(hba) und takt() - ende < tsc * 1000000:
+                    kern_pause()
+                wenn ahci_pci_da(hba):
+                    gib_zurück falsch
+                setze gelesen: ergebnis[void, BlockFehler] auf block_anfordern(kennung, anfrage, BLOCK_LESEN, 16, 1, u64(p), 512)
+                wenn ist_erfolg(gelesen):
+                    gib_zurück falsch
+                setze f: BlockFehler auf ergebnis_fehler(gelesen)
+                log(adresse_von(AHCI_PROBE_T_HOT_FERTIG), u64(f.code))
+                gib_zurück f.code == BLOCK_NICHT_BEREIT
+            kern_pause()
+        gib_zurück falsch
+
+@nativ
+funktion ahci_probe_lauf(tsc: u64, bi: u64, map: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze pci: u64 auf adresse_von(AHCI_PCI)
+        setze bus: u64 auf (pci_lese32(pci, AHCI_PROBE_SLOT, 0x18) >> 8) & 255
+        wenn bus == 0 oder bus == 255:
+            gib_zurück falsch
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze feste: ptr[AhciHba] auf zeiger(adresse_von(AHCI_PROBE_HBAS[0]))
+        setze entnehmbar: ptr[AhciHba] auf zeiger(adresse_von(AHCI_PROBE_HBAS[1]))
+        setze ziel0: AhciHbaZiel auf AhciHbaZiel(0x68, 0x29228086, 4096, apic)
+        setze ziel1: AhciHbaZiel auf AhciHbaZiel(bus << 8, 0x29228086, 4096, apic)
+        setze r: ergebnis[void, BlockFehler] auf ahci_hba_einrichten(feste, zeiger(adresse_von(ziel0)), tsc, bi, map, log_adr)
+        wenn nicht ist_erfolg(r):
+            setze fehler: BlockFehler auf ergebnis_fehler(r)
+            log(adresse_von(AHCI_PROBE_T_HBA_FEHLER), u64(fehler.geraete_status))
+            gib_zurück falsch
+        setze e: ergebnis[void, BlockFehler] auf ahci_hba_einrichten(entnehmbar, zeiger(adresse_von(ziel1)), tsc, bi, map, log_adr)
+        wenn nicht ist_erfolg(e):
+            setze slot_fehler: BlockFehler auf ergebnis_fehler(e)
+            log(adresse_von(AHCI_PROBE_T_HBA_FEHLER), 0x100 | u64(slot_fehler.geraete_status))
+            gib_zurück falsch
+        wenn feste.vektor == 0 oder entnehmbar.vektor == 0 oder feste.vektor == entnehmbar.vektor:
+            gib_zurück falsch
+        setze basis: u64 auf ar_rahmen_nehmen(20)
+        wenn basis == 0:
+            gib_zurück falsch
+        setze p: ptr[u64] auf zeiger(basis)
+        setze speicher: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(speicher))
+        setze a0: u64 auf ahci_probe_port(feste, 0, 0, a, p, log_adr)
+        setze a1: u64 auf ahci_probe_port(feste, 1, 1, a, p, log_adr)
+        setze a2: u64 auf ahci_probe_port(feste, 2, 2, a, p, log_adr)
+        setze a3: u64 auf ahci_probe_port(entnehmbar, 0, 3, a, p, log_adr)
+        wenn a0 == 0 oder a1 == 0 oder a2 == 0 oder a3 == 0:
+            gib_zurück falsch
+        wenn nicht ahci_probe_entfernen(entnehmbar, a3, a, p, tsc, log_adr):
+            gib_zurück falsch
+        setze gut: bool auf ahci_probe_lesen(a0, 0, a, p) und ahci_probe_lesen(a1, 1, a, p) und ahci_probe_lesen(a2, 2, a, p)
+        gib_zurück ahci_hba_stoppen(feste) und gut
+
+@nativ
+funktion ahci_probe_starten(tsc: u64, bi: u64, map: u64, log: u64) -> bool:
+    unsicher:
+        wenn tsc == 0:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gut: bool auf ahci_probe_lauf(tsc, bi, map, log)
+        irq_wiederherstellen(irq)
+        gib_zurück gut

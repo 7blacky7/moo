@@ -1,0 +1,18 @@
+aus ds_fat_formate importiere Fat32Bpb, Fat32FsInfo, FatVerzeichnisEintrag, FatLangerNameEintrag
+
+@nativ
+funktion fat32_formate_probe() -> u64:
+    unsicher:
+        wenn groesse_von(Fat32Bpb) != 512 oder groesse_von(Fat32FsInfo) != 512 oder groesse_von(FatVerzeichnisEintrag) != 32 oder groesse_von(FatLangerNameEintrag) != 32:
+            gib_zurück 1
+        wenn versatz_von(Fat32Bpb, sektor_bytes) != 11 oder versatz_von(Fat32Bpb, cluster_sektoren) != 13 oder versatz_von(Fat32Bpb, fat_sektoren32) != 36 oder versatz_von(Fat32Bpb, wurzel_cluster) != 44:
+            gib_zurück 2
+        wenn versatz_von(Fat32Bpb, seriennummer) != 67 oder versatz_von(Fat32Bpb, volumen_name) != 71 oder versatz_von(Fat32Bpb, dateisystem_name) != 82 oder versatz_von(Fat32Bpb, bootcode) != 90 oder versatz_von(Fat32Bpb, signatur) != 510:
+            gib_zurück 3
+        wenn versatz_von(Fat32FsInfo, struktur_signatur) != 484 oder versatz_von(Fat32FsInfo, freie_cluster) != 488 oder versatz_von(Fat32FsInfo, naechster_cluster) != 492 oder versatz_von(Fat32FsInfo, ende_signatur) != 508:
+            gib_zurück 4
+        wenn versatz_von(FatVerzeichnisEintrag, cluster_hoch) != 20 oder versatz_von(FatVerzeichnisEintrag, cluster_tief) != 26 oder versatz_von(FatVerzeichnisEintrag, datei_bytes) != 28:
+            gib_zurück 5
+        wenn versatz_von(FatLangerNameEintrag, attribute) != 11 oder versatz_von(FatLangerNameEintrag, pruefsumme) != 13 oder versatz_von(FatLangerNameEintrag, cluster_null) != 26 oder versatz_von(FatLangerNameEintrag, name3) != 28:
+            gib_zurück 6
+        gib_zurück 0

@@ -1,0 +1,128 @@
+aus ds_fat importiere FatVolume, FatDatei, FatSektor, fat_formatieren, fat_oeffnen, fat_anlegen, fat_suchen, fat_schreiben, fat_lesen, fat_datei_groesse, fat_loeschen, fat_synchronisieren, FatDirPuffer, fat_kette_io, fat_kurz_pruefsumme
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler
+
+struktur FatTestPlatte:
+    bytes: [u8; 67108864]
+@nativ
+statisch FAT_TEST_PLATTE: FatTestPlatte auf 0
+
+@nativ
+funktion fat32_ablauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze ram: FatRam auf 0
+        setze r: ptr[FatRam] auf zeiger(adresse_von(ram))
+        weitergeben(fat_ram_einrichten(r, adresse_von(FAT_TEST_PLATTE.bytes[0]), 67108864, 512, falsch))
+        setze t: ptr[dyn FatTransport] auf r
+        weitergeben(fat_formatieren(t, 0x12345678))
+        setze volume: FatVolume auf 0
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(volume))
+        weitergeben(fat_oeffnen(v, t))
+        wenn v.layout.wurzel != 2 oder v.layout.fat_anzahl != 2 oder v.nur_lesend:
+            gib_zurück erfolg(1)
+        setze name: [u8; 33] auf [76, 97, 110, 103, 101, 114, 32, 68, 97, 116, 101, 105, 110, 97, 109, 101, 32, 71, 114, 195, 188, 195, 159, 101, 32, 240, 159, 152, 128, 46, 116, 120, 116]
+        setze datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(name), falsch))
+        setze f: ptr[FatDatei] auf zeiger(adresse_von(datei))
+        setze gefunden: FatDatei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(name)))
+        wenn gefunden.eintrag != datei.eintrag oder gefunden.lfn_anzahl < 2:
+            gib_zurück erfolg(2)
+        setze name_faltung: [u8; 33] auf [76, 65, 78, 71, 69, 82, 32, 68, 65, 84, 69, 73, 78, 65, 77, 69, 32, 71, 82, 195, 156, 195, 159, 69, 32, 240, 159, 152, 128, 46, 84, 88, 84]
+        setze anders: FatDatei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(name_faltung)))
+        wenn anders.eintrag != datei.eintrag:
+            gib_zurück erfolg(10)
+        setze daten_speicher: FatSektor auf 0
+        setze daten: puffer[u8] auf byteansicht(daten_speicher.bytes)
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            daten[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        weitergeben(fat_schreiben(v, f, 700, daten))
+        wenn datei.bytes != 4796 oder datei.cluster == 0:
+            gib_zurück erfolg(3)
+        setze lese_speicher: FatSektor auf 0
+        setze gelesen: puffer[u8] auf byteansicht(lese_speicher.bytes)
+        weitergeben(fat_lesen(v, f, 700, gelesen))
+        setze i auf 0
+        solange i < länge(daten):
+            wenn daten[i] != gelesen[i]:
+                gib_zurück erfolg(4)
+            setze i auf i + 1
+        weitergeben(fat_lesen(v, f, 0, gelesen))
+        setze i auf 0
+        solange i < 700:
+            wenn gelesen[i] != 0:
+                gib_zurück erfolg(5)
+            setze i auf i + 1
+        weitergeben(fat_datei_groesse(v, f, 17))
+        weitergeben(fat_datei_groesse(v, f, 6000))
+        weitergeben(fat_lesen(v, f, 0, gelesen))
+        setze i auf 0
+        solange i < länge(gelesen):
+            wenn gelesen[i] != 0:
+                gib_zurück erfolg(6)
+            setze i auf i + 1
+        weitergeben(fat_schreiben(v, f, 0, daten))
+        setze efi_name: [u8; 3] auf [69, 70, 73]
+        setze efi: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(efi_name), wahr))
+        setze boot_name: [u8; 4] auf [66, 79, 79, 84]
+        setze boot: FatDatei auf weitergeben(fat_anlegen(v, efi.cluster, byteansicht(boot_name), wahr))
+        setze elf_name: [u8; 11] auf [66, 79, 79, 84, 88, 54, 52, 46, 69, 70, 73]
+        setze elf: FatDatei auf weitergeben(fat_anlegen(v, boot.cluster, byteansicht(elf_name), falsch))
+        weitergeben(fat_schreiben(v, zeiger(adresse_von(elf)), 0, daten))
+        setze wieder: FatDatei auf weitergeben(fat_suchen(v, boot.cluster, byteansicht(elf_name)))
+        wenn wieder.bytes != 4096:
+            gib_zurück erfolg(7)
+        weitergeben(fat_loeschen(v, zeiger(adresse_von(elf))))
+        weitergeben(fat_loeschen(v, zeiger(adresse_von(boot))))
+        weitergeben(fat_loeschen(v, zeiger(adresse_von(efi))))
+        # Viele LFN-Einträge erzwingen Wachstum des Wurzelverzeichnisses.
+        setze kurz: [u8; 11] auf [68, 97, 116, 101, 105, 48, 48, 46, 116, 120, 116]
+        setze nummer: u64 auf 0
+        solange nummer < 24:
+            kurz[5] = u8(48 + nummer / 10)
+            kurz[6] = u8(48 + nummer % 10)
+            setze neu_datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(kurz), falsch))
+            wenn neu_datei.bytes != 0:
+                gib_zurück erfolg(8)
+            setze nummer auf nummer + 1
+        weitergeben(fat_loeschen(v, f))
+        # Legaler Fremdfall: LFN M0000001 mit einem anderen Kurzalias.
+        # Ein neuer generierter Alias darf diesen LFN nicht überdecken.
+        setze namensraum: [u8; 8] auf [77, 48, 48, 48, 48, 48, 48, 49]
+        setze union_datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(namensraum), falsch))
+        setze wire_speicher: FatDirPuffer auf 0
+        setze wire: puffer[u8] auf byteansicht(wire_speicher.bytes)
+        weitergeben(fat_kette_io(v, v.layout.wurzel, union_datei.eintrag * 32, wire, falsch))
+        setze anderer_alias: [u8; 11] auf [68, 73, 70, 70, 48, 48, 48, 49, 32, 32, 32]
+        setze z: u64 auf 0
+        solange z < 11:
+            wire[z] = anderer_alias[z]
+            setze z auf z + 1
+        setze checksum: u8 auf fat_kurz_pruefsumme(wire)
+        weitergeben(fat_kette_io(v, v.layout.wurzel, union_datei.eintrag * 32, wire, wahr))
+        weitergeben(fat_kette_io(v, v.layout.wurzel, union_datei.lfn_start * 32, wire, falsch))
+        wire[13] = checksum
+        weitergeben(fat_kette_io(v, v.layout.wurzel, union_datei.lfn_start * 32, wire, wahr))
+        setze fremder_lfn: FatDatei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(namensraum)))
+        wenn fremder_lfn.eintrag != union_datei.eintrag:
+            gib_zurück erfolg(11)
+        setze neuer_name: [u8; 16] auf [78, 111, 99, 104, 32, 101, 105, 110, 32, 76, 97, 110, 103, 110, 97, 109]
+        setze weitere: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(neuer_name), falsch))
+        weitergeben(fat_kette_io(v, v.layout.wurzel, weitere.eintrag * 32, wire, falsch))
+        wenn wire[0] != 77 oder wire[7] != 50:
+            gib_zurück erfolg(12)
+        weitergeben(fat_synchronisieren(v))
+        setze erneut: FatVolume auf 0
+        weitergeben(fat_oeffnen(zeiger(adresse_von(erneut)), t))
+        wenn erneut.nur_lesend:
+            gib_zurück erfolg(9)
+        gib_zurück erfolg(0)
+
+@nativ
+funktion fat32_probe() -> u64:
+    setze r: ergebnis[u64, BlockFehler] auf fat32_ablauf()
+    wenn nicht ist_erfolg(r):
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück 1000000 + als(u64, f.code) * 100 + als(u64, f.geraete_status)
+    gib_zurück ergebnis_wert(r)

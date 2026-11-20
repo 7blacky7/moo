@@ -1,0 +1,18 @@
+# P11-T19: gemeinsamer x87/SSE/AVX-Vertrag für BSP, AP und Ring 3.
+@nativ
+funktion simd_cpu_einrichten() -> bool:
+    unsicher:
+        setze merkmale: u32 auf assembler(ziel="x86_64", code="movl $$1, %eax; xorl %ecx, %ecx; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn (merkmale & 0x4000000) == 0:
+            # Ohne XSAVE bleibt der vorhandene FXSAVE-Pfad des IRQ-Rahmens.
+            gib_zurück falsch
+        setze erlaubt: u32 auf assembler(ziel="x86_64", code="movl $$13, %eax; xorl %ecx, %ecx; cpuid; movl %eax, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        setze maske: u32 auf 3
+        wenn (merkmale & 0x10000000) != 0 und (erlaubt & 4) != 0:
+            setze maske auf 7
+        # Standard-XSAVE: höchstens 832 Byte (x87/SSE/YMM), keine AVX-512-/AMX-
+        # Komponenten. FSGSBASE bleibt gemäß Ring-3-Vertrag ausgeschaltet.
+        # Auch ein später erneuter Aufruf darf zwischen CR4 und XCR0 keinen
+        # IRQ-Rahmen mit einer unvollständigen Zustandsmaske erlauben.
+        assembler(ziel="x86_64", code="pushfq; cli; movq %cr4, %rax; andq $$-65537, %rax; orq $$262144, %rax; movq %rax, %cr4; movl $0, %eax; xorl %edx, %edx; xorl %ecx, %ecx; xsetbv; popfq", eingaenge={"r": maske}, clobber=["rax", "rcx", "rdx", "memory"])
+        gib_zurück wahr

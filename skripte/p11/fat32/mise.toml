@@ -1,0 +1,24 @@
+[tasks.ram]
+run = "bash gate.sh ram"
+[tasks.abbild]
+run = "bash gate.sh abbild"
+[tasks.uefi]
+run = "bash gate.sh uefi"
+[tasks.alle]
+run = "bash gate.sh alle"
+
+[tasks.fuzz]
+run = "bash gate.sh fuzz"
+
+[tasks.kern]
+run = '''
+set -eu
+cd ../../..
+CARGO_TARGET_DIR=/home/blacky/dev/moo/build/p2-t123/target MOO_COMPILER="$PWD/build/p2-t123/target/release/moo-compiler" MOO_UEFI_PRUEFUNG=kern MOO_UEFI_FAT_PROBE=1 MOO_UEFI_SMP=4 MOO_UEFI_OUT="$PWD/build/p11/fat32/kern" bash scripts/uefi-smoke.sh
+'''
+
+
+[tasks.unicode]
+run = "bash gate.sh unicode"
+
+

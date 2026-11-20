@@ -13,6 +13,420 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/ahci.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/ahci_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/block_ram.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_block.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_block_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_blockcache.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_blockcache_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_datei_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T14/T15: Ziel-IR und opt verify, Synapse-Shell 4605c60c"
+    },
+    {
+      "path": "beispiele/kernel/kern_datei_syscall.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T14/T15: Ziel-IR und opt verify, Synapse-Shell 0a5109f8"
+    },
+    {
+      "path": "beispiele/kernel/kern_elf.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 4791f5bd"
+    },
+    {
+      "path": "beispiele/kernel/kern_elf_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_installieren.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_installieren_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_irq.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_irq_idt.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_irq_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_laufzeit_backend.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_simd.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0ce6d4b6"
+    },
+    {
+      "path": "beispiele/kernel/kern_simd_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/kern_vfs.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/kern_vfs_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/nvme_block.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/nvme_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/speicher_fat.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/speicher_fat_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/speicher_gpt_block.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell 0406ecee"
+    },
+    {
+      "path": "beispiele/kernel/speicher_gpt_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/kernel/usb_msc_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/kernel/usb_speicher_block.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/moos/datei_probe.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T14/T15: Ziel-IR und opt verify, Synapse-Shell f31ee3a8"
+    },
+    {
+      "path": "beispiele/moos/faden_probe.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/moos/hallo_benutzer.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/moos/installieren.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/moos/moos_laufzeit.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/moos/moos_laufzeit_backend.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
       "path": "beispiele/kernel/kern_adressraum.moos",
       "category": "profile",
       "args": [

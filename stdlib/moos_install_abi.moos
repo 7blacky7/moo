@@ -1,0 +1,38 @@
+# Privilegierter MoOS-Installer. Argumentsatz: Aktion in RDI, Nutzzeiger in RSI.
+@nativ
+konstante MOOS_INSTALL_AUFRUF: u64 auf 0x4D49
+@nativ
+konstante INSTALL_INFO: u64 auf 0
+@nativ
+konstante INSTALL_ANLEGEN: u64 auf 1
+@nativ
+konstante INSTALL_KOPIEREN: u64 auf 2
+@nativ
+konstante INSTALL_VEROEFFENTLICHEN: u64 auf 3
+@nativ
+konstante INSTALL_BLOCK_LESEN: u64 auf 16
+@nativ
+konstante INSTALL_BLOCK_SCHREIBEN: u64 auf 17
+@nativ
+konstante INSTALL_BLOCK_FLUSH: u64 auf 18
+
+# Blockaufrufe verwenden diese beiden Rollen. Kernel-Blockkennungen sind privat.
+@nativ
+konstante INSTALL_QUELLE: u64 auf 1
+@nativ
+konstante INSTALL_ESP: u64 auf 2
+
+struktur InstallInfo:
+    quell_sektoren: u64
+    quell_block_bytes: u64
+    ziel_sektoren: u64
+    ziel_block_bytes: u64
+    serien_bytes: u64
+    serie: [u8; 24]
+
+struktur InstallBlock:
+    medium: u64
+    lba: u64
+    anzahl: u64
+    puffer: u64
+    bytes: u64

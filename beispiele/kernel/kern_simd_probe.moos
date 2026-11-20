@@ -1,0 +1,157 @@
+# P11-T19: Nur das bestehende SMP_STRESS-Profil ruft diese Probe auf.
+aus "kern_smp" importiere smp_anzahl, smp_nummer, smp_planer
+aus "kern_smp_planer" importiere smp_faden_anbieten
+aus "kern_faden" importiere FadenPlaner, faden_abgeben
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch SIMD_PROBE_QUELLE: [u64; 1024] auf 0
+@nativ
+statisch SIMD_PROBE_ZIEL: [u64; 1024] auf 0
+@nativ
+statisch SIMD_PROBE_ANZAHL: atom[u32] auf 0
+@nativ
+statisch SIMD_PROBE_GESTARTET: atom[u32] auf 0
+@nativ
+statisch SIMD_PROBE_FERTIG: atom[u32] auf 0
+@nativ
+statisch SIMD_PROBE_FEHLER: atom[u32] auf 0
+@nativ
+statisch SIMD_PROBE_TICKS: atom[u64] auf 0
+@nativ
+konstante T_SIMD_CPU: [u8; _] auf "MOO-SIMD CPU-ANZAHL "
+@nativ
+konstante T_SIMD_AVX: [u8; _] auf "MOO-SIMD AVX "
+@nativ
+konstante T_SIMD_GFNI: [u8; _] auf "MOO-SIMD GFNI "
+@nativ
+konstante T_SIMD_TICKS: [u8; _] auf "MOO-SIMD REGISTER-TICKS "
+@nativ
+konstante T_SIMD_FEHLER: [u8; _] auf "MOO-SIMD FEHLER "
+@nativ
+konstante T_SIMD_GF: [u8; _] auf "MOO-SIMD GF-VERGLEICH "
+@nativ
+konstante T_SIMD_FERTIG: [u8; _] auf "MOO-SIMD FERTIG "
+
+# Ohne Call/Spill bleiben ALLE 16 Vektorregister über acht echte Timer-Ticks
+# lebend. Zwei verschieden belegte Fäden je CPU erzwingen Kontextwechsel.
+@nativ
+@nackt
+funktion simd_probe_register(avx: u64, ticks: ptr[u64], quelle: ptr[u64], ziel: ptr[u64]) -> u64:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rdx, %r8; movq %rcx, %r9; movq (%rsi), %r10; movq %r10, %r11; addq $$8, %r11; testq %rdi, %rdi; jz .Lsimd_probe_xmm; vmovdqu 0(%r8), %ymm0; vmovdqu 32(%r8), %ymm1; vmovdqu 64(%r8), %ymm2; vmovdqu 96(%r8), %ymm3; vmovdqu 128(%r8), %ymm4; vmovdqu 160(%r8), %ymm5; vmovdqu 192(%r8), %ymm6; vmovdqu 224(%r8), %ymm7; vmovdqu 256(%r8), %ymm8; vmovdqu 288(%r8), %ymm9; vmovdqu 320(%r8), %ymm10; vmovdqu 352(%r8), %ymm11; vmovdqu 384(%r8), %ymm12; vmovdqu 416(%r8), %ymm13; vmovdqu 448(%r8), %ymm14; vmovdqu 480(%r8), %ymm15; .Lsimd_probe_ymm_warten: pause; movq (%rsi), %rax; cmpq %r11, %rax; jb .Lsimd_probe_ymm_warten; vmovdqu %ymm0, 0(%r9); vmovdqu %ymm1, 32(%r9); vmovdqu %ymm2, 64(%r9); vmovdqu %ymm3, 96(%r9); vmovdqu %ymm4, 128(%r9); vmovdqu %ymm5, 160(%r9); vmovdqu %ymm6, 192(%r9); vmovdqu %ymm7, 224(%r9); vmovdqu %ymm8, 256(%r9); vmovdqu %ymm9, 288(%r9); vmovdqu %ymm10, 320(%r9); vmovdqu %ymm11, 352(%r9); vmovdqu %ymm12, 384(%r9); vmovdqu %ymm13, 416(%r9); vmovdqu %ymm14, 448(%r9); vmovdqu %ymm15, 480(%r9); subq %r10, %rax; retq; .Lsimd_probe_xmm: movdqu 0(%r8), %xmm0; movdqu 32(%r8), %xmm1; movdqu 64(%r8), %xmm2; movdqu 96(%r8), %xmm3; movdqu 128(%r8), %xmm4; movdqu 160(%r8), %xmm5; movdqu 192(%r8), %xmm6; movdqu 224(%r8), %xmm7; movdqu 256(%r8), %xmm8; movdqu 288(%r8), %xmm9; movdqu 320(%r8), %xmm10; movdqu 352(%r8), %xmm11; movdqu 384(%r8), %xmm12; movdqu 416(%r8), %xmm13; movdqu 448(%r8), %xmm14; movdqu 480(%r8), %xmm15; .Lsimd_probe_xmm_warten: pause; movq (%rsi), %rax; cmpq %r11, %rax; jb .Lsimd_probe_xmm_warten; movdqu %xmm0, 0(%r9); movdqu %xmm1, 32(%r9); movdqu %xmm2, 64(%r9); movdqu %xmm3, 96(%r9); movdqu %xmm4, 128(%r9); movdqu %xmm5, 160(%r9); movdqu %xmm6, 192(%r9); movdqu %xmm7, 224(%r9); movdqu %xmm8, 256(%r9); movdqu %xmm9, 288(%r9); movdqu %xmm10, 320(%r9); movdqu %xmm11, 352(%r9); movdqu %xmm12, 384(%r9); movdqu %xmm13, 416(%r9); movdqu %xmm14, 448(%r9); movdqu %xmm15, 480(%r9); subq %r10, %rax; retq", clobber=["memory"])
+
+@nativ
+@simd
+funktion simd_probe_geschuetzt(avx: u64, ticks: ptr[u64], quelle: ptr[u64], ziel: ptr[u64]) -> u64:
+    unsicher:
+        gib_zurück simd_probe_register(avx, ticks, quelle, ziel)
+
+@nativ
+funktion simd_probe_hat_avx() -> bool:
+    unsicher:
+        setze flags: u32 auf assembler(ziel="x86_64", code="movl $$1, %eax; xorl %ecx, %ecx; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        wenn (flags & 0x18000000) != 0x18000000:
+            gib_zurück falsch
+        setze maske: u32 auf assembler(ziel="x86_64", code="xorl %ecx, %ecx; xgetbv; movl %eax, $0", ausgang="=r", clobber=["rax", "rcx", "rdx"])
+        gib_zurück (maske & 7) == 7
+
+@nativ
+funktion simd_probe_faden(daten: u64) -> void:
+    unsicher:
+        wenn u64(smp_nummer()) != daten / 2:
+            atom_speichern(SIMD_PROBE_FEHLER, 1, ordnung=locker)
+        setze quelle: ptr[u64] auf zeiger(adresse_von(SIMD_PROBE_QUELLE) + daten * 512)
+        setze ziel: ptr[u64] auf zeiger(adresse_von(SIMD_PROBE_ZIEL) + daten * 512)
+        setze i: u64 auf 0
+        solange i < 64:
+            quelle[i] = 0x517CC1B727220A95 ^ (daten << 56) ^ (i * 0x102030405060708)
+            ziel[i] = 0
+            setze i auf i + 1
+        atom_addieren(SIMD_PROBE_GESTARTET, 1, ordnung=freigeben)
+        setze erwartet: u32 auf atom_laden(SIMD_PROBE_ANZAHL, ordnung=erwerben)
+        solange atom_laden(SIMD_PROBE_GESTARTET, ordnung=erwerben) != erwartet:
+            kern_pause()
+        setze avx: bool auf simd_probe_hat_avx()
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze tick_ptr: ptr[u64] auf zeiger(adresse_von(planer.fp_ticks))
+        setze vergangen: u64 auf simd_probe_geschuetzt(u64(avx), tick_ptr, quelle, ziel)
+        atom_addieren(SIMD_PROBE_TICKS, vergangen, ordnung=locker)
+        setze i auf 0
+        solange i < 64:
+            wenn (avx oder (i % 4) < 2) und ziel[i] != quelle[i]:
+                atom_speichern(SIMD_PROBE_FEHLER, 2, ordnung=locker)
+            setze i auf i + 1
+        atom_addieren(SIMD_PROBE_FERTIG, 1, ordnung=freigeben)
+
+@nativ
+@simd("skalar")
+funktion simd_probe_gf_skalar(a: u8x32, b: u8x32) -> u8x32:
+    gib_zurück simd_gf256_mal(a, b)
+
+@nativ
+@simd
+funktion simd_probe_gf_auto(a: u8x32, b: u8x32) -> u8x32:
+    gib_zurück simd_gf256_mal(a, b)
+
+@nativ
+@simd
+funktion simd_probe_gf_vergleichen() -> bool:
+    setze x: u64 auf 0
+    solange x < 256:
+        setze y: u64 auf 0
+        solange y < 256:
+            setze a: u8x32 auf u8x32(als(u8, x))
+            setze b: u8x32 auf u8x32()
+            setze i: u64 auf 0
+            solange i < 32:
+                b[i] = als(u8, y + i)
+                setze i auf i + 1
+            setze skalar: u8x32 auf simd_probe_gf_skalar(a, b)
+            setze schnell: u8x32 auf simd_probe_gf_auto(a, b)
+            wenn skalar != schnell:
+                gib_zurück falsch
+            setze y auf y + 32
+        setze x auf x + 1
+    gib_zurück wahr
+
+@nativ
+funktion simd_probe_starten(tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        setze cpus: u32 auf smp_anzahl()
+        wenn cpus == 0 oder cpus > 8 oder tsc == 0:
+            gib_zurück falsch
+        setze anzahl: u32 auf cpus * 2
+        atom_speichern(SIMD_PROBE_ANZAHL, anzahl, ordnung=freigeben)
+        atom_speichern(SIMD_PROBE_GESTARTET, 0, ordnung=locker)
+        atom_speichern(SIMD_PROBE_FERTIG, 0, ordnung=locker)
+        atom_speichern(SIMD_PROBE_FEHLER, 0, ordnung=locker)
+        atom_speichern(SIMD_PROBE_TICKS, 0, ordnung=locker)
+        setze start: u64 auf takt()
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze i: u32 auf 0
+        solange i < anzahl:
+            setze irq: u64 auf irq_sichern()
+            setze nummer: u32 auf smp_faden_anbieten(adresse_von(simd_probe_faden), u64(i), u64(1) << (i / 2))
+            irq_wiederherstellen(irq)
+            wenn nummer == 0:
+                gib_zurück falsch
+            setze i auf i + 1
+        unterbrechungen_an()
+        solange atom_laden(SIMD_PROBE_FERTIG, ordnung=erwerben) != anzahl und takt() - start < tsc * 10000000:
+            faden_abgeben(planer)
+        setze gf: bool auf simd_probe_gf_vergleichen()
+        setze flags: u32 auf assembler(ziel="x86_64", code="movl $$7, %eax; xorl %ecx, %ecx; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
+        setze fertig: u32 auf atom_laden(SIMD_PROBE_FERTIG, ordnung=erwerben)
+        setze fehler: u32 auf atom_laden(SIMD_PROBE_FEHLER, ordnung=erwerben)
+        setze ticks: u64 auf atom_laden(SIMD_PROBE_TICKS, ordnung=locker)
+        log(adresse_von(T_SIMD_CPU), u64(cpus))
+        log(adresse_von(T_SIMD_AVX), u64(simd_probe_hat_avx()))
+        log(adresse_von(T_SIMD_GFNI), u64((flags & 256) != 0))
+        log(adresse_von(T_SIMD_TICKS), ticks)
+        log(adresse_von(T_SIMD_FEHLER), u64(fehler))
+        log(adresse_von(T_SIMD_GF), u64(gf))
+        log(adresse_von(T_SIMD_FERTIG), u64(fertig))
+        gib_zurück fertig == anzahl und fehler == 0 und ticks >= u64(anzahl) * 8 und gf

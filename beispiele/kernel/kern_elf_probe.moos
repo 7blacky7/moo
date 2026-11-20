@@ -19,6 +19,8 @@ konstante T_ELF_CPU: [u8; _] auf "MOO-ELF CPU "
 @nativ
 konstante T_ELF_ENDE: [u8; _] auf "MOO-ELF EXIT "
 @nativ
+konstante T_ELF_START_FEHLER: [u8; _] auf "MOO-ELF START FEHLER "
+@nativ
 konstante T_ELF_VOR: [u8; _] auf "MOO-ELF PFA VOR "
 @nativ
 konstante T_ELF_NACH: [u8; _] auf "MOO-ELF PFA NACH "
@@ -295,7 +297,14 @@ funktion elf_laufzeit_lauf(elf: u64, laenge: u64, tsc: u64, pfa_adr: u64, log_ad
         setze vorher: u64 auf pfa(1)
         log(adresse_von(T_ELF_VOR), vorher)
         setze prozess: ptr[ElfProzess] auf elf_probe_slot(0)
-        wenn nicht elf_laden(prozess, elf, laenge) oder nicht elf_probe_rechte(prozess) oder nicht prozess_starten(prozess, 0):
+        wenn nicht elf_laden(prozess, elf, laenge):
+            log(adresse_von(T_ELF_START_FEHLER), 1)
+            gib_zurück falsch
+        wenn nicht elf_probe_rechte(prozess):
+            log(adresse_von(T_ELF_START_FEHLER), 2)
+            gib_zurück falsch
+        wenn nicht prozess_starten(prozess, 0):
+            log(adresse_von(T_ELF_START_FEHLER), 3)
             gib_zurück falsch
         solange atom_laden(prozess.ep_benutzer.bp_status, ordnung=erwerben) != 2 und takt() < frist:
             faden_abgeben(smp_planer())

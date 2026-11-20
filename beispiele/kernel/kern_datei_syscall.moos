@@ -1,0 +1,185 @@
+# Datei-Systemaufrufe: ausschließlich begrenzte Kernelkopien, nie direkte
+# Benutzerzeiger an VFS/Treiber. Alle elf Operationen liefern errno statt Trap.
+aus vfs importiere VfsFehler, VfsStat, VfsEintrag, VFS_ENOMEM, VFS_EBADF, VFS_EINVAL, VFS_ENOENT, VFS_ENAMETOOLONG
+aus moos_datei_abi importiere MoosDateiStat, MoosDateiVerzeichnis, MOOS_DATEI_EFAULT, MOOS_DATEI_ERANGE, MOOS_DATEI_OEFFNEN, MOOS_DATEI_LESEN, MOOS_DATEI_SCHREIBEN, MOOS_DATEI_SCHLIESSEN, MOOS_DATEI_STAT, MOOS_DATEI_VERZEICHNIS, MOOS_DATEI_POSITION, MOOS_DATEI_ABGLEICHEN, MOOS_DATEI_ANLEGEN, MOOS_DATEI_LOESCHEN, MOOS_DATEI_UMBENENNEN
+aus "kern_vfs" importiere KernVfsDateien, kern_vfs_oeffnen, kern_vfs_lesen, kern_vfs_schreiben, kern_vfs_schliessen, kern_vfs_stat, kern_vfs_verzeichnis, kern_vfs_position_begrenzt, kern_vfs_abgleichen, kern_vfs_anlegen, kern_vfs_loeschen, kern_vfs_umbenennen
+aus "kern_adressraum" importiere Adressraum, ar_benutzer_kopieren, ar_benutzer_zurueckkopieren, ar_benutzer_bereich, ar_rahmen_nehmen, ar_rahmen_freigeben
+
+@nativ
+funktion datei_syscall_fehler(code: u32) -> u64:
+    gib_zurück 0 - als(u64, code)
+
+@nativ
+funktion datei_syscall_wert(r: ergebnis[u64, VfsFehler]) -> u64:
+    wenn nicht ist_erfolg(r):
+        gib_zurück datei_syscall_fehler(ergebnis_fehler(r).code)
+    gib_zurück ergebnis_wert(r)
+
+@nativ
+funktion datei_syscall_void(r: ergebnis[void, VfsFehler]) -> u64:
+    wenn nicht ist_erfolg(r):
+        gib_zurück datei_syscall_fehler(ergebnis_fehler(r).code)
+    gib_zurück 0
+
+@nativ
+funktion datei_syscall_speicher(seiten: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(seiten)
+        wenn basis == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 0, 0))
+        gib_zurück erfolg(basis)
+
+@nativ
+funktion datei_syscall_freigeben(basis: u64, seiten: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < seiten:
+            ar_rahmen_freigeben(basis + i * 4096)
+            setze i auf i + 1
+
+@nativ
+funktion datei_syscall_pfad(raum: ptr[Adressraum], quelle: u64, bytes: u64, ziel: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn bytes == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+        wenn bytes > 4095:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 0, 0))
+        wenn nicht ar_benutzer_kopieren(raum, ziel, quelle, bytes):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion datei_syscall_oeffnen(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien], pfad: u64, bytes: u64, modus: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        wenn modus > 0xFFFFFFFF:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze basis: u64 auf weitergeben(datei_syscall_speicher(1))
+        aufräumen: datei_syscall_freigeben(basis, 1)
+        weitergeben(datei_syscall_pfad(raum, pfad, bytes, basis))
+        setze p: ptr[u8] auf zeiger(basis)
+        gib_zurück kern_vfs_oeffnen(dateien, byteansicht(p, bytes), als(u32, modus))
+
+# Ein Transfer ist höchstens eine Seite. Das ist ein erlaubter kurzer read/write
+# und begrenzt den Speicherbedarf pro gleichzeitigem Systemaufruf.
+@nativ
+funktion datei_syscall_daten(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien], fd: u64, adresse: u64, bytes: u64, schreiben: bool) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        wenn bytes > 0x7FFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        wenn bytes == 0:
+            setze leer: ptr[u8] auf nichts
+            wenn schreiben:
+                gib_zurück kern_vfs_schreiben(dateien, fd, byteansicht(leer, 0))
+            gib_zurück kern_vfs_lesen(dateien, fd, byteansicht(leer, 0))
+        setze menge: u64 auf bytes
+        wenn menge > 4096:
+            setze menge auf 4096
+        setze basis: u64 auf weitergeben(datei_syscall_speicher(1))
+        aufräumen: datei_syscall_freigeben(basis, 1)
+        setze p: ptr[u8] auf zeiger(basis)
+        wenn schreiben:
+            wenn nicht ar_benutzer_kopieren(raum, basis, adresse, menge):
+                gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+            gib_zurück kern_vfs_schreiben(dateien, fd, byteansicht(p, menge))
+        # Vorprüfung verhindert Positionsänderungen beim normalen EFAULT-Fall.
+        # Die eigentliche Kopie prüft erneut unter Adressraumsperre (kein TOCTOU).
+        wenn nicht ar_benutzer_bereich(raum, adresse, menge, wahr):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        setze anzahl: u64 auf weitergeben(kern_vfs_lesen(dateien, fd, byteansicht(p, menge)))
+        wenn nicht ar_benutzer_zurueckkopieren(raum, adresse, basis, anzahl):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        gib_zurück erfolg(anzahl)
+
+@nativ
+funktion datei_syscall_stat(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien], fd: u64, ziel: u64, bytes: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        wenn bytes != groesse_von(MoosDateiStat):
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze info: VfsStat auf weitergeben(kern_vfs_stat(dateien, fd))
+        setze ausgabe: MoosDateiStat auf MoosDateiStat(info.art, info.rechte, info.bytes)
+        wenn nicht ar_benutzer_zurueckkopieren(raum, ziel, adresse_von(ausgabe), bytes):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        gib_zurück erfolg(0)
+
+# Genau sechs Benutzerargumente, inklusive eigener Kapazität für die Namenssicht.
+@nativ
+funktion datei_syscall_verzeichnis(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien], fd: u64, index: u64, ziel: u64, bytes: u64, name: u64, kapazitaet: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        wenn bytes != groesse_von(MoosDateiVerzeichnis):
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze r: ergebnis[VfsEintrag, VfsFehler] auf kern_vfs_verzeichnis(dateien, fd, index)
+        wenn nicht ist_erfolg(r):
+            setze fehler: VfsFehler auf ergebnis_fehler(r)
+            wenn fehler.code == VFS_ENOENT:
+                gib_zurück erfolg(0)
+            gib_zurück fehlschlag(fehler)
+        setze eintrag: VfsEintrag auf ergebnis_wert(r)
+        wenn eintrag.name_bytes > kapazitaet:
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_ERANGE, 0, 0))
+        wenn nicht ar_benutzer_bereich(raum, ziel, bytes, wahr) oder nicht ar_benutzer_bereich(raum, name, eintrag.name_bytes, wahr):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        setze ausgabe: MoosDateiVerzeichnis auf MoosDateiVerzeichnis(eintrag.bytes, eintrag.name_bytes, eintrag.art, 0)
+        wenn nicht ar_benutzer_zurueckkopieren(raum, name, adresse_von(eintrag.name[0]), eintrag.name_bytes) oder nicht ar_benutzer_zurueckkopieren(raum, ziel, adresse_von(ausgabe), bytes):
+            gib_zurück fehlschlag(VfsFehler(MOOS_DATEI_EFAULT, 0, 0))
+        gib_zurück erfolg(1)
+
+@nativ
+funktion datei_syscall_pfadaktion(raum: ptr[Adressraum], pfad: u64, bytes: u64, art: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze basis: u64 auf weitergeben(datei_syscall_speicher(1))
+        aufräumen: datei_syscall_freigeben(basis, 1)
+        weitergeben(datei_syscall_pfad(raum, pfad, bytes, basis))
+        setze p: ptr[u8] auf zeiger(basis)
+        wenn art == 2:
+            gib_zurück kern_vfs_loeschen(byteansicht(p, bytes))
+        gib_zurück kern_vfs_anlegen(byteansicht(p, bytes), art == 1)
+
+@nativ
+funktion datei_syscall_umbenennen(raum: ptr[Adressraum], quelle: u64, quelle_bytes: u64, ziel: u64, ziel_bytes: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze basis: u64 auf weitergeben(datei_syscall_speicher(2))
+        aufräumen: datei_syscall_freigeben(basis, 2)
+        weitergeben(datei_syscall_pfad(raum, quelle, quelle_bytes, basis))
+        weitergeben(datei_syscall_pfad(raum, ziel, ziel_bytes, basis + 4096))
+        setze a: ptr[u8] auf zeiger(basis)
+        setze b: ptr[u8] auf zeiger(basis + 4096)
+        gib_zurück kern_vfs_umbenennen(byteansicht(a, quelle_bytes), byteansicht(b, ziel_bytes))
+
+@nativ
+funktion datei_syscall_verteilen(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien], nr: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> u64:
+    unsicher:
+        wenn u64(dateien) == 0:
+            gib_zurück datei_syscall_fehler(VFS_EBADF)
+        wenn nr == MOOS_DATEI_VERZEICHNIS:
+            gib_zurück datei_syscall_wert(datei_syscall_verzeichnis(raum, dateien, a, b, c, d, e, f))
+        wenn e != 0 oder f != 0:
+            gib_zurück datei_syscall_fehler(VFS_EINVAL)
+        wenn nr == MOOS_DATEI_UMBENENNEN:
+            gib_zurück datei_syscall_void(datei_syscall_umbenennen(raum, a, b, c, d))
+        wenn d != 0:
+            gib_zurück datei_syscall_fehler(VFS_EINVAL)
+        wenn nr == MOOS_DATEI_OEFFNEN:
+            gib_zurück datei_syscall_wert(datei_syscall_oeffnen(raum, dateien, a, b, c))
+        wenn nr == MOOS_DATEI_LESEN oder nr == MOOS_DATEI_SCHREIBEN:
+            gib_zurück datei_syscall_wert(datei_syscall_daten(raum, dateien, a, b, c, nr == MOOS_DATEI_SCHREIBEN))
+        wenn nr == MOOS_DATEI_STAT:
+            gib_zurück datei_syscall_wert(datei_syscall_stat(raum, dateien, a, b, c))
+        wenn nr == MOOS_DATEI_POSITION:
+            wenn c > 2:
+                gib_zurück datei_syscall_fehler(VFS_EINVAL)
+            gib_zurück datei_syscall_wert(kern_vfs_position_begrenzt(dateien, a, als_wrap(i64, b), als(u32, c), 0x7FFFFFFFFFFFFFFF))
+        wenn nr == MOOS_DATEI_ANLEGEN:
+            wenn c > 1:
+                gib_zurück datei_syscall_fehler(VFS_EINVAL)
+            gib_zurück datei_syscall_void(datei_syscall_pfadaktion(raum, a, b, c))
+        wenn c != 0:
+            gib_zurück datei_syscall_fehler(VFS_EINVAL)
+        wenn nr == MOOS_DATEI_LOESCHEN:
+            gib_zurück datei_syscall_void(datei_syscall_pfadaktion(raum, a, b, 2))
+        wenn b != 0:
+            gib_zurück datei_syscall_fehler(VFS_EINVAL)
+        wenn nr == MOOS_DATEI_SCHLIESSEN:
+            gib_zurück datei_syscall_void(kern_vfs_schliessen(dateien, a))
+        wenn nr == MOOS_DATEI_ABGLEICHEN:
+            gib_zurück datei_syscall_void(kern_vfs_abgleichen(dateien, a))
+        gib_zurück 0xFFFFFFFFFFFFFFDA

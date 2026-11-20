@@ -1,0 +1,327 @@
+# GPT-Metadaten eines im Blockregister gebundenen Mediums. Aufrufer geben
+# Änderungen der GPT ausschließlich über dieses Objekt in Auftrag.
+aus "kern_block" importiere BlockAnfrage, BlockGeometrie, BlockFehler, BlockGeraet, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_OK, BLOCK_GEOMETRIE, BLOCK_NUR_LESEN, BLOCK_PUFFER, BLOCK_BEREICH, BLOCK_BELEGT, BLOCK_VOLL, BLOCK_NICHT_BEREIT, block_anfordern, block_abschliessen, block_registrieren, block_geometrie
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "speicher_gpt" importiere gp_kopf, gp_tabelle_pruefen
+aus "../uefi/hardware_crc" importiere hw_crc_tabelle, hw_crc32
+aus "../uefi/netz_geraet" importiere nt_kopiere
+aus "../uefi/hardware_pci" importiere nt_null
+
+@nativ
+konstante GPT_UNGUELTIG: u32 auf 0x10000
+@nativ
+konstante GPT_EINTRAEGE: u64 auf 128
+@nativ
+konstante GPT_EINTRAG_BYTES: u64 auf 128
+@nativ
+konstante GPT_KOPF_BYTES: u64 auf 92
+@nativ
+konstante GPT_TABELLE_BYTES: u64 auf 16384
+
+# GUID im GPT-Byteformat, in zwei Little-Endian-Wörter geteilt.
+struktur GptGuid:
+    lo: u64
+    hi: u64
+
+# Genau 128 Bytes im x86-64-Bare-Kern. Der Name enthält UTF-16LE-Codeeinheiten.
+@gepackt
+struktur GptEintrag:
+    typ_guid: GptGuid
+    teil_guid: GptGuid
+    erster: u64
+    letzter: u64
+    merkmale: u64
+    name_utf16le: [u16; 36]
+
+@gepackt
+struktur GptKopf:
+    signatur: u64le
+    version: u32le
+    groesse: u32le
+    kopf_crc: u32le
+    reserviert: u32le
+    eigen: u64le
+    alternativ: u64le
+    erster: u64le
+    letzter: u64le
+    guid_lo: u64le
+    guid_hi: u64le
+    tab_lba: u64le
+    anzahl: u32le
+    breite: u32le
+    tab_crc: u32le
+
+struktur GptMedium:
+    sperre: KernMutex
+    unter: u64
+    geo: BlockGeometrie
+    stand: u64
+    crc: u64
+    kopf: u64
+    tabelle: u64
+    anfrage: BlockAnfrage
+
+struktur GptTabelle:
+    anzahl: u64
+    breite: u64
+    bloecke: u64
+
+struktur GptPartition implementiert BlockGeraet:
+    medium: ptr[GptMedium]
+    geo: BlockGeometrie
+    versatz: u64
+    stand: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze medium: ptr[GptMedium] auf selbst.medium
+            setze sperre: ptr[KernMutex] auf zeiger(adresse_von(medium.sperre))
+            mutex_nimm(smp_planer(), sperre)
+            wenn selbst.stand != medium.stand:
+                mutex_gib(smp_planer(), sperre)
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 0))
+            setze lba: u64 auf 0
+            wenn anfrage.art != BLOCK_FLUSH:
+                setze lba auf selbst.versatz + anfrage.lba
+            setze r: ergebnis[void, BlockFehler] auf block_anfordern(medium.unter, zeiger(adresse_von(medium.anfrage)), anfrage.art, lba, anfrage.anzahl, anfrage.puffer, anfrage.laenge)
+            mutex_gib(smp_planer(), sperre)
+            wenn nicht ist_erfolg(r):
+                gib_zurück r
+            block_abschliessen(anfrage, BlockFehler(BLOCK_OK, 0))
+            gib_zurück erfolg()
+
+# Wie das Blockregister bleiben Medium und Partitionsobjekte bis zum Neustart gültig.
+@nativ
+statisch GPT_MEDIEN: [GptMedium; 64] auf 0
+
+@nativ
+funktion gpt_oeffnen(unter: u64) -> ergebnis[ptr[GptMedium], BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf weitergeben(block_geometrie(unter))
+        setze bytes: u64 auf geo.block_bytes
+        wenn bytes < 512 oder bytes > 4096 oder (bytes & (bytes - 1)) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        wenn geo.bloecke < 4 + 2 * (GPT_TABELLE_BYTES / bytes):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze medium: ptr[GptMedium] auf zeiger(adresse_von(GPT_MEDIEN[unter - 1]))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(medium.sperre))
+        mutex_nimm(smp_planer(), sperre)
+        wenn medium.unter == 0:
+            # Je eine Seite für CRC und Kopf, 32 Seiten für bis zu 128 KiB Einträge.
+            setze basis: u64 auf ar_rahmen_nehmen(34)
+            wenn basis == 0:
+                mutex_gib(smp_planer(), sperre)
+                gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+            setze medium.crc auf basis
+            setze medium.kopf auf basis + 4096
+            setze medium.tabelle auf basis + 8192
+            hw_crc_tabelle(medium.crc)
+            setze medium.geo auf geo
+            setze medium.unter auf unter
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück erfolg(medium)
+
+# Zugriff auf die gemeinsame Anfrage und die Metadatenpuffer unter medium.sperre.
+@nativ
+funktion gpt_io(medium: ptr[GptMedium], art: u32, lba: u64, anzahl: u64, puffer: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        gib_zurück block_anfordern(medium.unter, zeiger(adresse_von(medium.anfrage)), art, lba, anzahl, puffer, anzahl * medium.geo.block_bytes)
+
+@nativ
+funktion gpt_laden(medium: ptr[GptMedium], kopf_lba: u64) -> ergebnis[GptTabelle, BlockFehler]:
+    unsicher:
+        setze kopf: u64 auf medium.kopf
+        setze tabelle: u64 auf medium.tabelle
+        setze bytes: u64 auf medium.geo.block_bytes
+        weitergeben(gpt_io(medium, BLOCK_LESEN, kopf_lba, 1, kopf))
+        wenn nicht gp_kopf(kopf, kopf_lba, bytes, medium.geo.bloecke - 1, medium.crc):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        setze kopf_ptr: ptr[u8] auf zeiger(kopf)
+        setze k: puffer[GptKopf] auf sicht(byteansicht(kopf_ptr, GPT_KOPF_BYTES), GptKopf, 0)
+        setze anzahl: u64 auf u64(k[0].anzahl)
+        setze breite: u64 auf u64(k[0].breite)
+        setze laenge: u64 auf anzahl * breite
+        setze bloecke: u64 auf (laenge + bytes - 1) / bytes
+        weitergeben(gpt_io(medium, BLOCK_LESEN, k[0].tab_lba, bloecke, tabelle))
+        wenn hw_crc32(medium.crc, tabelle, laenge) != k[0].tab_crc:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        wenn gp_tabelle_pruefen(tabelle, anzahl, breite, k[0].erster, k[0].letzter) < 0:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        gib_zurück erfolg(GptTabelle(anzahl, breite, bloecke))
+
+@nativ
+funktion gpt_kopie_schreiben(medium: ptr[GptMedium], eigen: u64, alternativ: u64, tab_lba: u64, tab_bloecke: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze kopf: u64 auf medium.kopf
+        setze kopf_ptr: ptr[u8] auf zeiger(kopf)
+        setze k: puffer[GptKopf] auf sicht(byteansicht(kopf_ptr, GPT_KOPF_BYTES), GptKopf, 0)
+        k[0].eigen = eigen
+        k[0].alternativ = alternativ
+        k[0].tab_lba = tab_lba
+        k[0].kopf_crc = 0
+        k[0].kopf_crc = hw_crc32(medium.crc, kopf, u64(k[0].groesse))
+        weitergeben(gpt_io(medium, BLOCK_SCHREIBEN, tab_lba, tab_bloecke, medium.tabelle))
+        gib_zurück gpt_io(medium, BLOCK_SCHREIBEN, eigen, 1, kopf)
+
+@nativ
+funktion gpt_mbr_schreiben(medium: ptr[GptMedium]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze mbr: u64 auf medium.kopf
+        setze laenge: u64 auf medium.geo.bloecke - 1
+        wenn laenge > 0xFFFFFFFF:
+            setze laenge auf 0xFFFFFFFF
+        nt_null(mbr, medium.geo.block_bytes)
+        speicher_schreiben(mbr + 447, 0x0200, 2)
+        # Typ EE und nicht darstellbare End-CHS-Adresse.
+        speicher_schreiben(mbr + 450, 0xFFFFFFEE, 4)
+        speicher_schreiben(mbr + 454, 1, 4)
+        speicher_schreiben(mbr + 458, u32(laenge), 4)
+        speicher_schreiben(mbr + 510, 0xAA55, 2)
+        gib_zurück gpt_io(medium, BLOCK_SCHREIBEN, 0, 1, mbr)
+
+@nativ
+funktion gpt_neu_gesperrt(medium: ptr[GptMedium], disk_guid: GptGuid, eintraege: ptr[GptEintrag], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn medium.geo.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        wenn groesse_von(GptEintrag) != GPT_EINTRAG_BYTES oder (disk_guid.lo | disk_guid.hi) == 0 oder anzahl > GPT_EINTRAEGE:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        wenn anzahl != 0 und u64(eintraege) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze kopf: u64 auf medium.kopf
+        setze tabelle: u64 auf medium.tabelle
+        setze bloecke: u64 auf GPT_TABELLE_BYTES / medium.geo.block_bytes
+        setze ende: u64 auf medium.geo.bloecke - 1
+        setze erste: u64 auf 2 + bloecke
+        setze letzte: u64 auf ende - bloecke - 1
+        wenn gp_tabelle_pruefen(u64(eintraege), anzahl, GPT_EINTRAG_BYTES, erste, letzte) < 0:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        # Ist nur das Backup brauchbar, vor der Ersetzung erst die alte
+        # Primärkopie sichern. Auch ein leeres oder unbrauchbares Medium
+        # ist für die ausdrückliche Neuanlage zulässig.
+        setze alt: ergebnis[bool, BlockFehler] auf gpt_reparatur_gesperrt(medium)
+        wenn nicht ist_erfolg(alt):
+            setze f: BlockFehler auf ergebnis_fehler(alt)
+            wenn f.code != GPT_UNGUELTIG:
+                gib_zurück fehlschlag(f)
+        nt_null(tabelle, GPT_TABELLE_BYTES)
+        wenn anzahl != 0:
+            nt_kopiere(tabelle, u64(eintraege), anzahl * GPT_EINTRAG_BYTES)
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze eintrag: u64 auf tabelle + i * GPT_EINTRAG_BYTES
+            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) == 0:
+                nt_null(eintrag, GPT_EINTRAG_BYTES)
+            setze i auf i + 1
+        nt_null(kopf, medium.geo.block_bytes)
+        setze kopf_ptr: ptr[u8] auf zeiger(kopf)
+        setze k: puffer[GptKopf] auf sicht(byteansicht(kopf_ptr, GPT_KOPF_BYTES), GptKopf, 0)
+        k[0].signatur = 0x5452415020494645
+        k[0].version = 0x10000
+        k[0].groesse = u32(GPT_KOPF_BYTES)
+        k[0].erster = erste
+        k[0].letzter = letzte
+        k[0].guid_lo = disk_guid.lo
+        k[0].guid_hi = disk_guid.hi
+        k[0].anzahl = u32(GPT_EINTRAEGE)
+        k[0].breite = u32(GPT_EINTRAG_BYTES)
+        k[0].tab_crc = hw_crc32(medium.crc, tabelle, GPT_TABELLE_BYTES)
+        # Ab Beginn der Änderung sind alte Partitionskennungen ungültig,
+        # auch wenn das untere Gerät einen Teilfehler meldet.
+        setze medium.stand auf medium.stand + 1
+        weitergeben(gpt_kopie_schreiben(medium, ende, 1, ende - bloecke, bloecke))
+        weitergeben(gpt_io(medium, BLOCK_FLUSH, 0, 0, 0))
+        weitergeben(gpt_kopie_schreiben(medium, 1, ende, 2, bloecke))
+        weitergeben(gpt_mbr_schreiben(medium))
+        gib_zurück gpt_io(medium, BLOCK_FLUSH, 0, 0, 0)
+
+# Explizite Neuanlage/Ersetzung. Der Entwurf bleibt bis zur Rückkehr stabil.
+# Null Einträge erzeugen eine leere GPT.
+@nativ
+funktion gpt_schreiben(medium: ptr[GptMedium], disk_guid: GptGuid, eintraege: ptr[GptEintrag], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(medium.sperre))
+        mutex_nimm(smp_planer(), sperre)
+        setze r: ergebnis[void, BlockFehler] auf gpt_neu_gesperrt(medium, disk_guid, eintraege, anzahl)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück r
+
+@nativ
+funktion gpt_reparatur_gesperrt(medium: ptr[GptMedium]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        setze primaer: ergebnis[GptTabelle, BlockFehler] auf gpt_laden(medium, 1)
+        wenn ist_erfolg(primaer):
+            gib_zurück erfolg(falsch)
+        setze fehler: BlockFehler auf ergebnis_fehler(primaer)
+        wenn fehler.code != GPT_UNGUELTIG:
+            gib_zurück fehlschlag(fehler)
+        wenn medium.geo.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        setze ende: u64 auf medium.geo.bloecke - 1
+        setze backup: GptTabelle auf weitergeben(gpt_laden(medium, ende))
+        setze kopf_ptr: ptr[u8] auf zeiger(medium.kopf)
+        setze k: puffer[GptKopf] auf sicht(byteansicht(kopf_ptr, GPT_KOPF_BYTES), GptKopf, 0)
+        wenn 2 + backup.bloecke > k[0].erster:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 0))
+        setze groesse: u64 auf u64(k[0].groesse)
+        setze laenge: u64 auf backup.anzahl * backup.breite
+        # Der Kopf kann an einer nicht auf 8 Byte gerundeten Position enden.
+        # Bei 4-KiB-Blöcken beginnt die Tabelle direkt hinter diesem Sektor.
+        solange groesse < medium.geo.block_bytes:
+            speicher_schreiben(medium.kopf + groesse, 0, 1)
+            setze groesse auf groesse + 1
+        nt_null(medium.tabelle + laenge, backup.bloecke * medium.geo.block_bytes - laenge)
+        setze medium.stand auf medium.stand + 1
+        weitergeben(gpt_kopie_schreiben(medium, 1, ende, 2, backup.bloecke))
+        weitergeben(gpt_io(medium, BLOCK_FLUSH, 0, 0, 0))
+        gib_zurück erfolg(wahr)
+
+# Erfolgswert wahr bedeutet, dass der Primärkopf samt Tabelle restauriert wurde.
+# Schutz-MBR und Backup bleiben bei der Reparatur auf dem Medium erhalten.
+@nativ
+funktion gpt_reparieren(medium: ptr[GptMedium]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(medium.sperre))
+        mutex_nimm(smp_planer(), sperre)
+        setze r: ergebnis[bool, BlockFehler] auf gpt_reparatur_gesperrt(medium)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück r
+
+@nativ
+funktion gpt_partition_gesperrt(medium: ptr[GptMedium], teil: ptr[GptPartition], nummer: u64, nur_lesend: bool) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(teil.medium) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 0))
+        setze t: GptTabelle auf weitergeben(gpt_laden(medium, 1))
+        wenn nummer == 0 oder nummer > t.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 0))
+        setze e: u64 auf medium.tabelle + (nummer - 1) * t.breite
+        wenn (u64(speicher_lesen(e, 8)) | u64(speicher_lesen(e + 8, 8))) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 0))
+        setze erster: u64 auf u64(speicher_lesen(e + 32, 8))
+        setze letzter: u64 auf u64(speicher_lesen(e + 40, 8))
+        setze teil.medium auf medium
+        setze teil.versatz auf erster
+        setze teil.stand auf medium.stand
+        setze teil.geo auf BlockGeometrie(letzter - erster + 1, medium.geo.block_bytes, medium.geo.nur_lesend oder nur_lesend)
+        setze r: ergebnis[u64, BlockFehler] auf block_registrieren(teil)
+        wenn nicht ist_erfolg(r):
+            setze teil.medium auf zeiger(0)
+        gib_zurück r
+
+# Nummern sind GPT-Slotnummern ab 1. Der Aufrufer übergibt ein dauerhaftes
+# Nullobjekt unter eigener Hoheit, bis die Registrierung es veröffentlicht.
+@nativ
+funktion gpt_partition_registrieren(medium: ptr[GptMedium], teil: ptr[GptPartition], nummer: u64, nur_lesend: bool) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(medium.sperre))
+        mutex_nimm(smp_planer(), sperre)
+        setze r: ergebnis[u64, BlockFehler] auf gpt_partition_gesperrt(medium, teil, nummer, nur_lesend)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück r

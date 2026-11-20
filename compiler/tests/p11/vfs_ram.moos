@@ -1,0 +1,4 @@
+aus "vfs_probe" importiere vfs_test
+# FEHLERPFAD(M-F001): Native Regression muss bei unerwarteten Laufzeitfehlern abbrechen.
+unsicher:
+    zeige vfs_test()

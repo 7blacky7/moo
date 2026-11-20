@@ -180,11 +180,37 @@ funktion gp_eintrag(daten: u64, erste: u64, letzte: u64) -> bool:
         gib_zurück (u64(speicher_lesen(daten + 48, 8)) & 0x0000FFFFFFFFFFF8) == 0
 
 @nativ
-funktion gp_lesen(kontext: u64, lesen: u64, loggen: u64, praefix: u64) -> bool:
+funktion gp_tabelle_pruefen(tabelle: u64, anzahl: u64, breite: u64, erste: u64, letzte: u64) -> i64:
+    unsicher:
+        setze j: u64 auf 0
+        setze k: u64 auf 0
+        setze partitionen: i64 auf 0
+        setze eintrag: u64 auf 0
+        setze anderer: u64 auf 0
+        solange j < anzahl:
+            setze eintrag auf tabelle + j * breite
+            wenn nicht gp_eintrag(eintrag, erste, letzte):
+                gib_zurück -1
+            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
+                setze k auf 0
+                solange k < j:
+                    setze anderer auf tabelle + k * breite
+                    wenn (u64(speicher_lesen(anderer, 8)) | u64(speicher_lesen(anderer + 8, 8))) != 0:
+                        wenn u64(speicher_lesen(eintrag + 16, 8)) == u64(speicher_lesen(anderer + 16, 8)) und u64(speicher_lesen(eintrag + 24, 8)) == u64(speicher_lesen(anderer + 24, 8)):
+                            gib_zurück -1
+                        wenn u64(speicher_lesen(eintrag + 32, 8)) <= u64(speicher_lesen(anderer + 40, 8)) und u64(speicher_lesen(anderer + 32, 8)) <= u64(speicher_lesen(eintrag + 40, 8)):
+                            gib_zurück -1
+                    setze k auf k + 1
+                setze partitionen auf partitionen + 1
+            setze j auf j + 1
+        gib_zurück partitionen
+
+@nativ
+funktion gp_lesen(kontext: u64, lesen: u64, geraet: u64, loggen: u64, praefix: u64) -> bool:
     unsicher:
         wenn kontext == 0 oder lesen == 0 oder loggen == 0 oder praefix == 0:
             gib_zurück falsch
-        setze lese_block: ptr[fn[sysv64](u64) -> bool] auf zeiger(lesen)
+        setze lese_block: ptr[fn[sysv64](u64, u64) -> bool] auf zeiger(lesen)
         setze crc_tabelle: u64 auf speicher_lesen(kontext + 24, 8)
         setze block_bytes: u64 auf speicher_lesen(kontext + 32, 8)
         setze medium_letzte: u64 auf speicher_lesen(kontext + 40, 8)
@@ -200,22 +226,19 @@ funktion gp_lesen(kontext: u64, lesen: u64, loggen: u64, praefix: u64) -> bool:
         setze pos: u64 auf 0
         setze teil: u64 auf 0
         setze j: u64 auf 0
-        setze k: u64 auf 0
         setze eintrag: u64 auf 0
-        setze anderer: u64 auf 0
         setze erste: u64 auf 0
         setze letzte: u64 auf 0
-        setze partitionen: u64 auf 0
         setze schutz_mbr: bool auf falsch
         wenn puffer == 0 oder kopf == 0 oder tabelle == 0 oder crc_tabelle == 0 oder block_bytes < 512 oder block_bytes > 4096 oder (block_bytes & (block_bytes - 1)) != 0:
             gib_zurück falsch
-        wenn nicht lese_block(0) oder u64(speicher_lesen(puffer + 510, 2)) != 0xAA55:
+        wenn nicht lese_block(0, geraet) oder u64(speicher_lesen(puffer + 510, 2)) != 0xAA55:
             gib_zurück falsch
         solange j < 4:
             wenn u64(speicher_lesen(puffer + 450 + j * 16, 1)) == 0xEE:
                 setze schutz_mbr auf wahr
             setze j auf j + 1
-        wenn nicht schutz_mbr oder nicht lese_block(1) oder nicht gp_kopf(puffer, 1, block_bytes, medium_letzte, crc_tabelle):
+        wenn nicht schutz_mbr oder nicht lese_block(1, geraet) oder nicht gp_kopf(puffer, 1, block_bytes, medium_letzte, crc_tabelle):
             gib_zurück falsch
         nt_kopiere(kopf, puffer, 92)
         setze quelle_lba auf u64(speicher_lesen(kopf + 72, 8))
@@ -226,7 +249,7 @@ funktion gp_lesen(kontext: u64, lesen: u64, loggen: u64, praefix: u64) -> bool:
         setze erste auf u64(speicher_lesen(kopf + 40, 8))
         setze letzte auf u64(speicher_lesen(kopf + 48, 8))
         solange pos < bytezahl:
-            wenn nicht lese_block(quelle_lba + pos / block_bytes):
+            wenn nicht lese_block(quelle_lba + pos / block_bytes, geraet):
                 gib_zurück falsch
             setze teil auf block_bytes
             wenn teil > bytezahl - pos:
@@ -235,25 +258,12 @@ funktion gp_lesen(kontext: u64, lesen: u64, loggen: u64, praefix: u64) -> bool:
             setze pos auf pos + teil
         wenn u64(hw_crc32(crc_tabelle, tabelle, bytezahl)) != u64(speicher_lesen(kopf + 88, 4)):
             gib_zurück falsch
-        setze j auf 0
-        solange j < anzahl:
-            setze eintrag auf tabelle + j * breite
-            wenn nicht gp_eintrag(eintrag, erste, letzte):
-                gib_zurück falsch
-            wenn (u64(speicher_lesen(eintrag, 8)) | u64(speicher_lesen(eintrag + 8, 8))) != 0:
-                setze k auf 0
-                solange k < j:
-                    setze anderer auf tabelle + k * breite
-                    wenn (u64(speicher_lesen(anderer, 8)) | u64(speicher_lesen(anderer + 8, 8))) != 0:
-                        wenn u64(speicher_lesen(eintrag + 16, 8)) == u64(speicher_lesen(anderer + 16, 8)) und u64(speicher_lesen(eintrag + 24, 8)) == u64(speicher_lesen(anderer + 24, 8)):
-                            gib_zurück falsch
-                        wenn u64(speicher_lesen(eintrag + 32, 8)) <= u64(speicher_lesen(anderer + 40, 8)) und u64(speicher_lesen(anderer + 32, 8)) <= u64(speicher_lesen(eintrag + 40, 8)):
-                            gib_zurück falsch
-                    setze k auf k + 1
-                setze partitionen auf partitionen + 1
-            setze j auf j + 1
+        setze gueltig: i64 auf gp_tabelle_pruefen(tabelle, anzahl, breite, erste, letzte)
+        wenn gueltig < 0:
+            gib_zurück falsch
+        setze partitionen: u64 auf u64(gueltig)
         # Auch eine hohe Backup-LBA wird ueber denselben Lesecallback gelesen.
-        wenn nicht lese_block(backup_lba) oder nicht gp_kopf(puffer, backup_lba, block_bytes, medium_letzte, crc_tabelle):
+        wenn nicht lese_block(backup_lba, geraet) oder nicht gp_kopf(puffer, backup_lba, block_bytes, medium_letzte, crc_tabelle):
             gib_zurück falsch
         wenn u64(speicher_lesen(puffer + 40, 8)) != erste oder u64(speicher_lesen(puffer + 48, 8)) != letzte oder u64(speicher_lesen(puffer + 56, 8)) != u64(speicher_lesen(kopf + 56, 8)) oder u64(speicher_lesen(puffer + 64, 8)) != u64(speicher_lesen(kopf + 64, 8)):
             gib_zurück falsch

@@ -1,0 +1,22 @@
+aus "kern_irq" importiere IRQ_ERSTER, IRQ_GRENZE
+
+extern "C" konstante moo_irq_stubs: u8
+
+# Ein 16-Byte-Einstieg je Gerätevektor; der normale Interrupt-Rahmen übernimmt
+# Register, GS-/XSAVE-Zustand und IRETQ für Kern- und Benutzerursprung.
+@nativ
+@nackt
+@einstieg
+funktion kern_irq_sprungtabelle() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code=".p2align 4; .globl moo_irq_stubs; moo_irq_stubs:; .set .Lmoo_irq_nummer,80; .rept 160; pushq $$.Lmoo_irq_nummer; jmp planer_irq_rahmen; .p2align 4; .set .Lmoo_irq_nummer,.Lmoo_irq_nummer+1; .endr", clobber=["memory"])
+
+@nativ
+funktion kern_irq_idt(tor_adr: u64) -> void:
+    unsicher:
+        setze tor: ptr[fn[sysv64](u64, u64, u64) -> void] auf zeiger(tor_adr)
+        setze basis: u64 auf adresse_von(moo_irq_stubs)
+        setze v: u64 auf IRQ_ERSTER
+        solange v < IRQ_GRENZE:
+            tor(v, basis + (v - IRQ_ERSTER) * 16, 0)
+            setze v auf v + 1

@@ -1,0 +1,4 @@
+importiere "fat32_formate_probe"
+# Der Format-Selbsttest soll bei einem unerwarteten Fehler abbrechen.
+unsicher:
+    zeige fat32_formate_probe()

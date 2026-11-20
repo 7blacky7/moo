@@ -1,0 +1,95 @@
+# Testaufbau für das vorhandene ELF-Laufzeitprofil (keine zweite ELF-Ausführung).
+# Die RAM-Arena existiert vor dessen PFA-Vergleich und bleibt bis nach Cleanup.
+aus ds_ram importiere RamDateisystem, ram_einrichten
+aus vfs importiere Dateisystem, VfsFehler, VFS_EBUSY, VFS_EIO, VFS_ENOMEM
+aus "kern_vfs" importiere kern_vfs_einhaengen, kern_vfs_aushängen
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben
+
+struktur DateiProbeZustand:
+    basis: u64
+    aktiv: bool
+@nativ
+statisch DATEI_PROBE_ZUSTAND: DateiProbeZustand auf 0
+@nativ
+statisch DATEI_PROBE_RAM: RamDateisystem auf 0
+@nativ
+konstante DATEI_PROBE_WURZEL: [u8; 1] auf "/"
+@nativ
+konstante DATEI_T_FEHLER: [u8; _] auf "MOO-DATEI FEHLER CODE GRUND "
+
+@nativ
+funktion datei_probe_seiten_frei() -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 512:
+            ar_rahmen_freigeben(DATEI_PROBE_ZUSTAND.basis + i * 4096)
+            setze i auf i + 1
+        setze DATEI_PROBE_ZUSTAND.basis auf 0
+        setze DATEI_PROBE_RAM.bereit auf falsch
+
+@nativ
+funktion datei_probe_aufbau() -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze wurzel: [u8; 1] auf [47]
+        wenn DATEI_PROBE_ZUSTAND.aktiv:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 1, 0))
+        setze basis: u64 auf ar_rahmen_nehmen(512)
+        wenn basis == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 2, 0))
+        setze DATEI_PROBE_ZUSTAND.basis auf basis
+        setze ram: ptr[RamDateisystem] auf zeiger(adresse_von(DATEI_PROBE_RAM))
+        setze r: ergebnis[void, VfsFehler] auf ram_einrichten(ram, basis, 2097152)
+        wenn nicht ist_erfolg(r):
+            datei_probe_seiten_frei()
+            gib_zurück fehlschlag(ergebnis_fehler(r))
+        setze fs: ptr[dyn Dateisystem] auf ram
+        setze mount: ergebnis[void, VfsFehler] auf kern_vfs_einhaengen(byteansicht(wurzel), fs)
+        wenn nicht ist_erfolg(mount):
+            datei_probe_seiten_frei()
+            gib_zurück fehlschlag(ergebnis_fehler(mount))
+        setze DATEI_PROBE_ZUSTAND.aktiv auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion datei_probe_abbau() -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze wurzel: [u8; 1] auf [47]
+        wenn nicht DATEI_PROBE_ZUSTAND.aktiv:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 3, 0))
+        setze ram: ptr[RamDateisystem] auf zeiger(adresse_von(DATEI_PROBE_RAM))
+        wenn ram.freie != 512 oder ram.knoten[0].referenzen != 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 4, 0))
+        setze i: u64 auf 1
+        solange i < 128:
+            wenn ram.knoten[i].aktiv:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, als(u32, 100 + i), 0))
+            setze i auf i + 1
+        setze i auf 0
+        solange i < 256:
+            wenn ram.griffe[i].aktiv:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, als(u32, 300 + i), 0))
+            setze i auf i + 1
+        weitergeben(kern_vfs_aushängen(byteansicht(wurzel)))
+        setze DATEI_PROBE_ZUSTAND.aktiv auf falsch
+        datei_probe_seiten_frei()
+        gib_zurück erfolg()
+
+@nativ
+funktion datei_probe_resultat(r: ergebnis[void, VfsFehler], log_adr: u64) -> bool:
+    unsicher:
+        wenn nicht ist_erfolg(r):
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(DATEI_T_FEHLER), (u64(f.code) << 32) | u64(f.grund))
+            gib_zurück falsch
+        gib_zurück wahr
+
+@nativ
+funktion datei_probe_einrichten(log: u64) -> bool:
+    unsicher:
+        gib_zurück datei_probe_resultat(datei_probe_aufbau(), log)
+
+@nativ
+funktion datei_probe_abschliessen(log: u64) -> bool:
+    unsicher:
+        gib_zurück datei_probe_resultat(datei_probe_abbau(), log)

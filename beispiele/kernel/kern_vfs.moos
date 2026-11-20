@@ -1,0 +1,201 @@
+# Prozessweite Deskriptoren. Fäden derselben BenutzerGruppe teilen Tabelle und
+# Dateiposition. Sperrreihenfolge: Prozess-Mutex, dann globaler VFS-Mutex.
+# Beide sind schlafend: Dateisystem-/Block-I/O hält niemals eine Spinsperre.
+aus vfs importiere VfsTabelle, VfsDatei, VfsFehler, VfsStat, VfsEintrag, Dateisystem, VFS_EMFILE, VFS_EBADF, VFS_EIO, VFS_EOVERFLOW, vfs_oeffnen, vfs_einhaengen, vfs_aushängen, vfs_anlegen, vfs_loeschen, vfs_umbenennen, vfs_stat
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+
+struktur KernVfsDateien:
+    sperre: KernMutex
+    dateien: [VfsDatei; 64]
+    letzter_fehler: VfsFehler
+
+struktur KernVfs:
+    sperre: KernMutex
+    mounts: VfsTabelle
+
+@nativ
+statisch KERN_VFS: KernVfs auf 0
+
+@nativ
+funktion kern_vfs_dateien_initialisieren(d: ptr[KernVfsDateien]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < groesse_von(KernVfsDateien):
+            speicher_schreiben(u64(d) + i, 0, 1)
+            setze i auf i + 1
+
+@nativ
+funktion kern_vfs_global_nimm() -> void:
+    unsicher:
+        mutex_nimm(smp_planer(), zeiger(adresse_von(KERN_VFS.sperre)))
+
+@nativ
+funktion kern_vfs_global_gib() -> void:
+    unsicher:
+        setze besass: bool auf mutex_gib(smp_planer(), zeiger(adresse_von(KERN_VFS.sperre)))
+
+@nativ
+funktion kern_vfs_dateien_nimm(d: ptr[KernVfsDateien]) -> void:
+    unsicher:
+        mutex_nimm(smp_planer(), zeiger(adresse_von(d.sperre)))
+        kern_vfs_global_nimm()
+
+@nativ
+funktion kern_vfs_dateien_gib(d: ptr[KernVfsDateien]) -> void:
+    unsicher:
+        kern_vfs_global_gib()
+        setze besass: bool auf mutex_gib(smp_planer(), zeiger(adresse_von(d.sperre)))
+
+@nativ
+funktion kern_vfs_fd(d: ptr[KernVfsDateien], fd: u64) -> ergebnis[ptr[VfsDatei], VfsFehler]:
+    unsicher:
+        wenn fd < 3 oder fd >= 64:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+        wenn nicht d.dateien[fd].offen:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+        gib_zurück erfolg(zeiger(adresse_von(d.dateien[fd])))
+
+@nativ
+funktion kern_vfs_oeffnen(d: ptr[KernVfsDateien], pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze fd: u64 auf 3
+        solange fd < 64 und d.dateien[fd].offen:
+            setze fd auf fd + 1
+        wenn fd == 64:
+            gib_zurück fehlschlag(VfsFehler(VFS_EMFILE, 0, 0))
+        weitergeben(vfs_oeffnen(zeiger(adresse_von(KERN_VFS.mounts)), pfad, modus, zeiger(adresse_von(d.dateien[fd]))))
+        gib_zurück erfolg(fd)
+
+@nativ
+funktion kern_vfs_lesen(d: ptr[KernVfsDateien], fd: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.lesen(daten)
+
+@nativ
+funktion kern_vfs_schreiben(d: ptr[KernVfsDateien], fd: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.schreiben(daten)
+
+@nativ
+funktion kern_vfs_position(d: ptr[KernVfsDateien], fd: u64, offset: i64, bezug: u32) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        gib_zurück kern_vfs_position_begrenzt(d, fd, offset, bezug, 0xFFFFFFFFFFFFFFFF)
+
+# Benutzer-Syscalls reservieren negative Rückgabewerte für errno. Ein Fehler
+# beim engeren Offsetlimit lässt die bisherige Dateiposition unverändert.
+@nativ
+funktion kern_vfs_position_begrenzt(d: ptr[KernVfsDateien], fd: u64, offset: i64, bezug: u32, maximum: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        setze vorher: u64 auf datei.offset
+        setze position: u64 auf weitergeben(datei.position(offset, bezug))
+        wenn position > maximum:
+            setze datei.offset auf vorher
+            gib_zurück fehlschlag(VfsFehler(VFS_EOVERFLOW, 0, 0))
+        gib_zurück erfolg(position)
+
+@nativ
+funktion kern_vfs_stat(d: ptr[KernVfsDateien], fd: u64) -> ergebnis[VfsStat, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.stat()
+
+@nativ
+funktion kern_vfs_verzeichnis(d: ptr[KernVfsDateien], fd: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.verzeichnis(index)
+
+@nativ
+funktion kern_vfs_abgleichen(d: ptr[KernVfsDateien], fd: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.abgleichen()
+
+@nativ
+funktion kern_vfs_schliessen(d: ptr[KernVfsDateien], fd: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze datei: ptr[VfsDatei] auf weitergeben(kern_vfs_fd(d, fd))
+        gib_zurück datei.schliessen()
+
+# Erst nach dem letzten Nutzer des Adressraums aufrufen. Auch beim ersten
+# Flushfehler alle Griffe konsumieren; die Diagnose bleibt im Prozessobjekt.
+@nativ
+funktion kern_vfs_dateien_freigeben(d: ptr[KernVfsDateien]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_dateien_nimm(d)
+        aufräumen: kern_vfs_dateien_gib(d)
+        setze erster: VfsFehler auf 0
+        setze fd: u64 auf 3
+        solange fd < 64:
+            wenn d.dateien[fd].offen:
+                setze datei: ptr[VfsDatei] auf zeiger(adresse_von(d.dateien[fd]))
+                setze resultat: ergebnis[void, VfsFehler] auf datei.schliessen()
+                wenn nicht ist_erfolg(resultat) und erster.code == 0:
+                    setze erster auf ergebnis_fehler(resultat)
+            setze fd auf fd + 1
+        setze d.letzter_fehler auf erster
+        wenn erster.code != 0:
+            gib_zurück fehlschlag(erster)
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_vfs_einhaengen(pfad: puffer[u8], system: ptr[dyn Dateisystem]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_einhaengen(zeiger(adresse_von(KERN_VFS.mounts)), pfad, system)
+
+@nativ
+funktion kern_vfs_aushängen(pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_aushängen(zeiger(adresse_von(KERN_VFS.mounts)), pfad)
+
+@nativ
+funktion kern_vfs_anlegen(pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_anlegen(zeiger(adresse_von(KERN_VFS.mounts)), pfad, verzeichnis)
+
+@nativ
+funktion kern_vfs_loeschen(pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_loeschen(zeiger(adresse_von(KERN_VFS.mounts)), pfad)
+
+@nativ
+funktion kern_vfs_umbenennen(quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_umbenennen(zeiger(adresse_von(KERN_VFS.mounts)), quelle, ziel)
+
+@nativ
+funktion kern_vfs_pfad_stat(pfad: puffer[u8]) -> ergebnis[VfsStat, VfsFehler]:
+    unsicher:
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        gib_zurück vfs_stat(zeiger(adresse_von(KERN_VFS.mounts)), pfad)

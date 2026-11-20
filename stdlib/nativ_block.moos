@@ -1,0 +1,70 @@
+# Gemeinsamer Blockvertrag für Host und Kern; keine IRQ-/Planer-Abhängigkeit.
+@nativ
+konstante BLOCK_LESEN: u32 auf 1
+@nativ
+konstante BLOCK_SCHREIBEN: u32 auf 2
+@nativ
+konstante BLOCK_FLUSH: u32 auf 3
+@nativ
+konstante BLOCK_VERWERFEN: u32 auf 4
+@nativ
+konstante BLOCK_SCHREIBEN_FUA: u32 auf 5
+
+@nativ
+konstante BLOCK_OK: u32 auf 0
+@nativ
+konstante BLOCK_KEIN_GERAET: u32 auf 1
+@nativ
+konstante BLOCK_GEOMETRIE: u32 auf 2
+@nativ
+konstante BLOCK_BEREICH: u32 auf 3
+@nativ
+konstante BLOCK_PUFFER: u32 auf 4
+@nativ
+konstante BLOCK_NUR_LESEN: u32 auf 5
+@nativ
+konstante BLOCK_BELEGT: u32 auf 6
+@nativ
+konstante BLOCK_VOLL: u32 auf 7
+@nativ
+konstante BLOCK_UNBEKANNT: u32 auf 8
+@nativ
+konstante BLOCK_EA: u32 auf 9
+@nativ
+konstante BLOCK_ZEIT: u32 auf 10
+@nativ
+konstante BLOCK_NICHT_BEREIT: u32 auf 11
+
+struktur BlockGeometrie:
+    bloecke: u64
+    block_bytes: u64
+    nur_lesend: bool
+
+struktur BlockFehler:
+    code: u32
+    geraete_status: u32
+
+@nativ
+funktion block_pruefen(geo: BlockGeometrie, art: u32, lba: u64, anzahl: u64, puffer: u64, laenge: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn art == BLOCK_FLUSH:
+            wenn lba != 0 oder anzahl != 0 oder puffer != 0 oder laenge != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+            gib_zurück erfolg()
+        wenn art != BLOCK_LESEN und art != BLOCK_SCHREIBEN und art != BLOCK_SCHREIBEN_FUA und art != BLOCK_VERWERFEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 0))
+        wenn (art == BLOCK_SCHREIBEN oder art == BLOCK_SCHREIBEN_FUA oder art == BLOCK_VERWERFEN) und geo.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        wenn anzahl == 0 oder lba >= geo.bloecke oder anzahl > geo.bloecke - lba:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 0))
+        wenn art == BLOCK_VERWERFEN:
+            wenn puffer != 0 oder laenge != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+            gib_zurück erfolg()
+        setze max_adresse: u64 auf 0xFFFFFFFFFFFFFFFF
+        wenn anzahl > max_adresse / geo.block_bytes:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        wenn laenge != anzahl * geo.block_bytes oder puffer == 0 oder laenge - 1 > max_adresse - puffer:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        gib_zurück erfolg()
+

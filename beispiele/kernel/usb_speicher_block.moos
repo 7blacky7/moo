@@ -1,0 +1,270 @@
+# Gebundene USB-BOT-Geräte leben zusammen mit ihren xHCI-Slots bis zum Neustart.
+aus "usb_speicher" importiere ms, ms_setze, ms_waehle, ms_konfigurieren, ms_scsi_starten, ms_bot, ms_sense, ms_reset, ms_daten_aus
+aus "usb_xhci" importiere xh, xh_setze, xh_ausgabe, xh_kontext, xh_waehle, xh_host_verfuegbar, xh_log, usb_poll_berichte
+aus "kern_block" importiere BlockGeraet, BlockAnfrage, BlockGeometrie, BlockFehler, BLOCK_OK, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_NICHT_BEREIT, BLOCK_UNBEKANNT, BLOCK_NUR_LESEN, BLOCK_EA, BLOCK_ZEIT, block_registrieren, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "../uefi/netz_geraet" importiere nt_kopiere
+
+@nativ
+konstante MSC_DMA_BYTES: u64 auf 65536
+@nativ
+konstante MSC_MAX_GERAETE: u64 auf 8
+
+struktur UsbMscZiel:
+    bdf: u64
+    port: u64
+    vid_pid: u64
+    serie: u64
+    schreiben: bool
+
+struktur UsbMscGeraet implementiert BlockGeraet:
+    host: u64
+    slot: u64
+    ep0_index: u64
+    ep0_zyklus: u64
+    in_index: u64
+    in_zyklus: u64
+    out_index: u64
+    out_zyklus: u64
+    zustand: [u64; 32]
+    geo: BlockGeometrie
+    kennung: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze f: BlockFehler auf usb_msc_auftrag(selbst, anfrage)
+            block_abschliessen(anfrage, f)
+            gib_zurück erfolg()
+
+@nativ
+statisch MSC_GERAETE: [UsbMscGeraet; 8] auf 0
+@nativ
+statisch MSC_ZIELE: [u64; 2] auf 0
+@nativ
+statisch MSC_LAUF: atom[u64] auf 0
+@nativ
+statisch MSC_USB_MUTEX: KernMutex auf 0
+@nativ
+konstante MSC_T_PORT: [u8; _] auf "MOO-KERNEL USB MSC BLOCK PORT "
+@nativ
+konstante MSC_T_LESEND: [u8; _] auf "MOO-KERNEL USB MSC BLOCK NUR LESEND "
+
+@nativ
+funktion usb_msc_sichern(geraet: ptr[UsbMscGeraet]) -> void:
+    unsicher:
+        setze geraet.ep0_index auf xh(12)
+        setze geraet.ep0_zyklus auf xh(13)
+        setze geraet.in_index auf xh(14)
+        setze geraet.in_zyklus auf xh(15)
+        setze geraet.out_index auf xh(44)
+        setze geraet.out_zyklus auf xh(45)
+
+@nativ
+funktion usb_msc_laden(geraet: ptr[UsbMscGeraet]) -> void:
+    unsicher:
+        xh_waehle(geraet.host)
+        xh_setze(10, geraet.slot)
+        xh_setze(12, geraet.ep0_index)
+        xh_setze(13, geraet.ep0_zyklus)
+        xh_setze(14, geraet.in_index)
+        xh_setze(15, geraet.in_zyklus)
+        xh_setze(44, geraet.out_index)
+        xh_setze(45, geraet.out_zyklus)
+        xh_setze(21, 1)
+        ms_waehle(adresse_von(geraet.zustand))
+
+@nativ
+funktion usb_msc_abgeben(geraet: ptr[UsbMscGeraet], vorher: u64) -> void:
+    unsicher:
+        usb_msc_sichern(geraet)
+        ms_waehle(0)
+        xh_setze(21, 0)
+        xh_setze(10, 0)
+        xh_waehle(vorher)
+
+@nativ
+funktion usb_msc_bindung(geraet: ptr[UsbMscGeraet], ziel: ptr[UsbMscZiel], port: u64, speed: u64, laenge: u64) -> bool:
+    unsicher:
+        # 31 Seiten reichen auch mit 15 Seiten Vorlauf für 64-KiB-Alignment.
+        setze roh: u64 auf ar_rahmen_nehmen(31)
+        wenn roh == 0 oder roh >= 0xFFF00000:
+            gib_zurück falsch
+        setze basis: u64 auf (roh + 65535) & 0xFFFFFFFFFFFF0000
+        ms_waehle(adresse_von(geraet.zustand))
+        ms_setze(0, xh(4))
+        ms_setze(1, basis)
+        ms_setze(2, xh_ausgabe() + 2048)
+        ms_setze(3, xh_ausgabe() + 2112)
+        ms_setze(5, ziel.vid_pid)
+        ms_setze(27, ziel.serie)
+        ms_setze(28, MSC_DMA_BYTES)
+        ms_setze(29, u64(ziel.schreiben))
+        ms_setze(30, 1)
+        setze ok: bool auf ms_konfigurieren(port, speed, laenge) und ms_scsi_starten() und ms(18) != 0xFFFFFFFFFFFFFFFF
+        wenn ok:
+            setze geraet.host auf xh_kontext()
+            setze geraet.slot auf xh(10)
+            setze geraet.geo auf BlockGeometrie(ms(18) + 1, ms(17), nicht ziel.schreiben)
+            usb_msc_sichern(geraet)
+            xh_log(adresse_von(MSC_T_PORT), port)
+            xh_log(adresse_von(MSC_T_LESEND), u64(geraet.geo.nur_lesend))
+        ms_waehle(0)
+        gib_zurück ok
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion usb_msc_entdecken(port: u64, speed: u64, laenge: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < MSC_ZIELE[1]:
+            setze ziel: ptr[UsbMscZiel] auf zeiger(MSC_ZIELE[0] + i * groesse_von(UsbMscZiel))
+            wenn ziel.bdf == xh(29) und ziel.port == port und ziel.vid_pid != 0 und ziel.vid_pid <= 0xFFFFFFFF und ziel.serie != 0:
+                setze geraet: ptr[UsbMscGeraet] auf zeiger(adresse_von(MSC_GERAETE[i]))
+                gib_zurück usb_msc_bindung(geraet, ziel, port, speed, laenge)
+            setze i auf i + 1
+        gib_zurück falsch
+
+# Die Zielliste ist während usb_starten gültig; ihre Portbindungen sind eindeutig.
+@nativ
+funktion usb_msc_vorbereiten(ziele: ptr[UsbMscZiel], anzahl: u64) -> u64:
+    unsicher:
+        wenn u64(ziele) == 0 oder anzahl == 0 oder anzahl > MSC_MAX_GERAETE:
+            gib_zurück 0
+        setze MSC_ZIELE[0] auf u64(ziele)
+        setze MSC_ZIELE[1] auf anzahl
+        gib_zurück adresse_von(usb_msc_entdecken)
+
+# Nach Host-Enumeration und Start des Fadenplaners.
+@nativ
+funktion usb_msc_registrieren() -> u64:
+    unsicher:
+        setze registriert: u64 auf 0
+        setze i: u64 auf 0
+        solange i < MSC_ZIELE[1]:
+            setze geraet: ptr[UsbMscGeraet] auf zeiger(adresse_von(MSC_GERAETE[i]))
+            wenn geraet.host != 0 und xh_host_verfuegbar(geraet.host, geraet.zustand[0]):
+                wenn geraet.kennung == 0:
+                    setze r: ergebnis[u64, BlockFehler] auf block_registrieren(geraet)
+                    wenn ist_erfolg(r):
+                        setze geraet.kennung auf ergebnis_wert(r)
+                wenn geraet.kennung != 0:
+                    setze registriert auf registriert + 1
+            setze i auf i + 1
+        wenn registriert != 0:
+            atom_speichern(MSC_LAUF, 1, ordnung=freigeben)
+        gib_zurück registriert
+
+@nativ
+funktion usb_msc_id(nr: u64) -> u64:
+    unsicher:
+        wenn nr >= MSC_MAX_GERAETE:
+            gib_zurück 0
+        gib_zurück MSC_GERAETE[nr].kennung
+
+@nativ
+funktion usb_msc_eingabe(callback: u64) -> bool:
+    unsicher:
+        wenn atom_laden(MSC_LAUF, ordnung=erwerben) == 0:
+            gib_zurück usb_poll_berichte(callback)
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(MSC_USB_MUTEX))
+        mutex_nimm(smp_planer(), sperre)
+        setze offen: bool auf usb_poll_berichte(callback)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück offen
+
+@nativ
+funktion usb_msc_bot_io(op: u64, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> BlockFehler:
+    unsicher:
+        wenn ms(20) != 0:
+            gib_zurück BlockFehler(BLOCK_NICHT_BEREIT, 0)
+        setze schreiben: bool auf ms_daten_aus(op)
+        wenn schreiben:
+            nt_kopiere(ms(1), puffer, bytes)
+        wenn ms_bot(op, lba, anzahl) und ms(16) == bytes:
+            wenn bytes != 0 und nicht schreiben:
+                nt_kopiere(puffer, ms(1), bytes)
+            gib_zurück BlockFehler(BLOCK_OK, 0)
+        wenn ms(15) == 1:
+            setze sense: u64 auf ms_sense()
+            wenn (sense >> 16) == 7:
+                gib_zurück BlockFehler(BLOCK_NUR_LESEN, u32(sense))
+            gib_zurück BlockFehler(BLOCK_EA, u32(sense))
+        setze cc: u32 auf u32(ms(31))
+        wenn cc == 0:
+            gib_zurück BlockFehler(BLOCK_ZEIT, 0)
+        gib_zurück BlockFehler(BLOCK_EA, cc)
+
+@nativ
+funktion usb_msc_einzel(geraet: ptr[UsbMscGeraet], op: u64, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> BlockFehler:
+    unsicher:
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(MSC_USB_MUTEX))
+        mutex_nimm(smp_planer(), sperre)
+        setze vorher: u64 auf xh_kontext()
+        usb_msc_laden(geraet)
+        setze f: BlockFehler auf usb_msc_bot_io(op, lba, anzahl, puffer, bytes)
+        usb_msc_abgeben(geraet, vorher)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück f
+
+@nativ
+funktion usb_msc_flush(geraet: ptr[UsbMscGeraet]) -> BlockFehler:
+    unsicher:
+        wenn geraet.geo.nur_lesend:
+            gib_zurück BlockFehler(BLOCK_OK, 0)
+        # LBA und Blockzahl null synchronisieren den ganzen LUN.
+        gib_zurück usb_msc_einzel(geraet, 0x35, 0, 0, 0, 0)
+
+@nativ
+funktion usb_msc_auftrag(geraet: ptr[UsbMscGeraet], anfrage: ptr[BlockAnfrage]) -> BlockFehler:
+    unsicher:
+        wenn anfrage.art == BLOCK_FLUSH:
+            gib_zurück usb_msc_flush(geraet)
+        wenn anfrage.art != BLOCK_LESEN und anfrage.art != BLOCK_SCHREIBEN und anfrage.art != BLOCK_SCHREIBEN_FUA:
+            gib_zurück BlockFehler(BLOCK_UNBEKANNT, 0)
+        setze lesen: bool auf anfrage.art == BLOCK_LESEN
+        setze lba: u64 auf anfrage.lba
+        setze rest: u64 auf anfrage.anzahl
+        setze puffer: u64 auf anfrage.puffer
+        setze bytes: u64 auf geraet.geo.block_bytes
+        setze max_anzahl: u64 auf MSC_DMA_BYTES / bytes
+        solange rest != 0:
+            setze n: u64 auf rest
+            wenn n > max_anzahl:
+                setze n auf max_anzahl
+            setze op: u64 auf 0x2A
+            wenn lesen:
+                setze op auf 0x28
+            wenn lba + n - 1 > 0xFFFFFFFF:
+                setze op auf op + 0x60
+            setze teil: u64 auf n * bytes
+            setze f: BlockFehler auf usb_msc_einzel(geraet, op, lba, n, puffer, teil)
+            wenn f.code != BLOCK_OK:
+                gib_zurück f
+            setze lba auf lba + n
+            setze rest auf rest - n
+            setze puffer auf puffer + teil
+        wenn anfrage.art == BLOCK_SCHREIBEN_FUA:
+            gib_zurück usb_msc_flush(geraet)
+        gib_zurück BlockFehler(BLOCK_OK, 0)
+
+# Expliziter Transportneustart; die registrierte Gerätekennung bleibt gebunden.
+@nativ
+funktion usb_msc_neustart(nr: u64) -> bool:
+    unsicher:
+        wenn usb_msc_id(nr) == 0:
+            gib_zurück falsch
+        setze geraet: ptr[UsbMscGeraet] auf zeiger(adresse_von(MSC_GERAETE[nr]))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(MSC_USB_MUTEX))
+        mutex_nimm(smp_planer(), sperre)
+        setze vorher: u64 auf xh_kontext()
+        usb_msc_laden(geraet)
+        setze ok: bool auf ms_reset()
+        usb_msc_abgeben(geraet, vorher)
+        mutex_gib(smp_planer(), sperre)
+        gib_zurück ok

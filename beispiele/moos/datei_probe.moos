@@ -1,0 +1,184 @@
+# Datei-API im echten Ring 3: kurze Transfers, alle sechs Registerargumente,
+# Fehlercodes, geerbter Deskriptor und automatisches Cleanup beim Prozessende.
+aus moos_syscall importiere _start, moos_aufruf6, moos_schreiben, moos_abgeben, moos_schlafen, moos_faden_neu, moos_faden_warten, moos_ende
+aus moos_datei importiere moos_datei_oeffnen, moos_datei_lesen, moos_datei_schreiben, moos_datei_schliessen, moos_datei_stat, moos_datei_verzeichnis, moos_datei_position, moos_datei_abgleichen, moos_datei_anlegen, moos_datei_loeschen, moos_datei_umbenennen
+aus moos_datei_abi importiere MoosDateiStat, MoosDateiVerzeichnis, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_LEEREN, VFS_VERZEICHNIS, MOOS_DATEI_LESEN, MOOS_DATEI_SCHREIBEN, MOOS_DATEI_STAT, MOOS_DATEI_VERZEICHNIS, MOOS_DATEI_UMBENENNEN
+struktur DateiProbeSpeicher:
+    daten: [u8; 8192]
+    gelesen: [u8; 8192]
+    name: [u8; 1024]
+@nativ
+statisch DATEI_SPEICHER: DateiProbeSpeicher auf 0
+@nativ
+konstante DATEI_ORDNER: [u8; 11] auf "/dateiprobe"
+@nativ
+konstante DATEI_ALT: [u8; 21] auf "/dateiprobe/daten.bin"
+@nativ
+konstante DATEI_NEU: [u8; 19] auf "/dateiprobe/neu.bin"
+@nativ
+konstante DATEI_WURZEL: [u8; 1] auf "/"
+@nativ
+konstante DATEI_NAME: [u8; 7] auf "neu.bin"
+@nativ
+konstante DATEI_BEGINN: [u8; 19] auf "MOO-LAUFZEIT-BEGIN\n"
+@nativ
+konstante DATEI_ENDE: [u8; 17] auf "MOO-LAUFZEIT-END\n"
+@nativ
+konstante DATEI_OK: [u8; 17] auf "MOO-DATEI-API-OK\n"
+
+@nativ
+funktion datei_probe_pruefe(gut: bool, code: u32) -> ergebnis[void, u32]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(code)
+    gib_zurück erfolg()
+
+@nativ
+funktion datei_probe_negativ(roh: u64, code: u32) -> bool:
+    gib_zurück roh == 0 - als(u64, code)
+
+@nativ
+funktion datei_probe_faden(fd: u64) -> void:
+    unsicher:
+        setze daten: [u8; 8] auf [0, 0, 0, 0, 0, 0, 0, 0]
+        setze r: ergebnis[u64, u32] auf moos_datei_lesen(fd, byteansicht(daten))
+        wenn nicht ist_erfolg(r):
+            moos_ende(1)
+        wenn ergebnis_wert(r) != 8:
+            moos_ende(2)
+        setze i: u64 auf 0
+        solange i < 8:
+            wenn daten[i] != als_wrap(u8, i * 37 + 11):
+                moos_ende(3)
+            setze i auf i + 1
+        moos_ende(73)
+
+@nativ
+funktion datei_probe_ablauf() -> ergebnis[void, u32]:
+    unsicher:
+        setze p: ptr[DateiProbeSpeicher] auf zeiger(adresse_von(DATEI_SPEICHER))
+        setze ordner: [u8; 11] auf [47, 100, 97, 116, 101, 105, 112, 114, 111, 98, 101]
+        setze alt: [u8; 21] auf [47, 100, 97, 116, 101, 105, 112, 114, 111, 98, 101, 47, 100, 97, 116, 101, 110, 46, 98, 105, 110]
+        setze zielpfad: [u8; 19] auf [47, 100, 97, 116, 101, 105, 112, 114, 111, 98, 101, 47, 110, 101, 117, 46, 98, 105, 110]
+        setze wurzel: [u8; 1] auf [47]
+        weitergeben(datei_probe_pruefe(moos_abgeben() == 0 und moos_schlafen(0) == 0, 1001))
+        weitergeben(moos_datei_anlegen(byteansicht(ordner), wahr))
+        weitergeben(moos_datei_anlegen(byteansicht(alt), falsch))
+        setze fd: u64 auf weitergeben(moos_datei_oeffnen(byteansicht(alt), VFS_LESEN | VFS_SCHREIBEN | VFS_LEEREN))
+        weitergeben(datei_probe_pruefe(fd == 3, 1002))
+        setze i: u64 auf 0
+        solange i < 8192:
+            p.daten[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        setze gesamt: u64 auf 0
+        setze anzahl: u64 auf 0
+        solange gesamt < 1048576:
+            setze geschrieben: u64 auf 0
+            solange geschrieben < 8192:
+                setze quelle: ptr[u8] auf zeiger(adresse_von(p.daten[geschrieben]))
+                setze anzahl auf weitergeben(moos_datei_schreiben(fd, byteansicht(quelle, 8192 - geschrieben)))
+                weitergeben(datei_probe_pruefe(anzahl != 0 und anzahl <= 8192 - geschrieben, 1003))
+                setze geschrieben auf geschrieben + anzahl
+            setze gesamt auf gesamt + geschrieben
+        setze info: MoosDateiStat auf weitergeben(moos_datei_stat(fd))
+        weitergeben(datei_probe_pruefe(info.bytes == 1048576 und info.art == 1, 1004))
+        weitergeben(moos_datei_abgleichen(fd))
+        setze pos: u64 auf weitergeben(moos_datei_position(fd, 0, 0))
+        setze roh: u64 auf moos_aufruf6(MOOS_DATEI_LESEN, fd, 0, 1, 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 14), 1005))
+        setze roh auf moos_aufruf6(MOOS_DATEI_LESEN, fd, adresse_von(DATEI_ORDNER), 1, 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 14), 1006))
+        setze roh auf moos_aufruf6(MOOS_DATEI_LESEN, fd, 0xFFFFFFFF80000000, 1, 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 14), 1007))
+        setze roh auf moos_aufruf6(MOOS_DATEI_SCHREIBEN, fd, 0, 1, 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 14), 1008))
+        setze roh auf moos_aufruf6(MOOS_DATEI_STAT, fd, adresse_von(DATEI_ORDNER), groesse_von(MoosDateiStat), 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 14), 1009))
+        setze roh auf moos_aufruf6(MOOS_DATEI_SCHREIBEN, fd, adresse_von(p.daten[0]), 0xFFFFFFFFFFFFFFFF, 0, 0, 0)
+        weitergeben(datei_probe_pruefe(datei_probe_negativ(roh, 22), 1010))
+        setze pos auf weitergeben(moos_datei_position(fd, 0, 1))
+        weitergeben(datei_probe_pruefe(pos == 0, 1011))
+        setze negativ_seek: ergebnis[u64, u32] auf moos_datei_position(fd, -1, 0)
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(negativ_seek), 1012))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(negativ_seek) == 22, 1013))
+        setze pos auf weitergeben(moos_datei_position(fd, 0x7FFFFFFFFFFFFFFF, 0))
+        setze voll_seek: ergebnis[u64, u32] auf moos_datei_position(fd, 1, 1)
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(voll_seek), 1014))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(voll_seek) == 75, 1015))
+        setze pos auf weitergeben(moos_datei_position(fd, 0, 1))
+        weitergeben(datei_probe_pruefe(pos == 0x7FFFFFFFFFFFFFFF, 1016))
+        setze runde: u64 auf 0
+        solange runde < 2:
+            setze pos auf weitergeben(moos_datei_position(fd, 0, 0))
+            setze kind: u64 auf moos_faden_neu(adresse_von(datei_probe_faden), fd)
+            weitergeben(datei_probe_pruefe(kind < 0x8000000000000000 und kind != 0, 1017))
+            weitergeben(datei_probe_pruefe(moos_faden_warten(kind) == 73, 1018))
+            setze pos auf weitergeben(moos_datei_position(fd, 0, 1))
+            weitergeben(datei_probe_pruefe(pos == 8, 1019))
+            setze runde auf runde + 1
+        setze pos auf weitergeben(moos_datei_position(fd, 0, 0))
+        setze gesamt auf 0
+        solange gesamt < 1048576:
+            setze gelesen: u64 auf 0
+            solange gelesen < 8192:
+                setze ziel: ptr[u8] auf zeiger(adresse_von(p.gelesen[gelesen]))
+                setze anzahl auf weitergeben(moos_datei_lesen(fd, byteansicht(ziel, 8192 - gelesen)))
+                weitergeben(datei_probe_pruefe(anzahl != 0 und anzahl <= 8192 - gelesen, 1020))
+                setze gelesen auf gelesen + anzahl
+            setze i auf 0
+            solange i < 8192:
+                weitergeben(datei_probe_pruefe(p.daten[i] == p.gelesen[i], 1021))
+                setze i auf i + 1
+            setze gesamt auf gesamt + gelesen
+        setze anzahl auf weitergeben(moos_datei_lesen(fd, byteansicht(p.gelesen)))
+        weitergeben(datei_probe_pruefe(anzahl == 0, 1022))
+        weitergeben(moos_datei_umbenennen(byteansicht(alt), byteansicht(zielpfad)))
+        setze weg: ergebnis[u64, u32] auf moos_datei_oeffnen(byteansicht(alt), VFS_LESEN)
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(weg), 1023))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(weg) == 2, 1024))
+        setze dir: u64 auf weitergeben(moos_datei_oeffnen(byteansicht(ordner), VFS_LESEN | VFS_VERZEICHNIS))
+        setze kurzname: ptr[u8] auf zeiger(adresse_von(p.name[0]))
+        p.name[0] = 255
+        setze klein: ergebnis[MoosDateiVerzeichnis, u32] auf moos_datei_verzeichnis(dir, 0, byteansicht(kurzname, 1))
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(klein), 1025))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(klein) == 34 und p.name[0] == 255, 1026))
+        setze eintrag: MoosDateiVerzeichnis auf weitergeben(moos_datei_verzeichnis(dir, 0, byteansicht(p.name)))
+        weitergeben(datei_probe_pruefe(eintrag.art == 1 und eintrag.bytes == 1048576 und eintrag.name_bytes == 7 und eintrag.reserviert == 0, 1027))
+        setze i auf 0
+        solange i < eintrag.name_bytes:
+            weitergeben(datei_probe_pruefe(p.name[i] == DATEI_NAME[i], 1028))
+            setze i auf i + 1
+        setze eintrag auf weitergeben(moos_datei_verzeichnis(dir, 1, byteansicht(p.name)))
+        weitergeben(datei_probe_pruefe(eintrag.art == 0 und eintrag.name_bytes == 0, 1029))
+        weitergeben(moos_datei_schliessen(dir))
+        weitergeben(moos_datei_schliessen(fd))
+        setze doppelt: ergebnis[void, u32] auf moos_datei_schliessen(fd)
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(doppelt), 1030))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(doppelt) == 9, 1031))
+        weitergeben(moos_datei_loeschen(byteansicht(zielpfad)))
+        setze fd auf weitergeben(moos_datei_oeffnen(byteansicht(alt), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN))
+        setze anzahl auf weitergeben(moos_datei_schreiben(fd, byteansicht(kurzname, 1)))
+        weitergeben(moos_datei_loeschen(byteansicht(alt)))
+        weitergeben(moos_datei_loeschen(byteansicht(ordner)))
+        # Der Prozess lässt absichtlich 61 Griffe offen. Sein Cleanup muss den
+        # letzten unverbundenen Datei-Inode und alle Mountreferenzen freigeben.
+        setze i auf 0
+        solange i < 60:
+            setze root_fd: u64 auf weitergeben(moos_datei_oeffnen(byteansicht(wurzel), VFS_LESEN | VFS_VERZEICHNIS))
+            setze i auf i + 1
+        setze voll: ergebnis[u64, u32] auf moos_datei_oeffnen(byteansicht(wurzel), VFS_LESEN)
+        weitergeben(datei_probe_pruefe(nicht ist_erfolg(voll), 1032))
+        weitergeben(datei_probe_pruefe(ergebnis_fehler(voll) == 24, 1033))
+        gib_zurück erfolg()
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        wenn moos_schreiben(adresse_von(DATEI_BEGINN), 19) != 19:
+            gib_zurück 2001
+        setze r: ergebnis[void, u32] auf datei_probe_ablauf()
+        wenn nicht ist_erfolg(r):
+            gib_zurück 10000 + als(u64, ergebnis_fehler(r))
+        wenn moos_schreiben(adresse_von(DATEI_OK), 17) != 17 oder moos_schreiben(adresse_von(DATEI_ENDE), 17) != 17:
+            gib_zurück 2002
+        gib_zurück 0

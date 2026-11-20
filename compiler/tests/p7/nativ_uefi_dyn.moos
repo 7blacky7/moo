@@ -556,23 +556,20 @@ funktion ms_serien_test() -> u64:
         gib_zurück 2031
 
 # P7-T27: reine NVMe-Wireorakel im bereits vorhandenen Test-RAM.
-aus "../../../beispiele/kernel/nvme" importiere NVME_BEFEHL, nvme_wert, nvme_setze, nvme_opcode_erlaubt, nvme_befehl_lesend, nvme_bauen, nvme_cqe_passend, nvme_cq_weiter, nvme_namespace_pruefen, nvme_serie
+aus "../../../beispiele/kernel/nvme" importiere NvmeController, NvmeNamespace, nvme_opcode_erlaubt, nvme_befehl_gueltig, nvme_bauen, nvme_cqe_passend, nvme_cq_weiter, nvme_namespace_pruefen, nvme_serie
 @nativ
 konstante NVME_TEST_SERIE: [u8; _] auf "MOONVME-READONLY-001"
 
 @nativ
-funktion nvme_test_basis() -> u64:
+funktion nvme_test_basis(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> u64:
     unsicher:
         setze a: u64 auf ms_test_basis()
-        setze i: u64 auf 0
-        solange i < 48:
-            nvme_setze(i, 0)
-            setze i auf i + 1
-        nvme_setze(0, 0x100000)
-        nvme_setze(6, 8)
-        nvme_setze(18, 512)
-        nvme_setze(19, 0x200000003)
-        nvme_setze(20, 1)
+        setze ctrl.dma auf 0x100000
+        setze ctrl.tiefe auf 8
+        setze ctrl.daten_seiten auf 1
+        setze ns.block_bytes auf 512
+        setze ns.letzte_lba auf 0x200000003
+        setze ns.nsid auf 1
         gib_zurück a
 
 @nativ
@@ -582,137 +579,197 @@ funktion nvme_opcode_test() -> u64:
         setze admin: bool auf falsch
         solange opcode < 256:
             setze admin auf opcode == 0 oder opcode == 1 oder opcode == 2 oder opcode == 4 oder opcode == 5 oder opcode == 6 oder opcode == 10
-            wenn nvme_opcode_erlaubt(0, opcode) != admin oder nvme_opcode_erlaubt(1, opcode) != (opcode == 2) oder nvme_opcode_erlaubt(2, opcode):
+            wenn nvme_opcode_erlaubt(0, opcode, falsch, falsch) != admin oder nvme_opcode_erlaubt(1, opcode, falsch, falsch) != (opcode == 2) oder nvme_opcode_erlaubt(2, opcode, falsch, falsch):
                 gib_zurück 3201
             setze opcode auf opcode + 1
-        wenn nvme_opcode_erlaubt(0, 256) oder nvme_opcode_erlaubt(1, 0x102):
+        wenn nvme_opcode_erlaubt(0, 256, falsch, falsch) oder nvme_opcode_erlaubt(1, 0x102, falsch, falsch):
             gib_zurück 3202
         gib_zurück 2032
 
 @nativ
+@ausrichten(4096)
+statisch NVME_TEST_DATEN: [u8; 36864] auf 0
+
+@nativ
+funktion nvme_schreib_wire(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> u64:
+    unsicher:
+        setze ctrl.dma auf adresse_von(NVME_TEST_DATEN)
+        setze ctrl.daten_seiten auf 4
+        setze dma: u64 auf ctrl.dma + 4 * 4096
+        setze liste: u64 auf dma + 4 * 4096
+        setze befehl: u64 auf adresse_von(ctrl.befehl)
+        wenn nvme_bauen(ctrl, ns, 1, 1, 4, 1) oder nvme_bauen(ctrl, ns, 1, 0, 0, 0) oder nvme_bauen(ctrl, ns, 1, 9, 4, 1):
+            gib_zurück 3320
+        setze ns.schreibbar auf wahr
+        wenn nicht nvme_bauen(ctrl, ns, 1, 1, 0x100000007, 17):
+            gib_zurück 3321
+        wenn speicher_lesen(befehl, 8) != 0x0000000100000001 oder speicher_lesen(befehl + 24, 8) != dma oder speicher_lesen(befehl + 32, 8) != liste oder speicher_lesen(befehl + 40, 8) != 0x100000007 oder speicher_lesen(befehl + 48, 8) != 16:
+            gib_zurück 3322
+        wenn speicher_lesen(liste, 8) != dma + 4096 oder speicher_lesen(liste + 8, 8) != dma + 8192:
+            gib_zurück 3323
+        speicher_schreiben(liste + 8, dma + 12288, 8)
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, befehl):
+            gib_zurück 3324
+        setze ctrl.mdts auf 1
+        wenn nvme_bauen(ctrl, ns, 1, 2, 4, 17) oder nicht nvme_bauen(ctrl, ns, 1, 2, 4, 16):
+            gib_zurück 3325
+        wenn speicher_lesen(befehl + 32, 8) != dma + 4096:
+            gib_zurück 3326
+        wenn nicht nvme_bauen(ctrl, ns, 1, 0, 0, 0) oder speicher_lesen(befehl, 8) != 0x100000000 oder speicher_lesen(befehl + 24, 8) != 0:
+            gib_zurück 3327
+        wenn nvme_bauen(ctrl, ns, 1, 9, 4, 7):
+            gib_zurück 3328
+        setze ctrl.oncs auf 4
+        wenn nicht nvme_bauen(ctrl, ns, 1, 9, 4, 7) oder speicher_lesen(befehl, 8) != 0x100000009 oder speicher_lesen(befehl + 40, 8) != 0x400000000:
+            gib_zurück 3329
+        wenn speicher_lesen(dma, 8) != 0x700000000 oder speicher_lesen(dma + 8, 8) != 4:
+            gib_zurück 3330
+        wenn nvme_bauen(ctrl, ns, 1, 9, ns.letzte_lba, 2) oder nvme_bauen(ctrl, ns, 1, 2, ns.letzte_lba, 2):
+            gib_zurück 3331
+        wenn nicht nvme_bauen(ctrl, ns, 1, 1, 4, 1):
+            gib_zurück 3332
+        setze ns.schreibbar auf falsch
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, befehl):
+            gib_zurück 3333
+        gib_zurück 2033
+
+@nativ
 funktion nvme_sqe_test() -> u64:
     unsicher:
-        setze a: u64 auf nvme_test_basis()
-        setze p: u64 auf adresse_von(NVME_BEFEHL)
-        wenn nicht nvme_bauen(1, 2, 0x100000007):
+        setze kontroller: NvmeController auf 0
+        setze namespace: NvmeNamespace auf 0
+        setze ctrl: ptr[NvmeController] auf zeiger(adresse_von(kontroller))
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(namespace))
+        setze a: u64 auf nvme_test_basis(ctrl, ns)
+        setze p: u64 auf adresse_von(ctrl.befehl)
+        wenn nicht nvme_bauen(ctrl, ns, 1, 2, 0x100000007, 1):
             gib_zurück 3301
         wenn u64(speicher_lesen(p, 8)) != 0x0000000100000002 oder u64(speicher_lesen(p + 8, 8)) != 0 oder u64(speicher_lesen(p + 16, 8)) != 0 oder u64(speicher_lesen(p + 24, 8)) != 0x104000 oder u64(speicher_lesen(p + 32, 8)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 0x100000007 oder u64(speicher_lesen(p + 48, 8)) != 0 oder u64(speicher_lesen(p + 56, 8)) != 0:
             gib_zurück 3302
         speicher_schreiben(p, 1, 1)
-        wenn nvme_befehl_lesend(1, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3303
-        nvme_bauen(1, 2, 0)
+        nvme_bauen(ctrl, ns, 1, 2, 0, 1)
         speicher_schreiben(p + 1, 1, 1)
-        wenn nvme_befehl_lesend(1, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3304
-        nvme_bauen(1, 2, 0)
+        nvme_bauen(ctrl, ns, 1, 2, 0, 1)
         speicher_schreiben(p + 4, 2, 4)
-        wenn nvme_befehl_lesend(1, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3305
-        nvme_bauen(1, 2, 0)
+        nvme_bauen(ctrl, ns, 1, 2, 0, 1)
         speicher_schreiben(p + 24, 0x105000, 8)
-        wenn nvme_befehl_lesend(1, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3306
-        nvme_bauen(1, 2, 0)
+        nvme_bauen(ctrl, ns, 1, 2, 0, 1)
         speicher_schreiben(p + 32, 0x104000, 8)
-        wenn nvme_befehl_lesend(1, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3307
-        nvme_bauen(1, 2, 0)
-        speicher_schreiben(p + 48, 1, 4)
-        wenn nvme_befehl_lesend(1, p):
+        nvme_bauen(ctrl, ns, 1, 2, 0, 1)
+        # CDW12.FUA gehört nicht zum angebotenen Auftrag.
+        speicher_schreiben(p + 48, 0x40000000, 4)
+        wenn nvme_befehl_gueltig(ctrl, ns, 1, p):
             gib_zurück 3308
-        wenn nvme_bauen(1, 2, 0x200000004) oder nvme_bauen(1, 1, 0) oder nvme_bauen(2, 2, 0):
+        wenn nvme_bauen(ctrl, ns, 1, 2, 0x200000004, 1) oder nvme_bauen(ctrl, ns, 1, 1, 0, 1) oder nvme_bauen(ctrl, ns, 2, 2, 0, 1):
             gib_zurück 3309
-        nvme_setze(20, 0x100000000)
-        wenn nvme_bauen(1, 2, 0) oder nvme_bauen(0, 6, 0):
+        setze ns.nsid auf 0x100000000
+        wenn nvme_bauen(ctrl, ns, 1, 2, 0, 1) oder nvme_bauen(ctrl, ns, 0, 6, 0, 1):
             gib_zurück 3310
-        nvme_setze(20, 1)
-        wenn nicht nvme_bauen(0, 5, 1) oder u64(speicher_lesen(p, 8)) != 5 oder u64(speicher_lesen(p + 24, 8)) != 0x103000 oder u64(speicher_lesen(p + 40, 8)) != 0x0000000100070001:
+        setze ns.nsid auf 1
+        wenn nicht nvme_bauen(ctrl, ns, 0, 5, 1, 1) oder u64(speicher_lesen(p, 8)) != 5 oder u64(speicher_lesen(p + 24, 8)) != 0x103000 oder u64(speicher_lesen(p + 40, 8)) != 0x0000000100070001:
             gib_zurück 3311
-        wenn nicht nvme_bauen(0, 1, 1) oder u64(speicher_lesen(p, 8)) != 1 oder u64(speicher_lesen(p + 24, 8)) != 0x102000 oder u64(speicher_lesen(p + 40, 8)) != 0x0001000100070001:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 1, 1, 1) oder u64(speicher_lesen(p, 8)) != 1 oder u64(speicher_lesen(p + 24, 8)) != 0x102000 oder u64(speicher_lesen(p + 40, 8)) != 0x0001000100070001:
             gib_zurück 3312
-        wenn nicht nvme_bauen(0, 0, 1) oder u64(speicher_lesen(p, 8)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 1:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 0, 1, 1) oder u64(speicher_lesen(p, 8)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 1:
             gib_zurück 3313
-        wenn nicht nvme_bauen(0, 4, 1) oder u64(speicher_lesen(p, 8)) != 4:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 4, 1, 1) oder u64(speicher_lesen(p, 8)) != 4:
             gib_zurück 3314
-        wenn nicht nvme_bauen(0, 6, 1) oder u64(speicher_lesen(p + 4, 4)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 1:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 6, 1, 1) oder u64(speicher_lesen(p + 4, 4)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 1:
             gib_zurück 3315
-        wenn nicht nvme_bauen(0, 6, 0) oder u64(speicher_lesen(p + 4, 4)) != 1 oder u64(speicher_lesen(p + 40, 8)) != 0:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 6, 0, 1) oder u64(speicher_lesen(p + 4, 4)) != 1 oder u64(speicher_lesen(p + 40, 8)) != 0:
             gib_zurück 3316
-        wenn nicht nvme_bauen(0, 10, 7) oder u64(speicher_lesen(p + 24, 8)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 7 oder nvme_bauen(0, 10, 6):
+        wenn nicht nvme_bauen(ctrl, ns, 0, 10, 7, 1) oder u64(speicher_lesen(p + 24, 8)) != 0 oder u64(speicher_lesen(p + 40, 8)) != 7 oder nvme_bauen(ctrl, ns, 0, 10, 6, 1):
             gib_zurück 3317
-        wenn nicht nvme_bauen(0, 2, 1) oder u64(speicher_lesen(p, 8)) != 0xFFFFFFFF00000002 oder u64(speicher_lesen(p + 24, 8)) != 0x104000 oder u64(speicher_lesen(p + 40, 8)) != 0x000F8001:
+        wenn nicht nvme_bauen(ctrl, ns, 0, 2, 1, 1) oder u64(speicher_lesen(p, 8)) != 0xFFFFFFFF00000002 oder u64(speicher_lesen(p + 24, 8)) != 0x104000 oder u64(speicher_lesen(p + 40, 8)) != 0x000F8001:
             gib_zurück 3318
         speicher_schreiben(p + 40, 0x000F0001, 4)
-        wenn nvme_befehl_lesend(0, p):
+        wenn nvme_befehl_gueltig(ctrl, ns, 0, p):
             gib_zurück 3319
-        gib_zurück 2033
+        gib_zurück nvme_schreib_wire(ctrl, ns)
 
 @nativ
 funktion nvme_cqe_test() -> u64:
     unsicher:
-        setze a: u64 auf nvme_test_basis()
+        setze kontroller: NvmeController auf 0
+        setze namespace: NvmeNamespace auf 0
+        setze ctrl: ptr[NvmeController] auf zeiger(adresse_von(kontroller))
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(namespace))
+        setze a: u64 auf nvme_test_basis(ctrl, ns)
         setze p: u64 auf a + 256
         speicher_schreiben(p + 8, 1, 2)
         speicher_schreiben(p + 10, 1, 2)
         speicher_schreiben(p + 12, 0x321, 2)
         speicher_schreiben(p + 14, 1, 2)
-        wenn nicht nvme_cqe_passend(1, 0x321, p, 1) oder nvme_cqe_passend(0, 0x321, p, 1) oder nvme_cqe_passend(1, 0x322, p, 1) oder nvme_cqe_passend(1, 0x321, p, 0):
+        wenn nicht nvme_cqe_passend(ctrl.tiefe, 1, 0x321, p, 1) oder nvme_cqe_passend(ctrl.tiefe, 0, 0x321, p, 1) oder nvme_cqe_passend(ctrl.tiefe, 1, 0x322, p, 1) oder nvme_cqe_passend(ctrl.tiefe, 1, 0x321, p, 0):
             gib_zurück 3401
         speicher_schreiben(p + 14, 3, 2)
-        wenn nicht nvme_cqe_passend(1, 0x321, p, 1):
+        wenn nicht nvme_cqe_passend(ctrl.tiefe, 1, 0x321, p, 1):
             gib_zurück 3402
         speicher_schreiben(p + 8, 8, 2)
-        wenn nvme_cqe_passend(1, 0x321, p, 1):
+        wenn nvme_cqe_passend(ctrl.tiefe, 1, 0x321, p, 1):
             gib_zurück 3403
-        nvme_setze(10, 7)
-        nvme_setze(11, 1)
-        nvme_cq_weiter(0)
-        wenn nvme_wert(10) != 0 oder nvme_wert(11) != 0 oder nvme_wert(34) != 1:
+        setze ctrl.admin.cq_kopf auf 7
+        setze ctrl.admin.cq_phase auf 1
+        nvme_cq_weiter(zeiger(adresse_von(ctrl.admin)), ctrl.tiefe)
+        wenn ctrl.admin.cq_kopf != 0 oder ctrl.admin.cq_phase != 0 oder ctrl.admin.cq_umlaeufe != 1:
             gib_zurück 3404
-        nvme_cq_weiter(0)
-        wenn nvme_wert(10) != 1 oder nvme_wert(11) != 0:
+        nvme_cq_weiter(zeiger(adresse_von(ctrl.admin)), ctrl.tiefe)
+        wenn ctrl.admin.cq_kopf != 1 oder ctrl.admin.cq_phase != 0:
             gib_zurück 3405
-        nvme_setze(14, 7)
-        nvme_setze(15, 1)
-        nvme_cq_weiter(1)
-        wenn nvme_wert(14) != 0 oder nvme_wert(15) != 0 oder nvme_wert(33) != 1:
+        setze ctrl.io.cq_kopf auf 7
+        setze ctrl.io.cq_phase auf 1
+        nvme_cq_weiter(zeiger(adresse_von(ctrl.io)), ctrl.tiefe)
+        wenn ctrl.io.cq_kopf != 0 oder ctrl.io.cq_phase != 0 oder ctrl.io.cq_umlaeufe != 1:
             gib_zurück 3406
-        nvme_setze(14, 8)
-        nvme_cq_weiter(1)
-        wenn nvme_wert(14) != 8:
+        setze ctrl.io.cq_kopf auf 8
+        nvme_cq_weiter(zeiger(adresse_von(ctrl.io)), ctrl.tiefe)
+        wenn ctrl.io.cq_kopf != 8:
             gib_zurück 3407
         gib_zurück 2034
 
 @nativ
 funktion nvme_namespace_test() -> u64:
     unsicher:
-        setze a: u64 auf nvme_test_basis()
+        setze kontroller: NvmeController auf 0
+        setze namespace: NvmeNamespace auf 0
+        setze ctrl: ptr[NvmeController] auf zeiger(adresse_von(kontroller))
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(namespace))
+        setze a: u64 auf nvme_test_basis(ctrl, ns)
         speicher_schreiben(a, 0x200000004, 8)
         speicher_schreiben(a + 8, 0x200000004, 8)
         speicher_schreiben(a + 128, u32(9 << 16), 4)
-        wenn nicht nvme_namespace_pruefen(a) oder nvme_wert(18) != 512 oder nvme_wert(19) != 0x200000003:
+        wenn nicht nvme_namespace_pruefen(ns, a) oder ns.block_bytes != 512 oder ns.letzte_lba != 0x200000003:
             gib_zurück 3501
         speicher_schreiben(a + 128, u32(12 << 16), 4)
-        wenn nicht nvme_namespace_pruefen(a) oder nvme_wert(18) != 4096:
+        wenn nicht nvme_namespace_pruefen(ns, a) oder ns.block_bytes != 4096:
             gib_zurück 3502
         speicher_schreiben(a + 128, u32((12 << 16) | 8), 4)
-        wenn nvme_namespace_pruefen(a) oder nvme_wert(18) != 4096:
+        wenn nvme_namespace_pruefen(ns, a) oder ns.block_bytes != 4096:
             gib_zurück 3503
         speicher_schreiben(a + 128, u32(12 << 16), 4)
         speicher_schreiben(a + 26, 16, 1)
-        wenn nvme_namespace_pruefen(a):
+        wenn nvme_namespace_pruefen(ns, a):
             gib_zurück 3504
         speicher_schreiben(a + 26, 1, 1)
-        wenn nvme_namespace_pruefen(a):
+        wenn nvme_namespace_pruefen(ns, a):
             gib_zurück 3505
         speicher_schreiben(a + 26, 0, 1)
         speicher_schreiben(a + 29, 1, 1)
-        wenn nvme_namespace_pruefen(a):
+        wenn nvme_namespace_pruefen(ns, a):
             gib_zurück 3506
         speicher_schreiben(a + 29, 0, 1)
         speicher_schreiben(a + 8, 0x200000005, 8)
-        wenn nvme_namespace_pruefen(a) oder nvme_namespace_pruefen(0):
+        wenn nvme_namespace_pruefen(ns, a) oder nvme_namespace_pruefen(ns, 0):
             gib_zurück 3507
         gib_zurück 2035
 
@@ -722,7 +779,7 @@ konstante NVME_TEST_NUL_SERIE: [u8; 20] auf [50,48,50,52,48,56,50,52,48,48,48,48
 @nativ
 funktion nvme_serien_test() -> u64:
     unsicher:
-        setze a: u64 auf nvme_test_basis()
+        setze a: u64 auf ms_test_basis()
         setze serie: u64 auf adresse_von(NVME_TEST_SERIE)
         nt_kopiere(a + 4, serie, 20)
         wenn nicht nvme_serie(a, serie, 20) oder nvme_serie(a, serie, 19) oder nvme_serie(0, serie, 20) oder nvme_serie(a, 0, 20):

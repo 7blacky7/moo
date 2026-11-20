@@ -1,0 +1,25 @@
+aus ds_fat_unicode importiere fat_unicode_gross
+aus ds_fat importiere FatSektor
+extern "C" funktion write(fd: i32, bytes: ptr[u8], anzahl: u64) -> i64
+
+@nativ
+funktion fat_unicode_ausgeben() -> u64:
+    unsicher:
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze punkt: u32 auf 0
+        solange punkt < 0x110000:
+            setze i: u64 auf 0
+            solange i < 1024:
+                byte_schreiben_le32(bytes, i * 4, fat_unicode_gross(punkt + u32(i)))
+                setze i auf i + 1
+            wenn write(1, puffer_zeiger(bytes), 4096) != 4096:
+                gib_zurück 1
+            setze punkt auf punkt + 1024
+        gib_zurück 0
+
+# Binäres Orakel. Unerwartete Sprachfehler sollen den Lauf abbrechen.
+unsicher:
+    setze status auf fat_unicode_ausgeben()
+    wenn status != 0:
+        wirf "Unicode-Orakel: kurzer Schreibzugriff"

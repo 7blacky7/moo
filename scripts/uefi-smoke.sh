@@ -81,7 +81,11 @@ CFLAGS=(--target=x86_64-w64-windows-gnu -std=c11 -O2 -ffreestanding -fno-stack-p
 WAIT_S="${MOO_UEFI_WAIT:-45}"
 DEBUGCON="${MOO_UEFI_DEBUGCON:-1}"
 QEMU_ACCEL=()
-[ "${MOO_UEFI_KVM:-0}" != 1 ] || QEMU_ACCEL+=(-enable-kvm -cpu host)
+if [ "${MOO_UEFI_KVM:-0}" = 1 ]; then
+  QEMU_ACCEL=(-enable-kvm -cpu "${MOO_UEFI_CPU:-host}")
+elif [ -n "${MOO_UEFI_CPU:-}" ]; then
+  QEMU_ACCEL=(-cpu "$MOO_UEFI_CPU")
+fi
 
 fail() { echo "      FAIL: $*"; echo "# ERGEBNIS: ROT"; exit 1; }
 case "$KERN_TASTATUR" in
@@ -135,6 +139,106 @@ case "$BENUTZER_PROBE" in
     [ -f "${MOO_UEFI_BENUTZER_ERWARTET:-}" ] || fail "Benutzerlaufzeit braucht eine .expected-Datei"
     ;;
   *) fail "Benutzer-ELF-Probe: 0, 1 oder 2 (Moo-Laufzeit)" ;;
+esac
+BLOCK_PROBE="${MOO_UEFI_BLOCK:-0}"
+case "$BLOCK_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] ||
+      fail "Blockgeräteprobe braucht das Kernprofil mit MOO_UEFI_SMP=4"
+    ;;
+  *) fail "MOO_UEFI_BLOCK: 0 oder 1" ;;
+esac
+NVME_RW="${MOO_UEFI_NVME_RW:-0}"
+case "$NVME_RW" in
+  0) ;;
+  1|ro)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_NVME:-0}" = 0 ] && [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] ||
+      fail "NVMe-Schreibprobe braucht ihr eigenes Kern- und Plattenprofil"
+    ;;
+  *) fail "MOO_UEFI_NVME_RW: 0, 1 oder ro" ;;
+esac
+AHCI_PROBE="${MOO_UEFI_AHCI_PROBE:-0}"
+case "$AHCI_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$NVME_RW" = 0 ] && [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] ||
+      fail "AHCI-Probe braucht ihr eigenes Kern- und Plattenprofil"
+    ;;
+  *) fail "MOO_UEFI_AHCI_PROBE: 0 oder 1" ;;
+esac
+CACHE_PROBE="${MOO_UEFI_CACHE_PROBE:-0}"
+case "$CACHE_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$NVME_RW" = 0 ] && [ "$AHCI_PROBE" = 0 ] &&
+      [ "${MOO_UEFI_NVME:-0}" = 0 ] && [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] ||
+      fail "Blockcache-Probe braucht ihr eigenes Kern- und Plattenprofil"
+    ;;
+  *) fail "MOO_UEFI_CACHE_PROBE: 0 oder 1" ;;
+esac
+GPT_PROBE="${MOO_UEFI_GPT_PROBE:-0}"
+case "$GPT_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$NVME_RW" = 0 ] && [ "$AHCI_PROBE" = 0 ] &&
+      [ "$CACHE_PROBE" = 0 ] && [ "${MOO_UEFI_NVME:-0}" = 0 ] &&
+      [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] ||
+      fail "GPT-Probe braucht ihr eigenes Kern- und Plattenprofil"
+    ;;
+  *) fail "MOO_UEFI_GPT_PROBE: 0 oder 1" ;;
+esac
+FAT_PROBE="${MOO_UEFI_FAT_PROBE:-0}"
+case "$FAT_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$GPT_PROBE" = 0 ] && [ "$CACHE_PROBE" = 0 ] &&
+      [ "$AHCI_PROBE" = 0 ] && [ "$NVME_RW" = 0 ] || fail "FAT-Probe braucht ihr eigenes Kernprofil"
+    ;;
+  *) fail "MOO_UEFI_FAT_PROBE: 0 oder 1" ;;
+esac
+VFS_PROBE="${MOO_UEFI_VFS_PROBE:-0}"
+case "$VFS_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$FAT_PROBE" = 0 ] && [ "$GPT_PROBE" = 0 ] &&
+      [ "$CACHE_PROBE" = 0 ] && [ "$AHCI_PROBE" = 0 ] && [ "$NVME_RW" = 0 ] &&
+      [ "${MOO_UEFI_NVME:-0}" = 0 ] && [ "${MOO_UEFI_USB_MSC_PROBE:-0}" = 0 ] &&
+      [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] || fail "VFS-Probe braucht ihr eigenes Kern-/NVMe-Profil"
+    ;;
+  *) fail "MOO_UEFI_VFS_PROBE: 0 oder 1" ;;
+esac
+DATEI_PROBE="${MOO_UEFI_DATEI_PROBE:-0}"
+case "$DATEI_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$BENUTZER_PROBE" = 2 ] &&
+      [ "$VFS_PROBE" = 0 ] && [ "$FAT_PROBE" = 0 ] && [ "$GPT_PROBE" = 0 ] &&
+      [ "$CACHE_PROBE" = 0 ] && [ "$AHCI_PROBE" = 0 ] && [ "$NVME_RW" = 0 ] ||
+      fail "Datei-Syscall-Probe braucht das eigene Benutzerlaufzeitprofil"
+    ;;
+  *) fail "MOO_UEFI_DATEI_PROBE: 0 oder 1" ;;
+esac
+USB_MSC_PROBE="${MOO_UEFI_USB_MSC_PROBE:-0}"
+case "$USB_MSC_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_USB:-1}" = 1 ] && [ "${MOO_UEFI_USB_STORAGE:-0}" = 0 ] &&
+      [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] && [ "$NVME_RW" = 0 ] && [ "$AHCI_PROBE" = 0 ] &&
+      [ "$CACHE_PROBE" = 0 ] && [ "$GPT_PROBE" = 0 ] && [ "${MOO_UEFI_NVME:-0}" = 0 ] ||
+      fail "USB-MSC-Schreibprobe braucht ihr eigenes Kern- und Geräteprofil"
+    ;;
+  *) fail "MOO_UEFI_USB_MSC_PROBE: 0 oder 1" ;;
+esac
+INSTALL_PROBE="${MOO_UEFI_INSTALL_PROBE:-0}"
+case "$INSTALL_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "$BENUTZER_PROBE" = 0 ] && [ "$USB_MSC_PROBE" = 0 ] &&
+      [ "${MOO_UEFI_ESP_KERN:-0}" = 1 ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] ||
+      fail "Installerprobe braucht den eigenen 4-CPU-Kern- und ESP-Start"
+    ;;
+  *) fail "MOO_UEFI_INSTALL_PROBE: 0 oder 1" ;;
 esac
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
 skip() {
@@ -406,9 +510,16 @@ if [ "$PRUEFUNG" = "kern" ]; then
     1) KERN_STDLIB_FLAGS=(); KERN_IR_FLAGS=(--kernel) ;;
     *) fail "MOO_UEFI_KERN_LAUFZEIT: 0 oder 1" ;;
   esac
-  if [ "$BENUTZER_PROBE" != 0 ]; then
+  if [ "$BENUTZER_PROBE" != 0 ] || [ "$INSTALL_PROBE" = 1 ]; then
     phase K2a "Benutzerprogramm: Moo-Start, Syscalls, x86_64-moos ELF"
-    "$BIN" compile "${MOO_UEFI_BENUTZER_SRC:-$ROOT/beispiele/moos/hallo_benutzer.moos}" --target x86_64-moos \
+    BENUTZER_SRC="${MOO_UEFI_BENUTZER_SRC:-$ROOT/beispiele/moos/hallo_benutzer.moos}"
+    if [ "$INSTALL_PROBE" = 1 ]; then
+      BENUTZER_SRC="$ROOT/beispiele/moos/installieren.moos"
+      "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
+        -o "$OUT/KERN-INSTALLIERT.ELF" >"$OUT/installierter-kern.err" 2>&1 ||
+        { sed 's/^/      | /' "$OUT/installierter-kern.err"; fail "Installierbares Kernel-ELF"; }
+    fi
+    "$BIN" compile "$BENUTZER_SRC" --target x86_64-moos \
       --lib-pfad "$ROOT/stdlib" -o "$OUT/HALLO.ELF" || fail "Benutzer-ELF nicht gebaut"
     readelf -Whl "$OUT/HALLO.ELF" >"$OUT/benutzer-elf.txt" || fail "Benutzer-ELF nicht lesbar"
     objcopy -I binary -O elf64-x86-64 -B i386:x86-64 --strip-all \
@@ -676,6 +787,152 @@ PY
     uv run --no-project --offline python -B "$ROOT/skripte/p8/smp/benutzer_profil.py" "$OUT/KERN.ELF" ||
       fail "Benutzerlaufzeit-Profil nicht gesetzt"
   fi
+  IRQ_PROBE="${MOO_UEFI_IRQ:-0}"
+  case "$IRQ_PROBE" in
+    0) ;;
+    1)
+      uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOOIRQ01" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("IRQ-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOOIRQ01" + (1).to_bytes(8, "little")))
+PY
+        fail "IRQ-Profil in privater ELF-Kopie"
+      ;;
+    *) fail "MOO_UEFI_IRQ: 0 oder 1" ;;
+  esac
+  if [ "$BLOCK_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOOBLK01" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("Blockprofil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOOBLK01" + (1).to_bytes(8, "little")))
+PY
+      fail "Blockprofil in privater ELF-Kopie"
+  fi
+  if [ "$NVME_RW" != 0 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" "$NVME_RW" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOONVWR1" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("NVMe-Schreibprofil nicht eindeutig")
+modus = 1 if sys.argv[2] == "1" else 2
+elf.write_bytes(daten.replace(vertrag, b"MOONVWR1" + modus.to_bytes(8, "little")))
+PY
+      fail "NVMe-Schreibprofil in privater ELF-Kopie"
+  fi
+  if [ "$AHCI_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOAHCI01" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("AHCI-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOAHCI01" + (1).to_bytes(8, "little")))
+PY
+      fail "AHCI-Profil in privater ELF-Kopie"
+  fi
+  if [ "$CACHE_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOCACH01" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("Blockcache-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOCACH01" + (1).to_bytes(8, "little")))
+PY
+      fail "Blockcache-Profil in privater ELF-Kopie"
+  fi
+  if [ "$GPT_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOGPT001" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("GPT-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOGPT001" + (1).to_bytes(8, "little")))
+PY
+      fail "GPT-Profil in privater ELF-Kopie"
+  fi
+  if [ "$DATEI_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MODAT001" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("Datei-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MODAT001" + (1).to_bytes(8, "little")))
+PY
+      fail "Datei-Profil in privater ELF-Kopie"
+  fi
+  if [ "$VFS_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOVFS001" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("VFS-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOVFS001" + (1).to_bytes(8, "little")))
+PY
+      fail "VFS-Profil in privater ELF-Kopie"
+  fi
+  if [ "$FAT_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOFAT001" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("FAT-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOFAT001" + (1).to_bytes(8, "little")))
+PY
+      fail "FAT-Profil in privater ELF-Kopie"
+  fi
+  if [ "$USB_MSC_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOUWRK01" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("USB-MSC-Schreibprofil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOUWRK01" + (1).to_bytes(8, "little")))
+PY
+      fail "USB-MSC-Schreibprofil in privater ELF-Kopie"
+  fi
   phase K3 "OVMF-Boot: Moo-Loader -> ExitBootServices -> Moo-Kern"
   KOVMF_CODE=""; KOVMF_VARS=""
   for c in /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2-ovmf/x64/OVMF_CODE.4m.fd \
@@ -683,6 +940,13 @@ PY
     [ -f "$c" ] && { KOVMF_CODE="$c"; KOVMF_VARS="${c/CODE/VARS}"; break; }
   done
   [ -n "$KOVMF_CODE" ] && [ -f "$KOVMF_VARS" ] || skip "OVMF fehlt" "sudo pacman -S edk2-ovmf" "Build K1/K2 gruen — OVMF-Boot GESKIPPT."
+  if [ "$INSTALL_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/installer_probe.py" \
+      "$OUT" "$LADER_EFI" "$OUT/KERN.ELF" "$OUT/KERN-INSTALLIERT.ELF" "$KOVMF_CODE" "$KOVMF_VARS" "$WAIT_S" \
+      "${QEMU_ACCEL[@]}" || fail "Installer-Gate: Installation, Boot oder Abbruchprobe"
+    echo "# ERGEBNIS: Installer-Gate grün."
+    exit 0
+  fi
   kern_image() {  # Image, mit Kern (1/0), mit Loader (Standard 1)
     rm -f "$1"; truncate -s 48M "$1" || fail "Image nicht anlegbar"
     parted -s "$1" mklabel gpt mkpart ESP fat32 1MiB 100% set 1 esp on >/dev/null 2>&1 || fail "parted"
@@ -736,12 +1000,16 @@ PY
       [ "$USB" = 1 ] || fail "USB_MSI braucht USB=1"
       KERN_QEMU+=(-global "qemu-xhci.msi=$USB_MSI" -global qemu-xhci.msix=off)
       ;;
-    *) fail "USB_MSI: auto, on oder off" ;;
+    msix)
+      [ "$USB" = 1 ] || fail "USB_MSI braucht USB=1"
+      KERN_QEMU+=(-global qemu-xhci.msi=off -global qemu-xhci.msix=on)
+      ;;
+    *) fail "USB_MSI: auto, on, off oder msix" ;;
   esac
   USB_VERSION="${MOO_UEFI_USB_VERSION:-2}"
   case "$USB_VERSION" in 1|2) ;; *) fail "USB_VERSION: nur 1 (Full-Speed) oder 2 (High-Speed)";; esac
   if [ "$USB" = 1 ]; then
-    XHCI_ADDR=""; [ "$MSC" = 0 ] || XHCI_ADDR=",addr=0xd"
+    XHCI_ADDR=""; { [ "$MSC" = 0 ] && [ "$USB_MSC_PROBE" = 0 ]; } || XHCI_ADDR=",addr=0xd"
     KERN_QEMU+=(-device "qemu-xhci,id=xhci$XHCI_ADDR" -device "usb-kbd,bus=xhci.0,usb_version=$USB_VERSION")
   elif [ "$USB" = hub ]; then
     KERN_QEMU+=(-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1
@@ -751,12 +1019,69 @@ PY
     KERN_QEMU+=(-drive "if=none,id=msc,format=raw,readonly=on,file=$OUT/usb-gpt.img"
       -device "usb-storage,bus=xhci.0,drive=msc,serial=$MSC_SERIE,pcap=$OUT/usb.pcap")
   fi
+  if [ "$USB_MSC_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/usb_msc_probe.py" aufbauen "$OUT/usbmsc" ||
+      fail "USB-MSC-Testimages"
+    mapfile -d '' -t msc_qemu <"$OUT/usbmsc/qemu-argumente.nul" || fail "USB-MSC-Testgeräte"
+    KERN_QEMU+=("${msc_qemu[@]}")
+  fi
   if [ "$NVME" != 0 ]; then
     KERN_QEMU+=(-drive "if=none,id=nvmedisk,format=raw,readonly=on,file=$OUT/nvme-gpt.img"
       -device "nvme,id=nvme0,serial=$NVME_SERIE,addr=0xe"
       -device "nvme-ns,bus=nvme0,drive=nvmedisk,nsid=1,logical_block_size=$NVME_BLOCK,physical_block_size=$NVME_BLOCK"
       -trace "events=$OUT/nvme-trace-events,file=$OUT/nvme.trace")
   fi
+  if [ "$NVME_RW" != 0 ]; then
+    nvme_fehler=()
+    [ "$NVME_RW" != 1 ] || nvme_fehler=(--eio nvme0:8)
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/geschirr.py" aufbauen "$OUT/speicher" \
+      --nvme 2 --ahci 0 --usb 0 --nvme-probe "${nvme_fehler[@]}" || fail "NVMe-Testimages"
+    mapfile -d '' -t nvme_qemu <"$OUT/speicher/qemu-argumente.nul" || fail "NVMe-Testgeräte"
+    KERN_QEMU+=("${nvme_qemu[@]}")
+    [ "$NVME_RW" != 1 ] || KERN_QEMU+=(-S)
+  fi
+  if [ "$AHCI_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/geschirr.py" aufbauen "$OUT/ahci" \
+      --nvme 0 --ahci 4 --usb 0 --ahci-probe || fail "AHCI-Testimages"
+    mapfile -d '' -t ahci_qemu <"$OUT/ahci/qemu-argumente.nul" || fail "AHCI-Testgeräte"
+    KERN_QEMU+=("${ahci_qemu[@]}")
+  fi
+  if [ "$CACHE_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/geschirr.py" aufbauen "$OUT/cache" \
+      --nvme 2 --ahci 0 --usb 0 --nvme-probe --eio nvme0:8 || fail "Blockcache-Testimages"
+    mapfile -d '' -t cache_qemu <"$OUT/cache/qemu-argumente.nul" || fail "Blockcache-Testgeräte"
+    printf '%s\n' pci_nvme_io_cmd pci_nvme_flush_ns pci_nvme_enqueue_req_completion >"$OUT/cache-trace-events"
+    KERN_QEMU+=("${cache_qemu[@]}" -trace "events=$OUT/cache-trace-events,file=$OUT/cache.trace")
+  fi
+  if [ "$GPT_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/geschirr.py" aufbauen "$OUT/gpt" \
+      --nvme 2 --ahci 0 --usb 0 --nvme-probe || fail "GPT-Testimages"
+    mapfile -d '' -t gpt_qemu <"$OUT/gpt/qemu-argumente.nul" || fail "GPT-Testgeräte"
+    KERN_QEMU+=("${gpt_qemu[@]}")
+  fi
+  if [ "$VFS_PROBE" = 1 ]; then
+    truncate -s 64M "$OUT/vfs-boot.img" || fail "VFS-Testmedium"
+    mkfs.fat -F 32 -n MOOVFS "$OUT/vfs-boot.img" >"$OUT/vfs-mkfs.log" || fail "VFS-Test-FAT32"
+    mcopy -i "$OUT/vfs-boot.img" "$OUT/KERN.ELF" ::KERN.ELF || fail "KERN.ELF ins VFS-Testmedium"
+    KERN_QEMU+=(-drive "if=none,id=vfsboot,format=raw,readonly=on,file=$OUT/vfs-boot.img"
+      -device "nvme,id=vfsnvme,serial=MOOP11-VFS-BOOT-0001,addr=0xd,msix-exclusive-bar=on,msix_qsize=2,mdts=6"
+      -device "nvme-ns,bus=vfsnvme,drive=vfsboot,nsid=1,logical_block_size=512,physical_block_size=512")
+  fi
+  # P11: beschreibbare Platten werden ausschließlich für diesen QEMU-Lauf angelegt.
+  case "${MOO_UEFI_SPEICHER_TEST:-0}" in
+    0) ;;
+    1)
+      speicher_fehler=()
+      [ -z "${MOO_UEFI_SPEICHER_EIO:-}" ] || speicher_fehler=(--eio "$MOO_UEFI_SPEICHER_EIO")
+      uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/geschirr.py" aufbauen "$OUT/speicher" \
+        --nvme "${MOO_UEFI_SPEICHER_NVME:-2}" --ahci "${MOO_UEFI_SPEICHER_AHCI:-1}" \
+        --usb "${MOO_UEFI_SPEICHER_USB:-1}" --mib "${MOO_UEFI_SPEICHER_MIB:-64}" "${speicher_fehler[@]}" ||
+        fail "P11-QEMU-Testplatten konnten nicht erstellt werden"
+      mapfile -d '' -t speicher_qemu <"$OUT/speicher/qemu-argumente.nul" || fail "P11-QEMU-Argumente"
+      KERN_QEMU+=("${speicher_qemu[@]}")
+      ;;
+    *) fail "SPEICHER_TEST: 0 oder 1" ;;
+  esac
   if [ "$SAMMEL_IGB" = 1 ]; then
     KERN_QEMU+=(
       -netdev user,id=igb0,restrict=on -device igb,id=igb_a,addr=0x5,netdev=igb0,mac=52:54:00:22:57:01,romfile=
@@ -764,14 +1089,36 @@ PY
   fi
   KERN_LAUFZEIT=$((WAIT_S + 60))
   [ "$KERN_TASTATUR" != 1 ] || KERN_LAUFZEIT=$((KERN_LAUFZEIT + 35))
-  timeout --foreground "${KERN_LAUFZEIT}s" qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}" \
-      -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE" \
-      -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd" \
-      -drive format=raw,file="$OUT/uefi.img" \
-      -m 256M -vga std -display none -no-reboot -monitor stdio \
-      -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9 \
+  KERN_START=(qemu-system-x86_64 "${QEMU_ACCEL[@]}" "${KERN_QEMU[@]}"
+    -drive if=pflash,format=raw,unit=0,readonly=on,file="$KOVMF_CODE"
+    -drive if=pflash,format=raw,unit=1,file="$OUT/vars.fd"
+    -drive format=raw,file="$OUT/uefi.img"
+    -m 256M -vga std -display none -no-reboot
+    -serial file:"$OUT/serial.log" -debugcon file:"$OUT/debug.log" -global isa-debugcon.iobase=0xe9)
+  if [ "$CACHE_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/cache_probe.py" "$OUT" "$WAIT_S" \
+      "${KERN_START[@]}" -monitor none || fail "Blockcache-Barriere, EIO und Rohbilder"
+    echo "# ERGEBNIS: Blockcache-Prüfung grün nach QEMU-SIGKILL."
+    exit 0
+  fi
+  timeout --foreground --kill-after=5s "${KERN_LAUFZEIT}s" "${KERN_START[@]}" -monitor stdio \
       <"$OUT/monitor.in" >"$OUT/monitor.log" 2>&1 &
   QPID=$!
+  if [ "$USB_MSC_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/usb_msc_probe.py" tippen \
+      "$OUT/usbmsc" "$OUT/serial.log" --frist "$WAIT_S" >"$OUT/usb-msc-tasten.log" 2>&1 &
+    MSC_TIPP_PID=$!
+  fi
+  if [ "$AHCI_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/ahci_probe.py" entfernen \
+      "$OUT/ahci" "$OUT/serial.log" --frist "$WAIT_S" >"$OUT/ahci-hotplug.log" 2>&1 &
+    AHCI_DBG_PID=$!
+  fi
+  if [ "$NVME_RW" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/nvme_probe.py" latenz \
+      "$OUT/speicher" "$OUT/serial.log" 1 --frist "$WAIT_S" >"$OUT/nvme-latenz.log" 2>&1 &
+    NVME_DBG_PID=$!
+  fi
   if [ "$FADEN_WACHT" = 1 ] || [ "$AR_PROBE" = schutz ]; then
     for ((i = 0; i < WAIT_S; i++)); do
       if grep -aqE 'MOO-KERNEL AUSNAHME CR2 [0-9A-F]{16}' "$OUT/serial.log" || ! kill -0 "$QPID" 2>/dev/null; then
@@ -815,7 +1162,7 @@ PY
       printf 'sendkey a\n' >&3
       KEY_SENT=1
     fi
-    grep -aq "MOO-KERNEL OK" "$OUT/serial.log" 2>/dev/null && break
+    grep -aqE "MOO-KERNEL OK|MOO-MSC-PROBE-FEHLER|MOO-(NVME|AHCI|GPT|FAT32|VFS|DATEI)-PROBE-FEHLER" "$OUT/serial.log" 2>/dev/null && break
     grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" 2>/dev/null && break
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
@@ -957,6 +1304,52 @@ PY
   for ((i = 0; i < 15; i++)); do [ -s "$OUT/screenshot.png" ] && break; sleep 1; done
   printf 'quit\n' >&3 2>/dev/null || true; exec 3>&-; wait "$QPID" 2>/dev/null
   tr -d '\000\r' <"$OUT/serial.log" | grep -aE "MOO-(LADER|KERNEL)" | sed 's/^/      | /'
+  if [ "$USB_MSC_PROBE" = 1 ]; then
+    wait "$MSC_TIPP_PID" || { cat "$OUT/usb-msc-tasten.log"; fail "USB-Tipp-Probe"; }
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/usb_msc_probe.py" pruefen \
+      "$OUT/usbmsc" "$OUT/serial.log" >"$OUT/usb-msc-rohbilder.log" 2>&1 ||
+      { cat "$OUT/usb-msc-rohbilder.log"; fail "USB-MSC-Schreibprobe"; }
+    cat "$OUT/usb-msc-tasten.log" "$OUT/usb-msc-rohbilder.log"
+  fi
+  if [ "$NVME_RW" != 0 ]; then
+    if [ "$NVME_RW" = 1 ]; then
+      wait "$NVME_DBG_PID" || { cat "$OUT/nvme-latenz.log"; fail "NVMe blkdebug Latenz"; }
+    fi
+    grep -aqF "MOO-NVME-PROBE-OK" "$OUT/serial.log" || fail "NVMe-Blockgeräteprobe unvollständig"
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/nvme_probe.py" pruefen \
+      "$OUT/speicher" "$OUT/serial.log" "$NVME_RW" >"$OUT/nvme-rohbilder.log" 2>&1 ||
+      { cat "$OUT/nvme-rohbilder.log"; fail "NVMe-Rohimages weichen von Erwartung ab"; }
+    cat "$OUT/nvme-rohbilder.log"
+  fi
+  if [ "$AHCI_PROBE" = 1 ]; then
+    wait "$AHCI_DBG_PID" || { cat "$OUT/ahci-hotplug.log"; fail "AHCI PCIe-Hotplug"; }
+    grep -aqF "MOO-AHCI-PROBE-OK" "$OUT/serial.log" || fail "AHCI-Blockgeräteprobe unvollständig"
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/ahci_probe.py" pruefen \
+      "$OUT/ahci" "$OUT/serial.log" >"$OUT/ahci-rohbilder.log" 2>&1 ||
+      { cat "$OUT/ahci-rohbilder.log"; fail "AHCI-Rohbilder oder Befehle weichen ab"; }
+    cat "$OUT/ahci-hotplug.log" "$OUT/ahci-rohbilder.log"
+  fi
+  if [ "$GPT_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/gpt_probe.py" \
+      "$OUT/gpt" "$OUT/serial.log" >"$OUT/gpt-rohbilder.log" 2>&1 ||
+      { cat "$OUT/gpt-rohbilder.log"; fail "GPT-Rohimages oder Reparatur weichen ab"; }
+    cat "$OUT/gpt-rohbilder.log"
+  fi
+  if [ "$DATEI_PROBE" = 1 ]; then
+    grep -aqF "MOO-DATEI-PROBE-OK" "$OUT/serial.log" || fail "Datei-Syscall-/Cleanup-Probe unvollständig"
+    if grep -aqF "MOO-DATEI-PROBE-FEHLER" "$OUT/serial.log"; then fail "Datei-Syscall-/Cleanup-Probe fehlerhaft"; fi
+  fi
+  if [ "$VFS_PROBE" = 1 ]; then
+    grep -aqF "MOO-VFS-PROBE-OK" "$OUT/serial.log" || fail "VFS-Kernprobe unvollständig"
+    if grep -aqF "MOO-VFS-PROBE-FEHLER" "$OUT/serial.log"; then fail "VFS-Kernprobe fehlerhaft"; fi
+    mcopy -i "$OUT/vfs-boot.img" ::KERN.ELF "$OUT/vfs-nachher.elf" || fail "VFS-Testmedium rücklesen"
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/vfs/vergleich.py" "$OUT" ||
+      fail "VFS-Dateilänge/CRC/SMP stimmen nicht"
+  fi
+  if [ "$FAT_PROBE" = 1 ]; then
+    grep -aqF "MOO-FAT32-PROBE-OK" "$OUT/serial.log" || fail "FAT-Kernprobe unvollständig"
+    grep -aqF "MOO-FAT32-PROBE-FEHLER" "$OUT/serial.log" && fail "FAT-Kernprobe fehlerhaft"
+  fi
   grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" && fail "Loader meldet FEHLER (siehe oben)"
   for m in "MOO-LADER START (STEUERUNG IN MOO)" "MOO-LADER GOP " "MOO-LADER FB-STRIDE " "MOO-LADER RSDP " \
            "MOO-LADER KERN-DATEI " "MOO-LADER SEGMENT " "MOO-LADER KERN-EINSTIEG " \
@@ -992,8 +1385,12 @@ PY
     grep -aqF "MOO-KERNEL USB SPEED 000000000000000$USB_SPEED" "$OUT/serial.log" || fail "Erwarteter USB-Speed $USB_SPEED fehlt"
     echo "      OK: USB-Version $USB_VERSION, Port-Speed $USB_SPEED, $USB_C/140 Tastendruecke"
     case "$USB_MSI" in
-      on)
+      on|msix)
         grep -aqF 'MOO-KERNEL USB MSI BDF ' "$OUT/serial.log" || fail "xHCI MSI fehlt"
+        grep -aqF 'MOO-KERNEL USB MSI VEKTOR ' "$OUT/serial.log" || fail "Dynamischer xHCI-Vektor fehlt"
+        if [ "$USB_MSI" = msix ]; then
+          grep -aqF 'MOO-KERNEL USB MSI-X VEKTOR ' "$OUT/serial.log" || fail "xHCI MSI-X fehlt"
+        fi
         IRQ_STAENDE="$(awk '/MOO-KERNEL USB MSI IRQ / {gsub(/\r/, "", $NF); if ($NF ~ /^[0-9A-F]+$/ && $NF !~ /^0+$/) print $NF}' "$OUT/serial.log" | sort -u | wc -l)"
         [ "$IRQ_STAENDE" -ge 2 ] || fail "Kein IRQ-Fortschritt bei HID-Reports"
         echo "      OK: HID mit LAPIC-MSI, $IRQ_STAENDE verschiedene IRQ-Zaehlerstaende"
@@ -1011,6 +1408,18 @@ PY
     grep -aqF "MOO-KERNEL USB BEREIT POLLING 0000000000000000" "$OUT/serial.log" || fail "Hub faelschlich als Boot-Keyboard bereit"
     grep -aqF "MOO-KERNEL USB TASTE " "$OUT/serial.log" && fail "Hub-Negativfall meldet erfundene Eingabe"
     echo "      OK: USB-Tastatur hinter Hub als Diagnose-/Negativfall (Hubtreiber weiterhin offen)"
+  fi
+  if [ "$IRQ_PROBE" = 1 ]; then
+    grep -aqF 'MOO-IRQ-OK' "$OUT/serial.log" || fail "Zwei zugeteilte Gerätevektoren nicht zugestellt"
+    echo "      OK: zwei dynamisch vergebene Gerätevektoren mit eigener APIC-Zustellung und Handlerdaten"
+  fi
+  if [ "$BLOCK_PROBE" = 1 ]; then
+    for m in "MOO-BLOCK PRUEFUNG 0000000000000001" "MOO-BLOCK PRUEFUNG 0000000000000002" \
+             "MOO-BLOCK FADEN FERTIG 0000000000000008" "MOO-BLOCK CPU-MASKE 000000000000000F" \
+             "MOO-BLOCK RAM OP 00000000000F4240" "MOO-BLOCK FADEN FEHLER 0000000000000000" "MOO-BLOCK-OK"; do
+      grep -aqF "$m" "$OUT/serial.log" || fail "Blockgeräteprobe: $m fehlt"
+    done
+    echo "      OK: Blockgeräteprüfung, IRQ-Abschluss und 1000000 geprüfte RAM-Operationen auf vier CPUs"
   fi
   if [ "$USB" != 0 ]; then
     for m in "HCSPARAMS1" "HCSPARAMS2" "HCCPARAMS1" "PROTOCOL CAP" "PROTOCOL PORTBEREICH" "PORTSC" "CCS" "PED" "PR" "PLS" "PP" "SPEED" "CSC GESEHEN" "EVENT TYP" "EVENT TRB" "EVENT CC" "EVENT REST" "EVENT COMMAND PARAM24" "OUTPUT SLOT STATE" "OUTPUT USB ADRESSE" "OUTPUT EP0 STATE" "OUTPUT EP0 MPS" "CONTROL SETUP FLAGS" "DESCRIPTOR8 ROH" "DESCRIPTOR MPS0"; do

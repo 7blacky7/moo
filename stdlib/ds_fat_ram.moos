@@ -1,0 +1,55 @@
+# Geliehener RAM-Bereich. Sein Besitzer serialisiert die Zugriffe und hält ihn
+# bis zum Ende aller Anforderungen gültig; der Adapter übernimmt kein Eigentum.
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_GEOMETRIE, BLOCK_PUFFER, BLOCK_LESEN, BLOCK_FLUSH, BLOCK_VERWERFEN, block_pruefen
+aus ds_fat_transport importiere FatTransport
+
+struktur FatRam implementiert FatTransport:
+    basis: u64
+    geo: BlockGeometrie
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            weitergeben(block_pruefen(selbst.geo, art, lba, anzahl, puffer, bytes))
+            wenn art == BLOCK_FLUSH:
+                gib_zurück erfolg()
+            setze adresse: u64 auf selbst.basis + lba * selbst.geo.block_bytes
+            setze menge: u64 auf anzahl * selbst.geo.block_bytes
+            wenn art == BLOCK_VERWERFEN:
+                setze null_index: u64 auf 0
+                solange null_index < menge:
+                    speicher_schreiben(adresse + null_index, 0, 1)
+                    setze null_index auf null_index + 1
+                gib_zurück erfolg()
+            setze quelle: u64 auf puffer
+            setze ziel: u64 auf adresse
+            wenn art == BLOCK_LESEN:
+                setze quelle auf adresse
+                setze ziel auf puffer
+            # memmove-Semantik, auch wenn der Aufrufer einen Bereich der Platte leiht.
+            wenn ziel > quelle und ziel - quelle < menge:
+                solange menge > 0:
+                    setze menge auf menge - 1
+                    setze rueckwert: u8 auf speicher_lesen(quelle + menge, 1)
+                    speicher_schreiben(ziel + menge, rueckwert, 1)
+            sonst:
+                setze i: u64 auf 0
+                solange i < menge:
+                    setze wert: u8 auf speicher_lesen(quelle + i, 1)
+                    speicher_schreiben(ziel + i, wert, 1)
+                    setze i auf i + 1
+            gib_zurück erfolg()
+
+@nativ
+funktion fat_ram_einrichten(ram: ptr[FatRam], basis: u64, bytes: u64, block_bytes: u64, nur_lesend: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn block_bytes == 0 oder bytes == 0 oder bytes % block_bytes != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        wenn basis == 0 oder bytes - 1 > 0xFFFFFFFFFFFFFFFF - basis:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze ram.basis auf basis
+        setze ram.geo auf BlockGeometrie(bytes / block_bytes, block_bytes, nur_lesend)
+        gib_zurück erfolg()

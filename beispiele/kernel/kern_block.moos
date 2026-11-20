@@ -1,0 +1,137 @@
+# P11-T6: Blockgerätevertrag für Aufrufer im laufenden Kernplaner.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen
+aus "kern_faden" importiere FadenWarteschlange, faden_abgeben, faden_warte_einreihen, faden_wartenden_holen, faden_wartenden_wecken
+aus "kern_smp" importiere smp_planer
+
+aus nativ_block importiere BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_VERWERFEN, BLOCK_SCHREIBEN_FUA, BLOCK_OK, BLOCK_KEIN_GERAET, BLOCK_GEOMETRIE, BLOCK_BEREICH, BLOCK_PUFFER, BLOCK_NUR_LESEN, BLOCK_BELEGT, BLOCK_VOLL, BLOCK_UNBEKANNT, BLOCK_EA, BLOCK_ZEIT, BLOCK_NICHT_BEREIT, BlockGeometrie, BlockFehler, block_pruefen
+
+@nativ
+konstante ANFRAGE_FREI: u32 auf 0
+@nativ
+konstante ANFRAGE_OFFEN: u32 auf 1
+@nativ
+konstante ANFRAGE_FERTIG: u32 auf 2
+@nativ
+konstante BLOCK_PLAETZE: u64 auf 64
+
+# Der Aufrufer initialisiert die Anfrage mit Null und behält Anfrage und Puffer
+# bis zur Rückkehr aus block_anfordern. Der Treiber liest die Nutzfelder bis zum Abschluss.
+struktur BlockAnfrage:
+    ba_sperre: KernSperre
+    ba_warte: FadenWarteschlange
+    ba_zustand: u32
+    ba_fehler: BlockFehler
+    art: u32
+    lba: u64
+    anzahl: u64
+    puffer: u64
+    laenge: u64
+
+# Geometrie und Geräteobjekt bleiben während der Registrierung gültig.
+# block_starten wird aus einem Faden aufgerufen. Erfolg übernimmt die Anfrage
+# bis zu genau einem block_abschliessen; Fehler lässt sie beim Aufrufer.
+schnittstelle BlockGeraet:
+    funktion geometrie(selbst) -> BlockGeometrie
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]
+
+struktur BlockEintrag:
+    geraet: ptr[dyn BlockGeraet]
+
+@nativ
+statisch BLOCK_REGISTER: [BlockEintrag; 64] auf 0
+@nativ
+statisch BLOCK_REGISTER_SPERRE: KernSperre auf 0
+@nativ
+statisch BLOCK_REGISTER_ANZAHL: atom[u64] auf 0
+
+# Der Kern hält registrierte Geräte bis zum Neustart vor. Kennungen beginnen bei 1.
+@nativ
+funktion block_registrieren(geraet: ptr[dyn BlockGeraet]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf geraet.geometrie()
+        wenn geo.bloecke == 0 oder geo.block_bytes == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(BLOCK_REGISTER_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze platz: u64 auf atom_laden(BLOCK_REGISTER_ANZAHL, ordnung=locker)
+        wenn platz == BLOCK_PLAETZE:
+            spin_gib(sperre, irq)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze BLOCK_REGISTER[platz].geraet auf geraet
+        atom_speichern(BLOCK_REGISTER_ANZAHL, platz + 1, ordnung=freigeben)
+        spin_gib(sperre, irq)
+        gib_zurück erfolg(platz + 1)
+
+@nativ
+funktion block_vorhanden(kennung: u64) -> bool:
+    unsicher:
+        gib_zurück kennung != 0 und kennung <= atom_laden(BLOCK_REGISTER_ANZAHL, ordnung=erwerben)
+
+@nativ
+funktion block_geometrie(kennung: u64) -> ergebnis[BlockGeometrie, BlockFehler]:
+    unsicher:
+        wenn nicht block_vorhanden(kennung):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_KEIN_GERAET, 0))
+        setze geraet: ptr[dyn BlockGeraet] auf BLOCK_REGISTER[kennung - 1].geraet
+        gib_zurück erfolg(geraet.geometrie())
+
+# Auch aus einem IRQ aufrufbar. Gerät und Treiber greifen danach nicht mehr auf
+# Anfrage oder Puffer zu. Der Status ist beim Wecken bereits veröffentlicht.
+@nativ
+funktion block_abschliessen(anfrage: ptr[BlockAnfrage], fehler: BlockFehler) -> void:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(anfrage.ba_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        wenn anfrage.ba_zustand == ANFRAGE_OFFEN:
+            setze anfrage.ba_fehler auf fehler
+            setze anfrage.ba_zustand auf ANFRAGE_FERTIG
+            faden_wartenden_wecken(faden_wartenden_holen(zeiger(adresse_von(anfrage.ba_warte))))
+        spin_gib(sperre, irq)
+
+@nativ
+funktion block_warten(anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(anfrage.ba_sperre))
+        setze irq: u64 auf irq_sichern()
+        solange wahr:
+            setze gehalten: u64 auf spin_nimm(sperre)
+            wenn anfrage.ba_zustand == ANFRAGE_FERTIG:
+                setze fehler: BlockFehler auf anfrage.ba_fehler
+                setze anfrage.ba_zustand auf ANFRAGE_FREI
+                spin_gib(sperre, gehalten)
+                irq_wiederherstellen(irq)
+                wenn fehler.code == BLOCK_OK:
+                    gib_zurück erfolg()
+                gib_zurück fehlschlag(fehler)
+            faden_warte_einreihen(smp_planer(), zeiger(adresse_von(anfrage.ba_warte)))
+            spin_gib(sperre, gehalten)
+            faden_abgeben(smp_planer())
+
+@nativ
+funktion block_anfordern(kennung: u64, anfrage: ptr[BlockAnfrage], art: u32, lba: u64, anzahl: u64, puffer: u64, laenge: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht block_vorhanden(kennung):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_KEIN_GERAET, 0))
+        wenn u64(anfrage) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze geraet: ptr[dyn BlockGeraet] auf BLOCK_REGISTER[kennung - 1].geraet
+        weitergeben(block_pruefen(geraet.geometrie(), art, lba, anzahl, puffer, laenge))
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(anfrage.ba_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        wenn anfrage.ba_zustand != ANFRAGE_FREI:
+            spin_gib(sperre, irq)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 0))
+        setze anfrage.art auf art
+        setze anfrage.lba auf lba
+        setze anfrage.anzahl auf anzahl
+        setze anfrage.puffer auf puffer
+        setze anfrage.laenge auf laenge
+        setze anfrage.ba_zustand auf ANFRAGE_OFFEN
+        spin_gib(sperre, irq)
+        setze gestartet: ergebnis[void, BlockFehler] auf geraet.block_starten(anfrage)
+        wenn nicht ist_erfolg(gestartet):
+            setze irq auf spin_nimm(sperre)
+            setze anfrage.ba_zustand auf ANFRAGE_FREI
+            spin_gib(sperre, irq)
+            gib_zurück gestartet
+        gib_zurück block_warten(anfrage)

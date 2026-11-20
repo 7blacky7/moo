@@ -1,0 +1,44 @@
+# P11-T6: RAM-Platte auf einem vom Kern bereitgestellten PFA-Bereich.
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BLOCK_OK, BLOCK_GEOMETRIE, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_VERWERFEN, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "../uefi/netz_geraet" importiere nt_kopiere
+aus "../uefi/hardware_pci" importiere nt_null
+
+struktur RamPlatte implementiert BlockGeraet:
+    ram_basis: u64
+    ram_geo: BlockGeometrie
+    ram_mutex: KernMutex
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.ram_geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze mutex: ptr[KernMutex] auf zeiger(adresse_von(selbst.ram_mutex))
+            mutex_nimm(smp_planer(), mutex)
+            setze adresse: u64 auf selbst.ram_basis + anfrage.lba * selbst.ram_geo.block_bytes
+            wenn anfrage.art == BLOCK_LESEN:
+                nt_kopiere(anfrage.puffer, adresse, anfrage.laenge)
+            sonst wenn anfrage.art == BLOCK_SCHREIBEN oder anfrage.art == BLOCK_SCHREIBEN_FUA:
+                nt_kopiere(adresse, anfrage.puffer, anfrage.laenge)
+            sonst wenn anfrage.art == BLOCK_VERWERFEN:
+                nt_null(adresse, anfrage.anzahl * selbst.ram_geo.block_bytes)
+            mutex_gib(smp_planer(), mutex)
+            block_abschliessen(anfrage, BlockFehler(BLOCK_OK, 0))
+            gib_zurück erfolg()
+
+# Einmal vor der Registrierung auf einem nullinitialisierten Geräteobjekt.
+# Der bereitgestellte Speicher bleibt im Besitz des Geräts.
+@nativ
+funktion block_ram_einrichten(platte: ptr[RamPlatte], basis: u64, bytes: u64, block_bytes: u64, nur_lesend: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze max_adresse: u64 auf 0xFFFFFFFFFFFFFFFF
+        wenn basis == 0 oder bytes == 0 oder block_bytes == 0 oder bytes - 1 > max_adresse - basis:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        wenn bytes % block_bytes != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze platte.ram_basis auf basis
+        setze platte.ram_geo auf BlockGeometrie(bytes / block_bytes, block_bytes, nur_lesend)
+        gib_zurück erfolg()

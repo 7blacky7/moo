@@ -14,6 +14,10 @@ run = "bash ergebnis.sh"
 description = "P11-T19: Ganzzahl-SIMD, ISA-Varianten und vollständiges Byte-Orakel"
 run = "bash simd.sh"
 
+[tasks.simd-kern]
+description = "P11-T19: XMM/YMM-Präemption, 1/4 CPUs und GFNI im QEMU-Kern"
+run = "bash simd-kern.sh"
+
 [tasks.simd-winrm]
 description = "P11-T19: alle Bytepaare mit echtem GFNI128/256 auf Windows-N100"
 run = "bash simd-winrm.sh"

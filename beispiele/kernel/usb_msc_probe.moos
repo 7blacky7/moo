@@ -1,0 +1,103 @@
+# QEMU-only; Zielbindung teilt den xHCI-Host mit der USB-Tastatur.
+aus "usb_speicher_block" importiere UsbMscZiel, usb_msc_vorbereiten, usb_msc_registrieren, usb_msc_id, usb_msc_neustart, MSC_DMA_BYTES
+aus "kern_block" importiere BlockAnfrage, BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_EA, block_anfordern, block_geometrie
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "nvme_probe" importiere nvme_probe_muster, nvme_probe_pruefe_muster
+
+@nativ
+statisch MSC_PROBE_ZIELE: [UsbMscZiel; 2] auf 0
+@nativ
+konstante MSC_PROBE_SN1: [u8; _] auf "MOOP11MSC0000001"
+@nativ
+konstante MSC_PROBE_SN2: [u8; _] auf "MOOP11MSC0000002"
+@nativ
+konstante MSC_PROBE_BYTES: u64 auf 1073741824
+@nativ
+konstante MSC_PROBE_LBA64: u64 auf 0x100000008
+@nativ
+konstante MSC_PROBE_FEHLER: u32 auf 0x10001
+@nativ
+konstante MSC_PROBE_T_STATUS: [u8; _] auf "MOO-MSC FEHLER CODE STATUS "
+@nativ
+konstante MSC_PROBE_T_START: [u8; _] auf "MOO-MSC SCHREIBEN START "
+@nativ
+konstante MSC_PROBE_T_FORTSCHRITT: [u8; _] auf "MOO-MSC SCHREIBEN BYTES "
+@nativ
+konstante MSC_PROBE_T_ENDE: [u8; _] auf "MOO-MSC SCHREIBEN ENDE "
+@nativ
+konstante MSC_PROBE_T_LBA: [u8; _] auf "MOO-MSC SCHREIBEN LBA64 "
+@nativ
+konstante MSC_PROBE_T_EIO: [u8; _] auf "MOO-MSC SCSI FEHLERSTATUS "
+
+@nativ
+funktion usb_msc_probe_ziel() -> u64:
+    unsicher:
+        setze MSC_PROBE_ZIELE[0] auf UsbMscZiel(0x68, 2, 0x000146F4, adresse_von(MSC_PROBE_SN1), wahr)
+        setze MSC_PROBE_ZIELE[1] auf UsbMscZiel(0x68, 3, 0x000146F4, adresse_von(MSC_PROBE_SN2), wahr)
+        gib_zurück usb_msc_vorbereiten(zeiger(adresse_von(MSC_PROBE_ZIELE[0])), 2)
+
+@nativ
+funktion usb_msc_probe_lauf(log_adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        wenn usb_msc_registrieren() != 2:
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 1))
+        setze id0: u64 auf usb_msc_id(0)
+        setze id1: u64 auf usb_msc_id(1)
+        setze links: BlockGeometrie auf weitergeben(block_geometrie(id0))
+        setze rechts: BlockGeometrie auf weitergeben(block_geometrie(id1))
+        wenn links.block_bytes != 4096 oder rechts.block_bytes != 512 oder rechts.bloecke <= MSC_PROBE_LBA64 oder links.bloecke < MSC_PROBE_BYTES / links.block_bytes:
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 2))
+        setze puffer: u64 auf ar_rahmen_nehmen(16)
+        wenn puffer == 0:
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 3))
+        setze anfrage: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+
+        nvme_probe_muster(puffer, 512, 0x64)
+        setze fehler: ergebnis[void, BlockFehler] auf block_anfordern(id1, a, BLOCK_SCHREIBEN, MSC_PROBE_LBA64, 1, puffer, 512)
+        wenn ist_erfolg(fehler):
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 4))
+        setze f: BlockFehler auf ergebnis_fehler(fehler)
+        wenn f.code != BLOCK_EA oder f.geraete_status == 0:
+            gib_zurück fehlschlag(f)
+        log(adresse_von(MSC_PROBE_T_EIO), u64(f.geraete_status))
+        wenn nicht usb_msc_neustart(1):
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 5))
+        weitergeben(block_anfordern(id1, a, BLOCK_SCHREIBEN_FUA, MSC_PROBE_LBA64, 1, puffer, 512))
+        weitergeben(block_anfordern(id1, a, BLOCK_LESEN, MSC_PROBE_LBA64, 1, puffer, 512))
+        wenn nicht nvme_probe_pruefe_muster(puffer, 512, 0x64):
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 6))
+        log(adresse_von(MSC_PROBE_T_LBA), MSC_PROBE_LBA64)
+
+        nvme_probe_muster(puffer, MSC_DMA_BYTES, 0x63)
+        setze pos: u64 auf 0
+        setze n: u64 auf MSC_DMA_BYTES / links.block_bytes
+        log(adresse_von(MSC_PROBE_T_START), MSC_PROBE_BYTES)
+        solange pos < MSC_PROBE_BYTES:
+            speicher_schreiben(puffer, pos / MSC_DMA_BYTES, 8)
+            weitergeben(block_anfordern(id0, a, BLOCK_SCHREIBEN, pos / links.block_bytes, n, puffer, MSC_DMA_BYTES))
+            setze pos auf pos + MSC_DMA_BYTES
+            wenn (pos & 0x3FFFFFF) == 0:
+                log(adresse_von(MSC_PROBE_T_FORTSCHRITT), pos)
+        weitergeben(block_anfordern(id0, a, BLOCK_FLUSH, 0, 0, 0, 0))
+        log(adresse_von(MSC_PROBE_T_ENDE), pos)
+        weitergeben(block_anfordern(id1, a, BLOCK_LESEN, MSC_PROBE_LBA64, 1, puffer, 512))
+        wenn nicht nvme_probe_pruefe_muster(puffer, 512, 0x64):
+            gib_zurück fehlschlag(BlockFehler(MSC_PROBE_FEHLER, 7))
+        gib_zurück erfolg()
+
+@nativ
+funktion usb_msc_probe_starten(log_adr: u64) -> bool:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf usb_msc_probe_lauf(log_adr)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(MSC_PROBE_T_STATUS), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück falsch
+        gib_zurück wahr

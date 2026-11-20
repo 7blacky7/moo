@@ -1,0 +1,274 @@
+aus vfs importiere Dateisystem, Datei, VfsTabelle, VfsDatei, VfsFehler, VfsStat, VfsEintrag, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_EXKLUSIV, VFS_VERZEICHNIS, VFS_ANHAENGEN, VFS_EIO, VFS_EBADF, VFS_ENOENT, VFS_EBUSY, VFS_EXDEV, VFS_ENOSPC, VFS_EMFILE, VFS_ENOTEMPTY, VFS_EINVAL, VFS_EEXIST, vfs_einhaengen, vfs_oeffnen, vfs_anlegen, vfs_loeschen, vfs_umbenennen, vfs_stat, vfs_aushängen
+aus ds_ram importiere RamDateisystem, ram_einrichten
+struktur VfsTestArena:
+    bytes: [u8; 65536]
+struktur VfsTestBytes:
+    bytes: [u8; 8192]
+struktur VfsTestGriffe:
+    werte: [u64; 256]
+@nativ
+statisch VFS_TEST_ARENA: VfsTestArena auf 0
+@nativ
+statisch VFS_TEST_RAM: RamDateisystem auf 0
+@nativ
+statisch VFS_TEST_MOUNTS: VfsTabelle auf 0
+@nativ
+funktion vfs_test_pruefe(gut: bool, nummer: u32) -> ergebnis[void, VfsFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(VfsFehler(VFS_EIO, nummer, 0))
+    gib_zurück erfolg()
+
+@nativ
+funktion vfs_test_ablauf() -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze r: ptr[RamDateisystem] auf zeiger(adresse_von(VFS_TEST_RAM))
+        weitergeben(ram_einrichten(r, adresse_von(VFS_TEST_ARENA.bytes[0]), 65536))
+        setze fs: ptr[dyn Dateisystem] auf r
+        setze t: ptr[VfsTabelle] auf zeiger(adresse_von(VFS_TEST_MOUNTS))
+        setze wurzel: [u8; 1] auf [47]
+        setze ordner: [u8; 2] auf [47, 97]
+        setze unter: [u8; 4] auf [47, 97, 47, 117]
+        setze datei: [u8; 4] auf [47, 97, 47, 120]
+        setze anders: [u8; 4] auf [47, 97, 47, 121]
+        setze weg: [u8; 6] auf [47, 97, 47, 117, 47, 122]
+        setze umweg: [u8; 11] auf [47, 97, 47, 46, 47, 117, 47, 46, 46, 47, 120]
+        setze boot: [u8; 5] auf [47, 98, 111, 111, 116]
+        setze bootdatei: [u8; 7] auf [47, 98, 111, 111, 116, 47, 122]
+        setze daneben: [u8; 7] auf [47, 98, 111, 111, 116, 101, 100]
+        setze zyklus: [u8; 10] auf [47, 97, 47, 117, 47, 107, 114, 101, 105, 115]
+        weitergeben(vfs_einhaengen(t, byteansicht(wurzel), fs))
+        setze fehler1: ergebnis[void, VfsFehler] auf vfs_einhaengen(t, byteansicht(wurzel), fs)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler1), 1))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler1).code == VFS_EBUSY, 2))
+        weitergeben(vfs_anlegen(t, byteansicht(ordner), wahr))
+        weitergeben(vfs_anlegen(t, byteansicht(unter), wahr))
+        setze a_zustand: VfsDatei auf 0
+        setze b_zustand: VfsDatei auf 0
+        setze a: ptr[VfsDatei] auf zeiger(adresse_von(a_zustand))
+        setze b: ptr[VfsDatei] auf zeiger(adresse_von(b_zustand))
+        setze dyn_a: ptr[dyn Datei] auf a
+        weitergeben(vfs_oeffnen(t, byteansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN, a))
+        setze quelle: VfsTestBytes auf 0
+        setze ziel: VfsTestBytes auf 0
+        setze i: u64 auf 0
+        solange i < 8192:
+            quelle.bytes[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        setze position: u64 auf weitergeben(a.position(4090, 0))
+        weitergeben(vfs_test_pruefe(position == 4090, 3))
+        setze anzahl: u64 auf weitergeben(a.schreiben(byteansicht(quelle.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 4))
+        setze info: VfsStat auf weitergeben(a.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 12282, 5))
+        setze position auf weitergeben(a.position(-8192, 2))
+        weitergeben(vfs_test_pruefe(position == 4090, 6))
+        setze anzahl auf weitergeben(dyn_a.lesen(byteansicht(ziel.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 7))
+        setze i auf 0
+        solange i < 8192:
+            weitergeben(vfs_test_pruefe(quelle.bytes[i] == ziel.bytes[i], 8))
+            setze i auf i + 1
+        setze position auf weitergeben(a.position(0, 0))
+        setze anzahl auf weitergeben(dyn_a.lesen(byteansicht(ziel.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 9))
+        setze i auf 0
+        solange i < 4090:
+            weitergeben(vfs_test_pruefe(ziel.bytes[i] == 0, 10))
+            setze i auf i + 1
+        setze fehler2: ergebnis[u64, VfsFehler] auf a.position(-1, 0)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler2), 11))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler2).code == VFS_EINVAL, 12))
+        weitergeben(fs.groesse(a.griff, 17))
+        weitergeben(fs.groesse(a.griff, 8192))
+        setze position auf weitergeben(a.position(0, 0))
+        setze anzahl auf weitergeben(dyn_a.lesen(byteansicht(ziel.bytes)))
+        setze i auf 0
+        solange i < 8192:
+            weitergeben(vfs_test_pruefe(ziel.bytes[i] == 0, 13))
+            setze i auf i + 1
+        weitergeben(vfs_oeffnen(t, byteansicht(umweg), VFS_LESEN, b))
+        setze fehler3: ergebnis[u64, VfsFehler] auf b.schreiben(byteansicht(quelle.bytes))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler3), 14))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler3).code == VFS_EBADF, 15))
+        setze fehler4: ergebnis[void, VfsFehler] auf vfs_aushängen(t, byteansicht(wurzel))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler4), 16))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler4).code == VFS_EBUSY, 17))
+        weitergeben(vfs_umbenennen(t, byteansicht(datei), byteansicht(anders)))
+        setze fehler5: ergebnis[VfsStat, VfsFehler] auf vfs_stat(t, byteansicht(datei))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler5), 18))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler5).code == VFS_ENOENT, 19))
+        setze info auf weitergeben(vfs_stat(t, byteansicht(anders)))
+        weitergeben(vfs_test_pruefe(info.bytes == 8192, 20))
+        weitergeben(vfs_loeschen(t, byteansicht(anders)))
+        setze info auf weitergeben(b.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 8192, 21))
+        weitergeben(a.schliessen())
+        weitergeben(vfs_test_pruefe(r.freie == 14, 22))
+        weitergeben(b.schliessen())
+        weitergeben(vfs_test_pruefe(r.freie == 16, 23))
+        setze fehler6: ergebnis[VfsStat, VfsFehler] auf a.stat()
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler6), 24))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler6).code == VFS_EBADF, 25))
+        setze fehler7: ergebnis[void, VfsFehler] auf vfs_umbenennen(t, byteansicht(ordner), byteansicht(zyklus))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler7), 26))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler7).code == VFS_EINVAL, 27))
+        setze fehler8: ergebnis[void, VfsFehler] auf vfs_loeschen(t, byteansicht(ordner))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler8), 28))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler8).code == VFS_ENOTEMPTY, 29))
+        weitergeben(vfs_loeschen(t, byteansicht(unter)))
+        weitergeben(vfs_oeffnen(t, byteansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN, a))
+        setze fehler9: ergebnis[void, VfsFehler] auf vfs_oeffnen(t, byteansicht(datei), VFS_LESEN | VFS_ANLEGEN | VFS_EXKLUSIV, b)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler9), 30))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler9).code == VFS_EEXIST, 31))
+        weitergeben(vfs_oeffnen(t, byteansicht(datei), VFS_SCHREIBEN | VFS_ANHAENGEN, b))
+        setze position auf weitergeben(b.position(17, 0))
+        setze anzahl auf weitergeben(b.schreiben(byteansicht(quelle.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192 und b.offset == 8192, 58))
+        setze position auf weitergeben(b.position(0, 0))
+        setze anzahl auf weitergeben(b.schreiben(byteansicht(quelle.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192 und b.offset == 16384, 59))
+        weitergeben(fs.groesse(a.griff, 65536))
+        setze position auf weitergeben(b.position(17, 0))
+        setze append_fehler: ergebnis[u64, VfsFehler] auf b.schreiben(byteansicht(quelle.bytes))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(append_fehler), 60))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(append_fehler).code == VFS_ENOSPC und b.offset == 17, 61))
+        weitergeben(b.schliessen())
+        setze position auf weitergeben(a.position(65536, 0))
+        setze fehler11: ergebnis[u64, VfsFehler] auf a.schreiben(byteansicht(quelle.bytes))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler11), 34))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler11).code == VFS_ENOSPC, 35))
+        setze info auf weitergeben(a.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 65536, 36))
+        setze alt: u64 auf a.griff
+        weitergeben(a.schliessen())
+        weitergeben(vfs_oeffnen(t, byteansicht(ordner), VFS_LESEN | VFS_VERZEICHNIS, b))
+        setze eintrag: VfsEintrag auf weitergeben(b.verzeichnis(0))
+        weitergeben(vfs_test_pruefe(eintrag.name_bytes == 1 und eintrag.name[0] == 120 und eintrag.bytes == 65536, 37))
+        setze fehler12: ergebnis[VfsEintrag, VfsFehler] auf b.verzeichnis(1)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler12), 38))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler12).code == VFS_ENOENT, 39))
+        weitergeben(b.schliessen())
+        setze fehler13: ergebnis[VfsStat, VfsFehler] auf fs.stat(alt)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler13), 40))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler13).code == VFS_EBADF, 41))
+        weitergeben(vfs_loeschen(t, byteansicht(datei)))
+        weitergeben(vfs_test_pruefe(r.freie == 16, 42))
+        # Ersetzen erhält sowohl den offenen Quell- als auch den alten Ziel-Inode.
+        weitergeben(vfs_oeffnen(t, byteansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN, a))
+        weitergeben(vfs_oeffnen(t, byteansicht(anders), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN, b))
+        setze anzahl auf weitergeben(a.schreiben(byteansicht(quelle.bytes)))
+        setze marke: [u8; 1] auf [77]
+        setze anzahl auf weitergeben(b.schreiben(byteansicht(marke)))
+        weitergeben(vfs_umbenennen(t, byteansicht(datei), byteansicht(anders)))
+        setze position auf weitergeben(b.position(0, 0))
+        setze anzahl auf weitergeben(b.lesen(byteansicht(ziel.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 1 und ziel.bytes[0] == 77, 62))
+        weitergeben(a.schliessen())
+        weitergeben(vfs_oeffnen(t, byteansicht(anders), VFS_LESEN, a))
+        setze anzahl auf weitergeben(a.lesen(byteansicht(ziel.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192 und ziel.bytes[0] == 11, 63))
+        weitergeben(a.schliessen())
+        weitergeben(b.schliessen())
+        weitergeben(vfs_loeschen(t, byteansicht(anders)))
+        weitergeben(vfs_test_pruefe(r.freie == 16, 64))
+        setze griffe: VfsTestGriffe auf 0
+        setze i auf 0
+        solange i < 256:
+            griffe.werte[i] = weitergeben(fs.oeffnen(byteansicht(wurzel), VFS_LESEN))
+            setze i auf i + 1
+        setze fehler14: ergebnis[u64, VfsFehler] auf fs.oeffnen(byteansicht(wurzel), VFS_LESEN)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler14), 43))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler14).code == VFS_EMFILE, 44))
+        setze i auf 0
+        solange i < 256:
+            weitergeben(fs.schliessen(griffe.werte[i]))
+            setze i auf i + 1
+        setze fehler15: ergebnis[void, VfsFehler] auf fs.schliessen(griffe.werte[0])
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler15), 45))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler15).code == VFS_EBADF, 46))
+        weitergeben(vfs_einhaengen(t, byteansicht(boot), fs))
+        setze fehler16: ergebnis[void, VfsFehler] auf vfs_umbenennen(t, byteansicht(ordner), byteansicht(bootdatei))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler16), 47))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler16).code == VFS_EXDEV, 48))
+        setze fehler17: ergebnis[void, VfsFehler] auf vfs_aushängen(t, byteansicht(wurzel))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler17), 49))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler17).code == VFS_EBUSY, 50))
+        setze fehler18: ergebnis[VfsStat, VfsFehler] auf vfs_stat(t, byteansicht(daneben))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler18), 51))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler18).code == VFS_ENOENT, 52))
+        weitergeben(vfs_oeffnen(t, byteansicht(boot), VFS_LESEN | VFS_VERZEICHNIS, b))
+        weitergeben(b.schliessen())
+        weitergeben(vfs_aushängen(t, byteansicht(boot)))
+        weitergeben(vfs_loeschen(t, byteansicht(ordner)))
+        weitergeben(vfs_aushängen(t, byteansicht(wurzel)))
+        setze fehlerfs: VfsTestSchliessen auf VfsTestSchliessen(fs)
+        setze mock: ptr[VfsTestSchliessen] auf zeiger(adresse_von(fehlerfs))
+        setze dynmock: ptr[dyn Dateisystem] auf mock
+        weitergeben(vfs_einhaengen(t, byteansicht(wurzel), dynmock))
+        weitergeben(vfs_oeffnen(t, byteansicht(wurzel), VFS_LESEN, a))
+        setze fehler19: ergebnis[void, VfsFehler] auf a.schliessen()
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler19), 53))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler19).code == VFS_EIO, 54))
+        weitergeben(vfs_test_pruefe(nicht a.offen und t.mounts[0].offen == 0, 55))
+        setze fehler20: ergebnis[void, VfsFehler] auf a.schliessen()
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehler20), 56))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehler20).code == VFS_EBADF, 57))
+        weitergeben(vfs_aushängen(t, byteansicht(wurzel)))
+        gib_zurück erfolg()
+
+@nativ
+funktion vfs_test() -> u64:
+    unsicher:
+        setze resultat: ergebnis[void, VfsFehler] auf vfs_test_ablauf()
+        wenn nicht ist_erfolg(resultat):
+            setze f: VfsFehler auf ergebnis_fehler(resultat)
+            gib_zurück 10000 + als(u64, f.code) * 100 + als(u64, f.grund)
+        gib_zurück 0
+
+struktur VfsTestSchliessen implementiert Dateisystem:
+    quelle: ptr[dyn Dateisystem]
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.oeffnen(pfad, modus)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(selbst.quelle.schliessen(griff))
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.lesen(griff, offset, daten)
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.schreiben(griff, offset, daten)
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.stat(griff)
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.verzeichnis(griff, index)
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.groesse(griff, bytes)
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.anlegen(pfad, verzeichnis)
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.loeschen(pfad)
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.umbenennen(quelle, ziel)
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.quelle.abgleichen()

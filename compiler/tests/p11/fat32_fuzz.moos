@@ -1,0 +1,4 @@
+aus "fat32_fuzz_probe" importiere fat32_fuzz_probe
+# Fuzzläufe sollen bei einem unerwarteten Sprachfehler abbrechen.
+unsicher:
+    zeige fat32_fuzz_probe()

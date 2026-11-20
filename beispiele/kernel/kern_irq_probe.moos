@@ -1,0 +1,50 @@
+# Privates QEMU-Profil: zwei zugeteilte Vektoren als lokale APIC-IPI zustellen.
+aus "kern_irq" importiere kern_irq_reservieren, kern_irq_stoppen
+aus "kern_ap" importiere ap_ipi
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch IRQ_PROBE_A: atom[u64] auf 0
+@nativ
+statisch IRQ_PROBE_B: atom[u64] auf 0
+
+@nativ
+konstante IRQ_T_A: [u8; _] auf "MOO-IRQ VEKTOR A "
+@nativ
+konstante IRQ_T_B: [u8; _] auf "MOO-IRQ VEKTOR B "
+
+@nativ
+funktion irq_probe_a(daten: u64) -> void:
+    unsicher:
+        atom_addieren(IRQ_PROBE_A, daten, ordnung=freigeben)
+
+@nativ
+funktion irq_probe_b(daten: u64) -> void:
+    unsicher:
+        atom_addieren(IRQ_PROBE_B, daten, ordnung=freigeben)
+
+@nativ
+funktion irq_probe_starten(tsc: u64, ziel: u32, log_adr: u64) -> bool:
+    unsicher:
+        wenn tsc == 0:
+            gib_zurück falsch
+        setze a: u64 auf kern_irq_reservieren(adresse_von(irq_probe_a), 7)
+        setze b: u64 auf kern_irq_reservieren(adresse_von(irq_probe_b), 11)
+        wenn a == 0 oder b == 0 oder a == b:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gesendet: bool auf ap_ipi(ziel, als(u32, a)) und ap_ipi(ziel, als(u32, b))
+        setze start: u64 auf takt()
+        solange gesendet und takt() - start < tsc * 1000000:
+            wenn atom_laden(IRQ_PROBE_A, ordnung=erwerben) == 7 und atom_laden(IRQ_PROBE_B, ordnung=erwerben) == 11:
+                stopp
+            kern_pause()
+        irq_wiederherstellen(irq)
+        kern_irq_stoppen(a)
+        kern_irq_stoppen(b)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(IRQ_T_A), a)
+        log(adresse_von(IRQ_T_B), b)
+        gib_zurück gesendet und atom_laden(IRQ_PROBE_A, ordnung=erwerben) == 7 und atom_laden(IRQ_PROBE_B, ordnung=erwerben) == 11

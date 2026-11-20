@@ -1,0 +1,4 @@
+aus "fat32_probe" importiere fat32_probe
+# Der Selbsttest soll bei unerwarteten nativen Fehlern abbrechen.
+unsicher:
+    zeige fat32_probe()

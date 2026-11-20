@@ -1,0 +1,24 @@
+# FAT-Transport auf einem registrierten Blockgerät (auch GPT-Partition/Cache).
+aus ds_fat_transport importiere FatTransport
+aus "kern_block" importiere BlockGeometrie, BlockFehler, BlockAnfrage, block_geometrie, block_anfordern
+
+struktur FatKernTransport implementiert FatTransport:
+    kennung: u64
+    geo: BlockGeometrie
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze anfrage: BlockAnfrage auf 0
+            gib_zurück block_anfordern(selbst.kennung, zeiger(adresse_von(anfrage)), art, lba, anzahl, puffer, bytes)
+
+@nativ
+funktion fat_kern_transport_einrichten(transport: ptr[FatKernTransport], kennung: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf weitergeben(block_geometrie(kennung))
+        setze transport.kennung auf kennung
+        setze transport.geo auf geo
+        gib_zurück erfolg()

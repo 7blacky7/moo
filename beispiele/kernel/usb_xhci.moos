@@ -2,17 +2,19 @@
 # xHCI 1.2: Register/Contexts/TRBs; USB 2.0 Kap.9; HID 1.11 Boot Keyboard.
 # Boot-Tastaturen direkt an xHCI-Rootports. MSI weckt den Eingabefaden.
 # Pro Host eigener Kommando-/Eventring, pro Slot eigener Device Context,
-# Control-/Interrupt-Ring und vorheriger Report. MSC bleibt synchron.
+# Control-, IN- und OUT-Ringe. Laufender BOT verarbeitet auch HID-Ereignisse.
 # Timer-Polling bleibt der Rückfall. Hub, Maus und Hotplug sind weitere Stufen.
 # Kein Firmwaredienst nach ExitBootServices.
 # Die DMA-Seiten bleiben beim PFA reserviert.
 aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32, nt_mmio_glocke32, nt_cfg_lese32, nt_cfg_schreibe32, takt, nt_null
+aus "kern_irq" importiere kern_irq_msi, kern_irq_msix, kern_irq_stoppen
 
 # 0 CAP,1 OP,2 DB,3 RT,4 DMA,5 Contextgroesse,6/7 CMD Index/Cycle,
 # 8/9 Event Index/Cycle,10 Slot,11 DCI,12/13 EP0 Index/Cycle,
 # 14/15 Arbeitsindex/Cycle fuer IN,16 Anzahl HID-Slots,18 TSC/us,
 # 19 Fehlerstufe,22 Completion-Slot,23 physische BAR.
-# 17 MSI aktiv; 20/21,24/25 sind frei.
+# 17 MSI aktiv, 20 Anzahl MSC-Slots, 21 kompakte BOT-Protokollierung,
+# 24 HID-Callback bei synchroner I/O; 25 frei.
 # 26 Meldungs-Callback,27 PPC,28 MaxPorts,29 BDF,
 # 30 Keyboard-Interface,31 Endpoint,32 Paketgroesse,33 bInterval,34 Konfig,35 Protocol-Caps.
 # 36/37/38 letztes passendes Event Status/Steuer/TRB; 39/40/41 aktive EP0-TRBs,
@@ -25,9 +27,9 @@ konstante XH_WERTE: u64 auf 52
 konstante XH_MAX_HOSTS: u64 auf 8
 @nativ
 konstante XH_MAX_HID: u64 auf 16
-# 64 Seiten Host, je Slot drei Seiten: Output/RAM, EP0 und Interrupt-IN.
+# 64 Seiten Host, je Slot vier Seiten: Output/RAM, EP0, IN und OUT.
 @nativ
-konstante XH_HID_SEITEN: u64 auf 112
+konstante XH_HID_SEITEN: u64 auf 128
 @nativ
 statisch XH: [u64; 52] auf 0
 @nativ
@@ -36,6 +38,8 @@ statisch XH_HID_HOSTS: [u64; 416] auf 0
 statisch XH_AKTIV: [u64; 1] auf 0
 @nativ
 statisch XH_HID_HOST_ANZAHL: [u64; 1] auf 0
+@nativ
+statisch XH_MSC_RUF: [u64; 1] auf 0
 
 # Metadaten oberhalb des 32 * 64 Byte grossen Output Device Context.
 struktur XhTastatur:
@@ -287,7 +291,7 @@ funktion xh_setze(f: u64, w: u64) -> void:
 @nativ
 funktion xh_hid_slot(slot: u64) -> u64:
     unsicher:
-        gib_zurück xh(4) + 64 * 4096 + (slot - 1) * 3 * 4096
+        gib_zurück xh(4) + 64 * 4096 + (slot - 1) * 4 * 4096
 
 @nativ
 funktion xh_ausgabe() -> u64:
@@ -299,8 +303,11 @@ funktion xh_ausgabe() -> u64:
 @nativ
 funktion xh_ring_basis(seite: u64) -> u64:
     unsicher:
-        wenn xh(51) != 0 und (seite == 6 oder seite == 7):
-            gib_zurück xh_ausgabe() + (seite - 5) * 4096
+        wenn xh(51) != 0:
+            wenn seite == 6 oder seite == 7:
+                gib_zurück xh_ausgabe() + (seite - 5) * 4096
+            wenn seite == 9:
+                gib_zurück xh_ausgabe() + 3 * 4096
         gib_zurück xh(4) + seite * 4096
 
 @nativ
@@ -389,7 +396,7 @@ funktion xh_event_holen() -> bool:
             xh_setze(9, xh(9) ^ 1)
         wenn xh(17) == 0:
             xh_eventring_freigeben()
-        wenn ereignis == 32 oder ereignis == 33:
+        wenn (ereignis == 32 oder ereignis == 33) und (xh(21) == 0 oder (status >> 24) != 1 oder u64(steuer >> 24) != xh(10)):
             xh_log(adresse_von(XH_T_EVT_TYP), u64(ereignis))
             xh_log(adresse_von(XH_T_EVT_TRB), parameter)
             xh_log(adresse_von(XH_T_EVT_STATUS), u64(status))
@@ -411,6 +418,9 @@ funktion xh_event(typ: u32, erwartet: u64) -> u32:
     unsicher:
         wenn nicht xh_event_holen():
             gib_zurück 0
+        wenn xh(17) != 0:
+            xh_msi_status_quittieren()
+            xh_eventring_freigeben()
         setze steuer: u32 auf u32(xh(49))
         setze status: u32 auf u32(xh(48))
         setze ereignis: u32 auf (steuer >> 10) & 63
@@ -436,15 +446,17 @@ funktion xh_event(typ: u32, erwartet: u64) -> u32:
             wenn ereignis == 32 und xh(39) != 0 und parameter == xh(40) und code == 13 und u64(status & 0xFFFFFF) <= xh(42):
                 xh_setze(43, xh(42) - u64(status & 0xFFFFFF))
                 gib_zurück 0
+        sonst wenn xh(24) != 0:
+            xh_hid_ereignis(xh(24))
         gib_zurück code
 
 @nativ
-funktion xh_ergebnis(typ: u32, p: u64) -> u32:
+funktion xh_ergebnis_frist(typ: u32, p: u64, mikrosekunden: u64) -> u32:
     unsicher:
         setze start: u64 auf takt()
         setze code: u32 auf 0
         xh_setze(36, 0)
-        solange takt() - start < 1000000 * xh(18):
+        solange takt() - start < mikrosekunden * xh(18):
             setze code auf xh_event(typ, p)
             wenn code != 0:
                 # Rohes CC behalten; Control-Short-Data wird bereits in xh_event gepaart.
@@ -453,6 +465,10 @@ funktion xh_ergebnis(typ: u32, p: u64) -> u32:
         xh_log(adresse_von(XH_T_WARTE_TYP), u64(typ))
         xh_log(adresse_von(XH_T_WARTE_TRB), p)
         gib_zurück 0
+@nativ
+funktion xh_ergebnis(typ: u32, p: u64) -> u32:
+    unsicher:
+        gib_zurück xh_ergebnis_frist(typ, p, 1000000)
 
 @nativ
 funktion xh_abschluss(typ: u32, p: u64) -> bool:
@@ -549,40 +565,6 @@ funktion xh_pci(bdf: u32, off: u32) -> u32:
     unsicher:
         gib_zurück nt_cfg_lese32(0x80000000 | (bdf << 8) | off)
 
-# MSI-Capability und Message-Control liegen im herkömmlichen PCI-Raum.
-# PCI_CAPABILITY_LIST wie bei NVMe, maximal 48 ausgerichtete Einträge.
-@nativ
-funktion xh_msi_cap(bdf: u32) -> u32:
-    unsicher:
-        wenn (xh_pci(bdf, 4) & (1 << 20)) == 0:
-            gib_zurück 0
-        setze cap: u32 auf xh_pci(bdf, 0x34) & 0xFC
-        setze msi: u32 auf 0
-        setze anzahl: u64 auf 0
-        solange cap != 0 und anzahl < 48:
-            wenn cap < 0x40:
-                gib_zurück 0
-            setze kopf: u32 auf xh_pci(bdf, cap)
-            setze art: u32 auf kopf & 255
-            wenn art == 5:
-                wenn msi != 0:
-                    gib_zurück 0
-                setze msi auf cap
-            wenn art == 0x11 und (kopf & 0x80000000) != 0:
-                # Bei aktivem MSI-X bleibt der HID-Pfad im Polling.
-                gib_zurück 0
-            setze cap auf (kopf >> 8) & 0xFC
-            setze anzahl auf anzahl + 1
-        wenn cap != 0:
-            gib_zurück 0
-        gib_zurück msi
-
-@nativ
-funktion xh_cfg_schreibe16(bdf: u32, off: u32, wert: u16) -> void:
-    unsicher:
-        port_schreibe32(0xCF8, 0x80000000 | (bdf << 8) | (off & 0xFC))
-        port_schreibe16(als(u16, 0xCFC + (off & 2)), wert)
-
 # USBSTS.EINT vor dem Eventring quittieren. Bei MSI wird IMAN.IP bei
 # der Zustellung geloescht (Linux v6.12 xhci-ring.c:3017–3026,3104–3127).
 @nativ
@@ -594,64 +576,32 @@ funktion xh_msi_status_quittieren() -> bool:
         nt_mmio_schreibe32(status, 8)
         gib_zurück wahr
 
-# PCI MSI: 32-/64-Bit-Nachricht, genau ein Vektor. Linux v6.12
-# pci_regs.h:306–321, drivers/pci/msi/msi.c:190–206,278–282,303–314.
 @nativ
-funktion xh_msi_starten(adresse: u32, datenwort: u16) -> bool:
+funktion xh_msi_starten(pci: u64, ziel: u64, ruf: u64) -> u64:
     unsicher:
-        wenn adresse == 0:
-            gib_zurück falsch
-        setze bdf: u32 auf als(u32, xh(29))
-        setze cap: u32 auf xh_msi_cap(bdf)
-        wenn cap == 0:
-            gib_zurück falsch
-        setze kontrolle: u16 auf als(u16, xh_pci(bdf, cap) >> 16)
-        setze lang: bool auf (kontrolle & 0x80) != 0
-        setze maskierbar: bool auf (kontrolle & 0x100) != 0
-        setze daten_off: u32 auf cap + 8
-        wenn lang:
-            setze daten_off auf daten_off + 4
-        wenn daten_off > 0xFC oder (maskierbar und daten_off + 8 > 0xFC):
-            gib_zurück falsch
-        setze cfg: u32 auf 0x80000000 | (bdf << 8)
-        # Kontrolle liegt in der oberen Hälfte, Message Data in der unteren.
-        # MSI Enable und Multiple Message Enable aus, dann Adresse/Daten setzen.
-        setze kontrolle auf kontrolle & 0xFF8E
-        xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
-        wenn (xh_pci(bdf, cap) & 0x10000) != 0:
-            gib_zurück falsch
-        nt_cfg_schreibe32(cfg | (cap + 4), adresse)
-        wenn lang:
-            nt_cfg_schreibe32(cfg | (cap + 8), 0)
-        xh_cfg_schreibe16(bdf, daten_off, datenwort)
-        wenn maskierbar:
-            setze maske: u32 auf xh_pci(bdf, daten_off + 4) & 0xFFFFFFFE
-            nt_cfg_schreibe32(cfg | (daten_off + 4), maske)
-            wenn (xh_pci(bdf, daten_off + 4) & 1) != 0:
-                gib_zurück falsch
-        wenn xh_pci(bdf, cap + 4) != adresse oder als(u16, xh_pci(bdf, daten_off) & 0xFFFF) != datenwort:
-            gib_zurück falsch
-        wenn lang und xh_pci(bdf, cap + 8) != 0:
-            gib_zurück falsch
-        xh_cfg_schreibe16(bdf, cap + 2, kontrolle | 1)
-        wenn ((xh_pci(bdf, cap) >> 16) & 0x71) != 1:
-            xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
-            gib_zurück falsch
+        setze v: u64 auf kern_irq_msi(pci, xh(29), ziel, ruf, 0)
+        setze msix: bool auf falsch
+        wenn v == 0:
+            setze v auf kern_irq_msix(pci, xh(29), ziel, 0, xh(0), 1048576, 0, ruf, 0)
+            setze msix auf v != 0
+        wenn v == 0:
+            gib_zurück 0
         xh_msi_status_quittieren()
         xh_eventring_freigeben()
         setze iman: u64 auf xh(3) + 0x20
         setze cmd: u32 auf nt_mmio_lese32(xh(1))
-        # Altes IP im ausgeschalteten Interrupter quittieren. Dann IE und INTE
-        # setzen (xHCI §5.5.2.1, §5.4.1).
+        # Altes IP quittieren, danach IE und INTE setzen (xHCI §5.5.2.1).
         nt_mmio_schreibe32(iman, 1)
         nt_mmio_schreibe32(iman, 2)
         nt_mmio_schreibe32(xh(1), cmd | 4)
         wenn (nt_mmio_lese32(iman) & 2) != 0 und (nt_mmio_lese32(xh(1)) & 4) != 0:
-            gib_zurück wahr
+            wenn msix:
+                xh_log(adresse_von(XH_T_MSIX), v)
+            gib_zurück v
         nt_mmio_schreibe32(xh(1), cmd & 0xFFFFFFFB)
         nt_mmio_schreibe32(iman, 1)
-        xh_cfg_schreibe16(bdf, cap + 2, kontrolle)
-        gib_zurück falsch
+        kern_irq_stoppen(v)
+        gib_zurück 0
 
 @nativ
 funktion xh_stop() -> bool:
@@ -1064,6 +1014,11 @@ funktion xh_geraet(port: u64, speed: u64) -> bool:
         wenn laenge == 0:
             gib_zurück falsch
         wenn nicht xh_boot_interface(desc, laenge):
+            wenn XH_MSC_RUF[0] != 0:
+                setze binden: ptr[fn[sysv64](u64, u64, u64) -> bool] auf zeiger(XH_MSC_RUF[0])
+                wenn binden(port, speed, laenge):
+                    xh_setze(20, xh(20) + 1)
+                    gib_zurück wahr
             xh_log(adresse_von(XH_T_INTERFACE), 0xFFFFFFFF)
             gib_zurück falsch
         setze hid_nummer auf xh(30)
@@ -1180,6 +1135,10 @@ funktion xh_hid_anfordern(slot: u64, zustand: u64) -> void:
         setze p_index: u64 auf zustand + versatz_von(XhTastatur, index)
         setze p_zyklus: u64 auf zustand + versatz_von(XhTastatur, zyklus)
         setze dci: u64 auf speicher_lesen(zustand + versatz_von(XhTastatur, dci), 8)
+        # HID kann beim synchronen Warten auf einen anderen Slot eintreffen.
+        setze alt_slot: u64 auf xh(10)
+        setze alt_index: u64 auf xh(14)
+        setze alt_zyklus: u64 auf xh(15)
         xh_setze(10, slot)
         xh_setze(14, speicher_lesen(p_index, 8))
         xh_setze(15, speicher_lesen(p_zyklus, 8))
@@ -1187,6 +1146,9 @@ funktion xh_hid_anfordern(slot: u64, zustand: u64) -> void:
         speicher_schreiben(p_index, xh(14), 8)
         speicher_schreiben(p_zyklus, xh(15), 8)
         speicher_schreiben(zustand + versatz_von(XhTastatur, anfrage), trb, 8)
+        xh_setze(10, alt_slot)
+        xh_setze(14, alt_index)
+        xh_setze(15, alt_zyklus)
         nt_mmio_glocke32(xh(2) + slot * 4, u32(dci))
 
 @nativ
@@ -1385,7 +1347,7 @@ funktion xh_durchlaufen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel
                             setze port auf port + 1
                     sonst:
                         setze vollstaendig auf falsch
-                    wenn hid und port_ok und xh(16) > 0:
+                    wenn hid und port_ok und (xh(16) > 0 oder xh(20) > 0):
                         setze hosts auf hosts + 1
                     sonst:
                         setze fortsetzen auf xh_stop()
@@ -1412,20 +1374,32 @@ funktion usb_inventar(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartun
 @nativ
 konstante XH_T_MSI: [u8; _] auf "MOO-KERNEL USB MSI BDF "
 @nativ
+konstante XH_T_MSI_VEKTOR: [u8; _] auf "MOO-KERNEL USB MSI VEKTOR "
+@nativ
+konstante XH_T_MSIX: [u8; _] auf "MOO-KERNEL USB MSI-X VEKTOR "
+@nativ
 konstante XH_T_POLL: [u8; _] auf "MOO-KERNEL USB POLL BDF "
 
 @nativ
-funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64, report: bool, msi_adresse: u32, msi_daten: u16) -> bool:
+funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, wartung: u64, report: bool, pci: u64, msi_ziel: u64, msi_ruf: u64, speicher_ruf: u64, bericht: u64) -> bool:
     unsicher:
         speicher_schreiben(adresse_von(XH_HID_HOST_ANZAHL), 0, 8)
-        wenn allokieren == 0 oder nicht xh_durchlaufen(0, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet), wartung, allokieren, report):
+        setze XH_MSC_RUF[0] auf speicher_ruf
+        setze gestartet: bool auf allokieren != 0 und xh_durchlaufen(0, tsc_us, bi, map, log, 65536, adresse_von(xh_geraet), wartung, allokieren, report)
+        setze XH_MSC_RUF[0] auf 0
+        wenn nicht gestartet:
             gib_zurück falsch
         setze host: u64 auf 0
+        setze tastatur: bool auf falsch
         solange host < speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8):
             xh_waehle(adresse_von(XH_HID_HOSTS) + host * XH_WERTE * 8)
-            wenn xh_msi_starten(msi_adresse, msi_daten):
+            setze tastatur auf tastatur oder xh(16) != 0
+            xh_setze(24, bericht)
+            setze v: u64 auf xh_msi_starten(pci, msi_ziel, msi_ruf)
+            wenn v != 0:
                 xh_setze(17, 1)
                 xh_log(adresse_von(XH_T_MSI), xh(29))
+                xh_log(adresse_von(XH_T_MSI_VEKTOR), v)
             sonst:
                 xh_log(adresse_von(XH_T_POLL), xh(29))
             setze slot: u64 auf 1
@@ -1436,7 +1410,16 @@ funktion usb_starten(allokieren: u64, tsc_us: u64, bi: u64, map: u64, log: u64, 
                 setze slot auf slot + 1
             setze host auf host + 1
         xh_waehle(adresse_von(XH_HID_HOSTS))
-        gib_zurück wahr
+        gib_zurück tastatur
+
+@nativ
+funktion xh_host_verfuegbar(kontext: u64, dma: u64) -> bool:
+    unsicher:
+        setze basis: u64 auf adresse_von(XH_HID_HOSTS)
+        setze anzahl: u64 auf speicher_lesen(adresse_von(XH_HID_HOST_ANZAHL), 8)
+        wenn kontext < basis oder kontext >= basis + anzahl * XH_WERTE * 8 oder (kontext - basis) % (XH_WERTE * 8) != 0:
+            gib_zurück falsch
+        gib_zurück speicher_lesen(kontext + 4 * 8, 8) == dma
 
 @nativ
 funktion usb_braucht_poll() -> bool:

@@ -1,0 +1,387 @@
+# P11-T10: ein Blockcache pro unterer Gerätekennung. Der Aufrufer reicht
+# für konsistente Datenzugriffe ausschließlich die Cache-Kennung weiter.
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BLOCK_OK, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_VERWERFEN, BLOCK_BELEGT, BLOCK_VOLL, BLOCK_GEOMETRIE, block_geometrie, block_registrieren, block_anfordern, block_abschliessen
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_bedingung" importiere KernBedingung, bedingung_warten, bedingung_wecken
+aus "kern_faden" importiere FadenPlaner, faden_abgeben
+aus "kern_smp" importiere smp_planer
+aus "kern_smp_planer" importiere smp_online_maske, smp_faden_anbieten
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "../uefi/netz_geraet" importiere nt_kopiere
+
+@nativ
+konstante BLOCKCACHE_MAX_ZEILEN: u32 auf 64
+@nativ
+konstante BLOCKCACHE_PFA_GRENZE: u64 auf 256
+@nativ
+konstante BLOCKCACHE_START: u32 auf 0
+@nativ
+konstante BLOCKCACHE_AKTIV: u32 auf 1
+@nativ
+konstante BLOCKCACHE_ABBRUCH: u32 auf 2
+@nativ
+konstante BLOCKCACHE_BEENDET: u32 auf 3
+
+@nativ
+statisch BLOCKCACHE_BUDGET_SPERRE: KernSperre auf 0
+@nativ
+statisch BLOCKCACHE_GERAETE: [u64; 1] auf 0
+@nativ
+statisch BLOCKCACHE_SEITEN: [u64; 1] auf 0
+
+struktur BlockCacheZeile:
+    lba: u64
+    kette: u32
+    aelter: u32
+    juenger: u32
+    belegt: bool
+    schmutzig: bool
+
+struktur BlockCache implementiert BlockGeraet:
+    unter: u64
+    geo: BlockGeometrie
+    basis: u64
+    seiten: u64
+    zeilen: u32
+    belegt: u32
+    schmutzig: u32
+    lru_alt: u32
+    lru_neu: u32
+    phase: u32
+    fehler: BlockFehler
+    mutex: KernMutex
+    wecken: KernBedingung
+    anfrage: BlockAnfrage
+    hash: [u32; 128]
+    plaetze: [BlockCacheZeile; 64]
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze planer: ptr[FadenPlaner] auf smp_planer()
+            setze sperre: ptr[KernMutex] auf zeiger(adresse_von(selbst.mutex))
+            mutex_nimm(planer, sperre)
+            setze fehler: BlockFehler auf blockcache_auftrag(selbst, anfrage)
+            wenn selbst.schmutzig != 0:
+                bedingung_wecken(planer, zeiger(adresse_von(selbst.wecken)))
+            mutex_gib(planer, sperre)
+            block_abschliessen(anfrage, fehler)
+            gib_zurück erfolg()
+
+# 0 kennzeichnet eine leere Kette. Zeilenkennungen beginnen bei 1.
+@nativ
+funktion blockcache_hash(lba: u64) -> u64:
+    gib_zurück (lba ^ (lba >> 17) ^ (lba >> 32)) & 127
+
+@nativ
+funktion blockcache_ort(cache: ptr[BlockCache], nr: u32) -> ptr[BlockCacheZeile]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(cache.plaetze) + (u64(nr) - 1) * groesse_von(BlockCacheZeile))
+
+@nativ
+funktion blockcache_daten(cache: ptr[BlockCache], nr: u32) -> u64:
+    unsicher:
+        gib_zurück cache.basis + (u64(nr) - 1) * cache.geo.block_bytes
+
+@nativ
+funktion blockcache_finden(cache: ptr[BlockCache], lba: u64) -> u32:
+    unsicher:
+        setze nr: u32 auf cache.hash[blockcache_hash(lba)]
+        solange nr != 0:
+            setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+            wenn zeile.lba == lba:
+                gib_zurück nr
+            setze nr auf zeile.kette
+        gib_zurück 0
+
+@nativ
+funktion blockcache_lru_trennen(cache: ptr[BlockCache], nr: u32) -> void:
+    unsicher:
+        setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        wenn zeile.aelter == 0:
+            setze cache.lru_alt auf zeile.juenger
+        sonst:
+            setze alt: ptr[BlockCacheZeile] auf blockcache_ort(cache, zeile.aelter)
+            setze alt.juenger auf zeile.juenger
+        wenn zeile.juenger == 0:
+            setze cache.lru_neu auf zeile.aelter
+        sonst:
+            setze jung: ptr[BlockCacheZeile] auf blockcache_ort(cache, zeile.juenger)
+            setze jung.aelter auf zeile.aelter
+
+@nativ
+funktion blockcache_lru_anhaengen(cache: ptr[BlockCache], nr: u32) -> void:
+    unsicher:
+        setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        setze zeile.aelter auf cache.lru_neu
+        setze zeile.juenger auf 0
+        wenn cache.lru_neu == 0:
+            setze cache.lru_alt auf nr
+        sonst:
+            setze vorher: ptr[BlockCacheZeile] auf blockcache_ort(cache, cache.lru_neu)
+            setze vorher.juenger auf nr
+        setze cache.lru_neu auf nr
+
+@nativ
+funktion blockcache_entfernen(cache: ptr[BlockCache], nr: u32) -> void:
+    unsicher:
+        setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        setze fach: u64 auf blockcache_hash(zeile.lba)
+        setze kopf: u32 auf cache.hash[fach]
+        wenn kopf == nr:
+            setze cache.hash[fach] auf zeile.kette
+        sonst:
+            setze vorher: ptr[BlockCacheZeile] auf blockcache_ort(cache, kopf)
+            solange vorher.kette != nr:
+                setze vorher auf blockcache_ort(cache, vorher.kette)
+            setze vorher.kette auf zeile.kette
+        blockcache_lru_trennen(cache, nr)
+        setze zeile.belegt auf falsch
+        setze cache.belegt auf cache.belegt - 1
+
+@nativ
+funktion blockcache_einfuegen(cache: ptr[BlockCache], nr: u32, lba: u64) -> void:
+    unsicher:
+        setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        setze fach: u64 auf blockcache_hash(lba)
+        setze zeile.lba auf lba
+        setze zeile.kette auf cache.hash[fach]
+        setze zeile.belegt auf wahr
+        setze cache.hash[fach] auf nr
+        setze cache.belegt auf cache.belegt + 1
+        blockcache_lru_anhaengen(cache, nr)
+
+@nativ
+funktion blockcache_unter(cache: ptr[BlockCache], art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> BlockFehler:
+    unsicher:
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(cache.anfrage))
+        setze r: ergebnis[void, BlockFehler] auf block_anfordern(cache.unter, a, art, lba, anzahl, puffer, bytes)
+        wenn nicht ist_erfolg(r):
+            gib_zurück ergebnis_fehler(r)
+        gib_zurück BlockFehler(BLOCK_OK, 0)
+
+@nativ
+funktion blockcache_rueckschreiben(cache: ptr[BlockCache], nr: u32) -> BlockFehler:
+    unsicher:
+        setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        setze r: BlockFehler auf blockcache_unter(cache, BLOCK_SCHREIBEN, zeile.lba, 1, blockcache_daten(cache, nr), cache.geo.block_bytes)
+        wenn r.code == BLOCK_OK:
+            setze zeile.schmutzig auf falsch
+            setze cache.schmutzig auf cache.schmutzig - 1
+        gib_zurück r
+
+# Der erste Hintergrundfehler wird dem nächsten synchronen Auftrag gemeldet.
+# Solange der Fehler vorliegt, bleibt die Zeile behalten und der Rückschreiber wartet.
+@nativ
+funktion blockcache_fehler_melden(cache: ptr[BlockCache]) -> BlockFehler:
+    unsicher:
+        setze f: BlockFehler auf cache.fehler
+        setze cache.fehler auf BlockFehler(BLOCK_OK, 0)
+        gib_zurück f
+
+# Cache-Mutex über Rückschreiben und Gerätesynchronisation halten.
+@nativ
+funktion blockcache_leeren(cache: ptr[BlockCache]) -> BlockFehler:
+    unsicher:
+        setze f: BlockFehler auf blockcache_fehler_melden(cache)
+        wenn f.code != BLOCK_OK:
+            gib_zurück f
+        setze nr: u32 auf cache.lru_alt
+        solange nr != 0:
+            setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+            wenn zeile.schmutzig:
+                setze f auf blockcache_rueckschreiben(cache, nr)
+                wenn f.code != BLOCK_OK:
+                    gib_zurück f
+            setze nr auf zeile.juenger
+        gib_zurück blockcache_unter(cache, BLOCK_FLUSH, 0, 0, 0, 0)
+
+@nativ
+funktion blockcache_nehmen(cache: ptr[BlockCache], lba: u64, lesen: bool) -> ergebnis[u32, BlockFehler]:
+    unsicher:
+        setze nr: u32 auf blockcache_finden(cache, lba)
+        wenn nr != 0:
+            wenn nr != cache.lru_neu:
+                blockcache_lru_trennen(cache, nr)
+                blockcache_lru_anhaengen(cache, nr)
+            gib_zurück erfolg(nr)
+        setze nr auf 1
+        solange nr <= cache.zeilen und blockcache_ort(cache, nr).belegt:
+            setze nr auf nr + 1
+        wenn nr > cache.zeilen:
+            setze nr auf cache.lru_alt
+        setze opfer: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+        wenn opfer.schmutzig:
+            setze rueck: BlockFehler auf blockcache_fehler_melden(cache)
+            wenn rueck.code != BLOCK_OK:
+                gib_zurück fehlschlag(rueck)
+            setze rueck auf blockcache_rueckschreiben(cache, nr)
+            wenn rueck.code != BLOCK_OK:
+                gib_zurück fehlschlag(rueck)
+        wenn lesen:
+            setze hilfe: u64 auf blockcache_daten(cache, cache.zeilen + 1)
+            setze gelesen: BlockFehler auf blockcache_unter(cache, BLOCK_LESEN, lba, 1, hilfe, cache.geo.block_bytes)
+            wenn gelesen.code != BLOCK_OK:
+                gib_zurück fehlschlag(gelesen)
+            nt_kopiere(blockcache_daten(cache, nr), hilfe, cache.geo.block_bytes)
+        wenn opfer.belegt:
+            blockcache_entfernen(cache, nr)
+        blockcache_einfuegen(cache, nr, lba)
+        gib_zurück erfolg(nr)
+
+@nativ
+funktion blockcache_verwerfen(cache: ptr[BlockCache], anfrage: ptr[BlockAnfrage]) -> BlockFehler:
+    unsicher:
+        setze f: BlockFehler auf blockcache_leeren(cache)
+        wenn f.code != BLOCK_OK:
+            gib_zurück f
+        setze f auf blockcache_unter(cache, BLOCK_VERWERFEN, anfrage.lba, anfrage.anzahl, 0, 0)
+        # Auch die Teilwirkung eines fehlgeschlagenen unteren Discards
+        # darf keinen gültigen alten Cache-Inhalt hinterlassen.
+        setze nr: u32 auf cache.lru_alt
+        solange nr != 0:
+            setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+            setze danach: u32 auf zeile.juenger
+            wenn zeile.lba >= anfrage.lba und zeile.lba - anfrage.lba < anfrage.anzahl:
+                blockcache_entfernen(cache, nr)
+            setze nr auf danach
+        gib_zurück f
+
+@nativ
+funktion blockcache_auftrag(cache: ptr[BlockCache], anfrage: ptr[BlockAnfrage]) -> BlockFehler:
+    unsicher:
+        wenn anfrage.art == BLOCK_FLUSH:
+            gib_zurück blockcache_leeren(cache)
+        wenn anfrage.art == BLOCK_VERWERFEN:
+            gib_zurück blockcache_verwerfen(cache, anfrage)
+        wenn anfrage.art == BLOCK_SCHREIBEN_FUA und cache.fehler.code != BLOCK_OK:
+            gib_zurück blockcache_fehler_melden(cache)
+        setze lesen: bool auf anfrage.art == BLOCK_LESEN
+        setze i: u64 auf 0
+        solange i < anfrage.anzahl:
+            setze r: ergebnis[u32, BlockFehler] auf blockcache_nehmen(cache, anfrage.lba + i, lesen)
+            wenn nicht ist_erfolg(r):
+                gib_zurück ergebnis_fehler(r)
+            setze nr: u32 auf ergebnis_wert(r)
+            setze puffer: u64 auf anfrage.puffer + i * cache.geo.block_bytes
+            wenn lesen:
+                nt_kopiere(puffer, blockcache_daten(cache, nr), cache.geo.block_bytes)
+            sonst:
+                nt_kopiere(blockcache_daten(cache, nr), puffer, cache.geo.block_bytes)
+                setze zeile: ptr[BlockCacheZeile] auf blockcache_ort(cache, nr)
+                wenn nicht zeile.schmutzig:
+                    setze zeile.schmutzig auf wahr
+                    setze cache.schmutzig auf cache.schmutzig + 1
+            setze i auf i + 1
+        wenn anfrage.art == BLOCK_SCHREIBEN_FUA:
+            gib_zurück blockcache_leeren(cache)
+        gib_zurück BlockFehler(BLOCK_OK, 0)
+
+@nativ
+funktion blockcache_faden(daten: u64) -> void:
+    unsicher:
+        setze cache: ptr[BlockCache] auf zeiger(daten)
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(cache.mutex))
+        setze wecken: ptr[KernBedingung] auf zeiger(adresse_von(cache.wecken))
+        solange wahr:
+            mutex_nimm(planer, sperre)
+            solange cache.phase == BLOCKCACHE_START oder (cache.phase == BLOCKCACHE_AKTIV und (cache.schmutzig == 0 oder cache.fehler.code != BLOCK_OK)):
+                bedingung_warten(planer, wecken, sperre)
+            wenn cache.phase == BLOCKCACHE_ABBRUCH:
+                setze cache.phase auf BLOCKCACHE_BEENDET
+                bedingung_wecken(planer, wecken)
+                mutex_gib(planer, sperre)
+                gib_zurück
+            setze nr: u32 auf cache.lru_alt
+            solange nicht blockcache_ort(cache, nr).schmutzig:
+                setze nr auf blockcache_ort(cache, nr).juenger
+            setze cache.fehler auf blockcache_rueckschreiben(cache, nr)
+            mutex_gib(planer, sperre)
+            faden_abgeben(planer)
+
+# Unterer Kennung und PFA-Seiten werden zusammen reserviert.
+@nativ
+funktion blockcache_reservieren(unter: u64, seiten: u64) -> u32:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(BLOCKCACHE_BUDGET_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze bit: u64 auf u64(1) << (unter - 1)
+        setze code: u32 auf BLOCK_OK
+        wenn (BLOCKCACHE_GERAETE[0] & bit) != 0:
+            setze code auf BLOCK_BELEGT
+        sonst wenn seiten > BLOCKCACHE_PFA_GRENZE - BLOCKCACHE_SEITEN[0]:
+            setze code auf BLOCK_VOLL
+        sonst:
+            setze BLOCKCACHE_GERAETE[0] auf BLOCKCACHE_GERAETE[0] | bit
+            setze BLOCKCACHE_SEITEN[0] auf BLOCKCACHE_SEITEN[0] + seiten
+        spin_gib(sperre, irq)
+        gib_zurück code
+
+@nativ
+funktion blockcache_freigeben(unter: u64, basis: u64, seiten: u64) -> void:
+    unsicher:
+        wenn basis != 0:
+            setze i: u64 auf 0
+            solange i < seiten:
+                ar_rahmen_freigeben(basis + i * 4096)
+                setze i auf i + 1
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(BLOCKCACHE_BUDGET_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze bit: u64 auf u64(1) << (unter - 1)
+        setze BLOCKCACHE_GERAETE[0] auf BLOCKCACHE_GERAETE[0] & (0xFFFFFFFFFFFFFFFF ^ bit)
+        setze BLOCKCACHE_SEITEN[0] auf BLOCKCACHE_SEITEN[0] - seiten
+        spin_gib(sperre, irq)
+
+# Ein dauerhaftes Nullobjekt je unterem Blockgerät. Zeilen plus eine
+# getrennte Lesezeile bleiben innerhalb der gemeinsamen PFA-Obergrenze.
+@nativ
+funktion blockcache_einrichten(cache: ptr[BlockCache], unter: u64, zeilen: u32) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn cache.basis != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 0))
+        setze geo: BlockGeometrie auf weitergeben(block_geometrie(unter))
+        wenn zeilen == 0 oder zeilen > BLOCKCACHE_MAX_ZEILEN oder geo.block_bytes > (BLOCKCACHE_PFA_GRENZE * 4096) / (u64(zeilen) + 1):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze seiten: u64 auf ((u64(zeilen) + 1) * geo.block_bytes + 4095) / 4096
+        setze code: u32 auf blockcache_reservieren(unter, seiten)
+        wenn code != BLOCK_OK:
+            gib_zurück fehlschlag(BlockFehler(code, 0))
+        setze basis: u64 auf ar_rahmen_nehmen(seiten)
+        wenn basis == 0:
+            blockcache_freigeben(unter, 0, seiten)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze cache.unter auf unter
+        setze cache.geo auf geo
+        setze cache.zeilen auf zeilen
+        setze cache.seiten auf seiten
+        setze cache.basis auf basis
+        setze cache.phase auf BLOCKCACHE_START
+        wenn smp_faden_anbieten(adresse_von(blockcache_faden), u64(cache), smp_online_maske()) == 0:
+            blockcache_freigeben(unter, basis, seiten)
+            setze cache.basis auf 0
+            setze cache.seiten auf 0
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze r: ergebnis[u64, BlockFehler] auf block_registrieren(cache)
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(cache.mutex))
+        setze wecken: ptr[KernBedingung] auf zeiger(adresse_von(cache.wecken))
+        mutex_nimm(planer, sperre)
+        wenn ist_erfolg(r):
+            setze cache.phase auf BLOCKCACHE_AKTIV
+            bedingung_wecken(planer, wecken)
+            mutex_gib(planer, sperre)
+            gib_zurück r
+        setze cache.phase auf BLOCKCACHE_ABBRUCH
+        bedingung_wecken(planer, wecken)
+        solange cache.phase != BLOCKCACHE_BEENDET:
+            bedingung_warten(planer, wecken, sperre)
+        mutex_gib(planer, sperre)
+        blockcache_freigeben(unter, basis, seiten)
+        setze cache.basis auf 0
+        setze cache.seiten auf 0
+        gib_zurück r

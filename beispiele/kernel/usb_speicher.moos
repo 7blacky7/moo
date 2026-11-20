@@ -1,10 +1,10 @@
-# P7-T26: USB-MSC/BOT, ausschliesslich lesende SCSI-Kommandos.
-# Verwendet den EINEN xHCI-Hostpfad; synchrone Diagnose VOR dem HID-Start.
+# USB-MSC/BOT: lesende GPT-Diagnose oder dauerhaft gebundener Blockpfad.
+# Schreibkommandos benötigen die ausdrückliche Freigabe des laufenden Geräts.
 # LUN0, direkt am Rootport, keine Streams/UAS/Hubs. DMA: mindestens99 PFA-Seiten.
 # Seite0..63 xHCI inkl.Scratchpads;64 Daten;65 CBW/CSW/GPT-Kopf/Kontext;66 CRC-Tabelle.
 # Seite67..98 haelt die komplette, auf128KiB begrenzte GPT-Eintragstabelle.
 # IN-Ring Seite7, OUT-Ring Seite9; HID benutzt die Arena erst nach Controller-Stopp.
-aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us, xh_inventar_roh
+aus "./usb_xhci" importiere xh, xh_setze, xh_null, xh_log, xh_trb, xh_ergebnis_frist, xh_ring_basis, xh_ausgabe, xh_befehl, xh_control, xh_suchen, xh_beschreiben, xh_stop, xh_warte_us, xh_inventar_roh
 aus "../uefi/hardware_pci" importiere nt_mmio_glocke32, takt
 aus "../uefi/hardware_crc" importiere hw_crc_tabelle
 aus "./speicher_gpt" importiere gp_hex_ziffer, gp_guid_format, gp_kopf, gp_eintrag, gp_kontext, gp_anzahl, gp_lesen
@@ -15,8 +15,12 @@ aus "../uefi/netz_geraet" importiere nt_kopiere
 # 14 Tag,15 CSW-Status,16 echte Datenlaenge,17 Blockgroesse,18 letzteLBA,
 # 19 bereit,20 Transport defekt,21 Zeitlimit,22 Partitionen,
 # 24 angeforderte Datenlaenge,25 CDB-Laenge,26 Opcode,27 erlaubte USB-Seriennummer.
+# 28 DMA-Grenze im Blockpfad,29 ausdrückliche Schreibfreigabe,30 Blockpfad,
+# 31 xHCI-Completion-Code des letzten Bulk-Transfers.
 @nativ
-statisch MS: [u64; 28] auf 0
+statisch MS: [u64; 32] auf 0
+@nativ
+statisch MS_AKTIV: [u64; 1] auf 0
 @nativ
 konstante MS_T_INTERFACE: [u8; _] auf "MOO-KERNEL USB MSC INTERFACE "
 @nativ
@@ -45,14 +49,33 @@ konstante MS_T_LBA: [u8; _] auf "MOO-KERNEL USB MSC LETZTE LBA "
 konstante MS_T_SENSE: [u8; _] auf "MOO-KERNEL USB MSC SENSE "
 
 @nativ
+funktion ms_waehle(kontext: u64) -> void:
+    unsicher:
+        setze MS_AKTIV[0] auf kontext
+
+@nativ
+funktion ms_kontext() -> u64:
+    unsicher:
+        wenn MS_AKTIV[0] != 0:
+            gib_zurück MS_AKTIV[0]
+        gib_zurück adresse_von(MS)
+
+@nativ
+funktion ms_max_bytes() -> u64:
+    unsicher:
+        wenn ms(30) != 0:
+            gib_zurück ms(28)
+        gib_zurück 4096
+
+@nativ
 funktion ms(feld: u64) -> u64:
     unsicher:
-        gib_zurück u64(speicher_lesen(adresse_von(MS) + feld * 8, 8))
+        gib_zurück u64(speicher_lesen(ms_kontext() + feld * 8, 8))
 
 @nativ
 funktion ms_setze(feld: u64, wert: u64) -> void:
     unsicher:
-        speicher_schreiben(adresse_von(MS) + feld * 8, wert, 8)
+        speicher_schreiben(ms_kontext() + feld * 8, wert, 8)
 
 @nativ
 funktion ms_be_lesen(daten: u64, breite: u64) -> u64:
@@ -84,7 +107,7 @@ funktion ms_cbw_lesend(cbw: u64) -> bool:
         setze anzahl: u64 auf 0
         wenn n != 0:
             setze flags auf 128
-        wenn u64(speicher_lesen(cbw, 4)) != 0x43425355 oder u64(speicher_lesen(cbw + 13, 1)) != 0 oder u64(speicher_lesen(cbw + 12, 1)) != flags oder n > 4096:
+        wenn u64(speicher_lesen(cbw, 4)) != 0x43425355 oder u64(speicher_lesen(cbw + 13, 1)) != 0 oder u64(speicher_lesen(cbw + 12, 1)) != flags oder n > ms_max_bytes():
             gib_zurück falsch
         wenn op == 0:
             gib_zurück cdb == 6 und n == 0
@@ -102,7 +125,38 @@ funktion ms_cbw_lesend(cbw: u64) -> bool:
             setze anzahl auf ms_be_lesen(cbw + 25, 4)
         sonst:
             gib_zurück falsch
-        gib_zurück ms(17) >= 512 und ms(17) <= 4096 und anzahl >= 1 und anzahl <= 8 und n == anzahl * ms(17)
+        gib_zurück ms(17) >= 512 und ms(17) <= 4096 und anzahl >= 1 und anzahl <= ms_max_bytes() / ms(17) und n == anzahl * ms(17)
+
+@nativ
+funktion ms_daten_aus(op: u64) -> bool:
+    gib_zurück op == 0x2A oder op == 0x8A
+
+@nativ
+funktion ms_cbw_erlaubt(cbw: u64) -> bool:
+    unsicher:
+        setze op: u64 auf u64(speicher_lesen(cbw + 15, 1))
+        wenn nicht ms_daten_aus(op) und op != 0x35:
+            gib_zurück ms_cbw_lesend(cbw)
+        wenn ms(30) == 0 oder ms(29) == 0 oder u64(speicher_lesen(cbw, 4)) != 0x43425355 oder u64(speicher_lesen(cbw + 12, 2)) != 0:
+            gib_zurück falsch
+        setze laenge: u64 auf u64(speicher_lesen(cbw + 8, 4))
+        setze breite: u64 auf u64(speicher_lesen(cbw + 14, 1))
+        wenn op == 0x35:
+            gib_zurück breite == 10 und laenge == 0
+        setze lba: u64 auf 0
+        setze anzahl: u64 auf 0
+        wenn op == 0x2A und breite == 10:
+            setze lba auf ms_be_lesen(cbw + 17, 4)
+            setze anzahl auf ms_be_lesen(cbw + 22, 2)
+            wenn anzahl > 0x100000000 - lba:
+                gib_zurück falsch
+        sonst wenn op == 0x8A und breite == 16:
+            setze lba auf ms_be_lesen(cbw + 17, 8)
+            setze anzahl auf ms_be_lesen(cbw + 25, 4)
+        sonst:
+            gib_zurück falsch
+        setze block_bytes: u64 auf ms(17)
+        gib_zurück block_bytes >= 512 und block_bytes <= 4096 und anzahl > 0 und anzahl <= ms_max_bytes() / block_bytes und lba <= ms(18) und anzahl - 1 <= ms(18) - lba und laenge == anzahl * block_bytes
 
 # MSC BOT: Klasse8/Subklasse6(SCSI transparent)/Protokoll0x50, Alternate0.
 @nativ
@@ -238,12 +292,10 @@ funktion ms_ep_context(input: u64, dci: u64, ring: u64, paket: u64, burst: u64, 
         speicher_schreiben(epctx + 16, 4096, 4)
 
 @nativ
-@aufrufkonvention("sysv64")
-funktion ms_geraet(port: u64, speed: u64) -> bool:
+funktion ms_konfigurieren(port: u64, speed: u64, laenge: u64) -> bool:
     unsicher:
         setze desc: u64 auf xh(4) + 32768
         setze input: u64 auf xh(4) + 16384
-        setze laenge: u64 auf xh_beschreiben(port, speed, ms(5))
         setze eingang: u64 auf 0
         setze ausgang: u64 auf 0
         setze letzte: u64 auf 0
@@ -265,8 +317,8 @@ funktion ms_geraet(port: u64, speed: u64) -> bool:
         wenn nicht xh_control((ms(6) << 16) | 0x0900, 0, 0):
             gib_zurück falsch
         xh_null(input, 4096)
-        xh_null(xh(4) + 28672, 4096)
-        xh_null(xh(4) + 36864, 4096)
+        xh_null(xh_ring_basis(7), 4096)
+        xh_null(xh_ring_basis(9), 4096)
         xh_setze(14, 0)
         xh_setze(15, 1)
         xh_setze(44, 0)
@@ -274,16 +326,21 @@ funktion ms_geraet(port: u64, speed: u64) -> bool:
         speicher_schreiben(input + 4, u32(1 | (u64(1) << eingang) | (u64(1) << ausgang)), 4)
         speicher_schreiben(input + xh(5), u32((speed << 20) | (letzte << 27)), 4)
         speicher_schreiben(input + xh(5) + 4, u32(port << 16), 4)
-        ms_ep_context(input, eingang, xh(4) + 28672, ms(10), ms(12), wahr)
-        ms_ep_context(input, ausgang, xh(4) + 36864, ms(11), ms(13), falsch)
+        ms_ep_context(input, eingang, xh_ring_basis(7), ms(10), ms(12), wahr)
+        ms_ep_context(input, ausgang, xh_ring_basis(9), ms(11), ms(13), falsch)
         wenn nicht xh_befehl(input, (12 << 10) | u32(xh(10) << 24)):
             gib_zurück falsch
         ms_setze(19, 1)
         ms_setze(20, 0)
         gib_zurück wahr
 
-# Ein Normal-TRB pro begrenztem Transfer; kein Ueberschreiten einer64KiB-Grenze.
-# Bulk-OUT nimmt NUR den geprueften31B-CBW, niemals einen Datensektor.
+@nativ
+@aufrufkonvention("sysv64")
+funktion ms_geraet(port: u64, speed: u64) -> bool:
+    unsicher:
+        gib_zurück ms_konfigurieren(port, speed, xh_beschreiben(port, speed, ms(5)))
+
+# Ein Normal-TRB pro Phase. OUT-Nutzdaten setzt eine freigegebene WRITE-CDB voraus.
 @nativ
 funktion ms_bulk(eingang: bool, puffer: u64, laenge: u64) -> bool:
     unsicher:
@@ -295,7 +352,7 @@ funktion ms_bulk(eingang: bool, puffer: u64, laenge: u64) -> bool:
         setze code: u32 auf 0
         setze rest: u64 auf 0
         ms_setze(16, 0)
-        wenn ms(19) == 0 oder ms(20) != 0 oder xh(4) != ms(0) oder laenge == 0 oder laenge > 4096 oder (puffer & 65535) + laenge > 65536:
+        wenn ms(19) == 0 oder ms(20) != 0 oder xh(4) != ms(0) oder laenge == 0 oder laenge > ms_max_bytes() oder (puffer & 65535) + laenge > 65536:
             gib_zurück falsch
         wenn eingang:
             wenn puffer != ms(1) und puffer != ms(3):
@@ -303,7 +360,10 @@ funktion ms_bulk(eingang: bool, puffer: u64, laenge: u64) -> bool:
             wenn puffer == ms(3) und laenge != 13:
                 gib_zurück falsch
         sonst:
-            wenn puffer != ms(2) oder laenge != 31 oder nicht ms_cbw_lesend(puffer):
+            wenn puffer == ms(2):
+                wenn laenge != 31 oder nicht ms_cbw_erlaubt(puffer):
+                    gib_zurück falsch
+            sonst wenn puffer != ms(1) oder laenge != ms(24) oder nicht ms_daten_aus(ms(26)) oder nicht ms_cbw_erlaubt(ms(2)):
                 gib_zurück falsch
             setze seite auf 9
             setze indexfeld auf 44
@@ -312,7 +372,11 @@ funktion ms_bulk(eingang: bool, puffer: u64, laenge: u64) -> bool:
         xh_setze(11, dci)
         setze trb auf xh_trb(seite, indexfeld, puffer, u32(laenge), steuer, wahr)
         nt_mmio_glocke32(xh(2) + xh(10) * 4, u32(dci))
-        setze code auf xh_ergebnis(32, trb)
+        setze frist: u64 auf 1000000
+        wenn puffer == ms(3) und ms(26) == 0x35:
+            setze frist auf 30000000
+        setze code auf xh_ergebnis_frist(32, trb, frist)
+        ms_setze(31, u64(code))
         setze rest auf xh(36) & 0xFFFFFF
         wenn (code != 1 und (nicht eingang oder code != 13)) oder rest > laenge:
             gib_zurück falsch
@@ -343,12 +407,18 @@ funktion ms_cbw_bauen(op: u64, lba: u64, anzahl: u64) -> bool:
         sonst wenn op == 0x9E:
             setze laenge auf 32
             setze breite auf 16
-        sonst wenn op == 0x28 oder op == 0x88:
-            wenn ms(17) < 512 oder ms(17) > 4096 oder anzahl == 0 oder anzahl > 4096 / ms(17) oder lba > ms(18) oder anzahl - 1 > ms(18) - lba:
+        sonst wenn op == 0x35:
+            wenn ms(30) == 0 oder ms(29) == 0:
+                gib_zurück falsch
+            setze breite auf 10
+        sonst wenn op == 0x28 oder op == 0x88 oder ms_daten_aus(op):
+            wenn ms_daten_aus(op) und (ms(30) == 0 oder ms(29) == 0):
+                gib_zurück falsch
+            wenn ms(17) < 512 oder ms(17) > 4096 oder anzahl == 0 oder anzahl > ms_max_bytes() / ms(17) oder lba > ms(18) oder anzahl - 1 > ms(18) - lba:
                 gib_zurück falsch
             setze laenge auf anzahl * ms(17)
             setze breite auf 16
-            wenn op == 0x28:
+            wenn op == 0x28 oder op == 0x2A:
                 wenn lba > 0xFFFFFFFF oder anzahl > 65535:
                     gib_zurück falsch
                 setze breite auf 10
@@ -362,7 +432,7 @@ funktion ms_cbw_bauen(op: u64, lba: u64, anzahl: u64) -> bool:
         speicher_schreiben(cbw, 0x43425355, 4)
         speicher_schreiben(cbw + 4, u32(ms(14)), 4)
         speicher_schreiben(cbw + 8, u32(laenge), 4)
-        wenn laenge != 0:
+        wenn laenge != 0 und nicht ms_daten_aus(op):
             speicher_schreiben(cbw + 12, 128, 1)
         speicher_schreiben(cbw + 14, u8(breite), 1)
         speicher_schreiben(cdb, u8(op), 1)
@@ -371,31 +441,62 @@ funktion ms_cbw_bauen(op: u64, lba: u64, anzahl: u64) -> bool:
         sonst wenn op == 0x9E:
             speicher_schreiben(cdb + 1, 0x10, 1)
             ms_be_setzen(cdb + 10, 32, 4)
-        sonst wenn op == 0x28:
+        sonst wenn op == 0x28 oder op == 0x2A:
             ms_be_setzen(cdb + 2, lba, 4)
             ms_be_setzen(cdb + 7, anzahl, 2)
-        sonst wenn op == 0x88:
+        sonst wenn op == 0x88 oder op == 0x8A:
             ms_be_setzen(cdb + 2, lba, 8)
             ms_be_setzen(cdb + 10, anzahl, 4)
         ms_setze(24, laenge)
         ms_setze(25, breite)
         ms_setze(26, op)
-        gib_zurück ms_cbw_lesend(cbw)
+        gib_zurück ms_cbw_erlaubt(cbw)
 
-# Nach einem Transport-/Phasenfehler keine weiteren CBWs in diesem Lauf.
-# BOT1.0 §5.3.4: Class Reset, Clear Halt IN, Clear Halt OUT; dann Controller-Stopp
-# durch den Aufrufer. Kein Wiederanlauf mit unpassendem Host-Datentoggle.
+# xHCI 4.6.8–4.6.10. Zu einem neuen leeren Ring erst aus Stopped umschalten.
 @nativ
-funktion ms_transport_abbruch(grund: u64) -> bool:
+funktion ms_ep_neustart(dci: u64, seite: u64, indexfeld: u64) -> bool:
+    unsicher:
+        setze ziel: u32 auf u32((dci << 16) | (xh(10) << 24))
+        lesebarriere()
+        setze zustand: u64 auf u64(speicher_lesen(xh_ausgabe() + dci * xh(5), 4)) & 7
+        wenn zustand == 1:
+            wenn nicht xh_befehl(0, (15 << 10) | ziel):
+                gib_zurück falsch
+        sonst wenn zustand == 2:
+            wenn nicht xh_befehl(0, (14 << 10) | ziel):
+                gib_zurück falsch
+        sonst wenn zustand != 3:
+            gib_zurück falsch
+        setze ring: u64 auf xh_ring_basis(seite)
+        xh_null(ring, 4096)
+        xh_setze(indexfeld, 0)
+        xh_setze(indexfeld + 1, 1)
+        gib_zurück xh_befehl(ring | 1, (16 << 10) | ziel)
+
+# BOT 1.0 §5.3.4: Class Reset, Clear Halt IN, Clear Halt OUT.
+# Der Diagnosepfad stoppt danach den Host. Im Blockbetrieb müssen zusätzlich
+# beide xHCI-Endpoints einen gültigen neuen Ring und Cycle erhalten.
+@nativ
+funktion ms_reset() -> bool:
     unsicher:
         ms_setze(20, 1)
-        xh_log(adresse_von(MS_T_FEHLER), grund)
         setze erholt: bool auf xh_control((ms(7) << 32) | 0xFF21, 0, 0)
         wenn erholt:
             setze erholt auf xh_control((ms(8) << 32) | 0x0102, 0, 0)
         wenn erholt:
             setze erholt auf xh_control((ms(9) << 32) | 0x0102, 0, 0)
+        wenn erholt und ms(30) != 0:
+            setze erholt auf ms_ep_neustart((ms(8) & 15) * 2 + 1, 7, 14) und ms_ep_neustart((ms(9) & 15) * 2, 9, 44)
+            wenn erholt:
+                ms_setze(20, 0)
         xh_log(adresse_von(MS_T_RECOVERY), u64(erholt))
+        gib_zurück erholt
+
+@nativ
+funktion ms_transport_abbruch(grund: u64) -> bool:
+    unsicher:
+        xh_log(adresse_von(MS_T_FEHLER), grund)
+        ms_reset()
         gib_zurück falsch
 
 # CSW-Tabelle5.2/§6.3: tatsaechliche13B, Signatur/Tag, gueltiger Status,
@@ -418,6 +519,10 @@ funktion ms_csw_pruefen(csw_laenge: u64, angefordert: u64, empfangen: u64) -> bo
 funktion ms_bot(op: u64, lba: u64, anzahl: u64) -> bool:
     unsicher:
         setze empfangen: u64 auf 0
+        setze diagnose: bool auf ms(30) == 0
+        ms_setze(15, 0)
+        ms_setze(16, 0)
+        ms_setze(31, 0xFFFFFFFF)
         wenn ms(19) == 0 oder ms(20) != 0:
             gib_zurück falsch
         wenn ms(21) != 0 und takt() - ms(21) > xh(18) * 30000000:
@@ -425,24 +530,30 @@ funktion ms_bot(op: u64, lba: u64, anzahl: u64) -> bool:
             xh_log(adresse_von(MS_T_FEHLER), 0xEE)
             gib_zurück falsch
         wenn nicht ms_cbw_bauen(op, lba, anzahl):
+            xh_log(adresse_von(MS_T_FEHLER), 0xCB)
             gib_zurück falsch
-        xh_log(adresse_von(MS_T_OPCODE), op)
-        xh_log(adresse_von(MS_T_TAG), ms(14))
+        wenn diagnose:
+            xh_log(adresse_von(MS_T_OPCODE), op)
+            xh_log(adresse_von(MS_T_TAG), ms(14))
         wenn nicht ms_bulk(falsch, ms(2), 31) oder ms(16) != 31:
             gib_zurück ms_transport_abbruch(1)
         wenn ms(24) != 0:
-            xh_null(ms(1), ms(24))
-            wenn nicht ms_bulk(wahr, ms(1), ms(24)):
+            setze lesen: bool auf nicht ms_daten_aus(op)
+            wenn lesen:
+                xh_null(ms(1), ms(24))
+            wenn nicht ms_bulk(lesen, ms(1), ms(24)):
                 gib_zurück ms_transport_abbruch(2)
             setze empfangen auf ms(16)
         xh_null(ms(3), 13)
         wenn nicht ms_bulk(wahr, ms(3), 13):
             gib_zurück ms_transport_abbruch(3)
-        xh_log(adresse_von(MS_T_STATUS), u64(speicher_lesen(ms(3) + 12, 1)))
-        xh_log(adresse_von(MS_T_REST), u64(speicher_lesen(ms(3) + 8, 4)))
+        wenn diagnose:
+            xh_log(adresse_von(MS_T_STATUS), u64(speicher_lesen(ms(3) + 12, 1)))
+            xh_log(adresse_von(MS_T_REST), u64(speicher_lesen(ms(3) + 8, 4)))
         wenn nicht ms_csw_pruefen(ms(16), ms(24), empfangen):
             gib_zurück ms_transport_abbruch(4)
-        xh_log(adresse_von(MS_T_DATEN), ms(16))
+        wenn diagnose:
+            xh_log(adresse_von(MS_T_DATEN), ms(16))
         gib_zurück ms(15) == 0
 
 @nativ
@@ -507,7 +618,7 @@ funktion ms_scsi_starten() -> bool:
 
 @nativ
 @aufrufkonvention("sysv64")
-funktion ms_lese_block(lba: u64) -> bool:
+funktion ms_lese_block(lba: u64, geraet: u64) -> bool:
     unsicher:
         setze op: u64 auf 0x28
         wenn lba > 0xFFFFFFFF:
@@ -547,7 +658,7 @@ funktion ms_gpt_lesen() -> bool:
         setze kontext: u64 auf ms(2) + 256
         setze ergebnis: bool auf falsch
         gp_kontext(kontext, ms(1), ms(2) + 128, ms(0) + 67 * 4096, ms(4), ms(17), ms(18))
-        setze ergebnis auf gp_lesen(kontext, adresse_von(ms_lese_block), xh(26), adresse_von(MS_T_GPT_PRAEFIX))
+        setze ergebnis auf gp_lesen(kontext, adresse_von(ms_lese_block), 0, xh(26), adresse_von(MS_T_GPT_PRAEFIX))
         ms_setze(22, gp_anzahl(kontext))
         gib_zurück ergebnis
 
@@ -557,7 +668,8 @@ funktion ms_gpt_lesen() -> bool:
 funktion usb_speicher_pruefen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel_bdf: u64, ziel_id: u64, ziel_serie: u64) -> bool:
     unsicher:
         setze ergebnis: bool auf falsch
-        xh_null(adresse_von(MS), 28 * 8)
+        ms_waehle(0)
+        xh_null(adresse_von(MS), 32 * 8)
         xh_setze(26, log)
         wenn dma == 0 oder (dma & 4095) != 0 oder dma >= 0xFFF00000 oder tsc_us == 0 oder tsc_us > 1000000 oder ziel_bdf >= 65536 oder ziel_id == 0 oder ziel_id > 0xFFFFFFFF oder ziel_serie == 0:
             xh_log(adresse_von(MS_T_FEHLER), 0xFF)

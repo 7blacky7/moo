@@ -1,0 +1,57 @@
+# Gemeinsamer Benutzer-/Kernelvertrag. Nummern 0–7 bleiben unverändert.
+@nativ
+konstante MOOS_DATEI_OEFFNEN: u64 auf 8
+@nativ
+konstante MOOS_DATEI_LESEN: u64 auf 9
+@nativ
+konstante MOOS_DATEI_SCHREIBEN: u64 auf 10
+@nativ
+konstante MOOS_DATEI_SCHLIESSEN: u64 auf 11
+@nativ
+konstante MOOS_DATEI_STAT: u64 auf 12
+@nativ
+konstante MOOS_DATEI_VERZEICHNIS: u64 auf 13
+@nativ
+konstante MOOS_DATEI_POSITION: u64 auf 14
+@nativ
+konstante MOOS_DATEI_ABGLEICHEN: u64 auf 15
+@nativ
+konstante MOOS_DATEI_ANLEGEN: u64 auf 16
+@nativ
+konstante MOOS_DATEI_LOESCHEN: u64 auf 17
+@nativ
+konstante MOOS_DATEI_UMBENENNEN: u64 auf 18
+@nativ
+konstante VFS_LESEN: u32 auf 1
+@nativ
+konstante VFS_SCHREIBEN: u32 auf 2
+@nativ
+konstante VFS_ANLEGEN: u32 auf 4
+@nativ
+konstante VFS_LEEREN: u32 auf 8
+@nativ
+konstante VFS_VERZEICHNIS: u32 auf 16
+@nativ
+konstante VFS_EXKLUSIV: u32 auf 32
+@nativ
+konstante VFS_ANHAENGEN: u32 auf 64
+@nativ
+konstante VFS_DATEI: u32 auf 1
+@nativ
+konstante VFS_ORDNER: u32 auf 2
+@nativ
+konstante MOOS_DATEI_EFAULT: u32 auf 14
+@nativ
+konstante MOOS_DATEI_ERANGE: u32 auf 34
+
+# x86-64: Größe 16/24, Ausrichtung jeweils 8; beim Kernstart geprüft.
+struktur MoosDateiStat:
+    art: u32
+    rechte: u32
+    bytes: u64
+
+struktur MoosDateiVerzeichnis:
+    bytes: u64
+    name_bytes: u64
+    art: u32
+    reserviert: u32

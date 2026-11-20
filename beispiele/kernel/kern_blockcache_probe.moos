@@ -1,0 +1,236 @@
+# Opt-in-QEMU-Abnahme für zwei Blockcaches. Der Host beendet QEMU nach
+# dem letzten Barriere-Marker ohne einen QEMU- oder Gast-Shutdown.
+aus "kern_blockcache" importiere BlockCache, blockcache_einrichten, blockcache_finden
+aus "kern_block" importiere BlockAnfrage, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_VERWERFEN, BLOCK_BELEGT, BLOCK_VOLL, BLOCK_EA, block_anfordern, block_registrieren
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten
+aus "nvme_probe" importiere NVME_PROBE_ZIEL_512, NVME_PROBE_ZIEL_4K
+aus "kern_smp" importiere smp_planer, smp_nummer, smp_kern
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_faden" importiere FadenPlaner, faden_abgeben
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "../uefi/hardware_pci" importiere takt, nt_null
+
+@nativ
+statisch CACHE_PROBE_CTRL: [NvmeBlockController; 2] auf 0
+@nativ
+statisch CACHE_PROBE_NVME: [NvmeBlockGeraet; 2] auf 0
+@nativ
+statisch CACHE_PROBE_CACHES: [BlockCache; 2] auf 0
+@nativ
+statisch CACHE_PROBE_ZUSATZ: BlockCache auf 0
+@nativ
+statisch CACHE_PROBE_RAM: RamPlatte auf 0
+
+@nativ
+konstante CACHE_T_EINRICHTEN: [u8; _] auf "MOO-CACHE EINRICHTEN FEHLER "
+@nativ
+konstante CACHE_T_ZEILEN: [u8; _] auf "MOO-CACHE HASH LRU ZEILEN "
+@nativ
+konstante CACHE_T_BUDGET: [u8; _] auf "MOO-CACHE PFA SEITEN "
+@nativ
+konstante CACHE_T_EIO_ARBEITER: [u8; _] auf "MOO-CACHE EIO RUECKSCHREIBER "
+@nativ
+konstante CACHE_T_EIO_AUFRUFER: [u8; _] auf "MOO-CACHE EIO AUFRUFER "
+@nativ
+konstante CACHE_T_FUA_START: [u8; _] auf "MOO-CACHE FUA START "
+@nativ
+konstante CACHE_T_FUA_OK: [u8; _] auf "MOO-CACHE FUA OK "
+@nativ
+konstante CACHE_T_ABSCHNITT: [u8; _] auf "MOO-CACHE ABSCHNITT "
+
+@nativ
+funktion cache_probe_muster(basis: u64, bytes: u64, saat: u64, fuellen: bool) -> bool:
+    unsicher:
+        setze p: ptr[u64] auf zeiger(basis)
+        setze i: u64 auf 0
+        solange i < bytes / 8:
+            setze wort: u64 auf 0
+            wenn saat != 0:
+                setze wort auf (saat << 56) | i
+            wenn fuellen:
+                volatile_schreiben(p, i, wort)
+            sonst wenn volatile_lesen(p, i) != wort:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion cache_probe_nvme(nr: u64, tsc: u64, bi: u64, map: u64, log_adr: u64) -> u64:
+    unsicher:
+        setze ziel: u64 auf adresse_von(NVME_PROBE_ZIEL_512)
+        wenn nr == 1:
+            setze ziel auf adresse_von(NVME_PROBE_ZIEL_4K)
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze optionen: NvmeBlockStart auf NvmeBlockStart(ziel, 0x00101B36, ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN), apic, 4, 4096, wahr)
+        setze eigner: ptr[NvmeBlockController] auf zeiger(adresse_von(CACHE_PROBE_CTRL[nr]))
+        setze geraet: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(CACHE_PROBE_NVME[nr]))
+        setze r: ergebnis[u64, BlockFehler] auf nvme_block_einrichten(eigner, geraet, zeiger(adresse_von(optionen)), tsc, bi, map, log_adr)
+        wenn nicht ist_erfolg(r):
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            log(adresse_von(CACHE_T_EINRICHTEN), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück 0
+        gib_zurück ergebnis_wert(r)
+
+@nativ
+funktion cache_probe_code(r: ergebnis[u64, BlockFehler], code: u32) -> bool:
+    unsicher:
+        wenn ist_erfolg(r):
+            gib_zurück falsch
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück f.code == code
+
+@nativ
+funktion cache_probe_budget(unter: u64, seiten: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze extra: ptr[BlockCache] auf zeiger(adresse_von(CACHE_PROBE_ZUSATZ))
+        wenn seiten != 6 oder nicht cache_probe_code(blockcache_einrichten(extra, unter, 4), BLOCK_BELEGT):
+            gib_zurück falsch
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(CACHE_PROBE_RAM))
+        wenn nicht ist_erfolg(block_ram_einrichten(ram, ar_rahmen_nehmen(4), 16384, 16384, falsch)):
+            gib_zurück falsch
+        setze id: ergebnis[u64, BlockFehler] auf block_registrieren(ram)
+        wenn nicht ist_erfolg(id):
+            gib_zurück falsch
+        wenn nicht cache_probe_code(blockcache_einrichten(extra, ergebnis_wert(id), 63), BLOCK_VOLL):
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(CACHE_T_BUDGET), seiten)
+        gib_zurück wahr
+
+@nativ
+funktion cache_probe_lru(cache: ptr[BlockCache], id: u64, a: ptr[BlockAnfrage], p: u64, log_adr: u64) -> bool:
+    unsicher:
+        # 1, 129, 257, 385 und 513 landen im gleichen Hashfach.
+        setze lba: u64 auf 1
+        solange lba < 513:
+            wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, lba, 1, p, 512)):
+                gib_zurück falsch
+            setze lba auf lba + 128
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, 1, 1, p, 512)):
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, 513, 1, p, 512)):
+            gib_zurück falsch
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(cache.mutex))
+        mutex_nimm(planer, sperre)
+        setze zeilen: u32 auf cache.belegt
+        setze gut: bool auf zeilen == 4 und blockcache_finden(cache, 129) == 0 und blockcache_finden(cache, 1) != 0
+        setze gut auf gut und blockcache_finden(cache, 257) != 0 und blockcache_finden(cache, 385) != 0 und blockcache_finden(cache, 513) != 0
+        mutex_gib(planer, sperre)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(CACHE_T_ZEILEN), u64(zeilen))
+        gib_zurück gut
+
+@nativ
+funktion cache_probe_warte_eio(cache: ptr[BlockCache], tsc: u64) -> BlockFehler:
+    unsicher:
+        setze planer: ptr[FadenPlaner] auf smp_planer()
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(cache.mutex))
+        setze start: u64 auf takt()
+        solange takt() - start < tsc * 3000000:
+            mutex_nimm(planer, sperre)
+            setze f: BlockFehler auf cache.fehler
+            setze erhalten: bool auf cache.schmutzig == 1
+            mutex_gib(planer, sperre)
+            wenn f.code != 0 und erhalten:
+                gib_zurück f
+            faden_abgeben(planer)
+        gib_zurück BlockFehler(0, 0)
+
+@nativ
+funktion cache_probe_eio(cache: ptr[BlockCache], id: u64, unter: u64, a: ptr[BlockAnfrage], p: u64, tsc: u64, log_adr: u64) -> bool:
+    unsicher:
+        cache_probe_muster(p, 512, 0x51, wahr)
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_SCHREIBEN, 8, 1, p, 512)):
+            gib_zurück falsch
+        setze vorher: BlockFehler auf cache_probe_warte_eio(cache, tsc)
+        wenn vorher.code != BLOCK_EA oder vorher.geraete_status == 0:
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(unter, a, BLOCK_LESEN, 8, 1, p, 512)) oder nicht cache_probe_muster(p, 512, 0, falsch):
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, 8, 1, p, 512)) oder nicht cache_probe_muster(p, 512, 0x51, falsch):
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(CACHE_T_EIO_ARBEITER), u64(vorher.geraete_status))
+        setze r: ergebnis[void, BlockFehler] auf block_anfordern(id, a, BLOCK_FLUSH, 0, 0, 0, 0)
+        wenn ist_erfolg(r):
+            gib_zurück falsch
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        log(adresse_von(CACHE_T_EIO_AUFRUFER), u64(f.geraete_status))
+        gib_zurück f.code == vorher.code und f.geraete_status == vorher.geraete_status und ist_erfolg(block_anfordern(id, a, BLOCK_FLUSH, 0, 0, 0, 0))
+
+@nativ
+funktion cache_probe_fua(id: u64, a: ptr[BlockAnfrage], p: u64, log_adr: u64) -> bool:
+    unsicher:
+        # Sechs Schreibblöcke in vier Zeilen erzwingen zwei schmutzige
+        # LRU-Verdrängungen, während der Aufrufer den Cache-Mutex hält.
+        cache_probe_muster(p, 24576, 0x61, wahr)
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_SCHREIBEN, 64, 6, p, 24576)):
+            gib_zurück falsch
+        cache_probe_muster(p, 4096, 0x62, wahr)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(CACHE_T_FUA_START), 1)
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_SCHREIBEN_FUA, 80, 1, p, 4096)):
+            gib_zurück falsch
+        log(adresse_von(CACHE_T_FUA_OK), 1)
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, 64, 6, p, 24576)) oder nicht cache_probe_muster(p, 24576, 0x61, falsch):
+            gib_zurück falsch
+        cache_probe_muster(p, 4096, 0x63, wahr)
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_SCHREIBEN, 100, 1, p, 4096)):
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(id, a, BLOCK_VERWERFEN, 100, 1, 0, 0)):
+            gib_zurück falsch
+        gib_zurück ist_erfolg(block_anfordern(id, a, BLOCK_LESEN, 100, 1, p, 4096)) und cache_probe_muster(p, 4096, 0, falsch)
+
+@nativ
+funktion cache_probe_lauf(tsc: u64, bi: u64, map: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze roh0: u64 auf cache_probe_nvme(0, tsc, bi, map, log_adr)
+        setze roh1: u64 auf cache_probe_nvme(1, tsc, bi, map, log_adr)
+        wenn roh0 == 0 oder roh1 == 0:
+            gib_zurück falsch
+        setze links: ptr[BlockCache] auf zeiger(adresse_von(CACHE_PROBE_CACHES[0]))
+        setze rechts: ptr[BlockCache] auf zeiger(adresse_von(CACHE_PROBE_CACHES[1]))
+        setze l: ergebnis[u64, BlockFehler] auf blockcache_einrichten(links, roh0, 4)
+        setze r: ergebnis[u64, BlockFehler] auf blockcache_einrichten(rechts, roh1, 4)
+        setze links_ok: bool auf ist_erfolg(l)
+        setze rechts_ok: bool auf ist_erfolg(r)
+        wenn nicht links_ok oder nicht rechts_ok:
+            gib_zurück falsch
+        setze id0: u64 auf ergebnis_wert(l)
+        setze id1: u64 auf ergebnis_wert(r)
+        setze p: u64 auf ar_rahmen_nehmen(6)
+        wenn p == 0:
+            gib_zurück falsch
+        setze anfrage: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+        wenn nicht cache_probe_budget(roh0, links.seiten + rechts.seiten, log_adr):
+            gib_zurück falsch
+        wenn nicht cache_probe_lru(links, id0, a, p, log_adr):
+            gib_zurück falsch
+        wenn nicht cache_probe_eio(links, id0, roh0, a, p, tsc, log_adr):
+            gib_zurück falsch
+        wenn nicht cache_probe_fua(id1, a, p, log_adr):
+            gib_zurück falsch
+        cache_probe_muster(p, 1024, 0x52, wahr)
+        wenn nicht ist_erfolg(block_anfordern(id0, a, BLOCK_SCHREIBEN, 32, 2, p, 1024)):
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(id0, a, BLOCK_FLUSH, 0, 0, 0, 0)) oder nicht ist_erfolg(block_anfordern(id1, a, BLOCK_FLUSH, 0, 0, 0, 0)):
+            gib_zurück falsch
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(CACHE_T_ABSCHNITT), 1)
+        gib_zurück wahr
+
+@nativ
+funktion blockcache_probe_starten(tsc: u64, bi: u64, map: u64, log: u64) -> bool:
+    unsicher:
+        wenn tsc == 0:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gut: bool auf cache_probe_lauf(tsc, bi, map, log)
+        irq_wiederherstellen(irq)
+        gib_zurück gut

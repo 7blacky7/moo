@@ -1,0 +1,325 @@
+# FAT32-Adapter zum neutralen VFS. Volume und Transport bleiben geliehen und
+# werden während des Mounts ausschließlich über diesen Adapter verändert.
+# Offene Dateien desselben Inodes teilen genau einen FatDatei-Zustand.
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VfsEintrag, VfsPfad, vfs_pfad, VFS_EIO, VFS_EINVAL, VFS_ENOENT, VFS_EROFS, VFS_ENOSPC, VFS_EEXIST, VFS_ENOTEMPTY, VFS_EBADF, VFS_EBUSY, VFS_EMFILE, VFS_ENFILE, VFS_EISDIR, VFS_ENOTDIR, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_LEEREN, VFS_ANHAENGEN, VFS_EXKLUSIV, VFS_VERZEICHNIS, VFS_DATEI, VFS_ORDNER
+aus nativ_block importiere BlockFehler, BLOCK_NUR_LESEN, BLOCK_VOLL, BLOCK_GEOMETRIE, BLOCK_BEREICH, BLOCK_PUFFER
+aus ds_fat importiere FatVolume, FatDatei, FatFund, FatName, FAT_NICHT_GEFUNDEN, FAT_VORHANDEN, FAT_NAME, fat_suchen, fat_anlegen, fat_lesen, fat_schreiben, fat_datei_groesse, fat_loeschen, fat_synchronisieren, fat_verzeichnis_naechster, fat_name_punkt, fat_verschieben
+
+struktur FatVfsKnoten:
+    datei: FatDatei
+    referenzen: u64
+
+struktur FatVfsGriff:
+    knoten: u64
+    generation: u64
+    aktiv: bool
+
+struktur FatVfsPfad:
+    datei: FatDatei
+    eltern: u64
+    ab: u64
+    anzahl: u64
+    vorhanden: bool
+
+struktur FatDateisystem implementiert Dateisystem:
+    volume: ptr[FatVolume]
+    bereit: bool
+    knoten: [FatVfsKnoten; 128]
+    griffe: [FatVfsGriff; 256]
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn (modus & 0xFFFFFF80) != 0 oder (modus & 3) == 0 oder ((modus & (VFS_LEEREN | VFS_ANHAENGEN)) != 0 und (modus & VFS_SCHREIBEN) == 0):
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: FatVfsPfad auf weitergeben(fat_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.vorhanden und (modus & (VFS_ANLEGEN | VFS_EXKLUSIV)) == (VFS_ANLEGEN | VFS_EXKLUSIV):
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            wenn ziel.vorhanden:
+                wenn (modus & VFS_VERZEICHNIS) != 0 und (ziel.datei.attribute & 16) == 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+                wenn (ziel.datei.attribute & 16) != 0 und (modus & VFS_SCHREIBEN) != 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+                wenn (modus & VFS_SCHREIBEN) != 0 und ((ziel.datei.attribute & 1) != 0 oder selbst.volume.nur_lesend):
+                    gib_zurück fehlschlag(VfsFehler(VFS_EROFS, 0, 0))
+            sonst wenn (modus & VFS_ANLEGEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            sonst wenn (modus & VFS_VERZEICHNIS) != 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze slot: u64 auf 0
+            solange slot < 256:
+                wenn nicht selbst.griffe[slot].aktiv und selbst.griffe[slot].generation < 0x00FFFFFFFFFFFFFF:
+                    stopp
+                setze slot auf slot + 1
+            wenn slot == 256:
+                gib_zurück fehlschlag(VfsFehler(VFS_EMFILE, 0, 0))
+            setze k: u64 auf 128
+            setze frei: u64 auf 128
+            setze i: u64 auf 0
+            solange i < 128:
+                wenn selbst.knoten[i].referenzen == 0:
+                    wenn frei == 128:
+                        setze frei auf i
+                sonst wenn ziel.vorhanden und selbst.knoten[i].datei.verzeichnis == ziel.datei.verzeichnis und selbst.knoten[i].datei.eintrag == ziel.datei.eintrag:
+                    setze k auf i
+                setze i auf i + 1
+            wenn k == 128 und frei == 128:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENFILE, 0, 0))
+            wenn nicht ziel.vorhanden:
+                setze name: ptr[u8] auf zeiger(adresse_von(normal.bytes[ziel.ab]))
+                setze neu_datei: ergebnis[FatDatei, BlockFehler] auf fat_anlegen(selbst.volume, ziel.eltern, byteansicht(name, ziel.anzahl), falsch)
+                wenn nicht ist_erfolg(neu_datei):
+                    gib_zurück fehlschlag(fat_vfs_fehler(ergebnis_fehler(neu_datei)))
+                setze ziel.datei auf ergebnis_wert(neu_datei)
+            wenn k == 128:
+                setze k auf frei
+                setze selbst.knoten[k].datei auf ziel.datei
+            wenn (modus & VFS_LEEREN) != 0:
+                weitergeben(fat_vfs_void(fat_datei_groesse(selbst.volume, zeiger(adresse_von(selbst.knoten[k].datei)), 0)))
+            setze selbst.knoten[k].referenzen auf selbst.knoten[k].referenzen + 1
+            setze selbst.griffe[slot].knoten auf k
+            setze selbst.griffe[slot].generation auf selbst.griffe[slot].generation + 1
+            setze selbst.griffe[slot].aktiv auf wahr
+            gib_zurück erfolg(selbst.griffe[slot].generation * 256 + slot)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            setze selbst.griffe[griff % 256].aktiv auf falsch
+            setze selbst.knoten[k].referenzen auf selbst.knoten[k].referenzen - 1
+            gib_zurück fat_vfs_void(fat_synchronisieren(selbst.volume))
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            setze d: ptr[FatDatei] auf zeiger(adresse_von(selbst.knoten[k].datei))
+            wenn (d.attribute & 16) != 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            wenn offset >= d.bytes oder länge(daten) == 0:
+                gib_zurück erfolg(0)
+            setze anzahl: u64 auf länge(daten)
+            wenn anzahl > d.bytes - offset:
+                setze anzahl auf d.bytes - offset
+            setze p: ptr[u8] auf puffer_zeiger(daten)
+            weitergeben(fat_vfs_void(fat_lesen(selbst.volume, d, offset, byteansicht(p, anzahl))))
+            gib_zurück erfolg(anzahl)
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            setze d: ptr[FatDatei] auf zeiger(adresse_von(selbst.knoten[k].datei))
+            wenn (d.attribute & 16) != 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            wenn länge(daten) == 0:
+                gib_zurück erfolg(0)
+            weitergeben(fat_vfs_void(fat_schreiben(selbst.volume, d, offset, daten)))
+            gib_zurück erfolg(länge(daten))
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            setze d: ptr[FatDatei] auf zeiger(adresse_von(selbst.knoten[k].datei))
+            setze art: u32 auf VFS_DATEI
+            wenn (d.attribute & 16) != 0:
+                setze art auf VFS_ORDNER
+            setze rechte: u32 auf 3
+            wenn selbst.volume.nur_lesend oder (d.attribute & 1) != 0:
+                setze rechte auf 1
+            gib_zurück erfolg(VfsStat(art, rechte, d.bytes))
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            setze d: ptr[FatDatei] auf zeiger(adresse_von(selbst.knoten[k].datei))
+            wenn (d.attribute & 16) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            setze cursor: u64 auf 0
+            setze gesehen: u64 auf 0
+            solange wahr:
+                setze roh: ergebnis[FatFund, BlockFehler] auf fat_verzeichnis_naechster(selbst.volume, d.cluster, cursor)
+                wenn nicht ist_erfolg(roh):
+                    gib_zurück fehlschlag(fat_vfs_fehler(ergebnis_fehler(roh)))
+                setze fund: FatFund auf ergebnis_wert(roh)
+                setze cursor auf fund.naechster
+                wenn fund.name.anzahl == 1 und fund.name.einheiten[0] == 46:
+                    weiter
+                wenn fund.name.anzahl == 2 und fund.name.einheiten[0] == 46 und fund.name.einheiten[1] == 46:
+                    weiter
+                wenn gesehen == index:
+                    gib_zurück fat_vfs_eintrag(zeiger(adresse_von(fund)))
+                setze gesehen auf gesehen + 1
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(fat_vfs_griff(selbst, griff))
+            gib_zurück fat_vfs_void(fat_datei_groesse(selbst.volume, zeiger(adresse_von(selbst.knoten[k].datei)), bytes))
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: FatVfsPfad auf weitergeben(fat_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            setze p: ptr[u8] auf zeiger(adresse_von(normal.bytes[ziel.ab]))
+            setze roh: ergebnis[FatDatei, BlockFehler] auf fat_anlegen(selbst.volume, ziel.eltern, byteansicht(p, ziel.anzahl), verzeichnis)
+            wenn nicht ist_erfolg(roh):
+                gib_zurück fehlschlag(fat_vfs_fehler(ergebnis_fehler(roh)))
+            gib_zurück erfolg()
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: FatVfsPfad auf weitergeben(fat_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn nicht ziel.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn normal.anzahl == 1:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            setze i: u64 auf 0
+            solange i < 128:
+                wenn selbst.knoten[i].referenzen != 0 und selbst.knoten[i].datei.verzeichnis == ziel.datei.verzeichnis und selbst.knoten[i].datei.eintrag == ziel.datei.eintrag:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+                setze i auf i + 1
+            gib_zurück fat_vfs_void(fat_loeschen(selbst.volume, zeiger(adresse_von(ziel.datei))))
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze a: VfsPfad auf 0
+            setze b: VfsPfad auf 0
+            weitergeben(vfs_pfad(quelle, zeiger(adresse_von(a))))
+            weitergeben(vfs_pfad(ziel, zeiger(adresse_von(b))))
+            setze alt: FatVfsPfad auf weitergeben(fat_vfs_pfad(selbst, zeiger(adresse_von(a))))
+            setze nach: FatVfsPfad auf weitergeben(fat_vfs_pfad(selbst, zeiger(adresse_von(b))))
+            wenn nicht alt.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn a.anzahl == 1 oder b.anzahl == 1:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            wenn nach.vorhanden:
+                wenn nach.datei.verzeichnis == alt.datei.verzeichnis und nach.datei.eintrag == alt.datei.eintrag:
+                    gib_zurück erfolg()
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            setze bisher: FatDatei auf alt.datei
+            setze p: ptr[u8] auf zeiger(adresse_von(b.bytes[nach.ab]))
+            weitergeben(fat_vfs_void(fat_verschieben(selbst.volume, zeiger(adresse_von(alt.datei)), nach.eltern, byteansicht(p, nach.anzahl))))
+            setze i: u64 auf 0
+            solange i < 128:
+                wenn selbst.knoten[i].referenzen != 0 und selbst.knoten[i].datei.verzeichnis == bisher.verzeichnis und selbst.knoten[i].datei.eintrag == bisher.eintrag:
+                    setze selbst.knoten[i].datei auf alt.datei
+                setze i auf i + 1
+            gib_zurück erfolg()
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.bereit:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+            gib_zurück fat_vfs_void(fat_synchronisieren(selbst.volume))
+
+@nativ
+funktion fat_vfs_fehler(f: BlockFehler) -> VfsFehler:
+    setze code: u32 auf VFS_EIO
+    wenn f.code == FAT_NICHT_GEFUNDEN:
+        setze code auf VFS_ENOENT
+    sonst wenn f.code == BLOCK_NUR_LESEN:
+        setze code auf VFS_EROFS
+    sonst wenn f.code == BLOCK_VOLL:
+        setze code auf VFS_ENOSPC
+    sonst wenn f.code == FAT_NAME oder f.code == BLOCK_GEOMETRIE oder f.code == BLOCK_BEREICH oder f.code == BLOCK_PUFFER:
+        setze code auf VFS_EINVAL
+    sonst wenn f.code == FAT_VORHANDEN:
+        setze code auf VFS_EEXIST
+        wenn f.geraete_status == 1:
+            setze code auf VFS_ENOTEMPTY
+    gib_zurück VfsFehler(code, f.code, f.geraete_status)
+
+@nativ
+funktion fat_vfs_void(roh: ergebnis[void, BlockFehler]) -> ergebnis[void, VfsFehler]:
+    wenn nicht ist_erfolg(roh):
+        gib_zurück fehlschlag(fat_vfs_fehler(ergebnis_fehler(roh)))
+    gib_zurück erfolg()
+
+@nativ
+funktion fat_vfs_einrichten(fs: ptr[FatDateisystem], volume: ptr[FatVolume]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < groesse_von(FatDateisystem):
+            speicher_schreiben(u64(fs) + i, 0, 1)
+            setze i auf i + 1
+        setze fs.volume auf volume
+        setze fs.bereit auf wahr
+
+@nativ
+funktion fat_vfs_griff(fs: ptr[FatDateisystem], griff: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze slot: u64 auf griff % 256
+        wenn nicht fs.bereit oder nicht fs.griffe[slot].aktiv oder fs.griffe[slot].generation != griff / 256:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+        gib_zurück erfolg(fs.griffe[slot].knoten)
+
+@nativ
+funktion fat_vfs_pfad(fs: ptr[FatDateisystem], pfad: ptr[VfsPfad]) -> ergebnis[FatVfsPfad, VfsFehler]:
+    unsicher:
+        wenn nicht fs.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+        setze dir: u64 auf fs.volume.layout.wurzel
+        wenn pfad.anzahl == 1:
+            gib_zurück erfolg(FatVfsPfad(FatDatei(dir, 0, 0, 0, 0, 0, 16), dir, 0, 1, wahr))
+        setze ab: u64 auf 1
+        solange ab < pfad.anzahl:
+            setze ende: u64 auf ab
+            solange ende < pfad.anzahl und pfad.bytes[ende] != 47:
+                setze ende auf ende + 1
+            setze p: ptr[u8] auf zeiger(adresse_von(pfad.bytes[ab]))
+            setze roh: ergebnis[FatDatei, BlockFehler] auf fat_suchen(fs.volume, dir, byteansicht(p, ende - ab))
+            wenn nicht ist_erfolg(roh):
+                setze fehler: BlockFehler auf ergebnis_fehler(roh)
+                wenn fehler.code == FAT_NICHT_GEFUNDEN und ende == pfad.anzahl:
+                    setze leer: FatDatei auf 0
+                    gib_zurück erfolg(FatVfsPfad(leer, dir, ab, ende - ab, falsch))
+                gib_zurück fehlschlag(fat_vfs_fehler(fehler))
+            setze datei: FatDatei auf ergebnis_wert(roh)
+            wenn ende == pfad.anzahl:
+                gib_zurück erfolg(FatVfsPfad(datei, dir, ab, ende - ab, wahr))
+            wenn (datei.attribute & 16) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            setze dir auf datei.cluster
+            setze ab auf ende + 1
+        gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+
+@nativ
+funktion fat_vfs_eintrag(fund: ptr[FatFund]) -> ergebnis[VfsEintrag, VfsFehler]:
+    unsicher:
+        setze eintrag: VfsEintrag auf 0
+        setze eintrag.art auf VFS_DATEI
+        wenn (fund.datei.attribute & 16) != 0:
+            setze eintrag.art auf VFS_ORDNER
+        setze eintrag.bytes auf fund.datei.bytes
+        setze i: u64 auf 0
+        solange i < fund.name.anzahl:
+            setze punkt: u32 auf fat_name_punkt(zeiger(adresse_von(fund.name)), i)
+            wenn punkt == 0xFFFFFFFF:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, FAT_NAME, 0))
+            setze j: u64 auf eintrag.name_bytes
+            wenn punkt < 128:
+                eintrag.name[j] = als(u8, punkt)
+                setze eintrag.name_bytes auf j + 1
+            sonst wenn punkt < 2048:
+                eintrag.name[j] = als(u8, 192 | (punkt >> 6))
+                eintrag.name[j + 1] = als(u8, 128 | (punkt & 63))
+                setze eintrag.name_bytes auf j + 2
+            sonst wenn punkt < 65536:
+                eintrag.name[j] = als(u8, 224 | (punkt >> 12))
+                eintrag.name[j + 1] = als(u8, 128 | ((punkt >> 6) & 63))
+                eintrag.name[j + 2] = als(u8, 128 | (punkt & 63))
+                setze eintrag.name_bytes auf j + 3
+            sonst:
+                eintrag.name[j] = als(u8, 240 | (punkt >> 18))
+                eintrag.name[j + 1] = als(u8, 128 | ((punkt >> 12) & 63))
+                eintrag.name[j + 2] = als(u8, 128 | ((punkt >> 6) & 63))
+                eintrag.name[j + 3] = als(u8, 128 | (punkt & 63))
+                setze eintrag.name_bytes auf j + 4
+                setze i auf i + 1
+            setze i auf i + 1
+        gib_zurück erfolg(eintrag)

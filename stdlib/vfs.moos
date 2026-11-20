@@ -1,0 +1,437 @@
+aus moos_datei_abi importiere VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_LEEREN, VFS_VERZEICHNIS, VFS_EXKLUSIV, VFS_ANHAENGEN, VFS_DATEI, VFS_ORDNER
+
+# Gemeinsamer nativer VFS-Vertrag für Host und MoOS. Der Besitzer serialisiert
+# Mounttabelle, Dateisysteme und offene Dateien. Ein Dateisystem lebt mindestens
+# bis zum erfolgreichen Aushängen, eine geöffnete Datei bis zum Schließen.
+@nativ
+konstante VFS_ENOENT: u32 auf 2
+@nativ
+konstante VFS_EIO: u32 auf 5
+@nativ
+konstante VFS_EBADF: u32 auf 9
+@nativ
+konstante VFS_ENOMEM: u32 auf 12
+@nativ
+konstante VFS_EACCES: u32 auf 13
+@nativ
+konstante VFS_EBUSY: u32 auf 16
+@nativ
+konstante VFS_EEXIST: u32 auf 17
+@nativ
+konstante VFS_EXDEV: u32 auf 18
+@nativ
+konstante VFS_ENOTDIR: u32 auf 20
+@nativ
+konstante VFS_EISDIR: u32 auf 21
+@nativ
+konstante VFS_EINVAL: u32 auf 22
+@nativ
+konstante VFS_ENFILE: u32 auf 23
+@nativ
+konstante VFS_EMFILE: u32 auf 24
+@nativ
+konstante VFS_ENOSPC: u32 auf 28
+@nativ
+konstante VFS_EROFS: u32 auf 30
+@nativ
+konstante VFS_ENAMETOOLONG: u32 auf 36
+@nativ
+konstante VFS_ENOSYS: u32 auf 38
+@nativ
+konstante VFS_ENOTEMPTY: u32 auf 39
+@nativ
+konstante VFS_EOVERFLOW: u32 auf 75
+
+struktur VfsFehler:
+    code: u32
+    grund: u32
+    status: u32
+
+struktur VfsStat:
+    art: u32
+    rechte: u32
+    bytes: u64
+
+# UTF-8 bei FAT, unveränderte Namensbytes bei ramfs. Keine NUL-Terminierung.
+struktur VfsEintrag:
+    name: [u8; 1024]
+    name_bytes: u64
+    art: u32
+    bytes: u64
+
+# Treibergriffe sind nur innerhalb des jeweiligen Dateisystems gültig.
+# Öffnen übernimmt einen Griff. Schließen konsumiert ihn auch bei einem
+# gemeldeten Abgleichfehler; ein zweiter Schließversuch ist EBADF.
+# Lese-/Schreibpuffer werden ausschließlich bis zur Rückkehr geliehen.
+schnittstelle Dateisystem:
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]
+
+schnittstelle Datei:
+    funktion lesen(selbst, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]
+    funktion schreiben(selbst, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]
+    funktion position(selbst, offset: i64, bezug: u32) -> ergebnis[u64, VfsFehler]
+    funktion stat(selbst) -> ergebnis[VfsStat, VfsFehler]
+    funktion verzeichnis(selbst, index: u64) -> ergebnis[VfsEintrag, VfsFehler]
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]
+    funktion schliessen(selbst) -> ergebnis[void, VfsFehler]
+
+struktur VfsPfad:
+    bytes: [u8; 4096]
+    anzahl: u64
+
+struktur VfsMount:
+    pfad: VfsPfad
+    system: ptr[dyn Dateisystem]
+    offen: u64
+    aktiv: bool
+
+struktur VfsTabelle:
+    mounts: [VfsMount; 16]
+
+# Dateizustand liegt beim Aufrufer, etwa direkt in der Prozess-FD-Tabelle.
+# Der Treibergriff wird nicht implizit kopiert oder per GC freigegeben.
+struktur VfsDatei implementiert Datei:
+    tabelle: ptr[VfsTabelle]
+    system: ptr[dyn Dateisystem]
+    mount: u64
+    griff: u64
+    offset: u64
+    modus: u32
+    offen: bool
+
+    funktion lesen(selbst, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen oder (selbst.modus & VFS_LESEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze n: u64 auf weitergeben(selbst.system.lesen(selbst.griff, selbst.offset, daten))
+            wenn n > länge(daten) oder n > 0xFFFFFFFFFFFFFFFF - selbst.offset:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+            setze selbst.offset auf selbst.offset + n
+            gib_zurück erfolg(n)
+
+    funktion schreiben(selbst, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen oder (selbst.modus & VFS_SCHREIBEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze schreiboffset: u64 auf selbst.offset
+            wenn (selbst.modus & VFS_ANHAENGEN) != 0:
+                setze info: VfsStat auf weitergeben(selbst.system.stat(selbst.griff))
+                setze schreiboffset auf info.bytes
+            wenn länge(daten) > 0xFFFFFFFFFFFFFFFF - schreiboffset:
+                gib_zurück fehlschlag(VfsFehler(VFS_EOVERFLOW, 0, 0))
+            setze n: u64 auf weitergeben(selbst.system.schreiben(selbst.griff, schreiboffset, daten))
+            wenn n > länge(daten):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+            setze selbst.offset auf schreiboffset + n
+            gib_zurück erfolg(n)
+
+    funktion position(selbst, offset: i64, bezug: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze basis: u64 auf 0
+            wenn bezug == 1:
+                setze basis auf selbst.offset
+            sonst wenn bezug == 2:
+                setze info: VfsStat auf weitergeben(selbst.system.stat(selbst.griff))
+                setze basis auf info.bytes
+            sonst wenn bezug != 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze neu_pos: u64 auf 0
+            wenn offset < 0:
+                # -(MIN_I64) ist nicht darstellbar; Betrag ohne signed Negation.
+                setze abstand: u64 auf 0 - als_wrap(u64, offset)
+                wenn abstand > basis:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+                setze neu_pos auf basis - abstand
+            sonst:
+                setze abstand_pos: u64 auf als(u64, offset)
+                wenn abstand_pos > 0xFFFFFFFFFFFFFFFF - basis:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EOVERFLOW, 0, 0))
+                setze neu_pos auf basis + abstand_pos
+            setze selbst.offset auf neu_pos
+            gib_zurück erfolg(neu_pos)
+
+    funktion stat(selbst) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            gib_zurück selbst.system.stat(selbst.griff)
+
+    funktion verzeichnis(selbst, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen oder (selbst.modus & VFS_LESEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            gib_zurück selbst.system.verzeichnis(selbst.griff, index)
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            gib_zurück selbst.system.abgleichen()
+
+    funktion schliessen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.offen:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze resultat: ergebnis[void, VfsFehler] auf selbst.system.schliessen(selbst.griff)
+            setze selbst.offen auf falsch
+            setze selbst.tabelle.mounts[selbst.mount].offen auf selbst.tabelle.mounts[selbst.mount].offen - 1
+            gib_zurück resultat
+
+# Leere Pfade sind Fehler; relative Pfade beginnen an /. Komponenten . und ..
+# werden vor der Mountwahl normalisiert. .. bleibt an der Wurzel stehen.
+@nativ
+funktion vfs_pfad(quelle: puffer[u8], ziel: ptr[VfsPfad]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn länge(quelle) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+        wenn länge(quelle) > 4095:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 0, 0))
+        setze ziel.anzahl auf 1
+        ziel.bytes[0] = 47
+        setze i: u64 auf 0
+        solange i < länge(quelle):
+            wenn quelle[i] == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            wenn quelle[i] == 47:
+                setze i auf i + 1
+                weiter
+            setze start: u64 auf i
+            solange i < länge(quelle) und quelle[i] != 47:
+                wenn quelle[i] == 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+                setze i auf i + 1
+            setze n: u64 auf i - start
+            wenn n == 1 und quelle[start] == 46:
+                weiter
+            wenn n == 2 und quelle[start] == 46 und quelle[start + 1] == 46:
+                solange ziel.anzahl > 1 und ziel.bytes[ziel.anzahl - 1] != 47:
+                    setze ziel.anzahl auf ziel.anzahl - 1
+                wenn ziel.anzahl > 1:
+                    setze ziel.anzahl auf ziel.anzahl - 1
+                weiter
+            wenn n > 1020:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 0, 0))
+            setze trenner: u64 auf 0
+            wenn ziel.anzahl > 1:
+                setze trenner auf 1
+            wenn n + trenner > 4095 - ziel.anzahl:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 0, 0))
+            wenn trenner != 0:
+                ziel.bytes[ziel.anzahl] = 47
+                setze ziel.anzahl auf ziel.anzahl + 1
+            setze j: u64 auf 0
+            solange j < n:
+                ziel.bytes[ziel.anzahl] = quelle[start + j]
+                setze ziel.anzahl auf ziel.anzahl + 1
+                setze j auf j + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion vfs_mount_wahl(t: ptr[VfsTabelle], pfad: ptr[VfsPfad]) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze bester: u64 auf 16
+        setze laenge: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 16:
+            setze m: ptr[VfsMount] auf zeiger(adresse_von(t.mounts[i]))
+            wenn m.aktiv und m.pfad.anzahl <= pfad.anzahl und m.pfad.anzahl >= laenge:
+                setze passt: bool auf m.pfad.anzahl == 1 oder m.pfad.anzahl == pfad.anzahl oder pfad.bytes[m.pfad.anzahl] == 47
+                setze j: u64 auf 0
+                solange passt und j < m.pfad.anzahl:
+                    wenn m.pfad.bytes[j] != pfad.bytes[j]:
+                        setze passt auf falsch
+                    setze j auf j + 1
+                wenn passt:
+                    setze bester auf i
+                    setze laenge auf m.pfad.anzahl
+            setze i auf i + 1
+        wenn bester == 16:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+        gib_zurück erfolg(bester)
+
+@nativ
+funktion vfs_einhaengen(t: ptr[VfsTabelle], name: puffer[u8], system: ptr[dyn Dateisystem]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze pfad: VfsPfad auf 0
+        weitergeben(vfs_pfad(name, zeiger(adresse_von(pfad))))
+        setze frei: u64 auf 16
+        setze i: u64 auf 0
+        solange i < 16:
+            wenn t.mounts[i].aktiv:
+                wenn t.mounts[i].pfad.anzahl == pfad.anzahl:
+                    setze gleich: bool auf wahr
+                    setze j: u64 auf 0
+                    solange j < pfad.anzahl:
+                        wenn t.mounts[i].pfad.bytes[j] != pfad.bytes[j]:
+                            setze gleich auf falsch
+                        setze j auf j + 1
+                    wenn gleich:
+                        gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            sonst wenn frei == 16:
+                setze frei auf i
+            setze i auf i + 1
+        wenn frei == 16:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOSPC, 0, 0))
+        setze t.mounts[frei].pfad auf pfad
+        setze t.mounts[frei].system auf system
+        setze t.mounts[frei].offen auf 0
+        setze t.mounts[frei].aktiv auf wahr
+        gib_zurück erfolg()
+
+# Liefert den normalisierten Pfad innerhalb des gewählten Dateisystems.
+@nativ
+funktion vfs_mount_versatz(t: ptr[VfsTabelle], index: u64, pfad: ptr[VfsPfad]) -> u64:
+    unsicher:
+        setze ab: u64 auf t.mounts[index].pfad.anzahl
+        wenn ab == 1:
+            setze ab auf 0
+        wenn ab == pfad.anzahl:
+            setze ab auf pfad.anzahl - 1
+            pfad.bytes[ab] = 47
+        gib_zurück ab
+
+@nativ
+funktion vfs_oeffnen(t: ptr[VfsTabelle], pfad: puffer[u8], modus: u32, datei: ptr[VfsDatei]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn datei.offen oder (modus & 0xFFFFFF80) != 0 oder (modus & 3) == 0 oder ((modus & (VFS_LEEREN | VFS_ANHAENGEN)) != 0 und (modus & VFS_SCHREIBEN) == 0):
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze normal: VfsPfad auf 0
+        weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+        setze mount: u64 auf weitergeben(vfs_mount_wahl(t, zeiger(adresse_von(normal))))
+        setze fs: ptr[dyn Dateisystem] auf t.mounts[mount].system
+        setze ab: u64 auf vfs_mount_versatz(t, mount, zeiger(adresse_von(normal)))
+        setze rel: ptr[u8] auf zeiger(adresse_von(normal.bytes[ab]))
+        setze griff: u64 auf weitergeben(fs.oeffnen(byteansicht(rel, normal.anzahl - ab), modus))
+        setze datei[0] auf VfsDatei(t, fs, mount, griff, 0, modus, wahr)
+        setze t.mounts[mount].offen auf t.mounts[mount].offen + 1
+        gib_zurück erfolg()
+
+
+# Ein Mountpunkt oder sein Vorfahr darf nicht umbenannt/gelöscht werden.
+@nativ
+funktion vfs_pfad_belegt(t: ptr[VfsTabelle], pfad: ptr[VfsPfad]) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 16:
+            wenn t.mounts[i].aktiv und t.mounts[i].pfad.anzahl >= pfad.anzahl:
+                setze gleich: bool auf wahr
+                setze j: u64 auf 0
+                solange j < pfad.anzahl:
+                    wenn pfad.bytes[j] != t.mounts[i].pfad.bytes[j]:
+                        setze gleich auf falsch
+                    setze j auf j + 1
+                wenn gleich:
+                    wenn pfad.anzahl == 1 oder pfad.anzahl == t.mounts[i].pfad.anzahl oder t.mounts[i].pfad.bytes[pfad.anzahl] == 47:
+                        gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
+
+@nativ
+funktion vfs_aushängen(t: ptr[VfsTabelle], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze normal: VfsPfad auf 0
+        weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+        setze m: u64 auf weitergeben(vfs_mount_wahl(t, zeiger(adresse_von(normal))))
+        wenn t.mounts[m].pfad.anzahl != normal.anzahl:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        wenn t.mounts[m].offen != 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+        setze i: u64 auf 0
+        solange i < 16:
+            wenn i != m und t.mounts[i].aktiv und t.mounts[i].pfad.anzahl > normal.anzahl:
+                setze gleich: bool auf wahr
+                setze j: u64 auf 0
+                solange j < normal.anzahl:
+                    wenn normal.bytes[j] != t.mounts[i].pfad.bytes[j]:
+                        setze gleich auf falsch
+                    setze j auf j + 1
+                wenn gleich und (normal.anzahl == 1 oder t.mounts[i].pfad.bytes[normal.anzahl] == 47):
+                    gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            setze i auf i + 1
+        weitergeben(t.mounts[m].system.abgleichen())
+        setze leer: VfsMount auf 0
+        setze t.mounts[m] auf leer
+        gib_zurück erfolg()
+
+@nativ
+funktion vfs_pfad_aktion(t: ptr[VfsTabelle], pfad: puffer[u8], art: u32) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze normal: VfsPfad auf 0
+        weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+        wenn vfs_pfad_belegt(t, zeiger(adresse_von(normal))):
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+        setze m: u64 auf weitergeben(vfs_mount_wahl(t, zeiger(adresse_von(normal))))
+        setze ab: u64 auf vfs_mount_versatz(t, m, zeiger(adresse_von(normal)))
+        setze p: ptr[u8] auf zeiger(adresse_von(normal.bytes[ab]))
+        wenn art == 0:
+            gib_zurück t.mounts[m].system.loeschen(byteansicht(p, normal.anzahl - ab))
+        gib_zurück t.mounts[m].system.anlegen(byteansicht(p, normal.anzahl - ab), art == VFS_ORDNER)
+
+@nativ
+funktion vfs_anlegen(t: ptr[VfsTabelle], pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze art: u32 auf VFS_DATEI
+        wenn verzeichnis:
+            setze art auf VFS_ORDNER
+        gib_zurück vfs_pfad_aktion(t, pfad, art)
+
+@nativ
+funktion vfs_loeschen(t: ptr[VfsTabelle], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        gib_zurück vfs_pfad_aktion(t, pfad, 0)
+
+@nativ
+funktion vfs_umbenennen(t: ptr[VfsTabelle], quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze a: VfsPfad auf 0
+        setze b: VfsPfad auf 0
+        weitergeben(vfs_pfad(quelle, zeiger(adresse_von(a))))
+        weitergeben(vfs_pfad(ziel, zeiger(adresse_von(b))))
+        wenn vfs_pfad_belegt(t, zeiger(adresse_von(a))) oder vfs_pfad_belegt(t, zeiger(adresse_von(b))):
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+        setze am: u64 auf weitergeben(vfs_mount_wahl(t, zeiger(adresse_von(a))))
+        setze bm: u64 auf weitergeben(vfs_mount_wahl(t, zeiger(adresse_von(b))))
+        wenn am != bm:
+            gib_zurück fehlschlag(VfsFehler(VFS_EXDEV, 0, 0))
+        setze aa: u64 auf vfs_mount_versatz(t, am, zeiger(adresse_von(a)))
+        setze ba: u64 auf vfs_mount_versatz(t, bm, zeiger(adresse_von(b)))
+        setze ap: ptr[u8] auf zeiger(adresse_von(a.bytes[aa]))
+        setze bp: ptr[u8] auf zeiger(adresse_von(b.bytes[ba]))
+        gib_zurück t.mounts[am].system.umbenennen(byteansicht(ap, a.anzahl - aa), byteansicht(bp, b.anzahl - ba))
+
+@nativ
+funktion vfs_stat(t: ptr[VfsTabelle], pfad: puffer[u8]) -> ergebnis[VfsStat, VfsFehler]:
+    unsicher:
+        setze datei: VfsDatei auf 0
+        setze d: ptr[VfsDatei] auf zeiger(adresse_von(datei))
+        weitergeben(vfs_oeffnen(t, pfad, VFS_LESEN, d))
+        setze info: ergebnis[VfsStat, VfsFehler] auf d.stat()
+        setze gut: bool auf ist_erfolg(info)
+        setze ende: ergebnis[void, VfsFehler] auf d.schliessen()
+        wenn nicht ist_erfolg(ende):
+            gib_zurück fehlschlag(ergebnis_fehler(ende))
+        wenn nicht gut:
+            gib_zurück fehlschlag(ergebnis_fehler(info))
+        gib_zurück erfolg(ergebnis_wert(info))
+
+@nativ
+funktion vfs_abgleichen(t: ptr[VfsTabelle]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 16:
+            wenn t.mounts[i].aktiv:
+                weitergeben(t.mounts[i].system.abgleichen())
+            setze i auf i + 1
+        gib_zurück erfolg()

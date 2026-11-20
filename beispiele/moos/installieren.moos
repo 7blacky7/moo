@@ -1,0 +1,32 @@
+# MoOS-Installer für x86_64-moos. Der Bootpfad vergibt das Schreibrecht
+# genau für das ausgewählte und anhand der Seriennummer gebundene Ziel.
+aus moos_syscall importiere _start, moos_aufruf, moos_schreiben
+aus moos_install_abi importiere InstallInfo, MOOS_INSTALL_AUFRUF, INSTALL_INFO, INSTALL_ANLEGEN, INSTALL_KOPIEREN, INSTALL_VEROEFFENTLICHEN
+
+@nativ
+konstante INSTALL_T_ZIEL: [u8; _] auf "MOO-INSTALL ZIELSERIE "
+@nativ
+konstante INSTALL_T_ZEILE: [u8; _] auf "\n"
+@nativ
+konstante INSTALL_T_FERTIG: [u8; _] auf "MOO-INSTALL ERFOLG\n"
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        setze info: InstallInfo auf 0
+        wenn moos_aufruf(MOOS_INSTALL_AUFRUF, INSTALL_INFO, adresse_von(info)) != 0:
+            gib_zurück 1
+        wenn info.serien_bytes == 0 oder info.serien_bytes > 24 oder info.ziel_sektoren == 0 oder info.quell_sektoren == 0:
+            gib_zurück 2
+        moos_schreiben(adresse_von(INSTALL_T_ZIEL), 22)
+        moos_schreiben(adresse_von(info.serie), info.serien_bytes)
+        moos_schreiben(adresse_von(INSTALL_T_ZEILE), 1)
+        wenn moos_aufruf(MOOS_INSTALL_AUFRUF, INSTALL_ANLEGEN, 0) != 0:
+            gib_zurück 3
+        wenn moos_aufruf(MOOS_INSTALL_AUFRUF, INSTALL_KOPIEREN, 0) != 0:
+            gib_zurück 4
+        wenn moos_aufruf(MOOS_INSTALL_AUFRUF, INSTALL_VEROEFFENTLICHEN, 0) != 0:
+            gib_zurück 5
+        moos_schreiben(adresse_von(INSTALL_T_FERTIG), 19)
+        gib_zurück 0

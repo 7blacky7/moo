@@ -13,12 +13,13 @@ konstante X86_GDT_USERDATEN: X86GdtWort auf X86GdtWort(65535, 0, 0xF2, 15, 12, 0
 @nativ
 konstante X86_GDT_USER64: X86GdtWort auf X86GdtWort(65535, 0, 0xFA, 15, 10, 0)
 
-# Die nackten Einsprünge verwenden die Offsets 0, 8, 16 und 24.
+# Die nackten Einsprünge verwenden Offsets 0/8/16/24 und R10-Scratch bei32.
 struktur SyscallLokal:
     sl_kernrsp: u64
     sl_userrsp: u64
     sl_prozess: u64
     sl_xzustand: u64
+    sl_r10: u64
     sl_bereit: atom[u32]
 
 @nativ

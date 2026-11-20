@@ -24,7 +24,13 @@ importiere nativ_x86_deskriptoren
 extern "C" funktion moo_laufzeit_programm() -> i32
 aus "kern_syscall_abi" importiere syscall_gdt_schreiben
 aus "kern_syscall" importiere syscall_initialisieren, syscall_benutzer_fehler, syscall_fatal_gs
+aus "kern_simd" importiere simd_cpu_einrichten
+aus "kern_simd_probe" importiere simd_probe_starten
 aus "kern_syscall_probe" importiere ring3_probe_starten
+aus "kern_irq" importiere kern_irq_ist_geraet, kern_irq_aufrufen
+aus "kern_irq_idt" importiere kern_irq_idt
+aus "kern_irq_probe" importiere irq_probe_starten
+aus "kern_block_probe" importiere block_probe_starten
 aus "kern_elf_probe" importiere elf_probe_starten
 aus "kern_smp" importiere smp_madt_lesen, smp_ressourcen, smp_planer, smp_faden_stapel, smp_melden, smp_nummer
 aus "kern_smp_planer" importiere IPI_NEUPLAN, IPI_TLB, IPI_HALT, smp_planer_initialisieren, smp_tlb_lokal, smp_tlb_abgleich, smp_alle_halten
@@ -39,11 +45,21 @@ aus "kern_kanal" importiere kanal_pruefen
 aus "kern_adressraum" importiere ar_cpu_einrichten, adressraum_initialisieren, AR_ERSTE_VA
 aus "kern_adressraum_probe" importiere ar_probe_starten, ar_probe_schutz
 aus "kern_raster" importiere kern_raster_init, kern_raster_clear, kern_raster_rect, kern_raster_text, kern_raster_schrift_zeichen, kern_raster_schrift_text, kern_schrift_abstand, kern_schrift_hoehe, moo_bare_font_mono, moo_bare_font_fett
-aus "usb_xhci" importiere usb_starten, usb_report_pruefen, usb_poll_berichte, xh, xh_neue_taste, usb_inventar, usb_braucht_poll
+aus "usb_xhci" importiere usb_starten, usb_report_pruefen, xh, xh_neue_taste, usb_inventar, usb_braucht_poll
 aus "kern_tastatur" importiere tastatur_codepunkt
 aus "kern_utf8" importiere utf8_dekodieren, utf8_lesen, utf8_schreiben, utf8_zeichenanzahl, utf8_letzter_anfang
 aus "usb_speicher" importiere usb_speicher_pruefen
+aus "usb_speicher_block" importiere usb_msc_eingabe
+aus "usb_msc_probe" importiere usb_msc_probe_ziel, usb_msc_probe_starten
+aus "kern_installieren_probe" importiere installer_probe_usb, installer_probe_starten
 aus "nvme" importiere nvme_pruefen
+aus "nvme_probe" importiere nvme_probe_starten
+aus "ahci_probe" importiere ahci_probe_starten
+aus "kern_blockcache_probe" importiere blockcache_probe_starten
+aus "speicher_gpt_probe" importiere gpt_probe_starten
+aus "speicher_fat_probe" importiere fat_probe_starten
+aus "kern_vfs_probe" importiere vfs_probe_starten
+aus "kern_datei_probe" importiere datei_probe_einrichten, datei_probe_abschliessen
 aus "i226_diagnose" importiere i226_inventar
 aus "netz_ipv4" importiere netz_ipv4_poll
 aus "netz_ipv6" importiere netz_ipv6_port_an, netz_ipv6_wartung, netz_ipv6_link_aus
@@ -297,7 +313,72 @@ statisch AUSNAHME_ZUSTAND: [u64; 3] auf [0, 0, 0]
 @nativ
 statisch HARDWARE_ZUSTAND: [u64; 16] auf 0
 @nativ
-konstante USB_MSI_VEKTOR: u16 auf 66
+statisch IRQ_PROFIL: [u64; 2] auf [0x31305152494F4F4D, 0]
+@nativ
+konstante T_IRQ_OK: [u8; _] auf "MOO-IRQ-OK\n"
+@nativ
+konstante T_IRQ_FEHLER: [u8; _] auf "MOO-IRQ-FEHLER\n"
+@nativ
+statisch BLOCK_PROFIL: [u64; 2] auf [0x31304B4C424F4F4D, 0]
+@nativ
+statisch NVME_SCHREIB_PROFIL: [u64; 2] auf [0x315257564E4F4F4D, 0]
+@nativ
+konstante T_NVME_PROBE_OK: [u8; _] auf "MOO-NVME-PROBE-OK\n"
+@nativ
+konstante T_NVME_PROBE_FEHLER: [u8; _] auf "MOO-NVME-PROBE-FEHLER\n"
+@nativ
+statisch AHCI_PROFIL: [u64; 2] auf [0x3130494348414F4D, 0]
+@nativ
+konstante T_AHCI_PROBE_OK: [u8; _] auf "MOO-AHCI-PROBE-OK\n"
+@nativ
+konstante T_AHCI_PROBE_FEHLER: [u8; _] auf "MOO-AHCI-PROBE-FEHLER\n"
+@nativ
+statisch CACHE_PROFIL: [u64; 2] auf [0x3130484341434F4D, 0]
+@nativ
+konstante T_CACHE_BARRIERE: [u8; _] auf "MOO-CACHE-BARRIERE-OK\n"
+@nativ
+konstante T_CACHE_PROBE_FEHLER: [u8; _] auf "MOO-CACHE-PROBE-FEHLER\n"
+@nativ
+statisch DATEI_PROFIL: [u64; 2] auf [0x3130305441444F4D, 0]
+@nativ
+konstante T_DATEI_PROBE_OK: [u8; _] auf "MOO-DATEI-PROBE-OK\n"
+@nativ
+konstante T_DATEI_PROBE_FEHLER: [u8; _] auf "MOO-DATEI-PROBE-FEHLER\n"
+@nativ
+statisch VFS_PROFIL: [u64; 2] auf [0x3130305346564F4D, 0]
+@nativ
+konstante T_VFS_PROBE_OK: [u8; _] auf "MOO-VFS-PROBE-OK\n"
+@nativ
+konstante T_VFS_PROBE_FEHLER: [u8; _] auf "MOO-VFS-PROBE-FEHLER\n"
+@nativ
+statisch FAT_PROFIL: [u64; 2] auf [0x3130305441464F4D, 0]
+@nativ
+konstante T_FAT_PROBE_OK: [u8; _] auf "MOO-FAT32-PROBE-OK\n"
+@nativ
+konstante T_FAT_PROBE_FEHLER: [u8; _] auf "MOO-FAT32-PROBE-FEHLER\n"
+@nativ
+statisch USB_MSC_PROFIL: [u64; 2] auf [0x31304B5257554F4D, 0]
+@nativ
+konstante T_USB_MSC_PROBE_OK: [u8; _] auf "MOO-MSC-PROBE-OK\n"
+@nativ
+konstante T_USB_MSC_PROBE_FEHLER: [u8; _] auf "MOO-MSC-PROBE-FEHLER\n"
+@nativ
+statisch INSTALL_PROFIL: [u64; 2] auf [0x313054534E494F4D, 0]
+@nativ
+konstante T_INSTALL_PROBE_OK: [u8; _] auf "MOO-INSTALL-PROBE-OK\n"
+@nativ
+konstante T_INSTALL_PROBE_FEHLER: [u8; _] auf "MOO-INSTALL-PROBE-FEHLER\n"
+@nativ
+statisch GPT_PROFIL: [u64; 2] auf [0x3130305450474F4D, 0]
+@nativ
+konstante T_GPT_PROBE_OK: [u8; _] auf "MOO-GPT-PROBE-OK\n"
+@nativ
+konstante T_GPT_PROBE_FEHLER: [u8; _] auf "MOO-GPT-PROBE-FEHLER\n"
+@nativ
+konstante T_BLOCK_OK: [u8; _] auf "MOO-BLOCK-OK\n"
+@nativ
+konstante T_BLOCK_FEHLER: [u8; _] auf "MOO-BLOCK-FEHLER\n"
+
 @nativ
 statisch USB_MSI_IRQS: atom[u64] auf 0
 @nativ
@@ -1241,7 +1322,7 @@ funktion idt_einrichten() -> bool:
         idt_tor(29, adresse_von(ausnahme_29), 0)
         idt_tor(30, adresse_von(ausnahme_30), 0)
         idt_tor(31, adresse_von(ausnahme_31), 0)
-        idt_tor(als(u64, USB_MSI_VEKTOR), adresse_von(usb_msi_irq), 0)
+        kern_irq_idt(adresse_von(idt_tor))
         idt_tor(u64(IPI_NEUPLAN), adresse_von(neuplan_irq), 0)
         idt_tor(u64(IPI_TLB), adresse_von(tlb_irq), 0)
         idt_tor(u64(IPI_HALT), adresse_von(halt_irq), 0)
@@ -1457,10 +1538,10 @@ funktion tastatur_irq() -> void:
         assembler(ziel="x86_64", code="pushq $$65; jmp planer_irq_rahmen", clobber=["memory"])
 
 @nativ
-@nackt
-funktion usb_msi_irq() -> void:
+funktion usb_msi_dienst(daten: u64) -> void:
     unsicher:
-        assembler(ziel="x86_64", code="pushq $$66; jmp planer_irq_rahmen", clobber=["memory"])
+        atom_addieren(USB_MSI_IRQS, 1, ordnung=locker)
+        eingabe_irq_signal()
 
 @nativ
 @nackt
@@ -1481,13 +1562,15 @@ funktion halt_irq() -> void:
         assembler(ziel="x86_64", code="pushq $$69; jmp planer_irq_rahmen", clobber=["memory"])
 
 # Fünf Hardwareworte, Software-Vektor und 15 GPRs. Kernelursprung behält
-# den FXSAVE-Rahmen. Bei Ring3 liegt der volle Benutzerzustand im Faden.
+# den XSAVE-Rahmen (x87/SSE/YMM), vor OSXSAVE den FXSAVE-Rückfall.
+# Bei Ring3 liegt der volle Benutzerzustand im Faden. Reservierte Headerbytes
+# bleiben null; ein FX-Abbild markiert x87/SSE als vorhanden, YMM als initial.
 @nativ
 @nackt
 @einstieg
 funktion planer_irq_rahmen() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rbp; pushq %rsi; pushq %rdi; pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15; movq %rsp, %r12; andq $$-16, %rsp; subq $$512, %rsp; testb $$3, 136(%r12); jz 1f; swapgs; lfence; pushfq; andq $$-262145, (%rsp); popfq; call syscall_xzustand_sichern; jmp 2f; 1: fxsave64 (%rsp); 2: lfence; leaq 128(%r12), %rdi; movq 120(%r12), %rsi; cld; call planer_irq_dienst; testb $$3, 136(%r12); jz 3f; call syscall_xzustand_laden; swapgs; jmp 4f; 3: fxrstor64 (%rsp); 4: movq %r12, %rsp; popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8; popq %rdi; popq %rsi; popq %rbp; popq %rdx; popq %rcx; popq %rbx; popq %rax; addq $$8, %rsp; iretq", clobber=["memory"])
+        assembler(ziel="x86_64", code="pushq %rax; pushq %rbx; pushq %rcx; pushq %rdx; pushq %rbp; pushq %rsi; pushq %rdi; pushq %r8; pushq %r9; pushq %r10; pushq %r11; pushq %r12; pushq %r13; pushq %r14; pushq %r15; movq %rsp, %r12; andq $$-64, %rsp; subq $$896, %rsp; xorq %rax, %rax; movq %rax, 512(%rsp); movq %rax, 520(%rsp); movq %rax, 528(%rsp); movq %rax, 536(%rsp); movq %rax, 544(%rsp); movq %rax, 552(%rsp); movq %rax, 560(%rsp); movq %rax, 568(%rsp); testb $$3, 136(%r12); jz 1f; swapgs; lfence; pushfq; andq $$-262145, (%rsp); popfq; call syscall_xzustand_sichern; jmp 2f; 1: movq %cr4, %rax; testq $$262144, %rax; jz .Lsimd_irq_fx_sichern; xorl %ecx, %ecx; xgetbv; andl $$7, %eax; xorl %edx, %edx; xsave64 (%rsp); jmp 2f; .Lsimd_irq_fx_sichern: movq $$3, 512(%rsp); fxsave64 (%rsp); 2: lfence; leaq 128(%r12), %rdi; movq 120(%r12), %rsi; cld; call planer_irq_dienst; testb $$3, 136(%r12); jz 3f; call syscall_xzustand_laden; swapgs; jmp 4f; 3: movq %cr4, %rax; testq $$262144, %rax; jz .Lsimd_irq_fx_laden; xorl %ecx, %ecx; xgetbv; andl $$7, %eax; xorl %edx, %edx; xrstor64 (%rsp); jmp 4f; .Lsimd_irq_fx_laden: fxrstor64 (%rsp); 4: movq %r12, %rsp; popq %r15; popq %r14; popq %r13; popq %r12; popq %r11; popq %r10; popq %r9; popq %r8; popq %rdi; popq %rsi; popq %rbp; popq %rdx; popq %rcx; popq %rbx; popq %rax; addq $$8, %rsp; iretq", clobber=["memory"])
 
 @nativ
 @einstieg
@@ -1497,10 +1580,9 @@ funktion planer_irq_dienst(rahmen: ptr[u64], vektor: u64) -> void:
             ps2_level_maske(wahr)
             apic_eoi()
             eingabe_irq_signal()
-        sonst wenn vektor == 66:
-            atom_addieren(USB_MSI_IRQS, 1, ordnung=locker)
+        sonst wenn kern_irq_ist_geraet(vektor):
             apic_eoi()
-            eingabe_irq_signal()
+            kern_irq_aufrufen(vektor)
         sonst wenn vektor == 68:
             smp_tlb_lokal()
             apic_eoi()
@@ -2233,7 +2315,7 @@ funktion usb_report_verarbeiten(report: u64, zuletzt: u64, port: u64, slot: u64)
 @nativ
 funktion usb_poll() -> bool:
     unsicher:
-        gib_zurück usb_poll_berichte(adresse_von(usb_report_verarbeiten))
+        gib_zurück usb_msc_eingabe(adresse_von(usb_report_verarbeiten))
 
 @nativ
 @aufrufkonvention("sysv64")
@@ -2938,6 +3020,7 @@ funktion kern_haupt(bi: u64) -> void:
         # Eigene NIC-DMA-Ringe muessen vor Freigabe ihrer alten UEFI-Arena stehen.
         setze idt_ok auf idt_einrichten()
         setze ar_cpu: u64 auf ar_cpu_einrichten(adresse_von(msr_lesen), adresse_von(msr_schreiben))
+        simd_cpu_einrichten()
         adressraum_initialisieren(cr3, adresse_von(pfa_nehme), adresse_von(pfa_gib), ar_cpu)
         setze tsc auf tsc_kalibrieren()
         meldung(adresse_von(T_TSC), tsc)
@@ -3058,12 +3141,16 @@ funktion kern_haupt(bi: u64) -> void:
         wenn sammeln:
             meldung(adresse_von(SAM_T_HID_START), 1)
             sammel_wartung(adresse_von(meldung))
-        setze usb_msi_adresse: u32 auf 0
-        wenn timer_start != 0 und hw(5) <= 255:
-            # Physische APIC-Ziel-ID und feste Edge-Nachricht. Linux v6.12
-            # arch/x86/include/asm/msi.h:15–41,52.
-            setze usb_msi_adresse auf 0xFEE00000 | (als(u32, hw(5)) << 12)
-        setze usb_ok auf usb_starten(adresse_von(usb_dma_nehmen), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung), sammeln, usb_msi_adresse, USB_MSI_VEKTOR)
+        setze usb_msi_ziel: u64 auf 256
+        wenn timer_start != 0:
+            setze usb_msi_ziel auf hw(5)
+        setze usb_msc_ruf: u64 auf 0
+        setze install_profil: u64 auf speicher_lesen(adresse_von(INSTALL_PROFIL) + 8, 8)
+        wenn install_profil >= 1 und install_profil <= 3:
+            setze usb_msc_ruf auf installer_probe_usb()
+        sonst wenn speicher_lesen(adresse_von(USB_MSC_PROFIL) + 8, 8) == 1:
+            setze usb_msc_ruf auf usb_msc_probe_ziel()
+        setze usb_ok auf usb_starten(adresse_von(usb_dma_nehmen), tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), adresse_von(sammel_wartung), sammeln, adresse_von(NETZ_PCI), usb_msi_ziel, adresse_von(usb_msi_dienst), usb_msc_ruf, adresse_von(usb_report_verarbeiten))
         meldung(adresse_von(T_USB_BAR), xh(23))
         meldung(adresse_von(T_USB_CAP), xh(0))
         meldung(adresse_von(T_USB_DMA), xh(4))
@@ -3130,9 +3217,59 @@ funktion kern_haupt(bi: u64) -> void:
             kern_text(adresse_von(T_KANAL_FEHLER))
             anhalten()
         kern_text(adresse_von(T_KANAL_OK))
+        wenn speicher_lesen(adresse_von(IRQ_PROFIL) + 8, 8) == 1:
+            wenn nicht irq_probe_starten(tsc, als(u32, hw(5)), adresse_von(meldung)):
+                kern_text(adresse_von(T_IRQ_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_IRQ_OK))
+        wenn speicher_lesen(adresse_von(BLOCK_PROFIL) + 8, 8) == 1:
+            wenn nicht block_probe_starten(tsc, adresse_von(meldung)):
+                kern_text(adresse_von(T_BLOCK_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_BLOCK_OK))
+        setze nvme_profil: u64 auf speicher_lesen(adresse_von(NVME_SCHREIB_PROFIL) + 8, 8)
+        wenn nvme_profil != 0:
+            wenn nicht nvme_probe_starten(nvme_profil, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_NVME_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_NVME_PROBE_OK))
+        wenn speicher_lesen(adresse_von(AHCI_PROFIL) + 8, 8) == 1:
+            wenn nicht ahci_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_AHCI_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_AHCI_PROBE_OK))
+        wenn speicher_lesen(adresse_von(CACHE_PROFIL) + 8, 8) == 1:
+            wenn nicht blockcache_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_CACHE_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_CACHE_BARRIERE))
+            anhalten()
+        wenn speicher_lesen(adresse_von(VFS_PROFIL) + 8, 8) == 1:
+            wenn nicht vfs_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_VFS_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_VFS_PROBE_OK))
+        wenn speicher_lesen(adresse_von(FAT_PROFIL) + 8, 8) == 1:
+            wenn nicht fat_probe_starten(adresse_von(meldung)):
+                kern_text(adresse_von(T_FAT_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_FAT_PROBE_OK))
+        wenn speicher_lesen(adresse_von(GPT_PROFIL) + 8, 8) == 1:
+            wenn nicht gpt_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_GPT_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_GPT_PROBE_OK))
+        wenn speicher_lesen(adresse_von(USB_MSC_PROFIL) + 8, 8) == 1:
+            wenn nicht usb_msc_probe_starten(adresse_von(meldung)):
+                kern_text(adresse_von(T_USB_MSC_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_USB_MSC_PROBE_OK))
         wenn moo_laufzeit_programm() != 0:
             anhalten()
         wenn speicher_lesen(adresse_von(SMP_STRESS_PROFIL) + 8, 8) == 1:
+            wenn nicht simd_probe_starten(tsc, adresse_von(meldung)):
+                kern_text(adresse_von(T_SMP_PROBE_NEIN))
+                anhalten()
             wenn nicht smp_probe_starten(tsc, adresse_von(meldung)) oder kern_mmio_abbilden(bi, 0xFEE00000, 4096) == 0:
                 kern_text(adresse_von(T_SMP_PROBE_NEIN))
                 anhalten()
@@ -3168,11 +3305,25 @@ funktion kern_haupt(bi: u64) -> void:
             kern_text(adresse_von(T_RING3_OK))
         setze benutzer_elf: u64 auf adresse_von(__moo_benutzer_elf_anfang)
         setze benutzer_ende: u64 auf adresse_von(__moo_benutzer_elf_ende)
-        wenn benutzer_ende > benutzer_elf:
+        wenn install_profil != 0:
+            wenn installer_probe_starten(install_profil, benutzer_elf, benutzer_ende - benutzer_elf, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_INSTALL_PROBE_OK))
+            sonst:
+                kern_text(adresse_von(T_INSTALL_PROBE_FEHLER))
+        sonst wenn benutzer_ende > benutzer_elf:
+            wenn speicher_lesen(adresse_von(DATEI_PROFIL) + 8, 8) == 1:
+                wenn nicht datei_probe_einrichten(adresse_von(meldung)):
+                    kern_text(adresse_von(T_DATEI_PROBE_FEHLER))
+                    anhalten()
             wenn nicht elf_probe_starten(benutzer_elf, benutzer_ende - benutzer_elf, tsc, adresse_von(pfa_wert), adresse_von(meldung)):
                 kern_text(adresse_von(T_ELF_FEHLER))
                 anhalten()
             kern_text(adresse_von(T_ELF_OK))
+            wenn speicher_lesen(adresse_von(DATEI_PROFIL) + 8, 8) == 1:
+                wenn nicht datei_probe_abschliessen(adresse_von(meldung)):
+                    kern_text(adresse_von(T_DATEI_PROBE_FEHLER))
+                    anhalten()
+                kern_text(adresse_von(T_DATEI_PROBE_OK))
         setze KERN_DIENSTE.kd_ps2 auf tastatur_ok
         setze KERN_DIENSTE.kd_timer auf timer_start != 0
         setze KERN_DIENSTE.kd_tsc_pro_us auf tsc

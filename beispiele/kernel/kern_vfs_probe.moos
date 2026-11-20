@@ -1,0 +1,230 @@
+# Privates Headless-Profil: tatsächliche KERN.ELF auf separatem FAT/NVMe-Medium.
+# Keine Testmuster oder Geräte-IDs beeinflussen den normalen VFS-Produktcode.
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VFS_EIO, VFS_ENOMEM, VFS_EMFILE, VFS_EBADF, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN
+aus ds_ram importiere RamDateisystem, ram_einrichten
+aus ds_fat importiere FatVolume, fat_oeffnen
+aus ds_fat_vfs importiere FatDateisystem, fat_vfs_einrichten, fat_vfs_void, fat_vfs_fehler
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus "kern_vfs" importiere KernVfsDateien, kern_vfs_einhaengen, kern_vfs_aushängen, kern_vfs_oeffnen, kern_vfs_lesen, kern_vfs_schreiben, kern_vfs_position, kern_vfs_stat, kern_vfs_schliessen, kern_vfs_anlegen, kern_vfs_loeschen
+aus "kern_syscall" importiere syscall_gruppe_initialisieren
+aus "kern_elf" importiere ElfProzess, prozess_freigeben
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "kern_smp" importiere smp_kern, smp_nummer, smp_planer, smp_planer_auf, smp_anzahl
+aus "kern_faden" importiere faden_erzeugen, faden_schlafen
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+aus "../uefi/hardware_crc" importiere hw_crc_tabelle, hw_crc_fortsetzen
+
+struktur VfsProbeFaden:
+    dateien: u64
+    fd: u64
+    fertig: atom[u64]
+    fehler: atom[u64]
+    gesehen: [atom[u64]; 1024]
+@nativ
+statisch VFS_PROBE_FADEN: VfsProbeFaden auf 0
+@nativ
+statisch VFS_PROBE_PROZESS: ElfProzess auf 0
+@nativ
+statisch VFS_PROBE_RAM: RamDateisystem auf 0
+@nativ
+statisch VFS_PROBE_FAT: FatDateisystem auf 0
+@nativ
+statisch VFS_PROBE_VOLUME: FatVolume auf 0
+@nativ
+statisch VFS_PROBE_TRANSPORT: FatKernTransport auf 0
+@nativ
+statisch VFS_PROBE_CTRL: NvmeBlockController auf 0
+@nativ
+statisch VFS_PROBE_NVME: NvmeBlockGeraet auf 0
+@nativ
+statisch VFS_PROBE_ZIEL: [u64; 7] auf [0x4E564D45524F3031, 0x68, 1, 20, 0x562d3131504f4f4d, 0x2d544f4f422d5346, 0x31303030]
+@nativ
+konstante VFS_T_BYTES: [u8; _] auf "MOO-VFS KERN BYTES "
+@nativ
+konstante VFS_T_CRC: [u8; _] auf "MOO-VFS KERN CRC32 "
+@nativ
+konstante VFS_T_FD: [u8; _] auf "MOO-VFS FD/SMP OK "
+@nativ
+konstante VFS_T_FEHLER: [u8; _] auf "MOO-VFS FEHLER CODE GRUND "
+@nativ
+konstante VFS_T_STATUS: [u8; _] auf "MOO-VFS FEHLER STATUS "
+
+@nativ
+funktion vfs_probe_pruefe(gut: bool, nummer: u32) -> ergebnis[void, VfsFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(VfsFehler(VFS_EIO, nummer, 0))
+    gib_zurück erfolg()
+
+@nativ
+@einstieg
+funktion vfs_probe_arbeiter(daten: u64) -> void:
+    unsicher:
+        unterbrechungen_an()
+        setze kontext: ptr[VfsProbeFaden] auf zeiger(daten)
+        setze d: ptr[KernVfsDateien] auf zeiger(kontext.dateien)
+        setze wort: u64 auf 0
+        setze p: ptr[u8] auf zeiger(adresse_von(wort))
+        solange wahr:
+            setze r: ergebnis[u64, VfsFehler] auf kern_vfs_lesen(d, kontext.fd, byteansicht(p, 8))
+            wenn nicht ist_erfolg(r):
+                atom_speichern(kontext.fehler, 1, ordnung=freigeben)
+                stopp
+            setze anzahl: u64 auf ergebnis_wert(r)
+            wenn anzahl == 0:
+                stopp
+            wenn anzahl != 8 oder wort >= 1024:
+                atom_speichern(kontext.fehler, 2, ordnung=freigeben)
+                stopp
+            setze vorher: u64 auf atom_addieren(kontext.gesehen[wort], 1, ordnung=locker)
+            wenn vorher != 0:
+                atom_speichern(kontext.fehler, 3, ordnung=freigeben)
+        atom_addieren(kontext.fertig, 1, ordnung=freigeben)
+
+@nativ
+funktion vfs_probe_ablauf(tsc: u64, bi: u64, map: u64, log_adr: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze basis: u64 auf ar_rahmen_nehmen(16)
+        wenn basis == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 1, 0))
+        setze ram: ptr[RamDateisystem] auf zeiger(adresse_von(VFS_PROBE_RAM))
+        weitergeben(ram_einrichten(ram, basis, 65536))
+        setze dynram: ptr[dyn Dateisystem] auf ram
+        setze wurzel: [u8; 1] auf [47]
+        setze boot: [u8; 5] auf [47, 98, 111, 111, 116]
+        setze datei: [u8; 5] auf [47, 116, 101, 115, 116]
+        setze kern: [u8; 14] auf [47, 98, 111, 111, 116, 47, 75, 69, 82, 78, 46, 69, 76, 70]
+        weitergeben(kern_vfs_einhaengen(byteansicht(wurzel), dynram))
+        weitergeben(kern_vfs_anlegen(byteansicht(boot), wahr))
+        setze ep: ptr[ElfProzess] auf zeiger(adresse_von(VFS_PROBE_PROZESS))
+        setze phys: u64 auf ar_rahmen_nehmen(1)
+        wenn phys == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 2, 0))
+        setze ep.ep_phys auf phys
+        setze ep.ep_seiten auf 1
+        syscall_gruppe_initialisieren(zeiger(adresse_von(ep.ep_gruppe)), zeiger(adresse_von(ep.ep_benutzer)), phys)
+        setze d: ptr[KernVfsDateien] auf zeiger(ep.ep_benutzer.bp_dateien)
+        weitergeben(vfs_probe_pruefe(ep.ep_benutzer.bp_dateien == adresse_von(ep.ep_gruppe.bg_dateien), 1))
+        setze fd: u64 auf weitergeben(kern_vfs_oeffnen(d, byteansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN))
+        weitergeben(vfs_probe_pruefe(fd == 3, 2))
+        setze zeigerwert: ptr[u64] auf zeiger(basis + 32768)
+        setze i: u64 auf 0
+        solange i < 1024:
+            volatile_schreiben(zeigerwert, i, i)
+            setze i auf i + 1
+        setze quelle: ptr[u8] auf zeiger(basis + 32768)
+        setze anzahl: u64 auf weitergeben(kern_vfs_schreiben(d, fd, byteansicht(quelle, 8192)))
+        weitergeben(vfs_probe_pruefe(anzahl == 8192, 3))
+        setze pos: u64 auf weitergeben(kern_vfs_position(d, fd, 0, 0))
+        setze VFS_PROBE_FADEN.dateien auf u64(d)
+        setze VFS_PROBE_FADEN.fd auf fd
+        weitergeben(vfs_probe_pruefe(smp_anzahl() >= 2, 4))
+        setze f0: u32 auf faden_erzeugen(smp_planer_auf(0), adresse_von(vfs_probe_arbeiter), adresse_von(VFS_PROBE_FADEN))
+        setze f1: u32 auf faden_erzeugen(smp_planer_auf(1), adresse_von(vfs_probe_arbeiter), adresse_von(VFS_PROBE_FADEN))
+        weitergeben(vfs_probe_pruefe(f0 != 0 und f1 != 0, 5))
+        setze frist: u64 auf takt() + tsc * 5000000
+        solange atom_laden(VFS_PROBE_FADEN.fertig, ordnung=erwerben) != 2 und takt() < frist:
+            faden_schlafen(smp_planer(), 1)
+        weitergeben(vfs_probe_pruefe(atom_laden(VFS_PROBE_FADEN.fertig, ordnung=erwerben) == 2 und atom_laden(VFS_PROBE_FADEN.fehler, ordnung=erwerben) == 0, 6))
+        setze i auf 0
+        solange i < 1024:
+            weitergeben(vfs_probe_pruefe(atom_laden(VFS_PROBE_FADEN.gesehen[i], ordnung=locker) == 1, 7))
+            setze i auf i + 1
+        weitergeben(kern_vfs_schliessen(d, fd))
+        setze i auf 0
+        solange i < 61:
+            setze offen_fd: u64 auf weitergeben(kern_vfs_oeffnen(d, byteansicht(wurzel), VFS_LESEN))
+            weitergeben(vfs_probe_pruefe(offen_fd == i + 3, 8))
+            setze i auf i + 1
+        setze voll: ergebnis[u64, VfsFehler] auf kern_vfs_oeffnen(d, byteansicht(wurzel), VFS_LESEN)
+        weitergeben(vfs_probe_pruefe(nicht ist_erfolg(voll), 9))
+        weitergeben(vfs_probe_pruefe(ergebnis_fehler(voll).code == VFS_EMFILE, 10))
+        setze ungueltig: ergebnis[VfsStat, VfsFehler] auf kern_vfs_stat(d, 2)
+        weitergeben(vfs_probe_pruefe(nicht ist_erfolg(ungueltig), 11))
+        weitergeben(vfs_probe_pruefe(ergebnis_fehler(ungueltig).code == VFS_EBADF, 12))
+        # Kein eigener Dateiclose: Prozessfreigabe muss alle 61 Mountreferenzen lösen.
+        weitergeben(vfs_probe_pruefe(prozess_freigeben(ep), 13))
+        weitergeben(vfs_probe_pruefe(d.letzter_fehler.code == 0, 14))
+        setze i auf 3
+        solange i < 64:
+            weitergeben(vfs_probe_pruefe(nicht d.dateien[i].offen, 17))
+            setze i auf i + 1
+        log(adresse_von(VFS_T_FD), 1024)
+
+        setze dma: u64 auf ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN)
+        wenn dma == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 3, 0))
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze start: NvmeBlockStart auf NvmeBlockStart(adresse_von(VFS_PROBE_ZIEL), 0x00101B36, dma, apic, 4, 4096, falsch)
+        # Der optionale Transportlogger bleibt für das sektorweise Streaming
+        # aus; eigene VFS-Fehler und Abschluss-CRC werden weiterhin gemeldet.
+        setze roh: u64 auf weitergeben(vfs_probe_nvme(zeiger(adresse_von(start)), tsc, bi, map, 0))
+        setze transport: ptr[FatKernTransport] auf zeiger(adresse_von(VFS_PROBE_TRANSPORT))
+        weitergeben(fat_vfs_void(fat_kern_transport_einrichten(transport, roh)))
+        setze dyntransport: ptr[dyn FatTransport] auf transport
+        setze volume: ptr[FatVolume] auf zeiger(adresse_von(VFS_PROBE_VOLUME))
+        weitergeben(fat_vfs_void(fat_oeffnen(volume, dyntransport)))
+        setze fs: ptr[FatDateisystem] auf zeiger(adresse_von(VFS_PROBE_FAT))
+        fat_vfs_einrichten(fs, volume)
+        setze dynfat: ptr[dyn Dateisystem] auf fs
+        weitergeben(kern_vfs_einhaengen(byteansicht(boot), dynfat))
+        setze fd auf weitergeben(kern_vfs_oeffnen(d, byteansicht(kern), VFS_LESEN))
+        setze info: VfsStat auf weitergeben(kern_vfs_stat(d, fd))
+        weitergeben(vfs_probe_pruefe(info.bytes > 4096, 15))
+        setze puffer: u64 auf ar_rahmen_nehmen(16)
+        setze tabelle: u64 auf ar_rahmen_nehmen(1)
+        wenn puffer == 0 oder tabelle == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 4, 0))
+        hw_crc_tabelle(tabelle)
+        setze crc: u32 auf 0xFFFFFFFF
+        setze gesamt: u64 auf 0
+        solange gesamt < info.bytes:
+            setze menge: u64 auf info.bytes - gesamt
+            wenn menge > 65536:
+                setze menge auf 65536
+            setze daten: ptr[u8] auf zeiger(puffer)
+            setze gelesen: u64 auf weitergeben(kern_vfs_lesen(d, fd, byteansicht(daten, menge)))
+            weitergeben(vfs_probe_pruefe(gelesen == menge, 16))
+            setze crc auf hw_crc_fortsetzen(tabelle, puffer, gelesen, crc)
+            setze gesamt auf gesamt + gelesen
+        log(adresse_von(VFS_T_BYTES), gesamt)
+        log(adresse_von(VFS_T_CRC), u64(crc ^ 0xFFFFFFFF))
+        weitergeben(kern_vfs_schliessen(d, fd))
+        weitergeben(kern_vfs_aushängen(byteansicht(boot)))
+        weitergeben(kern_vfs_loeschen(byteansicht(datei)))
+        weitergeben(kern_vfs_loeschen(byteansicht(boot)))
+        weitergeben(kern_vfs_aushängen(byteansicht(wurzel)))
+        setze i auf 0
+        solange i < 16:
+            ar_rahmen_freigeben(puffer + i * 4096)
+            ar_rahmen_freigeben(basis + i * 4096)
+            setze i auf i + 1
+        ar_rahmen_freigeben(tabelle)
+        gib_zurück erfolg()
+
+@nativ
+funktion vfs_probe_nvme(start: ptr[NvmeBlockStart], tsc: u64, bi: u64, map: u64, log: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze roh: ergebnis[u64, BlockFehler] auf nvme_block_einrichten(zeiger(adresse_von(VFS_PROBE_CTRL)), zeiger(adresse_von(VFS_PROBE_NVME)), start, tsc, bi, map, log)
+        wenn nicht ist_erfolg(roh):
+            gib_zurück fehlschlag(fat_vfs_fehler(ergebnis_fehler(roh)))
+        gib_zurück erfolg(ergebnis_wert(roh))
+
+@nativ
+funktion vfs_probe_starten(tsc: u64, bi: u64, map: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, VfsFehler] auf vfs_probe_ablauf(tsc, bi, map, log_adr)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(VFS_T_FEHLER), (u64(f.code) << 32) | u64(f.grund))
+            log(adresse_von(VFS_T_STATUS), u64(f.status))
+            gib_zurück falsch
+        gib_zurück wahr

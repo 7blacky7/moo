@@ -1,0 +1,170 @@
+# P11-T7: dauerhaft registrierter NVMe-Namespace mit eigener DMA-Arena.
+aus "nvme" importiere NvmeController, NvmeNamespace, NVME_PCI, nvme_oeffnen, nvme_io_einrichten, nvme_anhalten, nvme_abbrechen, nvme_senden, nvme_io_maxbytes, nvme_log
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BLOCK_OK, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_VERWERFEN, BLOCK_UNBEKANNT, BLOCK_EA, BLOCK_ZEIT, BLOCK_NICHT_BEREIT, block_registrieren, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_irq" importiere kern_irq_msix, kern_irq_stoppen
+aus "../uefi/netz_geraet" importiere nt_bar_slot, nt_kopiere
+
+@nativ
+konstante NVME_BLOCK_DMA_SEITEN: u64 auf 69
+@nativ
+konstante NVME_BLOCK_ABORT: [u8; _] auf "ABORT "
+@nativ
+konstante NVME_BLOCK_RESET: [u8; _] auf "RESET "
+@nativ
+konstante NVME_BLOCK_MSIX: [u8; _] auf "MSI-X VEKTOR "
+@nativ
+konstante NVME_BLOCK_TIEFE: [u8; _] auf "QUEUE TIEFE "
+
+# Geräteidentität aus dem Zielvertrag und erwartetem PCI-Gerät. Die
+# MSI-X-BAR-Länge stammt aus der geprüften PCI-Ressource des Aufrufers.
+struktur NvmeBlockStart:
+    ziel: u64
+    pci_id: u64
+    dma: u64
+    irq_ziel: u64
+    msix_bar: u64
+    msix_bytes: u64
+    schreibbar: bool
+
+struktur NvmeBlockGeraet implementiert BlockGeraet:
+    namespace: NvmeNamespace
+    eigner: ptr[NvmeBlockController]
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück BlockGeometrie(selbst.namespace.letzte_lba + 1, selbst.namespace.block_bytes, nicht selbst.namespace.schreibbar)
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze eigner: ptr[NvmeBlockController] auf selbst.eigner
+            setze sperre: ptr[KernMutex] auf zeiger(adresse_von(eigner.mutex))
+            mutex_nimm(smp_planer(), sperre)
+            setze fehler: BlockFehler auf nvme_block_auftrag(selbst, anfrage)
+            mutex_gib(smp_planer(), sperre)
+            block_abschliessen(anfrage, fehler)
+            gib_zurück erfolg()
+
+struktur NvmeBlockController:
+    transport: NvmeController
+    mutex: KernMutex
+    vektor: u64
+
+@nativ
+funktion nvme_block_irq(daten: u64) -> void:
+    unsicher:
+        setze ctrl: ptr[NvmeController] auf zeiger(daten)
+        atom_addieren(ctrl.irq_zaehler, 1, ordnung=freigeben)
+
+# Der Controller-Mutex gehört dem Aufrufer oder das Gerät wird eingerichtet.
+# Bei unbestätigtem Stop bleiben die dedizierten DMA-Seiten reserviert.
+@nativ
+funktion nvme_block_stoppen(geraet: ptr[NvmeBlockGeraet]) -> bool:
+    unsicher:
+        setze eigner: ptr[NvmeBlockController] auf geraet.eigner
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(geraet.namespace))
+        wenn eigner.vektor != 0:
+            kern_irq_stoppen(eigner.vektor)
+            setze eigner.vektor auf 0
+        gib_zurück nvme_anhalten(ns.kontroller, ns)
+
+@nativ
+funktion nvme_block_fehler(geraet: ptr[NvmeBlockGeraet], ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> BlockFehler:
+    unsicher:
+        wenn ctrl.defekt == 0:
+            gib_zurück BlockFehler(BLOCK_EA, als(u32, ctrl.cqe_status))
+        setze stufe: u64 auf ctrl.fehler_stufe
+        wenn stufe == 0x39:
+            setze abbruch: bool auf nvme_abbrechen(ctrl, ns)
+            nvme_log(ctrl, adresse_von(NVME_BLOCK_ABORT), u64(abbruch))
+        setze reset_ok: bool auf nvme_block_stoppen(geraet)
+        nvme_log(ctrl, adresse_von(NVME_BLOCK_RESET), u64(reset_ok))
+        wenn stufe == 0x39:
+            gib_zurück BlockFehler(BLOCK_ZEIT, als(u32, stufe))
+        gib_zurück BlockFehler(BLOCK_EA, als(u32, stufe))
+
+# Ein SQE gleichzeitig je Controller. Verschiedene Controller teilen
+# weder die Ringspeicher noch den Mutex. Lange Aufträge laufen in Teilstücken.
+@nativ
+funktion nvme_block_auftrag(geraet: ptr[NvmeBlockGeraet], anfrage: ptr[BlockAnfrage]) -> BlockFehler:
+    unsicher:
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(geraet.namespace))
+        setze ctrl: ptr[NvmeController] auf ns.kontroller
+        wenn ctrl.bereit == 0 oder ctrl.defekt != 0:
+            gib_zurück BlockFehler(BLOCK_NICHT_BEREIT, 0)
+        wenn anfrage.art == BLOCK_FLUSH:
+            wenn ns.schreibbar und nicht nvme_senden(ctrl, ns, 1, 0, 0, 0):
+                gib_zurück nvme_block_fehler(geraet, ctrl, ns)
+            gib_zurück BlockFehler(BLOCK_OK, 0)
+        setze opcode: u64 auf 2
+        setze limit: u64 auf nvme_io_maxbytes(ctrl) / ns.block_bytes
+        wenn anfrage.art == BLOCK_SCHREIBEN oder anfrage.art == BLOCK_SCHREIBEN_FUA:
+            setze opcode auf 1
+        sonst wenn anfrage.art == BLOCK_VERWERFEN:
+            wenn (ctrl.oncs & 4) == 0:
+                gib_zurück BlockFehler(BLOCK_UNBEKANNT, 9)
+            setze opcode auf 9
+            setze limit auf 0xFFFFFFFF
+        wenn limit == 0:
+            gib_zurück BlockFehler(BLOCK_EA, 0)
+        setze erledigt: u64 auf 0
+        setze dma: u64 auf ctrl.dma + 4 * 4096
+        solange erledigt < anfrage.anzahl:
+            setze anzahl: u64 auf anfrage.anzahl - erledigt
+            wenn anzahl > limit:
+                setze anzahl auf limit
+            setze bytes: u64 auf anzahl * ns.block_bytes
+            setze puffer: u64 auf anfrage.puffer + erledigt * ns.block_bytes
+            wenn opcode == 1:
+                nt_kopiere(dma, puffer, bytes)
+            wenn nicht nvme_senden(ctrl, ns, 1, opcode, anfrage.lba + erledigt, anzahl):
+                gib_zurück nvme_block_fehler(geraet, ctrl, ns)
+            wenn opcode == 2:
+                nt_kopiere(puffer, dma, bytes)
+            setze erledigt auf erledigt + anzahl
+        wenn anfrage.art == BLOCK_SCHREIBEN_FUA und nicht nvme_senden(ctrl, ns, 1, 0, 0, 0):
+            gib_zurück nvme_block_fehler(geraet, ctrl, ns)
+        gib_zurück BlockFehler(BLOCK_OK, 0)
+
+@nativ
+funktion nvme_block_route(ctrl: ptr[NvmeController], start: ptr[NvmeBlockStart], bi: u64, map: u64) -> u64:
+    unsicher:
+        setze bar: u64 auf nt_bar_slot(adresse_von(NVME_PCI), ctrl.bdf, start.msix_bar)
+        wenn bar == 0 oder start.msix_bytes == 0:
+            gib_zurück 0
+        setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
+        setze virtuell: u64 auf abbilden(bi, bar, start.msix_bytes)
+        wenn virtuell == 0:
+            gib_zurück 0
+        # Queue 0 bleibt ohne konfigurierten MSI-X-Eintrag. I/O-CQ verwendet 1.
+        gib_zurück kern_irq_msix(adresse_von(NVME_PCI), ctrl.bdf, start.irq_ziel, start.msix_bar, virtuell, start.msix_bytes, 1, adresse_von(nvme_block_irq), u64(ctrl))
+
+# Dauerhaftes Controller- und Geräteobjekt, je einmal initialisiert.
+# DMA-Seiten gehören dem Controller und werden auch bei spätem Fehler nicht wiederverwendet.
+@nativ
+funktion nvme_block_einrichten(eigner: ptr[NvmeBlockController], geraet: ptr[NvmeBlockGeraet], start: ptr[NvmeBlockStart], tsc_us: u64, bi: u64, map: u64, log: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze ctrl: ptr[NvmeController] auf zeiger(adresse_von(eigner.transport))
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(geraet.namespace))
+        setze geraet.eigner auf eigner
+        setze ctrl.dauerbetrieb auf wahr
+        setze ctrl.pci_ziel auf start.pci_id
+        wenn nicht nvme_oeffnen(ctrl, ns, start.dma, tsc_us, bi, map, log, start.ziel):
+            nvme_block_stoppen(geraet)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, als(u32, ctrl.fehler_stufe)))
+        setze eigner.vektor auf nvme_block_route(ctrl, start, bi, map)
+        wenn eigner.vektor == 0:
+            nvme_block_stoppen(geraet)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 0x26))
+        setze ctrl.io_irq_index auf 1
+        wenn nicht nvme_io_einrichten(ctrl, ns):
+            nvme_block_stoppen(geraet)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, als(u32, ctrl.fehler_stufe)))
+        setze ns.schreibbar auf start.schreibbar
+        nvme_log(ctrl, adresse_von(NVME_BLOCK_MSIX), eigner.vektor)
+        nvme_log(ctrl, adresse_von(NVME_BLOCK_TIEFE), ctrl.tiefe)
+        setze r: ergebnis[u64, BlockFehler] auf block_registrieren(geraet)
+        wenn nicht ist_erfolg(r):
+            nvme_block_stoppen(geraet)
+        gib_zurück r

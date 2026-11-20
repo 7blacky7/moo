@@ -1,0 +1,44 @@
+[tasks.lesen]
+description = "Bestehende USB-MSC- und NVMe-GPT-Leseproben in QEMU"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/speicher
+lauf="$(mktemp -d "$PWD/build/p11/speicher/lesen.XXXXXX")"
+MOO_UEFI_PRUEFUNG=kern MOO_UEFI_USB_STORAGE=1 MOO_UEFI_NVME=1 MOO_UEFI_SAMMEL=1 \
+  MOO_UEFI_OUT="$lauf" bash scripts/uefi-smoke.sh
+'''
+
+[tasks.kern]
+description = "MoOS-Kern in QEMU mit eigenen schreibbaren NVMe-, AHCI- und USB-Images booten"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/speicher
+lauf="$(mktemp -d "$PWD/build/p11/speicher/kern.XXXXXX")"
+MOO_UEFI_PRUEFUNG=kern MOO_UEFI_SPEICHER_TEST=1 MOO_UEFI_OUT="$lauf" bash scripts/uefi-smoke.sh
+'''
+
+[tasks.schreiben]
+description = "QEMU-Blockpfad, blkdebug EIO/Latenz, QMP-Entfernen und SIGKILL mit SHA-Vergleich"
+run = 'uv run --no-project --offline python -B geschirr.py pruefen "$@"'
+
+[tasks.entfernen]
+description = "QMP device_del, etwa entfernen LAUFVERZEICHNIS/speicher usb0"
+run = 'uv run --no-project --offline python -B geschirr.py entfernen "$@"'
+
+[tasks.gpt]
+description = "GPT eines regulären Testimages mit sgdisk -v prüfen"
+run = 'uv run --no-project --offline python -B host.py gpt "$@"'
+
+[tasks.fat]
+description = "FAT-Volume mit fsck.vfat -n und mdir prüfen"
+run = 'uv run --no-project --offline python -B host.py fat "$@"'
+
+[tasks.paritaet]
+description = "P/Q-SHA der Datenspuren in Argumentreihenfolge bestimmen und vergleichen"
+run = 'uv run --no-project --offline python -B host.py paritaet "$@"'
+
+[tasks.referenztest]
+description = "P/Q-Referenzvektor GF(2^8)/0x11D prüfen"
+run = 'uv run --no-project --offline python -B host.py selbsttest'

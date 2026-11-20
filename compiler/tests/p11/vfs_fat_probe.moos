@@ -1,0 +1,131 @@
+aus vfs importiere Dateisystem, VfsTabelle, VfsDatei, VfsStat, VfsEintrag, VfsFehler, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_VERZEICHNIS, VFS_EBUSY, VFS_EINVAL, VFS_ENOENT, VFS_EROFS, vfs_einhaengen, vfs_oeffnen, vfs_anlegen, vfs_loeschen, vfs_umbenennen, vfs_stat, vfs_aushängen
+aus ds_fat importiere FatVolume, fat_formatieren, fat_oeffnen
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_fat_vfs importiere FatDateisystem, fat_vfs_einrichten, fat_vfs_void
+aus "vfs_probe" importiere VfsTestBytes, vfs_test_pruefe
+struktur VfsFatPlatte:
+    bytes: [u8; 67108864]
+@nativ
+statisch VFS_FAT_PLATTE: VfsFatPlatte auf 0
+@nativ
+statisch VFS_FAT_SYSTEM: FatDateisystem auf 0
+@nativ
+statisch VFS_FAT_TABELLE: VfsTabelle auf 0
+@nativ
+funktion vfs_fat_ablauf() -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze ram: FatRam auf 0
+        setze rp: ptr[FatRam] auf zeiger(adresse_von(ram))
+        weitergeben(fat_vfs_void(fat_ram_einrichten(rp, adresse_von(VFS_FAT_PLATTE.bytes[0]), 67108864, 512, falsch)))
+        setze transport: ptr[dyn FatTransport] auf rp
+        weitergeben(fat_vfs_void(fat_formatieren(transport, 0xF1130013)))
+        setze volume: FatVolume auf 0
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(volume))
+        weitergeben(fat_vfs_void(fat_oeffnen(v, transport)))
+        setze f: ptr[FatDateisystem] auf zeiger(adresse_von(VFS_FAT_SYSTEM))
+        fat_vfs_einrichten(f, v)
+        setze fs: ptr[dyn Dateisystem] auf f
+        setze t: ptr[VfsTabelle] auf zeiger(adresse_von(VFS_FAT_TABELLE))
+        setze boot: [u8; 5] auf [47, 98, 111, 111, 116]
+        setze ordner: [u8; 12] auf [47, 98, 111, 111, 116, 47, 79, 114, 100, 110, 101, 114]
+        setze kind: [u8; 17] auf [47, 98, 111, 111, 116, 47, 79, 114, 100, 110, 101, 114, 47, 75, 105, 110, 100]
+        setze datei: [u8; 29] auf [47, 98, 111, 111, 116, 47, 79, 114, 100, 110, 101, 114, 47, 71, 114, 195, 188, 195, 159, 101, 32, 240, 159, 152, 128, 46, 116, 120, 116]
+        setze faltung: [u8; 29] auf [47, 98, 111, 111, 116, 47, 111, 114, 100, 110, 101, 114, 47, 71, 82, 195, 156, 195, 159, 69, 32, 240, 159, 152, 128, 46, 84, 88, 84]
+        setze neuer_name: [u8; 13] auf [47, 98, 111, 111, 116, 47, 110, 101, 117, 46, 98, 105, 110]
+        setze verschoben: [u8; 9] auf [47, 98, 111, 111, 116, 47, 78, 101, 117]
+        setze kind_neu: [u8; 14] auf [47, 98, 111, 111, 116, 47, 78, 101, 117, 47, 75, 105, 110, 100]
+        setze kindwurzel: [u8; 16] auf [47, 98, 111, 111, 116, 47, 87, 117, 114, 122, 101, 108, 107, 105, 110, 100]
+        setze zyklus: [u8; 24] auf [47, 98, 111, 111, 116, 47, 79, 114, 100, 110, 101, 114, 47, 75, 105, 110, 100, 47, 90, 121, 107, 108, 117, 115]
+        setze name: [u8; 16] auf [71, 114, 195, 188, 195, 159, 101, 32, 240, 159, 152, 128, 46, 116, 120, 116]
+        weitergeben(vfs_einhaengen(t, byteansicht(boot), fs))
+        weitergeben(vfs_anlegen(t, byteansicht(ordner), wahr))
+        weitergeben(vfs_anlegen(t, byteansicht(kind), wahr))
+        setze zustand_a: VfsDatei auf 0
+        setze zustand_b: VfsDatei auf 0
+        setze a: ptr[VfsDatei] auf zeiger(adresse_von(zustand_a))
+        setze b: ptr[VfsDatei] auf zeiger(adresse_von(zustand_b))
+        weitergeben(vfs_oeffnen(t, byteansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN, a))
+        weitergeben(vfs_oeffnen(t, byteansicht(faltung), VFS_LESEN, b))
+        setze daten: VfsTestBytes auf 0
+        setze gelesen: VfsTestBytes auf 0
+        setze i: u64 auf 0
+        solange i < 8192:
+            daten.bytes[i] = als_wrap(u8, i * 37 + 13)
+            setze i auf i + 1
+        setze pos: u64 auf weitergeben(a.position(700, 0))
+        setze anzahl: u64 auf weitergeben(a.schreiben(byteansicht(daten.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 101))
+        setze info: VfsStat auf weitergeben(b.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 8892, 102))
+        setze pos auf weitergeben(b.position(700, 0))
+        setze anzahl auf weitergeben(b.lesen(byteansicht(gelesen.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 103))
+        setze i auf 0
+        solange i < 8192:
+            weitergeben(vfs_test_pruefe(daten.bytes[i] == gelesen.bytes[i], 104))
+            setze i auf i + 1
+        setze fehl1: ergebnis[void, VfsFehler] auf vfs_loeschen(t, byteansicht(datei))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehl1), 105))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehl1).code == VFS_EBUSY, 106))
+        weitergeben(a.schliessen())
+        weitergeben(vfs_oeffnen(t, byteansicht(ordner), VFS_LESEN | VFS_VERZEICHNIS, a))
+        setze e: VfsEintrag auf weitergeben(a.verzeichnis(1))
+        weitergeben(vfs_test_pruefe(e.name_bytes == länge(byteansicht(name)) und e.bytes == 8892, 107))
+        setze i auf 0
+        solange i < länge(byteansicht(name)):
+            weitergeben(vfs_test_pruefe(e.name[i] == name[i], 108))
+            setze i auf i + 1
+        weitergeben(a.schliessen())
+        setze fehl2: ergebnis[void, VfsFehler] auf vfs_umbenennen(t, byteansicht(ordner), byteansicht(zyklus))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehl2), 109))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehl2).code == VFS_EINVAL, 110))
+        weitergeben(vfs_umbenennen(t, byteansicht(datei), byteansicht(neuer_name)))
+        setze info auf weitergeben(b.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 8892, 111))
+        setze pos auf weitergeben(b.position(700, 0))
+        setze anzahl auf weitergeben(b.lesen(byteansicht(gelesen.bytes)))
+        weitergeben(vfs_test_pruefe(anzahl == 8192, 112))
+        weitergeben(b.schliessen())
+        setze fehl3: ergebnis[VfsStat, VfsFehler] auf vfs_stat(t, byteansicht(datei))
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehl3), 113))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehl3).code == VFS_ENOENT, 114))
+        weitergeben(vfs_umbenennen(t, byteansicht(ordner), byteansicht(verschoben)))
+        setze info auf weitergeben(vfs_stat(t, byteansicht(kind_neu)))
+        weitergeben(vfs_test_pruefe(info.art == 2, 115))
+        weitergeben(vfs_umbenennen(t, byteansicht(kind_neu), byteansicht(kindwurzel)))
+        setze info auf weitergeben(vfs_stat(t, byteansicht(kindwurzel)))
+        weitergeben(vfs_test_pruefe(info.art == 2, 120))
+        weitergeben(vfs_loeschen(t, byteansicht(kindwurzel)))
+        weitergeben(vfs_loeschen(t, byteansicht(verschoben)))
+        weitergeben(vfs_oeffnen(t, byteansicht(neuer_name), VFS_LESEN, b))
+        setze pos auf weitergeben(b.position(700, 0))
+        setze anzahl auf weitergeben(b.lesen(byteansicht(gelesen.bytes)))
+        setze i auf 0
+        solange i < 8192:
+            weitergeben(vfs_test_pruefe(daten.bytes[i] == gelesen.bytes[i], 116))
+            setze i auf i + 1
+        weitergeben(b.schliessen())
+        weitergeben(vfs_aushängen(t, byteansicht(boot)))
+        weitergeben(fat_vfs_void(fat_oeffnen(v, transport)))
+        setze v.nur_lesend auf wahr
+        fat_vfs_einrichten(f, v)
+        weitergeben(vfs_einhaengen(t, byteansicht(boot), fs))
+        setze fehl4: ergebnis[void, VfsFehler] auf vfs_oeffnen(t, byteansicht(neuer_name), VFS_SCHREIBEN, a)
+        weitergeben(vfs_test_pruefe(nicht ist_erfolg(fehl4), 117))
+        weitergeben(vfs_test_pruefe(ergebnis_fehler(fehl4).code == VFS_EROFS, 118))
+        weitergeben(vfs_oeffnen(t, byteansicht(neuer_name), VFS_LESEN, a))
+        setze info auf weitergeben(a.stat())
+        weitergeben(vfs_test_pruefe(info.bytes == 8892 und info.rechte == 1, 119))
+        weitergeben(a.schliessen())
+        weitergeben(vfs_aushängen(t, byteansicht(boot)))
+        gib_zurück erfolg()
+
+@nativ
+funktion vfs_fat_test() -> u64:
+    unsicher:
+        setze r: ergebnis[void, VfsFehler] auf vfs_fat_ablauf()
+        wenn nicht ist_erfolg(r):
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            gib_zurück 10000 + als(u64, f.code) * 100 + als(u64, f.grund)
+        gib_zurück 0

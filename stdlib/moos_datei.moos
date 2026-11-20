@@ -1,0 +1,79 @@
+# Native Datei-API für MoOS. Puffer werden nur bis zur Rückkehr geliehen.
+# Lesen/Schreiben dürfen kurze Transfers liefern; Nullbytes bedeuten EOF.
+aus moos_syscall importiere moos_aufruf6
+aus moos_datei_abi importiere MoosDateiStat, MoosDateiVerzeichnis, MOOS_DATEI_OEFFNEN, MOOS_DATEI_LESEN, MOOS_DATEI_SCHREIBEN, MOOS_DATEI_SCHLIESSEN, MOOS_DATEI_STAT, MOOS_DATEI_VERZEICHNIS, MOOS_DATEI_POSITION, MOOS_DATEI_ABGLEICHEN, MOOS_DATEI_ANLEGEN, MOOS_DATEI_LOESCHEN, MOOS_DATEI_UMBENENNEN, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_LEEREN, VFS_VERZEICHNIS, VFS_EXKLUSIV, VFS_ANHAENGEN, VFS_DATEI, VFS_ORDNER
+
+@nativ
+funktion moos_datei_resultat(roh: u64) -> ergebnis[u64, u32]:
+    wenn roh >= 0xFFFFFFFFFFFFF001:
+        gib_zurück fehlschlag(als(u32, 0 - roh))
+    gib_zurück erfolg(roh)
+
+@nativ
+funktion moos_datei_oeffnen(pfad: puffer[u8], modus: u32) -> ergebnis[u64, u32]:
+    unsicher:
+        gib_zurück moos_datei_resultat(moos_aufruf6(MOOS_DATEI_OEFFNEN, u64(puffer_zeiger(pfad)), länge(pfad), u64(modus), 0, 0, 0))
+
+@nativ
+funktion moos_datei_lesen(fd: u64, daten: puffer[u8]) -> ergebnis[u64, u32]:
+    unsicher:
+        gib_zurück moos_datei_resultat(moos_aufruf6(MOOS_DATEI_LESEN, fd, u64(puffer_zeiger(daten)), länge(daten), 0, 0, 0))
+
+@nativ
+funktion moos_datei_schreiben(fd: u64, daten: puffer[u8]) -> ergebnis[u64, u32]:
+    unsicher:
+        gib_zurück moos_datei_resultat(moos_aufruf6(MOOS_DATEI_SCHREIBEN, fd, u64(puffer_zeiger(daten)), länge(daten), 0, 0, 0))
+
+@nativ
+funktion moos_datei_stat(fd: u64) -> ergebnis[MoosDateiStat, u32]:
+    unsicher:
+        setze info: MoosDateiStat auf 0
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_STAT, fd, adresse_von(info), groesse_von(MoosDateiStat), 0, 0, 0)))
+        gib_zurück erfolg(info)
+
+# art == 0 bedeutet Verzeichnisende, sonst name_bytes gültige Namensbytes.
+# Alle sechs Argumente haben Bedeutung: fd/index/Kopf/Größe/Name/Kapazität.
+@nativ
+funktion moos_datei_verzeichnis(fd: u64, index: u64, name: puffer[u8]) -> ergebnis[MoosDateiVerzeichnis, u32]:
+    unsicher:
+        setze info: MoosDateiVerzeichnis auf 0
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_VERZEICHNIS, fd, index, adresse_von(info), groesse_von(MoosDateiVerzeichnis), u64(puffer_zeiger(name)), länge(name))))
+        gib_zurück erfolg(info)
+
+@nativ
+funktion moos_datei_position(fd: u64, offset: i64, bezug: u32) -> ergebnis[u64, u32]:
+    unsicher:
+        gib_zurück moos_datei_resultat(moos_aufruf6(MOOS_DATEI_POSITION, fd, als_wrap(u64, offset), u64(bezug), 0, 0, 0))
+
+@nativ
+funktion moos_datei_schliessen(fd: u64) -> ergebnis[void, u32]:
+    unsicher:
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_SCHLIESSEN, fd, 0, 0, 0, 0, 0)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moos_datei_abgleichen(fd: u64) -> ergebnis[void, u32]:
+    unsicher:
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_ABGLEICHEN, fd, 0, 0, 0, 0, 0)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moos_datei_anlegen(pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, u32]:
+    unsicher:
+        setze art: u64 auf 0
+        wenn verzeichnis:
+            setze art auf 1
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_ANLEGEN, u64(puffer_zeiger(pfad)), länge(pfad), art, 0, 0, 0)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moos_datei_loeschen(pfad: puffer[u8]) -> ergebnis[void, u32]:
+    unsicher:
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_LOESCHEN, u64(puffer_zeiger(pfad)), länge(pfad), 0, 0, 0, 0)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moos_datei_umbenennen(quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, u32]:
+    unsicher:
+        setze roh: u64 auf weitergeben(moos_datei_resultat(moos_aufruf6(MOOS_DATEI_UMBENENNEN, u64(puffer_zeiger(quelle)), länge(quelle), u64(puffer_zeiger(ziel)), länge(ziel), 0, 0)))
+        gib_zurück erfolg()

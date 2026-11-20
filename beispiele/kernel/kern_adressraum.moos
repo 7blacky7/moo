@@ -387,24 +387,63 @@ funktion ar_kopieren_asm(ziel: u64, quelle: u64, anzahl: u64, smap: u64) -> void
     unsicher:
         assembler(ziel="x86_64", code="movq %rcx, %r8; movq %rdx, %rcx; cld; testq %r8, %r8; jz 1f; stac; rep movsb; clac; retq; 1: rep movsb; retq", clobber=["cc", "memory"])
 
+# Aufrufer hält raum.ar_sperre. Seiten dürfen während Prüfung und Kopie
+# nicht entfernt werden. Der aktive CR3 und Benutzerrechte werden geprüft.
 @nativ
-funktion ar_benutzer_kopieren(raum: ptr[Adressraum], ziel: u64, quelle: u64, anzahl: u64) -> bool:
+funktion ar_benutzer_bereich_gesperrt(raum: ptr[Adressraum], adresse: u64, anzahl: u64, schreiben: bool) -> bool:
     unsicher:
         wenn anzahl == 0:
             gib_zurück wahr
-        wenn quelle < AR_ERSTE_VA oder quelle >= AR_ENDE_VA oder anzahl > AR_ENDE_VA - quelle:
+        wenn adresse < AR_ERSTE_VA oder adresse >= AR_ENDE_VA oder anzahl > AR_ENDE_VA - adresse:
             gib_zurück falsch
+        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE)
+        setze maske: u64 auf 5
+        wenn schreiben:
+            setze maske auf 7
+        setze seite: u64 auf adresse & 0xFFFFFFFFFFFFF000
+        solange erlaubt und seite < adresse + anzahl:
+            setze erlaubt auf (ar_eintrag_lesen(raum.ar_pml4, seite) & maske) == maske
+            setze seite auf seite + 4096
+        gib_zurück erlaubt
+
+@nativ
+funktion ar_benutzer_bereich(raum: ptr[Adressraum], adresse: u64, anzahl: u64, schreiben: bool) -> bool:
+    unsicher:
+        wenn anzahl == 0:
+            gib_zurück wahr
         setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
         setze irq: u64 auf spin_nimm(sperre)
-        setze erlaubt: bool auf raum.ar_pml4 != 0 und raum.ar_pml4 == (ar_cr3_lesen() & AR_RAHMEN_MASKE)
-        setze seite: u64 auf quelle & 0xFFFFFFFFFFFFF000
-        solange erlaubt und seite < quelle + anzahl:
-            setze erlaubt auf (ar_eintrag_lesen(raum.ar_pml4, seite) & 5) == 5
-            setze seite auf seite + 4096
+        setze erlaubt: bool auf ar_benutzer_bereich_gesperrt(raum, adresse, anzahl, schreiben)
+        spin_gib(sperre, irq)
+        gib_zurück erlaubt
+
+# Nur ein Operand ist Benutzerspeicher; den anderen besitzt der Kernel.
+@nativ
+funktion ar_benutzer_kopieren_richtung(raum: ptr[Adressraum], ziel: u64, quelle: u64, anzahl: u64, zum_benutzer: bool) -> bool:
+    unsicher:
+        wenn anzahl == 0:
+            gib_zurück wahr
+        setze adresse: u64 auf quelle
+        wenn zum_benutzer:
+            setze adresse auf ziel
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(raum.ar_sperre))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze erlaubt: bool auf ar_benutzer_bereich_gesperrt(raum, adresse, anzahl, zum_benutzer)
         wenn erlaubt:
             ar_kopieren_asm(ziel, quelle, anzahl, ar_cr4_lesen() & 0x200000)
         spin_gib(sperre, irq)
         gib_zurück erlaubt
+
+# Bestehender Vierargumentvertrag bleibt User -> Kernel.
+@nativ
+funktion ar_benutzer_kopieren(raum: ptr[Adressraum], ziel: u64, quelle: u64, anzahl: u64) -> bool:
+    unsicher:
+        gib_zurück ar_benutzer_kopieren_richtung(raum, ziel, quelle, anzahl, falsch)
+
+@nativ
+funktion ar_benutzer_zurueckkopieren(raum: ptr[Adressraum], ziel: u64, quelle: u64, anzahl: u64) -> bool:
+    unsicher:
+        gib_zurück ar_benutzer_kopieren_richtung(raum, ziel, quelle, anzahl, wahr)
 
 
 

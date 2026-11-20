@@ -1,0 +1,69 @@
+# FAT32-Datenträgerformate nach Microsoft FAT Specification, Abschnitte 3, 5, 6 und 7.
+# Alle Mehrbytefelder sind ausdrücklich Little Endian und ohne Ausrichtungspolster.
+@gepackt
+struktur Fat32Bpb:
+    sprung: [u8; 3]
+    oem_name: [u8; 8]
+    sektor_bytes: u16le
+    cluster_sektoren: u8
+    reservierte_sektoren: u16le
+    fat_anzahl: u8
+    wurzel_eintraege16: u16le
+    sektor_anzahl16: u16le
+    medium: u8
+    fat_sektoren16: u16le
+    spur_sektoren: u16le
+    koepfe: u16le
+    versteckte_sektoren: u32le
+    sektor_anzahl32: u32le
+    fat_sektoren32: u32le
+    kennzeichen: u16le
+    version: u16le
+    wurzel_cluster: u32le
+    fsinfo_sektor: u16le
+    backup_sektor: u16le
+    reserviert32: [u8; 12]
+    laufwerk: u8
+    reserviert1: u8
+    erweiterte_signatur: u8
+    seriennummer: u32le
+    volumen_name: [u8; 11]
+    dateisystem_name: [u8; 8]
+    bootcode: [u8; 420]
+    signatur: u16le
+
+@gepackt
+struktur Fat32FsInfo:
+    anfang_signatur: u32le
+    reserviert1: [u8; 480]
+    struktur_signatur: u32le
+    freie_cluster: u32le
+    naechster_cluster: u32le
+    reserviert2: [u8; 12]
+    ende_signatur: u32le
+
+@gepackt
+struktur FatVerzeichnisEintrag:
+    kurzname: [u8; 11]
+    attribute: u8
+    nt_kennzeichen: u8
+    erstellt_zehntel: u8
+    erstellt_zeit: u16le
+    erstellt_datum: u16le
+    zugriff_datum: u16le
+    cluster_hoch: u16le
+    geschrieben_zeit: u16le
+    geschrieben_datum: u16le
+    cluster_tief: u16le
+    datei_bytes: u32le
+
+@gepackt
+struktur FatLangerNameEintrag:
+    reihenfolge: u8
+    name1: [u8; 10]
+    attribute: u8
+    eintrag_art: u8
+    pruefsumme: u8
+    name2: [u8; 12]
+    cluster_null: u16le
+    name3: [u8; 4]

@@ -1,0 +1,4 @@
+aus "fat32_transport_probe" importiere fat32_transport_probe
+
+unsicher:
+    zeige fat32_transport_probe()

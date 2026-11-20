@@ -1,0 +1,124 @@
+# P11-T12: gemeinsamer FAT-Kern auf RAM -> Blockregister -> GPT-Partition.
+# Geräte und der 80-MiB-PFA-Bereich bleiben wie das Blockregister bis Neustart
+# gültig. Der Test besitzt das Volume exklusiv; keine fremden Plattenzugriffe.
+aus ds_fat importiere FatVolume, FatDatei, FatSektor, fat_formatieren, fat_oeffnen, fat_anlegen, fat_suchen, fat_schreiben, fat_lesen, fat_datei_groesse, fat_loeschen, fat_synchronisieren
+aus ds_fat_transport importiere FatTransport
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus "kern_block" importiere BlockGeraet, BlockFehler, BLOCK_VOLL, BLOCK_EA, BLOCK_NUR_LESEN, block_registrieren
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "speicher_gpt_block" importiere GptGuid, GptEintrag, GptMedium, GptPartition, gpt_oeffnen, gpt_schreiben, gpt_partition_registrieren
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere nt_null
+
+@nativ
+statisch FAT_PROBE_RAM: RamPlatte auf 0
+@nativ
+statisch FAT_PROBE_TEIL: GptPartition auf 0
+@nativ
+statisch FAT_PROBE_RO: GptPartition auf 0
+@nativ
+statisch FAT_PROBE_ENTWURF: GptEintrag auf 0
+@nativ
+statisch FAT_PROBE_TRANSPORT: FatKernTransport auf 0
+@nativ
+statisch FAT_PROBE_RO_TRANSPORT: FatKernTransport auf 0
+@nativ
+statisch FAT_PROBE_VOLUME: FatVolume auf 0
+@nativ
+konstante FAT_T_SCHRITT: [u8; _] auf "MOO-FAT32 SCHRITT "
+@nativ
+konstante FAT_T_FEHLER: [u8; _] auf "MOO-FAT32 FEHLER CODE STATUS "
+
+@nativ
+funktion fat_probe_ablauf(log_adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze basis: u64 auf ar_rahmen_nehmen(20480)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 1))
+        nt_null(basis, 83886080)
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(FAT_PROBE_RAM))
+        weitergeben(block_ram_einrichten(ram, basis, 83886080, 512, falsch))
+        setze geraet: ptr[dyn BlockGeraet] auf ram
+        setze roh: u64 auf weitergeben(block_registrieren(geraet))
+        setze medium: ptr[GptMedium] auf weitergeben(gpt_oeffnen(roh))
+        setze entwurf: ptr[GptEintrag] auf zeiger(adresse_von(FAT_PROBE_ENTWURF))
+        setze entwurf.typ_guid auf GptGuid(0x477284830FC63DAF, 0xE47D47D8693D798E)
+        setze entwurf.teil_guid auf GptGuid(0x123456789ABCDEF0, 0xFFEEDDCCBBAA9988)
+        setze entwurf.erster auf 2048
+        setze entwurf.letzter auf 133119
+        entwurf.name_utf16le[0] = 70
+        entwurf.name_utf16le[1] = 65
+        entwurf.name_utf16le[2] = 84
+        weitergeben(gpt_schreiben(medium, GptGuid(0x1122334455667788, 0x8877665544332211), entwurf, 1))
+        setze id: u64 auf weitergeben(gpt_partition_registrieren(medium, zeiger(adresse_von(FAT_PROBE_TEIL)), 1, falsch))
+        setze ro_id: u64 auf weitergeben(gpt_partition_registrieren(medium, zeiger(adresse_von(FAT_PROBE_RO)), 1, wahr))
+        log(adresse_von(FAT_T_SCHRITT), 1)
+        setze adapter: ptr[FatKernTransport] auf zeiger(adresse_von(FAT_PROBE_TRANSPORT))
+        weitergeben(fat_kern_transport_einrichten(adapter, id))
+        setze transport: ptr[dyn FatTransport] auf adapter
+        weitergeben(fat_formatieren(transport, 0x11223344))
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(FAT_PROBE_VOLUME))
+        weitergeben(fat_oeffnen(v, transport))
+        log(adresse_von(FAT_T_SCHRITT), 2)
+        setze name: [u8; 25] auf [75, 101, 114, 110, 32, 108, 97, 110, 103, 101, 114, 32, 68, 97, 116, 101, 105, 110, 97, 109, 101, 46, 98, 105, 110]
+        setze datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(name), falsch))
+        setze f: ptr[FatDatei] auf zeiger(adresse_von(datei))
+        setze daten_speicher: FatSektor auf 0
+        setze daten: puffer[u8] auf byteansicht(daten_speicher.bytes)
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            daten[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        setze offset: u64 auf 0
+        solange offset < 65536:
+            weitergeben(fat_schreiben(v, f, offset, daten))
+            setze offset auf offset + länge(daten)
+        weitergeben(fat_synchronisieren(v))
+        weitergeben(fat_oeffnen(v, transport))
+        setze datei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(name)))
+        setze offset auf 0
+        solange offset < 65536:
+            weitergeben(fat_lesen(v, f, offset, daten))
+            setze i auf 0
+            solange i < länge(daten):
+                wenn daten[i] != als_wrap(u8, i * 37 + 11):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 2))
+                setze i auf i + 1
+            setze offset auf offset + länge(daten)
+        log(adresse_von(FAT_T_SCHRITT), 3)
+        setze ro_adapter: ptr[FatKernTransport] auf zeiger(adresse_von(FAT_PROBE_RO_TRANSPORT))
+        weitergeben(fat_kern_transport_einrichten(ro_adapter, ro_id))
+        setze ro_transport: ptr[dyn FatTransport] auf ro_adapter
+        setze ro_volume: FatVolume auf 0
+        weitergeben(fat_oeffnen(zeiger(adresse_von(ro_volume)), ro_transport))
+        setze abgelehnt: ergebnis[FatDatei, BlockFehler] auf fat_anlegen(zeiger(adresse_von(ro_volume)), ro_volume.layout.wurzel, byteansicht(name), wahr)
+        # Der Name existiert bereits; Größenänderung muss den RO-Vertrag prüfen.
+        wenn ist_erfolg(abgelehnt):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 3))
+        setze ro_datei: FatDatei auf weitergeben(fat_suchen(zeiger(adresse_von(ro_volume)), ro_volume.layout.wurzel, byteansicht(name)))
+        setze groesse: ergebnis[void, BlockFehler] auf fat_datei_groesse(zeiger(adresse_von(ro_volume)), zeiger(adresse_von(ro_datei)), 0)
+        wenn ist_erfolg(groesse):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 4))
+        setze fehler: BlockFehler auf ergebnis_fehler(groesse)
+        wenn fehler.code != BLOCK_NUR_LESEN:
+            gib_zurück fehlschlag(fehler)
+        weitergeben(fat_loeschen(v, f))
+        weitergeben(fat_synchronisieren(v))
+        log(adresse_von(FAT_T_SCHRITT), 4)
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_probe_starten(log_adr: u64) -> bool:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf fat_probe_ablauf(log_adr)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(FAT_T_FEHLER), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück falsch
+        gib_zurück wahr

@@ -1,0 +1,258 @@
+# Privates QEMU-Profil: RAM-Last und Geräteabschluss von einem anderen Kern.
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_BEREICH, BLOCK_PUFFER, BLOCK_NUR_LESEN, BLOCK_KEIN_GERAET, BLOCK_EA, BLOCK_BELEGT, block_registrieren, block_geometrie, block_anfordern, block_abschliessen
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_nullseiten
+aus "kern_smp" importiere smp_kern, smp_nummer, smp_planer
+aus "kern_smp_planer" importiere smp_online_maske, smp_faden_anbieten
+aus "kern_faden" importiere faden_abgeben
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "kern_irq" importiere kern_irq_reservieren, kern_irq_stoppen
+aus "kern_ap" importiere ap_ipi
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+konstante BLOCK_PROBE_PAARE: u64 auf 62500
+
+@nativ
+statisch BLOCK_PROBE_RAM: RamPlatte auf 0
+@nativ
+statisch BLOCK_PROBE_RO: RamPlatte auf 0
+@nativ
+statisch BLOCK_PROBE_RAM_ID: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_KERNE: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_FERTIG: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_OP: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_FEHLER: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_ASYNC: BlockAnfrage auf 0
+@nativ
+statisch BLOCK_PROBE_IRQ_CPU: atom[u64] auf 0
+@nativ
+statisch BLOCK_PROBE_IRQ_ID: atom[u64] auf 0
+
+@nativ
+konstante T_BLOCK_TEST: [u8; _] auf "MOO-BLOCK PRUEFUNG "
+@nativ
+konstante T_BLOCK_IRQ: [u8; _] auf "MOO-BLOCK IRQ CPU+1 "
+@nativ
+konstante T_BLOCK_KERNE: [u8; _] auf "MOO-BLOCK CPU-MASKE "
+@nativ
+konstante T_BLOCK_OP: [u8; _] auf "MOO-BLOCK RAM OP "
+@nativ
+konstante T_BLOCK_FERTIG: [u8; _] auf "MOO-BLOCK FADEN FERTIG "
+@nativ
+konstante T_BLOCK_FADEN_FEHLER: [u8; _] auf "MOO-BLOCK FADEN FEHLER "
+
+struktur BlockProbeAuftrag:
+    anfrage: BlockAnfrage
+    daten: [u64; 512]
+
+struktur BlockProbeIrq implementiert BlockGeraet:
+    irq_vektor: u64
+    irq_frist: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        gib_zurück BlockGeometrie(1, 512, falsch)
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn anfrage.art != BLOCK_FLUSH:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 0x31))
+            setze anderer_kern: u32 auf smp_nummer() ^ 1
+            wenn smp_faden_anbieten(adresse_von(block_probe_antwort), u64(anfrage), u64(1) << anderer_kern) == 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 0x32))
+            gib_zurück erfolg()
+
+@nativ
+statisch BLOCK_PROBE_IRQ: BlockProbeIrq auf 0
+
+@nativ
+funktion block_probe_fehler(r: ergebnis[void, BlockFehler], code: u32, status: u32) -> bool:
+    unsicher:
+        wenn ist_erfolg(r):
+            gib_zurück falsch
+        setze fehler: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück fehler.code == code und fehler.geraete_status == status
+
+@nativ
+funktion block_probe_antwort(daten: u64) -> void:
+    unsicher:
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(daten)
+        setze kennung: u64 auf atom_laden(BLOCK_PROBE_IRQ_ID, ordnung=erwerben)
+        wenn nicht block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_FLUSH, 0, 0, 0, 0), BLOCK_BELEGT, 0):
+            block_abschliessen(anfrage, BlockFehler(BLOCK_EA, 0x43))
+            gib_zurück
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(anfrage.ba_sperre))
+        setze start: u64 auf takt()
+        solange takt() - start < BLOCK_PROBE_IRQ.irq_frist:
+            setze irq: u64 auf spin_nimm(sperre)
+            setze wartet: bool auf anfrage.ba_warte.fw_kopf != 0
+            spin_gib(sperre, irq)
+            wenn wartet:
+                wenn ap_ipi(smp_kern(smp_nummer()).apic_id, als(u32, BLOCK_PROBE_IRQ.irq_vektor)):
+                    gib_zurück
+                stopp
+            kern_pause()
+        block_abschliessen(anfrage, BlockFehler(BLOCK_EA, 0x44))
+
+@nativ
+funktion block_probe_irq(daten: u64) -> void:
+    unsicher:
+        atom_speichern(BLOCK_PROBE_IRQ_CPU, u64(smp_nummer()) + 1, ordnung=freigeben)
+        block_abschliessen(zeiger(daten), BlockFehler(BLOCK_EA, 0x42))
+
+@nativ
+funktion block_probe_warten(tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(adresse_von(BLOCK_PROBE_ASYNC))
+        setze vektor: u64 auf kern_irq_reservieren(adresse_von(block_probe_irq), u64(anfrage))
+        wenn vektor == 0:
+            gib_zurück falsch
+        setze BLOCK_PROBE_IRQ.irq_vektor auf vektor
+        setze BLOCK_PROBE_IRQ.irq_frist auf tsc * 2000000
+        setze geraet: ptr[BlockProbeIrq] auf zeiger(adresse_von(BLOCK_PROBE_IRQ))
+        setze anmeldung: ergebnis[u64, BlockFehler] auf block_registrieren(geraet)
+        wenn nicht ist_erfolg(anmeldung):
+            kern_irq_stoppen(vektor)
+            gib_zurück falsch
+        setze kennung: u64 auf ergebnis_wert(anmeldung)
+        atom_speichern(BLOCK_PROBE_IRQ_ID, kennung, ordnung=freigeben)
+        setze auftrag: BlockProbeAuftrag auf 0
+        setze abgewiesen: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_LESEN, 0, 1, adresse_von(auftrag.daten), 512), BLOCK_EA, 0x31)
+        setze ziel: u64 auf u64(smp_nummer() ^ 1) + 1
+        setze abgeschlossen: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_FLUSH, 0, 0, 0, 0), BLOCK_EA, 0x42)
+        kern_irq_stoppen(vektor)
+        setze cpu: u64 auf atom_laden(BLOCK_PROBE_IRQ_CPU, ordnung=erwerben)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        log(adresse_von(T_BLOCK_IRQ), cpu)
+        gib_zurück abgewiesen und abgeschlossen und cpu == ziel
+
+@nativ
+funktion block_probe_grenzen(kennung: u64, nur_lesen: u64) -> bool:
+    unsicher:
+        setze auftrag: BlockProbeAuftrag auf 0
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(adresse_von(auftrag.anfrage))
+        setze basis: u64 auf adresse_von(auftrag.daten)
+        setze info: ergebnis[BlockGeometrie, BlockFehler] auf block_geometrie(kennung)
+        setze ro: ergebnis[BlockGeometrie, BlockFehler] auf block_geometrie(nur_lesen)
+        setze info_ok: bool auf ist_erfolg(info)
+        setze ro_ok: bool auf ist_erfolg(ro)
+        wenn nicht info_ok oder nicht ro_ok:
+            gib_zurück falsch
+        setze geo: BlockGeometrie auf ergebnis_wert(info)
+        setze ro_geo: BlockGeometrie auf ergebnis_wert(ro)
+        wenn geo.bloecke != 128 oder geo.block_bytes != 512 oder geo.nur_lesend:
+            gib_zurück falsch
+        wenn ro_geo.bloecke != 1 oder ro_geo.block_bytes != 4096 oder nicht ro_geo.nur_lesend:
+            gib_zurück falsch
+        setze fehlt: bool auf block_probe_fehler(block_anfordern(0, anfrage, BLOCK_LESEN, 0, 1, basis, 512), BLOCK_KEIN_GERAET, 0)
+        setze zu_viele: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_LESEN, 127, 2, basis, 1024), BLOCK_BEREICH, 0)
+        setze keine: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_LESEN, 0, 0, basis, 0), BLOCK_BEREICH, 0)
+        setze zu_kurz: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_LESEN, 0, 1, basis, 511), BLOCK_PUFFER, 0)
+        setze ueberlauf: bool auf block_probe_fehler(block_anfordern(kennung, anfrage, BLOCK_LESEN, 0, 1, 0xFFFFFFFFFFFFFFF0, 512), BLOCK_PUFFER, 0)
+        setze schutz: bool auf block_probe_fehler(block_anfordern(nur_lesen, anfrage, BLOCK_SCHREIBEN, 0, 1, basis, 4096), BLOCK_NUR_LESEN, 0)
+        setze gelesen: bool auf ist_erfolg(block_anfordern(nur_lesen, anfrage, BLOCK_LESEN, 0, 1, basis, 4096))
+        setze abgeschlossen: bool auf ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_FLUSH, 0, 0, 0, 0))
+        gib_zurück fehlt und zu_viele und keine und zu_kurz und ueberlauf und schutz und gelesen und abgeschlossen
+
+@nativ
+funktion block_probe_muster(nr: u64, kennung: u64) -> bool:
+    unsicher:
+        setze auftrag: BlockProbeAuftrag auf 0
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(adresse_von(auftrag.anfrage))
+        setze puffer: ptr[u64] auf zeiger(adresse_von(auftrag.daten))
+        setze runde: u64 auf 0
+        solange runde < BLOCK_PROBE_PAARE:
+            setze lba: u64 auf nr * 16 + runde % 16
+            setze praefix: u64 auf (nr << 56) | (runde << 16)
+            setze wort: u64 auf 0
+            solange wort < 64:
+                volatile_schreiben(puffer, wort, praefix | wort)
+                setze wort auf wort + 1
+            wenn nicht ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_SCHREIBEN, lba, 1, u64(puffer), 512)):
+                gib_zurück falsch
+            setze wort auf 0
+            solange wort < 64:
+                volatile_schreiben(puffer, wort, 0xFFFFFFFFFFFFFFFF)
+                setze wort auf wort + 1
+            wenn nicht ist_erfolg(block_anfordern(kennung, anfrage, BLOCK_LESEN, lba, 1, u64(puffer), 512)):
+                gib_zurück falsch
+            setze wort auf 0
+            solange wort < 64:
+                wenn volatile_lesen(puffer, wort) != (praefix | wort):
+                    gib_zurück falsch
+                setze wort auf wort + 1
+            setze runde auf runde + 1
+        gib_zurück wahr
+
+@nativ
+funktion block_probe_faden(nr: u64) -> void:
+    unsicher:
+        setze cpu: u64 auf u64(smp_nummer())
+        atom_oder(BLOCK_PROBE_KERNE, u64(1) << cpu, ordnung=locker)
+        wenn cpu == nr % 4 und block_probe_muster(nr, atom_laden(BLOCK_PROBE_RAM_ID, ordnung=erwerben)):
+            atom_addieren(BLOCK_PROBE_OP, BLOCK_PROBE_PAARE * 2, ordnung=locker)
+        sonst:
+            atom_oder(BLOCK_PROBE_FEHLER, u64(1) << nr, ordnung=locker)
+        atom_addieren(BLOCK_PROBE_FERTIG, 1, ordnung=freigeben)
+
+@nativ
+funktion block_probe_lauf(tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(protokoll)
+        setze basis: u64 auf ar_rahmen_nehmen(17)
+        wenn basis == 0:
+            gib_zurück falsch
+        ar_nullseiten(basis, 17)
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(BLOCK_PROBE_RAM))
+        setze ro: ptr[RamPlatte] auf zeiger(adresse_von(BLOCK_PROBE_RO))
+        wenn nicht ist_erfolg(block_ram_einrichten(ram, basis, 65536, 512, falsch)):
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_ram_einrichten(ro, basis + 65536, 4096, 4096, wahr)):
+            gib_zurück falsch
+        setze anmelden: ergebnis[u64, BlockFehler] auf block_registrieren(ram)
+        setze nur_lesen: ergebnis[u64, BlockFehler] auf block_registrieren(ro)
+        setze ram_ok: bool auf ist_erfolg(anmelden)
+        setze ro_ok: bool auf ist_erfolg(nur_lesen)
+        wenn nicht ram_ok oder nicht ro_ok:
+            gib_zurück falsch
+        setze kennung: u64 auf ergebnis_wert(anmelden)
+        wenn nicht block_probe_grenzen(kennung, ergebnis_wert(nur_lesen)):
+            gib_zurück falsch
+        log(adresse_von(T_BLOCK_TEST), 1)
+        wenn nicht block_probe_warten(tsc, protokoll):
+            gib_zurück falsch
+        log(adresse_von(T_BLOCK_TEST), 2)
+        atom_speichern(BLOCK_PROBE_RAM_ID, kennung, ordnung=freigeben)
+        setze nr: u64 auf 0
+        solange nr < 8:
+            wenn smp_faden_anbieten(adresse_von(block_probe_faden), nr, u64(1) << (nr % 4)) == 0:
+                gib_zurück falsch
+            setze nr auf nr + 1
+        setze start: u64 auf takt()
+        solange atom_laden(BLOCK_PROBE_FERTIG, ordnung=erwerben) != 8 und takt() - start < tsc * 60000000:
+            faden_abgeben(smp_planer())
+        setze fertig: u64 auf atom_laden(BLOCK_PROBE_FERTIG, ordnung=erwerben)
+        setze ops: u64 auf atom_laden(BLOCK_PROBE_OP, ordnung=locker)
+        setze maske: u64 auf atom_laden(BLOCK_PROBE_KERNE, ordnung=locker)
+        setze fehler: u64 auf atom_laden(BLOCK_PROBE_FEHLER, ordnung=locker)
+        log(adresse_von(T_BLOCK_FERTIG), fertig)
+        log(adresse_von(T_BLOCK_KERNE), maske)
+        log(adresse_von(T_BLOCK_OP), ops)
+        log(adresse_von(T_BLOCK_FADEN_FEHLER), fehler)
+        gib_zurück fertig == 8 und maske == 15 und ops == 1000000 und fehler == 0
+
+@nativ
+funktion block_probe_starten(tsc: u64, protokoll: u64) -> bool:
+    unsicher:
+        wenn tsc == 0 oder smp_online_maske() != 15:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gut: bool auf block_probe_lauf(tsc, protokoll)
+        irq_wiederherstellen(irq)
+        gib_zurück gut

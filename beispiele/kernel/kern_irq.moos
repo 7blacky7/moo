@@ -1,0 +1,280 @@
+# Dynamische Gerätevektoren und PCI-Nachrichten unter x86-64.
+aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+aus "../uefi/netz_geraet" importiere pci_ecam_adresse, pci_lese32, pci_schreibe32
+aus "../uefi/hardware_pci" importiere nt_mmio_lese32, nt_mmio_schreibe32
+
+# 0x00..0x4F enthält Ausnahmen, Legacy-IRQ und Planer-IPI.
+# 0xF0..0xFF bleibt für lokale APIC-Quellen einschließlich Spurious frei.
+@nativ
+konstante IRQ_ERSTER: u64 auf 80
+@nativ
+konstante IRQ_GRENZE: u64 auf 240
+
+struktur KernIrqPlatz:
+    ki_belegt: u64
+    ki_ruf: atom[u64]
+    ki_daten: u64
+    ki_pci: u64
+    ki_bdf: u64
+    ki_cap: u64
+    ki_zeile: u64
+
+@nativ
+statisch IRQ_PLAETZE: [KernIrqPlatz; 160] auf 0
+@nativ
+statisch IRQ_SPERRE: KernSperre auf 0
+
+@nativ
+funktion kern_irq_ist_geraet(v: u64) -> bool:
+    gib_zurück v >= IRQ_ERSTER und v < IRQ_GRENZE
+
+@nativ
+funktion irq_platz(v: u64) -> ptr[KernIrqPlatz]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(IRQ_PLAETZE) + (v - IRQ_ERSTER) * groesse_von(KernIrqPlatz))
+
+@nativ
+funktion kern_irq_aufrufen(v: u64) -> void:
+    unsicher:
+        wenn kern_irq_ist_geraet(v):
+            setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+            setze adr: u64 auf atom_laden(platz.ki_ruf, ordnung=erwerben)
+            wenn adr != 0:
+                setze ruf: ptr[fn[sysv64](u64) -> void] auf zeiger(adr)
+                ruf(platz.ki_daten)
+
+# Mit IRQ_SPERRE. BDF + physischer Tabellenplatz bezeichnet eine Route.
+# Handler und Kontext stehen vor dem Entmaskieren zur Verfügung.
+@nativ
+funktion irq_belegen(ruf: u64, daten: u64, pci: u64, bdf: u64, cap: u64, zeile: u64) -> u64:
+    unsicher:
+        wenn ruf == 0:
+            gib_zurück 0
+        setze frei: u64 auf 0
+        setze v: u64 auf IRQ_ERSTER
+        solange v < IRQ_GRENZE:
+            setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+            wenn platz.ki_belegt == 0 und frei == 0:
+                setze frei auf v
+            wenn platz.ki_belegt != 0 und pci != 0 und platz.ki_pci != 0 und platz.ki_bdf == bdf:
+                wenn platz.ki_cap != cap oder platz.ki_zeile == zeile:
+                    gib_zurück 0
+            setze v auf v + 1
+        wenn frei == 0:
+            gib_zurück 0
+        setze zielplatz: ptr[KernIrqPlatz] auf irq_platz(frei)
+        setze zielplatz.ki_belegt auf 1
+        setze zielplatz.ki_pci auf pci
+        setze zielplatz.ki_bdf auf bdf
+        setze zielplatz.ki_cap auf cap
+        setze zielplatz.ki_zeile auf zeile
+        setze zielplatz.ki_daten auf daten
+        atom_speichern(zielplatz.ki_ruf, ruf, ordnung=freigeben)
+        gib_zurück frei
+
+@nativ
+funktion kern_irq_reservieren(ruf: u64, daten: u64) -> u64:
+    unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(IRQ_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze v: u64 auf irq_belegen(ruf, daten, 0, 0, 0, 0)
+        spin_gib(sperre, irq)
+        gib_zurück v
+
+# Nur bei einer gescheiterten Einrichtung vor Entmaskierung wieder freigeben.
+@nativ
+funktion irq_verwerfen(v: u64) -> void:
+    unsicher:
+        setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+        atom_speichern(platz.ki_ruf, 0, ordnung=freigeben)
+        setze platz.ki_belegt auf 0
+
+# Standard-Capability-Liste. Rückgabe: MSI-X-Offset:MSI-Offset, je 8 Bit.
+@nativ
+funktion irq_pci_caps(pci: u64, bdf: u64) -> u64:
+    unsicher:
+        wenn pci == 0 oder bdf > 0xFFFF oder (pci_lese32(pci, bdf, 4) & 0x100000) == 0:
+            gib_zurück 0
+        wenn ((pci_lese32(pci, bdf, 12) >> 16) & 0x7F) > 1:
+            gib_zurück 0
+        setze cap: u64 auf pci_lese32(pci, bdf, 0x34) & 255
+        setze msi: u64 auf 0
+        setze msix: u64 auf 0
+        setze anzahl: u64 auf 0
+        solange cap != 0 und anzahl < 48:
+            wenn cap < 0x40 oder (cap & 3) != 0:
+                gib_zurück 0
+            setze kopf: u64 auf pci_lese32(pci, bdf, cap)
+            wenn (kopf & 255) == 5:
+                wenn msi != 0 oder cap > 0xF4:
+                    gib_zurück 0
+                setze msi auf cap
+            sonst wenn (kopf & 255) == 0x11:
+                wenn msix != 0 oder cap > 0xF4:
+                    gib_zurück 0
+                setze msix auf cap
+            setze cap auf (kopf >> 8) & 255
+            setze anzahl auf anzahl + 1
+        wenn cap != 0:
+            gib_zurück 0
+        gib_zurück msi | (msix << 8)
+
+# Genau ein klassischer MSI-Vektor. Das Gerät ist beim Aufruf quieszent.
+# Register und Masken: Linux v6.12 include/uapi/linux/pci_regs.h:306–321.
+@nativ
+funktion irq_msi_bauen(pci: u64, bdf: u64, ziel: u64, ruf: u64, daten: u64) -> u64:
+    unsicher:
+        setze caps: u64 auf irq_pci_caps(pci, bdf)
+        setze cap: u64 auf caps & 255
+        setze msix: u64 auf caps >> 8
+        wenn cap == 0 oder (msix != 0 und (pci_lese32(pci, bdf, msix) & 0x80000000) != 0):
+            gib_zurück 0
+        setze kopf: u64 auf pci_lese32(pci, bdf, cap) & 0xFF8EFFFF
+        setze lang: bool auf (kopf & 0x800000) != 0
+        setze maskierbar: bool auf (kopf & 0x1000000) != 0
+        setze daten_off: u64 auf cap + 8
+        wenn lang:
+            setze daten_off auf daten_off + 4
+        wenn daten_off > 0xFC oder (maskierbar und daten_off + 8 > 0xFC):
+            gib_zurück 0
+        setze v: u64 auf irq_belegen(ruf, daten, pci, bdf, cap, 0)
+        wenn v == 0:
+            gib_zurück 0
+        pci_schreibe32(pci, bdf, cap, kopf)
+        wenn (pci_lese32(pci, bdf, cap) & 0x10000) != 0:
+            # Der Ursprung kann noch senden. Diesen Vektor nicht erneut vergeben.
+            setze fehlerplatz: ptr[KernIrqPlatz] auf irq_platz(v)
+            atom_speichern(fehlerplatz.ki_ruf, 0, ordnung=freigeben)
+            gib_zurück 0
+        setze adr: u64 auf 0xFEE00000 | (ziel << 12)
+        pci_schreibe32(pci, bdf, cap + 4, adr)
+        wenn lang:
+            pci_schreibe32(pci, bdf, cap + 8, 0)
+        pci_schreibe32(pci, bdf, daten_off, (pci_lese32(pci, bdf, daten_off) & 0xFFFF0000) | v)
+        wenn maskierbar:
+            pci_schreibe32(pci, bdf, daten_off + 4, pci_lese32(pci, bdf, daten_off + 4) & 0xFFFFFFFE)
+        wenn pci_lese32(pci, bdf, cap + 4) != adr oder (pci_lese32(pci, bdf, daten_off) & 0xFFFF) != v oder (lang und pci_lese32(pci, bdf, cap + 8) != 0) oder (maskierbar und (pci_lese32(pci, bdf, daten_off + 4) & 1) != 0):
+            irq_verwerfen(v)
+            gib_zurück 0
+        pci_schreibe32(pci, bdf, cap, kopf | 0x10000)
+        wenn (pci_lese32(pci, bdf, cap) & 0x710000) != 0x10000:
+            pci_schreibe32(pci, bdf, cap, kopf)
+            setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+            atom_speichern(platz.ki_ruf, 0, ordnung=freigeben)
+            gib_zurück 0
+        gib_zurück v
+
+@nativ
+funktion kern_irq_msi(pci: u64, bdf: u64, ziel: u64, ruf: u64, daten: u64) -> u64:
+    unsicher:
+        wenn ziel > 255:
+            gib_zurück 0
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(IRQ_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze v: u64 auf irq_msi_bauen(pci, bdf, ziel, ruf, daten)
+        spin_gib(sperre, irq)
+        gib_zurück v
+
+@nativ
+funktion irq_msix_eigen(bdf: u64, cap: u64) -> bool:
+    unsicher:
+        setze v: u64 auf IRQ_ERSTER
+        solange v < IRQ_GRENZE:
+            setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+            wenn platz.ki_belegt != 0 und platz.ki_pci != 0 und platz.ki_bdf == bdf und platz.ki_cap == cap und platz.ki_zeile != 0:
+                gib_zurück wahr
+            setze v auf v + 1
+        gib_zurück falsch
+
+# Der Treiber übergibt das gemappte Fenster ab Basis des BAR <bir>; der
+# Tabellenbereich muss darin vollständig liegen. Linux v6.12 msi.c:572,
+# 653–663,721–752. Bei bereits aktivem MSI-X nur den eigenen Eintrag ändern.
+@nativ
+funktion irq_msix_bauen(pci: u64, bdf: u64, ziel: u64, bir: u64, bar: u64, bytes: u64, index: u64, ruf: u64, daten: u64) -> u64:
+    unsicher:
+        setze caps: u64 auf irq_pci_caps(pci, bdf)
+        setze cap: u64 auf caps >> 8
+        setze msi: u64 auf caps & 255
+        wenn cap == 0 oder (msi != 0 und (pci_lese32(pci, bdf, msi) & 0x10000) != 0):
+            gib_zurück 0
+        setze kopf: u64 auf pci_lese32(pci, bdf, cap)
+        setze frisch: bool auf (kopf & 0x80000000) == 0
+        wenn nicht frisch und nicht irq_msix_eigen(bdf, cap):
+            gib_zurück 0
+        setze anzahl: u64 auf ((kopf >> 16) & 0x7FF) + 1
+        setze tabelle: u64 auf pci_lese32(pci, bdf, cap + 4)
+        setze offset: u64 auf tabelle & 0xFFFFFFF8
+        wenn bir > 5 oder (tabelle & 7) != bir oder index >= anzahl oder bar == 0 oder bytes > 0xFFFFFFFFFFFFFFFF - bar oder offset > bytes oder anzahl * 16 > bytes - offset:
+            gib_zurück 0
+        wenn (pci_lese32(pci, bdf, 0x10 + bir * 4) & 1) != 0:
+            gib_zurück 0
+        setze basis: u64 auf bar + offset
+        setze zeile: u64 auf basis + index * 16
+        setze v: u64 auf irq_belegen(ruf, daten, pci, bdf, cap, zeile)
+        wenn v == 0:
+            gib_zurück 0
+        wenn frisch:
+            pci_schreibe32(pci, bdf, cap, kopf | 0xC0000000)
+            wenn (pci_lese32(pci, bdf, cap) & 0xC0000000) != 0xC0000000:
+                pci_schreibe32(pci, bdf, cap, kopf | 0x40000000)
+                irq_verwerfen(v)
+                gib_zurück 0
+            setze nr: u64 auf 0
+            solange nr < anzahl:
+                setze maske_adr: u64 auf basis + nr * 16 + 12
+                nt_mmio_schreibe32(maske_adr, nt_mmio_lese32(maske_adr) | 1)
+                setze nr auf nr + 1
+        setze kontrolle: u32 auf nt_mmio_lese32(zeile + 12) | 1
+        nt_mmio_schreibe32(zeile + 12, kontrolle)
+        setze adr: u32 auf als(u32, 0xFEE00000 | (ziel << 12))
+        nt_mmio_schreibe32(zeile, adr)
+        nt_mmio_schreibe32(zeile + 4, 0)
+        nt_mmio_schreibe32(zeile + 8, als(u32, v))
+        wenn nt_mmio_lese32(zeile) != adr oder nt_mmio_lese32(zeile + 4) != 0 oder u64(nt_mmio_lese32(zeile + 8)) != v oder (nt_mmio_lese32(zeile + 12) & 1) == 0:
+            wenn frisch:
+                pci_schreibe32(pci, bdf, cap, kopf | 0x40000000)
+            irq_verwerfen(v)
+            gib_zurück 0
+        nt_mmio_schreibe32(zeile + 12, kontrolle & 0xFFFFFFFE)
+        wenn frisch:
+            pci_schreibe32(pci, bdf, cap, (kopf | 0x80000000) & 0xBFFFFFFF)
+        wenn (nt_mmio_lese32(zeile + 12) & 1) != 0 oder (pci_lese32(pci, bdf, cap) & 0xC0000000) != 0x80000000:
+            nt_mmio_schreibe32(zeile + 12, kontrolle)
+            wenn frisch:
+                pci_schreibe32(pci, bdf, cap, kopf | 0x40000000)
+            setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+            atom_speichern(platz.ki_ruf, 0, ordnung=freigeben)
+            gib_zurück 0
+        gib_zurück v
+
+@nativ
+funktion kern_irq_msix(pci: u64, bdf: u64, ziel: u64, bir: u64, bar: u64, bytes: u64, index: u64, ruf: u64, daten: u64) -> u64:
+    unsicher:
+        wenn ziel > 255:
+            gib_zurück 0
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(IRQ_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze v: u64 auf irq_msix_bauen(pci, bdf, ziel, bir, bar, bytes, index, ruf, daten)
+        spin_gib(sperre, irq)
+        gib_zurück v
+
+# Das Gerät bleibt beim aufrufenden Treiber. Bereits zugestellte Nachrichten
+# können ausstehen, deshalb wird dieser Vektor während des Boots nicht neu belegt.
+@nativ
+funktion kern_irq_stoppen(v: u64) -> void:
+    unsicher:
+        wenn nicht kern_irq_ist_geraet(v):
+            gib_zurück
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(IRQ_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze platz: ptr[KernIrqPlatz] auf irq_platz(v)
+        wenn platz.ki_pci != 0 und atom_laden(platz.ki_ruf, ordnung=locker) != 0:
+            wenn platz.ki_zeile != 0:
+                setze adr: u64 auf platz.ki_zeile + 12
+                nt_mmio_schreibe32(adr, nt_mmio_lese32(adr) | 1)
+                nt_mmio_lese32(adr)
+            sonst:
+                setze kopf: u64 auf pci_lese32(platz.ki_pci, platz.ki_bdf, platz.ki_cap)
+                pci_schreibe32(platz.ki_pci, platz.ki_bdf, platz.ki_cap, kopf & 0xFFFEFFFF)
+        atom_speichern(platz.ki_ruf, 0, ordnung=freigeben)
+        spin_gib(sperre, irq)

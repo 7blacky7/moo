@@ -1,0 +1,409 @@
+# RAM-Dateisystem ohne Heap: Metadaten liegen beim Besitzer, Dateiseiten in
+# seinem geliehenen RAM-Bereich. Alle Aufrufe werden vom Besitzer serialisiert.
+aus vfs importiere Dateisystem, VFS_ANHAENGEN, VFS_ANLEGEN, VFS_DATEI, VFS_EBADF, VFS_EBUSY, VFS_EEXIST, VFS_EINVAL, VFS_EIO, VFS_EISDIR, VFS_EMFILE, VFS_ENAMETOOLONG, VFS_ENOENT, VFS_ENOSPC, VFS_ENOTDIR, VFS_ENOTEMPTY, VFS_EXKLUSIV, VFS_LEEREN, VFS_ORDNER, VFS_SCHREIBEN, VFS_VERZEICHNIS, VfsEintrag, VfsFehler, VfsPfad, VfsStat, vfs_pfad
+
+struktur RamKnoten:
+    name: [u8; 256]
+    name_bytes: u64
+    eltern: u64
+    art: u32
+    bytes: u64
+    erster: u64
+    referenzen: u64
+    aktiv: bool
+    verbunden: bool
+
+struktur RamGriff:
+    knoten: u64
+    generation: u64
+    aktiv: bool
+
+struktur RamZiel:
+    eltern: u64
+    knoten: u64
+    ab: u64
+    anzahl: u64
+
+struktur RamDateisystem implementiert Dateisystem:
+    basis: u64
+    seiten: u64
+    freie: u64
+    bereit: bool
+    # 2048 ist Kettenende, 2049 bedeutet freie Seite.
+    folge: [u64; 2048]
+    knoten: [RamKnoten; 128]
+    griffe: [RamGriff; 256]
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.bereit:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+            wenn (modus & 0xFFFFFF80) != 0 oder (modus & 3) == 0 oder ((modus & (VFS_LEEREN | VFS_ANHAENGEN)) != 0 und (modus & VFS_SCHREIBEN) == 0):
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: RamZiel auf weitergeben(ram_ziel(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.knoten != 128 und (modus & (VFS_ANLEGEN | VFS_EXKLUSIV)) == (VFS_ANLEGEN | VFS_EXKLUSIV):
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            wenn ziel.knoten != 128:
+                wenn (modus & VFS_VERZEICHNIS) != 0 und selbst.knoten[ziel.knoten].art != VFS_ORDNER:
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+                wenn selbst.knoten[ziel.knoten].art == VFS_ORDNER und (modus & VFS_SCHREIBEN) != 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            sonst wenn (modus & VFS_ANLEGEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            sonst wenn (modus & VFS_VERZEICHNIS) != 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze slot: u64 auf 0
+            solange slot < 256:
+                wenn nicht selbst.griffe[slot].aktiv und selbst.griffe[slot].generation < 0x00FFFFFFFFFFFFFF:
+                    stopp
+                setze slot auf slot + 1
+            wenn slot == 256:
+                gib_zurück fehlschlag(VfsFehler(VFS_EMFILE, 0, 0))
+            wenn ziel.knoten == 128:
+                setze ziel.knoten auf weitergeben(ram_anlegen(selbst, zeiger(adresse_von(normal)), ziel, falsch))
+            wenn (modus & VFS_LEEREN) != 0:
+                weitergeben(ram_groesse(selbst, ziel.knoten, 0))
+            setze selbst.griffe[slot].generation auf selbst.griffe[slot].generation + 1
+            setze selbst.griffe[slot].knoten auf ziel.knoten
+            setze selbst.griffe[slot].aktiv auf wahr
+            setze selbst.knoten[ziel.knoten].referenzen auf selbst.knoten[ziel.knoten].referenzen + 1
+            gib_zurück erfolg(selbst.griffe[slot].generation * 256 + slot)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            setze selbst.griffe[griff % 256].aktiv auf falsch
+            setze selbst.knoten[k].referenzen auf selbst.knoten[k].referenzen - 1
+            wenn nicht selbst.knoten[k].verbunden und selbst.knoten[k].referenzen == 0:
+                ram_freigeben(selbst, k)
+            gib_zurück erfolg()
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            wenn selbst.knoten[k].art == VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            wenn offset >= selbst.knoten[k].bytes:
+                gib_zurück erfolg(0)
+            setze anzahl: u64 auf länge(daten)
+            wenn anzahl > selbst.knoten[k].bytes - offset:
+                setze anzahl auf selbst.knoten[k].bytes - offset
+            ram_io(selbst, k, offset, daten, anzahl, falsch)
+            gib_zurück erfolg(anzahl)
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            wenn selbst.knoten[k].art == VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            wenn länge(daten) == 0:
+                gib_zurück erfolg(0)
+            wenn offset > 8388608 oder länge(daten) > 8388608 - offset:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOSPC, 0, 0))
+            setze ende: u64 auf offset + länge(daten)
+            wenn ende > selbst.knoten[k].bytes:
+                weitergeben(ram_groesse(selbst, k, ende))
+            ram_io(selbst, k, offset, daten, länge(daten), wahr)
+            gib_zurück erfolg(länge(daten))
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            gib_zurück erfolg(VfsStat(selbst.knoten[k].art, 3, selbst.knoten[k].bytes))
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            wenn selbst.knoten[k].art != VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            setze gesehen: u64 auf 0
+            setze i: u64 auf 1
+            solange i < 128:
+                wenn selbst.knoten[i].aktiv und selbst.knoten[i].verbunden und selbst.knoten[i].eltern == k:
+                    wenn gesehen == index:
+                        setze eintrag: VfsEintrag auf 0
+                        setze eintrag.name_bytes auf selbst.knoten[i].name_bytes
+                        setze eintrag.art auf selbst.knoten[i].art
+                        setze eintrag.bytes auf selbst.knoten[i].bytes
+                        setze j: u64 auf 0
+                        solange j < eintrag.name_bytes:
+                            eintrag.name[j] = selbst.knoten[i].name[j]
+                            setze j auf j + 1
+                        gib_zurück erfolg(eintrag)
+                    setze gesehen auf gesehen + 1
+                setze i auf i + 1
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze k: u64 auf weitergeben(ram_griff(selbst, griff))
+            gib_zurück ram_groesse(selbst, k, bytes)
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: RamZiel auf weitergeben(ram_ziel(selbst, zeiger(adresse_von(normal))))
+            setze neu_wert: u64 auf weitergeben(ram_anlegen(selbst, zeiger(adresse_von(normal)), ziel, verzeichnis))
+            gib_zurück erfolg()
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: RamZiel auf weitergeben(ram_ziel(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.knoten == 128:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn ziel.knoten == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            wenn selbst.knoten[ziel.knoten].art == VFS_ORDNER und nicht ram_leer(selbst, ziel.knoten):
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTEMPTY, 0, 0))
+            ram_abtrennen(selbst, ziel.knoten)
+            gib_zurück erfolg()
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze quellpfad: VfsPfad auf 0
+            setze nach: VfsPfad auf 0
+            weitergeben(vfs_pfad(quelle, zeiger(adresse_von(quellpfad))))
+            weitergeben(vfs_pfad(ziel, zeiger(adresse_von(nach))))
+            setze a: RamZiel auf weitergeben(ram_ziel(selbst, zeiger(adresse_von(quellpfad))))
+            setze b: RamZiel auf weitergeben(ram_ziel(selbst, zeiger(adresse_von(nach))))
+            wenn a.knoten == 128:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn a.knoten == 0 oder b.knoten == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            wenn a.knoten == b.knoten:
+                gib_zurück erfolg()
+            setze vorfahr: u64 auf b.eltern
+            solange vorfahr != 0:
+                wenn vorfahr == a.knoten:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+                setze vorfahr auf selbst.knoten[vorfahr].eltern
+            wenn b.knoten != 128:
+                wenn selbst.knoten[a.knoten].art != selbst.knoten[b.knoten].art:
+                    setze code: u32 auf VFS_ENOTDIR
+                    wenn selbst.knoten[b.knoten].art == VFS_ORDNER:
+                        setze code auf VFS_EISDIR
+                    gib_zurück fehlschlag(VfsFehler(code, 0, 0))
+                wenn selbst.knoten[b.knoten].art == VFS_ORDNER und nicht ram_leer(selbst, b.knoten):
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOTEMPTY, 0, 0))
+                ram_abtrennen(selbst, b.knoten)
+            setze selbst.knoten[a.knoten].eltern auf b.eltern
+            setze selbst.knoten[a.knoten].name_bytes auf b.anzahl
+            setze i: u64 auf 0
+            solange i < b.anzahl:
+                selbst.knoten[a.knoten].name[i] = nach.bytes[b.ab + i]
+                setze i auf i + 1
+            gib_zurück erfolg()
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn nicht selbst.bereit:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+            gib_zurück erfolg()
+
+# Wiederinitialisierung ist erst nach Ende aller Griffe und Mounts erlaubt.
+@nativ
+funktion ram_einrichten(r: ptr[RamDateisystem], basis: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn basis == 0 oder basis % 8 != 0 oder bytes < 4096 oder bytes / 4096 > 2048 oder bytes % 4096 != 0 oder bytes - 1 > 0xFFFFFFFFFFFFFFFF - basis:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze null_index: u64 auf 0
+        solange null_index < groesse_von(RamDateisystem):
+            speicher_schreiben(u64(r) + null_index, 0, 1)
+            setze null_index auf null_index + 1
+        setze r.basis auf basis
+        setze r.seiten auf bytes / 4096
+        setze r.freie auf r.seiten
+        setze i: u64 auf 0
+        solange i < 2048:
+            r.folge[i] = 2049
+            setze i auf i + 1
+        setze r.knoten[0].aktiv auf wahr
+        setze r.knoten[0].verbunden auf wahr
+        setze r.knoten[0].art auf VFS_ORDNER
+        setze r.knoten[0].erster auf 2048
+        setze r.bereit auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion ram_griff(r: ptr[RamDateisystem], griff: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze slot: u64 auf griff % 256
+        wenn nicht r.bereit oder nicht r.griffe[slot].aktiv oder r.griffe[slot].generation != griff / 256:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+        gib_zurück erfolg(r.griffe[slot].knoten)
+
+@nativ
+funktion ram_ziel(r: ptr[RamDateisystem], pfad: ptr[VfsPfad]) -> ergebnis[RamZiel, VfsFehler]:
+    unsicher:
+        wenn nicht r.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+        wenn pfad.anzahl == 1:
+            gib_zurück erfolg(RamZiel(0, 0, 0, 1))
+        setze eltern: u64 auf 0
+        setze ab: u64 auf 1
+        solange ab < pfad.anzahl:
+            wenn r.knoten[eltern].art != VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            setze ende: u64 auf ab
+            solange ende < pfad.anzahl und pfad.bytes[ende] != 47:
+                setze ende auf ende + 1
+            wenn ende - ab > 255:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 0, 0))
+            setze gefunden: u64 auf 128
+            setze i: u64 auf 1
+            solange i < 128:
+                wenn r.knoten[i].aktiv und r.knoten[i].verbunden und r.knoten[i].eltern == eltern und r.knoten[i].name_bytes == ende - ab:
+                    setze gleich: bool auf wahr
+                    setze j: u64 auf 0
+                    solange j < ende - ab:
+                        wenn r.knoten[i].name[j] != pfad.bytes[ab + j]:
+                            setze gleich auf falsch
+                        setze j auf j + 1
+                    wenn gleich:
+                        setze gefunden auf i
+                        stopp
+                setze i auf i + 1
+            wenn ende == pfad.anzahl:
+                gib_zurück erfolg(RamZiel(eltern, gefunden, ab, ende - ab))
+            wenn gefunden == 128:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            setze eltern auf gefunden
+            setze ab auf ende + 1
+        gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+
+@nativ
+funktion ram_anlegen(r: ptr[RamDateisystem], pfad: ptr[VfsPfad], ziel: RamZiel, verzeichnis: bool) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        wenn ziel.knoten != 128:
+            gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+        setze i: u64 auf 1
+        solange i < 128 und r.knoten[i].aktiv:
+            setze i auf i + 1
+        wenn i == 128:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOSPC, 0, 0))
+        setze leer: RamKnoten auf 0
+        setze r.knoten[i] auf leer
+        setze r.knoten[i].aktiv auf wahr
+        setze r.knoten[i].verbunden auf wahr
+        setze r.knoten[i].eltern auf ziel.eltern
+        setze r.knoten[i].art auf VFS_DATEI
+        wenn verzeichnis:
+            setze r.knoten[i].art auf VFS_ORDNER
+        setze r.knoten[i].erster auf 2048
+        setze r.knoten[i].name_bytes auf ziel.anzahl
+        setze j: u64 auf 0
+        solange j < ziel.anzahl:
+            r.knoten[i].name[j] = pfad.bytes[ziel.ab + j]
+            setze j auf j + 1
+        gib_zurück erfolg(i)
+
+@nativ
+funktion ram_leer(r: ptr[RamDateisystem], k: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 1
+        solange i < 128:
+            wenn r.knoten[i].aktiv und r.knoten[i].verbunden und r.knoten[i].eltern == k:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion ram_freigeben(r: ptr[RamDateisystem], k: u64) -> void:
+    unsicher:
+        setze seite: u64 auf r.knoten[k].erster
+        solange seite != 2048:
+            setze naechste: u64 auf r.folge[seite]
+            r.folge[seite] = 2049
+            setze r.freie auf r.freie + 1
+            setze seite auf naechste
+        setze leer: RamKnoten auf 0
+        setze r.knoten[k] auf leer
+
+@nativ
+funktion ram_abtrennen(r: ptr[RamDateisystem], k: u64) -> void:
+    unsicher:
+        setze r.knoten[k].verbunden auf falsch
+        wenn r.knoten[k].referenzen == 0:
+            ram_freigeben(r, k)
+
+# Vor der ersten Änderung gesamten Platz prüfen: ENOSPC lässt Größe und Inhalt
+# unverändert. Alle neuen Bytes einschließlich Löchern werden genullt.
+@nativ
+funktion ram_groesse(r: ptr[RamDateisystem], k: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn r.knoten[k].art == VFS_ORDNER:
+            gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+        wenn bytes > r.seiten * 4096:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOSPC, 0, 0))
+        setze alt: u64 auf (r.knoten[k].bytes + 4095) / 4096
+        setze neu_wert: u64 auf (bytes + 4095) / 4096
+        wenn neu_wert > alt und neu_wert - alt > r.freie:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOSPC, 0, 0))
+        setze letzte: u64 auf 2048
+        setze seite: u64 auf r.knoten[k].erster
+        setze i: u64 auf 0
+        solange i < alt und i < neu_wert:
+            setze letzte auf seite
+            setze seite auf r.folge[seite]
+            setze i auf i + 1
+        wenn neu_wert < alt:
+            wenn letzte == 2048:
+                setze r.knoten[k].erster auf 2048
+            sonst:
+                r.folge[letzte] = 2048
+            solange seite != 2048:
+                setze nach: u64 auf r.folge[seite]
+                r.folge[seite] = 2049
+                setze r.freie auf r.freie + 1
+                setze seite auf nach
+        solange i < neu_wert:
+            setze frei: u64 auf 0
+            solange frei < r.seiten und r.folge[frei] != 2049:
+                setze frei auf frei + 1
+            # Kapazitätsvorprüfung und Besitzer-Serialisierung garantieren frei.
+            r.folge[frei] = 2048
+            wenn letzte == 2048:
+                setze r.knoten[k].erster auf frei
+            sonst:
+                r.folge[letzte] = frei
+            setze r.freie auf r.freie - 1
+            setze null_index: u64 auf 0
+            solange null_index < 4096:
+                speicher_schreiben(r.basis + frei * 4096 + null_index, 0, 1)
+                setze null_index auf null_index + 1
+            setze letzte auf frei
+            setze i auf i + 1
+        wenn neu_wert > 0 und bytes % 4096 != 0:
+            setze tail: u64 auf bytes % 4096
+            solange tail < 4096:
+                speicher_schreiben(r.basis + letzte * 4096 + tail, 0, 1)
+                setze tail auf tail + 1
+        setze r.knoten[k].bytes auf bytes
+        gib_zurück erfolg()
+
+@nativ
+funktion ram_io(r: ptr[RamDateisystem], k: u64, offset: u64, daten: puffer[u8], anzahl: u64, schreiben: bool) -> void:
+    unsicher:
+        setze seite: u64 auf r.knoten[k].erster
+        setze skip: u64 auf offset / 4096
+        solange skip > 0:
+            setze seite auf r.folge[seite]
+            setze skip auf skip - 1
+        setze pos: u64 auf offset % 4096
+        setze i: u64 auf 0
+        solange i < anzahl:
+            wenn schreiben:
+                speicher_schreiben(r.basis + seite * 4096 + pos, daten[i], 1)
+            sonst:
+                setze wert: u8 auf speicher_lesen(r.basis + seite * 4096 + pos, 1)
+                daten[i] = wert
+            setze pos auf pos + 1
+            wenn pos == 4096:
+                setze pos auf 0
+                setze seite auf r.folge[seite]
+            setze i auf i + 1

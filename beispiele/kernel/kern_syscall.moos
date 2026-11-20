@@ -1,8 +1,13 @@
 # Ring-3-Einstieg, Prozess- und Thread-Systemaufrufe des Bare-Kerns.
 aus "kern_syscall_abi" importiere SyscallLokal, X86SyscallStar
+aus "kern_vfs" importiere KernVfsDateien
+aus moos_install_abi importiere MOOS_INSTALL_AUFRUF
+aus moos_datei_abi importiere MOOS_DATEI_OEFFNEN, MOOS_DATEI_UMBENENNEN, MoosDateiStat, MoosDateiVerzeichnis
+aus "kern_datei_syscall" importiere datei_syscall_verteilen
+aus "kern_simd" importiere simd_cpu_einrichten
 aus "kern_adressraum" importiere Adressraum, AR_ERSTE_VA, AR_ENDE_VA, ar_pte_lesen, ar_cr4_lesen, ar_benutzer_kopieren, ar_benutzer_lesen32, ar_nullseiten
 aus "kern_faden" importiere Faden, FadenPlaner, FadenWarteschlange, FADEN_ANZAHL, FADEN_FREI, faden_benutzer_starten, faden_abgeben, faden_schlafen, faden_ende, faden_ort, faden_sperre, faden_warte_einreihen, faden_wartenden_holen, faden_wartenden_wecken
-aus "kern_smp" importiere smp_anzahl, smp_planer, smp_planer_auf, smp_syscall_lokal, smp_syscall_auf
+aus "kern_smp" importiere KERN_LOKAL, smp_anzahl, smp_planer, smp_planer_auf, smp_syscall_lokal, smp_syscall_auf
 aus "kern_sperre" importiere KernSperre, spin_nimm, spin_gib, unterbrechungen_an, unterbrechungen_aus
 
 struktur BenutzerProzess:
@@ -17,13 +22,15 @@ struktur BenutzerProzess:
     bp_tls: u64
     bp_daten: u64
     bp_slot: u64
+    bp_dateien: u64
 
-# Offset 0 beginnt direkt über dem Ausrichtungspolster der Einsprungfunktion.
+# 128Byte, ohne Padding vor dem Rahmen; RSP bleibt vor jedem call16-ausgerichtet.
 struktur SyscallRahmen:
     sr_rax: u64
     sr_rdi: u64
     sr_rsi: u64
     sr_rdx: u64
+    sr_r10: u64
     sr_r8: u64
     sr_r9: u64
     sr_rbx: u64
@@ -45,10 +52,12 @@ statisch SYSCALL_LOKAL_VERSATZ: [u64; 1] auf 0
 @nativ
 statisch SYSCALL_SYSTEM: SyscallSystem auf 0
 @nativ
+statisch SYSCALL_INSTALL_RUF: atom[u64] auf 0
+@nativ
 statisch SYSCALL_TABELLE: [u64; 8] auf 0
 @nativ
 @ausrichten(64)
-statisch SYSCALL_XSTATE_NULL: [u64; 72] auf 0
+statisch SYSCALL_XSTATE_NULL: [u64; 104] auf 0
 @nativ
 konstante T_RING3_VEKTOR: [u8; _] auf "MOO-RING3 AUSNAHME VEKTOR "
 @nativ
@@ -60,15 +69,14 @@ konstante T_RING3_RIP: [u8; _] auf "MOO-RING3 AUSNAHME RIP "
 funktion syscall_cpu_einrichten(lese_adr: u64, schreibe_adr: u64) -> bool:
     unsicher:
         setze lokal: ptr[SyscallLokal] auf smp_syscall_lokal()
-        setze xsave: u32 auf assembler(ziel="x86_64", code="movl $$1, %eax; cpuid; movl %ecx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
         setze sce: u32 auf assembler(ziel="x86_64", code="movl $$0x80000001, %eax; cpuid; movl %edx, $0", ausgang="=r", clobber=["rax", "rbx", "rcx", "rdx"])
-        wenn lokal.sl_kernrsp == 0 oder (xsave & 0x4000000) == 0 oder (sce & 0x800) == 0:
+        wenn lokal.sl_kernrsp == 0 oder (sce & 0x800) == 0:
             gib_zurück falsch
         setze gelesen: ptr[fn[sysv64](u32) -> u64] auf zeiger(lese_adr)
         setze geschrieben: ptr[fn[sysv64](u32, u64) -> void] auf zeiger(schreibe_adr)
-        # Benutzer-XCR0: x87 und SSE. FSGSBASE bleibt für den Benutzer aus.
-        setze cr4: u64 auf (ar_cr4_lesen() & 0xFFFFFFFFFFFEFFFF) | 0x40000
-        assembler(ziel="x86_64", code="movq $0, %cr4; movl $$3, %eax; xorl %edx, %edx; xorl %ecx, %ecx; xsetbv", eingaenge={"r": cr4}, clobber=["rax", "rcx", "rdx", "memory"])
+        # BSP und AP verwenden denselben x87/SSE-/optionalen AVX-Vertrag.
+        wenn nicht simd_cpu_einrichten():
+            gib_zurück falsch
         geschrieben(0xC0000100, 0)
         geschrieben(0xC0000102, 0)
         setze star: X86SyscallStar auf X86SyscallStar(0, 8, 0x1B)
@@ -83,7 +91,7 @@ funktion syscall_cpu_einrichten(lese_adr: u64, schreibe_adr: u64) -> bool:
 @nativ
 funktion syscall_initialisieren(lese: u64, schreibe: u64, ausgabe_adr: u64, log: u64) -> bool:
     unsicher:
-        wenn versatz_von(SyscallLokal, sl_kernrsp) != 0 oder versatz_von(SyscallLokal, sl_userrsp) != 8 oder versatz_von(SyscallLokal, sl_prozess) != 16 oder versatz_von(SyscallLokal, sl_xzustand) != 24 oder groesse_von(SyscallRahmen) != 120:
+        wenn versatz_von(SyscallLokal, sl_kernrsp) != 0 oder versatz_von(SyscallLokal, sl_userrsp) != 8 oder versatz_von(SyscallLokal, sl_prozess) != 16 oder versatz_von(SyscallLokal, sl_xzustand) != 24 oder versatz_von(SyscallLokal, sl_r10) != 32 oder groesse_von(SyscallRahmen) != 128 oder versatz_von(SyscallRahmen, sr_r10) != 32 oder versatz_von(SyscallRahmen, sr_rsp) != 120 oder groesse_von(MoosDateiStat) != 16 oder groesse_von(MoosDateiVerzeichnis) != 24:
             gib_zurück falsch
         setze SYSCALL_SYSTEM.ss_ausgabe auf ausgabe_adr
         setze SYSCALL_SYSTEM.ss_meldung auf log
@@ -100,33 +108,35 @@ funktion syscall_initialisieren(lese: u64, schreibe: u64, ausgabe_adr: u64, log:
         volatile_schreiben(tabelle, 7, adresse_von(syscall_futex_wecken))
         gib_zurück syscall_cpu_einrichten(lese, schreibe)
 
-# Der Kernel benutzt bei Benutzer-Eintritt einen sauberen x87/SSE-Zustand.
+# Der Kernel benutzt bei Benutzer-Eintritt einen sauberen x87/SSE-/AVX-Zustand.
 @nativ
 @nackt
 @einstieg
 funktion syscall_xzustand_sichern() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; movl $$3, %eax; xorl %edx, %edx; xsave64 (%r11); xrstor64 SYSCALL_XSTATE_NULL(%rip); retq", clobber=["memory"])
+        assembler(ziel="x86_64", code="movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; xorl %ecx, %ecx; xgetbv; andl $$7, %eax; xorl %edx, %edx; xsave64 (%r11); xrstor64 SYSCALL_XSTATE_NULL(%rip); retq", clobber=["memory"])
 
 @nativ
 @nackt
 @einstieg
 funktion syscall_xzustand_laden() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="subq $$8, %rsp; call syscall_tls_laden; addq $$8, %rsp; movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; movl $$3, %eax; xorl %edx, %edx; xrstor64 (%r11); retq", clobber=["memory"])
+        assembler(ziel="x86_64", code="subq $$8, %rsp; call syscall_tls_laden; addq $$8, %rsp; movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %gs:24(%r10), %r11; xorl %ecx, %ecx; xgetbv; andl $$7, %eax; xorl %edx, %edx; xrstor64 (%r11); retq", clobber=["memory"])
 
-# ABI: RAX Nummer/Ergebnis, RDI/RSI Argumente, RCX/R11/R10 flüchtig.
+# ABI: RAX Nummer/Ergebnis, RDI/RSI/RDX/R10/R8/R9 Argumente.
+# R10 vor jeder Registernutzung direkt im CPU-lokalen Scratchslot retten.
+# RCX/R11/R10 bleiben flüchtig; niemals auf dem Benutzerstack zwischenspeichern.
 @nativ
 @nackt
 funktion syscall_einsprung() -> void:
     unsicher:
-        assembler(ziel="x86_64", code="swapgs; lfence; movq SYSCALL_LOKAL_VERSATZ(%rip), %r10; movq %rsp, %gs:8(%r10); movq %gs:0(%r10), %rsp; pushq %gs:8(%r10); pushq %r11; pushq %rcx; pushq %r15; pushq %r14; pushq %r13; pushq %r12; pushq %rbp; pushq %rbx; pushq %r9; pushq %r8; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rax; subq $$8, %rsp; cld; call syscall_xzustand_sichern; leaq 8(%rsp), %rdi; call syscall_verteilen; call syscall_xzustand_laden; addq $$8, %rsp; popq %rax; popq %rdi; popq %rsi; popq %rdx; popq %r8; popq %r9; popq %rbx; popq %rbp; popq %r12; popq %r13; popq %r14; popq %r15; popq %rcx; popq %r11; popq %rsp; xorl %r10d, %r10d; swapgs; sysretq", clobber=["memory"])
+        assembler(ziel="x86_64", code="swapgs; lfence; movq %r10, %gs:32+${0:c}; movq %rsp, %gs:8+${0:c}; movq %gs:${0:c}, %rsp; pushq %gs:8+${0:c}; pushq %r11; pushq %rcx; pushq %r15; pushq %r14; pushq %r13; pushq %r12; pushq %rbp; pushq %rbx; pushq %r9; pushq %r8; pushq %gs:32+${0:c}; pushq %rdx; pushq %rsi; pushq %rdi; pushq %rax; cld; call syscall_xzustand_sichern; movq %rsp, %rdi; call syscall_verteilen; call syscall_xzustand_laden; popq %rax; popq %rdi; popq %rsi; popq %rdx; popq %r10; popq %r8; popq %r9; popq %rbx; popq %rbp; popq %r12; popq %r13; popq %r14; popq %r15; popq %rcx; popq %r11; popq %rsp; xorl %r10d, %r10d; swapgs; sysretq", eingaenge={"i": pro_kern_versatz(KERN_LOKAL.syscall)}, clobber=["memory"])
 
 @nativ
 @nackt
 funktion syscall_iret(rip: u64, rsp_benutzer: u64, xzustand: u64, daten: u64) -> void:
     unsicher:
-        assembler(ziel="x86_64", code="cli; movq %rcx, %r9; movq %rdx, %r10; movl $$3, %eax; xorl %edx, %edx; xrstor64 (%r10); pushq $$0x23; pushq %rsi; pushq $$0x202; pushq $$0x2B; pushq %rdi; xorl %eax, %eax; xorl %ebx, %ebx; xorl %ecx, %ecx; xorl %edx, %edx; xorl %ebp, %ebp; xorl %esi, %esi; movq %r9, %rdi; xorl %r8d, %r8d; xorl %r9d, %r9d; xorl %r10d, %r10d; xorl %r11d, %r11d; xorl %r12d, %r12d; xorl %r13d, %r13d; xorl %r14d, %r14d; xorl %r15d, %r15d; swapgs; iretq", clobber=["memory"])
+        assembler(ziel="x86_64", code="cli; movq %rcx, %r9; movq %rdx, %r10; xorl %ecx, %ecx; xgetbv; andl $$7, %eax; xorl %edx, %edx; xrstor64 (%r10); pushq $$0x23; pushq %rsi; pushq $$0x202; pushq $$0x2B; pushq %rdi; xorl %eax, %eax; xorl %ebx, %ebx; xorl %ecx, %ecx; xorl %edx, %edx; xorl %ebp, %ebp; xorl %esi, %esi; movq %r9, %rdi; xorl %r8d, %r8d; xorl %r9d, %r9d; xorl %r10d, %r10d; xorl %r11d, %r11d; xorl %r12d, %r12d; xorl %r13d, %r13d; xorl %r14d, %r14d; xorl %r15d, %r15d; swapgs; iretq", clobber=["memory"])
 
 @nativ
 funktion syscall_adressen_ok(raum: ptr[Adressraum], rip: u64, stapel: u64) -> bool:
@@ -222,6 +232,12 @@ funktion syscall_schlafen(prozess: ptr[BenutzerProzess], a: u64, b: u64) -> u64:
             faden_schlafen(smp_planer(), a)
         gib_zurück 0
 
+# Nur der Kernel kann den Handler für den Installer veröffentlichen.
+@nativ
+funktion syscall_install_handler(ruf: u64) -> void:
+    unsicher:
+        atom_speichern(SYSCALL_INSTALL_RUF, ruf, ordnung=freigeben)
+
 @nativ
 @einstieg
 funktion syscall_verteilen(rahmen: ptr[SyscallRahmen]) -> void:
@@ -238,6 +254,13 @@ funktion syscall_verteilen(rahmen: ptr[SyscallRahmen]) -> void:
             setze tabelle: ptr[u64] auf zeiger(adresse_von(SYSCALL_TABELLE))
             setze aktion: ptr[fn[sysv64](ptr[BenutzerProzess], u64, u64) -> u64] auf zeiger(volatile_lesen(tabelle, nr))
             setze ergebnis auf aktion(prozess, rahmen.sr_rdi, rahmen.sr_rsi)
+        sonst wenn nr >= MOOS_DATEI_OEFFNEN und nr <= MOOS_DATEI_UMBENENNEN:
+            setze ergebnis auf datei_syscall_verteilen(raum, zeiger(prozess.bp_dateien), nr, rahmen.sr_rdi, rahmen.sr_rsi, rahmen.sr_rdx, rahmen.sr_r10, rahmen.sr_r8, rahmen.sr_r9)
+        sonst wenn nr == MOOS_INSTALL_AUFRUF:
+            setze ruf: u64 auf atom_laden(SYSCALL_INSTALL_RUF, ordnung=erwerben)
+            wenn ruf != 0:
+                setze install: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(ruf)
+                setze ergebnis auf install(u64(prozess), rahmen.sr_rdi, rahmen.sr_rsi)
         unterbrechungen_aus()
         setze rahmen.sr_rax auf ergebnis
         setze rahmen.sr_flags auf (rahmen.sr_flags & 0x8D5) | 0x202
@@ -277,6 +300,7 @@ struktur BenutzerGruppe:
     bg_cpu: u32
     bg_faeden: [BenutzerFaden; 15]
     bg_futex: [BenutzerFutex; 64]
+    bg_dateien: KernVfsDateien
 
 @nativ
 funktion syscall_faden_slot(gruppe: ptr[BenutzerGruppe], index: u64) -> ptr[BenutzerFaden]:
@@ -294,6 +318,7 @@ funktion syscall_gruppe_initialisieren(gruppe: ptr[BenutzerGruppe], prozess: ptr
             setze i auf i + 1
         setze gruppe.bg_phys auf phys
         setze prozess.bp_gruppe auf u64(gruppe)
+        setze prozess.bp_dateien auf adresse_von(gruppe.bg_dateien)
         setze prozess.bp_tls auf BENUTZER_STACK_OBEN - BENUTZER_FADEN_SEITEN * 4096
         setze prozess.bp_daten auf 0
         setze prozess.bp_slot auf 0
@@ -330,6 +355,7 @@ funktion syscall_faden_neu(prozess: ptr[BenutzerProzess], einstieg: u64, daten: 
                 ar_nullseiten(phys, BENUTZER_FADEN_SEITEN)
                 setze oben: u64 auf BENUTZER_STACK_OBEN - platz * BENUTZER_FADEN_SEITEN * 4096
                 setze kind.bp_gruppe auf u64(gruppe)
+                setze kind.bp_dateien auf adresse_von(gruppe.bg_dateien)
                 setze kind.bp_tls auf oben - BENUTZER_FADEN_SEITEN * 4096
                 setze kind.bp_daten auf daten
                 setze kind.bp_slot auf platz

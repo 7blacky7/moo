@@ -1,0 +1,140 @@
+# Isoliertes QEMU-Installationsprofil. Quelle schreibgeschützt, ein gebundenes Ziel.
+aus "kern_installieren" importiere install_sitzung_starten, install_sitzung_ende, INST_T_STAND
+aus "usb_speicher_block" importiere UsbMscZiel, usb_msc_vorbereiten, usb_msc_registrieren, usb_msc_id
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten
+aus "ahci" importiere AhciHba, AhciHbaZiel, AhciPortZiel, AHCI_DMA_SEITEN, ahci_hba_einrichten, ahci_port_einrichten
+aus "kern_block" importiere BlockFehler, BLOCK_NICHT_BEREIT
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_syscall" importiere BenutzerProzess
+aus "kern_elf" importiere ElfProzess, elf_laden, prozess_starten, prozess_freigeben
+aus "kern_smp" importiere smp_kern, smp_nummer, smp_planer
+aus "kern_faden" importiere faden_abgeben, faden_schlafen
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+@nativ
+statisch INST_PROBE_USB: UsbMscZiel auf 0
+@nativ
+konstante INST_PROBE_USB_SN: [u8; _] auf "MOOP11INSTUSB001"
+@nativ
+statisch INST_PROBE_NVME_ZIEL: [u64; 7] auf [0x4E564D45524F3031, 0x70, 1, 20, 0x492D3131504F4F4D, 0x454D564E2D54534E, 0x000000003130302D]
+@nativ
+konstante INST_PROBE_AHCI_SN: [u8; _] auf "MOOP11-INST-AHCI-001"
+@nativ
+statisch INST_PROBE_NVME_CTRL: NvmeBlockController auf 0
+@nativ
+statisch INST_PROBE_NVME: NvmeBlockGeraet auf 0
+@nativ
+statisch INST_PROBE_AHCI: AhciHba auf 0
+@nativ
+statisch INST_PROBE_PROZESSE: [ElfProzess; 2] auf 0
+@nativ
+statisch INST_PROBE_LOG: [u64; 2] auf 0
+@nativ
+konstante INST_PROBE_CODE: u32 auf 0x30002
+@nativ
+konstante INST_PROBE_T_EXIT: [u8; _] auf "MOO-INSTALL PROZESS CODE "
+@nativ
+konstante INST_PROBE_T_UNBERECHTIGT: [u8; _] auf "MOO-INSTALL UNBERECHTIGT "
+@nativ
+konstante INST_PROBE_T_ABBRUCH: [u8; _] auf "MOO-INSTALL ABBRUCHPUNKT "
+@nativ
+konstante INST_PROBE_T_FEHLER: [u8; _] auf "MOO-INSTALL PROBE CODE STATUS "
+
+@nativ
+funktion installer_probe_usb() -> u64:
+    unsicher:
+        setze ziel: ptr[UsbMscZiel] auf zeiger(adresse_von(INST_PROBE_USB))
+        setze ziel[0] auf UsbMscZiel(0x68, 2, 0x000146F4, adresse_von(INST_PROBE_USB_SN), falsch)
+        gib_zurück usb_msc_vorbereiten(ziel, 1)
+
+@nativ
+funktion installer_probe_ziel(modus: u64, tsc: u64, bi: u64, map: u64, meldung_adr: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        wenn modus == 2:
+            setze hba: ptr[AhciHba] auf zeiger(adresse_von(INST_PROBE_AHCI))
+            setze hba_ziel: AhciHbaZiel auf AhciHbaZiel(0x60, 0x29228086, 4096, apic)
+            weitergeben(ahci_hba_einrichten(hba, zeiger(adresse_von(hba_ziel)), tsc, bi, map, meldung_adr))
+            setze port: AhciPortZiel auf AhciPortZiel(0, ar_rahmen_nehmen(AHCI_DMA_SEITEN), adresse_von(INST_PROBE_AHCI_SN), wahr, wahr)
+            setze sata_id: u64 auf weitergeben(ahci_port_einrichten(hba, zeiger(adresse_von(port))))
+            # Gerätebindung bleibt im Log. E/A-Fehler meldet der Installer typisiert.
+            setze hba.log auf 0
+            gib_zurück erfolg(sata_id)
+        setze start: NvmeBlockStart auf NvmeBlockStart(adresse_von(INST_PROBE_NVME_ZIEL), 0x00101B36, ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN), apic, 4, 4096, wahr)
+        setze ctrl: ptr[NvmeBlockController] auf zeiger(adresse_von(INST_PROBE_NVME_CTRL))
+        setze geraet: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(INST_PROBE_NVME))
+        setze kennung: u64 auf weitergeben(nvme_block_einrichten(ctrl, geraet, zeiger(adresse_von(start)), tsc, bi, map, meldung_adr))
+        # Eine ESP-Formatierung erzeugt viele E/A-Kommandos. Phasen und Fehler
+        # werden im Installer erfasst, der Controller protokolliert die Bindung.
+        setze ctrl.transport.log auf 0
+        gib_zurück erfolg(kennung)
+
+@nativ
+@aufrufkonvention("sysv64")
+funktion installer_probe_log(text_adr: u64, wert: u64) -> void:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(INST_PROBE_LOG[0])
+        log(text_adr, wert)
+        # Nur das eigene QEMU-Abbruchprofil wartet am abgeglichenen Kern.
+        wenn INST_PROBE_LOG[1] == 3 und text_adr == adresse_von(INST_T_STAND) und wert == 2:
+            log(adresse_von(INST_PROBE_T_ABBRUCH), 1)
+            solange wahr:
+                faden_schlafen(smp_planer(), 1000)
+
+@nativ
+funktion installer_probe_warten(p: ptr[ElfProzess], tsc: u64) -> bool:
+    unsicher:
+        setze start: u64 auf takt()
+        solange atom_laden(p.ep_benutzer.bp_status, ordnung=erwerben) != 2:
+            wenn takt() - start >= tsc * 180000000:
+                gib_zurück falsch
+            faden_abgeben(smp_planer())
+        gib_zurück p.ep_benutzer.bp_grund == 0
+
+@nativ
+funktion installer_probe_lauf(modus: u64, elf: u64, laenge: u64, tsc: u64, bi: u64, map: u64, meldung_adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn tsc == 0 oder laenge < 64 oder usb_msc_registrieren() != 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 1))
+        setze quelle: u64 auf usb_msc_id(0)
+        setze ziel: u64 auf weitergeben(installer_probe_ziel(modus, tsc, bi, map, meldung_adr))
+        setze sn: u64 auf adresse_von(INST_PROBE_NVME_ZIEL) + 32
+        wenn modus == 2:
+            setze sn auf adresse_von(INST_PROBE_AHCI_SN)
+        setze berechtigt: ptr[ElfProzess] auf zeiger(adresse_von(INST_PROBE_PROZESSE[0]))
+        setze unberechtigt: ptr[ElfProzess] auf zeiger(adresse_von(INST_PROBE_PROZESSE[1]))
+        wenn nicht elf_laden(berechtigt, elf, laenge) oder nicht elf_laden(unberechtigt, elf, laenge):
+            gib_zurück fehlschlag(BlockFehler(INST_PROBE_CODE, 2))
+        setze eigentuemer: ptr[BenutzerProzess] auf zeiger(adresse_von(berechtigt.ep_benutzer))
+        weitergeben(install_sitzung_starten(eigentuemer, quelle, ziel, sn, 20, adresse_von(installer_probe_log)))
+        setze cpu: u32 auf smp_nummer()
+        wenn nicht prozess_starten(unberechtigt, cpu) oder nicht installer_probe_warten(unberechtigt, tsc) oder unberechtigt.ep_benutzer.bp_kode != 1:
+            gib_zurück fehlschlag(BlockFehler(INST_PROBE_CODE, 3))
+        installer_probe_log(adresse_von(INST_PROBE_T_UNBERECHTIGT), 1)
+        wenn nicht prozess_starten(berechtigt, cpu) oder nicht installer_probe_warten(berechtigt, tsc):
+            gib_zurück fehlschlag(BlockFehler(INST_PROBE_CODE, 4))
+        installer_probe_log(adresse_von(INST_PROBE_T_EXIT), berechtigt.ep_benutzer.bp_kode)
+        wenn berechtigt.ep_benutzer.bp_kode != 0:
+            gib_zurück fehlschlag(BlockFehler(INST_PROBE_CODE, u32(berechtigt.ep_benutzer.bp_kode)))
+        wenn nicht prozess_freigeben(berechtigt) oder nicht prozess_freigeben(unberechtigt):
+            gib_zurück fehlschlag(BlockFehler(INST_PROBE_CODE, 5))
+        gib_zurück erfolg()
+
+@nativ
+funktion installer_probe_starten(modus: u64, elf: u64, laenge: u64, tsc: u64, bi: u64, map: u64, meldung_adr: u64) -> bool:
+    unsicher:
+        wenn modus < 1 oder modus > 3:
+            gib_zurück falsch
+        setze INST_PROBE_LOG[0] auf meldung_adr
+        setze INST_PROBE_LOG[1] auf modus
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf installer_probe_lauf(modus, elf, laenge, tsc, bi, map, meldung_adr)
+        install_sitzung_ende()
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            installer_probe_log(adresse_von(INST_PROBE_T_FEHLER), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück falsch
+        gib_zurück wahr

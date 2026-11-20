@@ -9,10 +9,18 @@ funktion _start() -> void:
         assembler(ziel="x86_64", code="andq $$-16, %rsp; callq benutzer_haupt; movq %rax, %rdi; xorl %eax, %eax; syscall; ud2", clobber=["memory"])
 
 @nativ
-@nackt
 funktion moos_aufruf(nummer: u64, a: u64, b: u64) -> u64:
     unsicher:
-        assembler(ziel="x86_64", code="movq %rdi, %rax; movq %rsi, %rdi; movq %rdx, %rsi; syscall; retq", clobber=["memory"])
+        gib_zurück moos_aufruf6(nummer, a, b, 0, 0, 0, 0)
+
+# SysV: Nummer/a/b/c/d/e in Registern, f auf dem Stack. SYSCALL verwendet
+# RAX sowie RDI/RSI/RDX/R10/R8/R9; RCX/R11 sind architekturbedingt flüchtig.
+@nativ
+@nackt
+funktion moos_aufruf6(nummer: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> u64:
+    unsicher:
+        assembler(ziel="x86_64", code="movq %rdi, %rax; movq %rsi, %rdi; movq %rdx, %rsi; movq %rcx, %rdx; movq %r8, %r10; movq %r9, %r8; movq 8(%rsp), %r9; syscall; retq", clobber=["memory"])
+
 
 @nativ
 funktion moos_schreiben(puffer: u64, laenge: u64) -> u64:

@@ -195,15 +195,33 @@ funktion nt_finde(pci: u64, typ: u64, nummer: u64) -> i64:
         gib_zurück -1
 
 @nativ
-funktion nt_bar(pci: u64, bdf: u64) -> u64:
+funktion nt_bar_slot(pci: u64, bdf: u64, slot: u64) -> u64:
     unsicher:
-        setze bar: u64 auf pci_lese32(pci, bdf, 16)
+        wenn slot >= 6:
+            gib_zurück 0
+        setze i: u64 auf 0
+        solange i < slot:
+            setze davor: u64 auf pci_lese32(pci, bdf, 16 + 4 * i)
+            setze i auf i + 1
+            wenn (davor & 7) == 4:
+                setze i auf i + 1
+        wenn i != slot:
+            gib_zurück 0
+        setze offset: u64 auf 16 + 4 * slot
+        setze bar: u64 auf pci_lese32(pci, bdf, offset)
         setze basis: u64 auf bar & 0xFFFFFFF0
         wenn (bar & 1) != 0:
             gib_zurück 0
         wenn (bar & 6) == 4:
-            setze basis auf basis | (pci_lese32(pci, bdf, 20) << 32)
+            wenn slot == 5:
+                gib_zurück 0
+            setze basis auf basis | (pci_lese32(pci, bdf, offset + 4) << 32)
         gib_zurück basis
+
+@nativ
+funktion nt_bar(pci: u64, bdf: u64) -> u64:
+    unsicher:
+        gib_zurück nt_bar_slot(pci, bdf, 0)
 
 @nativ
 funktion nt_oeffnen_in(pci: u64, bdf: u64, nic: u64, mmio: u64, tsc_us: u64) -> bool:

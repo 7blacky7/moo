@@ -1,0 +1,141 @@
+# Opt-in-Probe auf zwei eindeutig gebundenen QEMU-NVMe-Testimages.
+aus "speicher_gpt_block" importiere GptGuid, GptEintrag, GptMedium, GptPartition, GPT_UNGUELTIG, GPT_TABELLE_BYTES, gpt_oeffnen, gpt_schreiben, gpt_reparieren, gpt_partition_registrieren
+aus "kern_block" importiere BlockAnfrage, BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_BEREICH, BLOCK_NUR_LESEN, BLOCK_NICHT_BEREIT, BLOCK_VOLL, block_anfordern, block_geometrie
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten
+aus "nvme_probe" importiere NVME_PROBE_ZIEL_512, NVME_PROBE_ZIEL_4K, nvme_probe_muster, nvme_probe_pruefe_muster, nvme_probe_null, nvme_probe_fehler
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_smp" importiere smp_kern, smp_nummer
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere nt_null
+
+@nativ
+statisch GPT_PROBE_CTRL: [NvmeBlockController; 2] auf 0
+@nativ
+statisch GPT_PROBE_NVME: [NvmeBlockGeraet; 2] auf 0
+@nativ
+statisch GPT_PROBE_TEILE: [GptPartition; 6] auf 0
+@nativ
+statisch GPT_PROBE_ENTWURF: [GptEintrag; 2] auf 0
+
+@nativ
+konstante GPT_T_SCHRITT: [u8; _] auf "MOO-GPT SCHRITT "
+@nativ
+konstante GPT_T_REPARATUR: [u8; _] auf "MOO-GPT REPARATUR BLOCKBYTES "
+@nativ
+konstante GPT_T_FEHLER: [u8; _] auf "MOO-GPT FEHLER CODE STATUS "
+
+@nativ
+funktion gpt_probe_reparatur(medium: ptr[GptMedium], roh: u64, geo: BlockGeometrie, a: ptr[BlockAnfrage], p: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze bytes: u64 auf geo.block_bytes
+        setze backup: u64 auf geo.bloecke - 1 - GPT_TABELLE_BYTES / bytes
+        weitergeben(block_anfordern(roh, a, BLOCK_LESEN, backup, 1, p + 4096, bytes))
+        nt_null(p, bytes)
+        weitergeben(block_anfordern(roh, a, BLOCK_SCHREIBEN_FUA, 1, 1, p, bytes))
+        weitergeben(block_anfordern(roh, a, BLOCK_SCHREIBEN_FUA, backup, 1, p, bytes))
+        setze defekt: ergebnis[bool, BlockFehler] auf gpt_reparieren(medium)
+        wenn ist_erfolg(defekt):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 4))
+        setze f: BlockFehler auf ergebnis_fehler(defekt)
+        wenn f.code != GPT_UNGUELTIG:
+            gib_zurück fehlschlag(f)
+        weitergeben(block_anfordern(roh, a, BLOCK_LESEN, 1, 1, p, bytes))
+        wenn nicht nvme_probe_null(p, bytes):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 5))
+        weitergeben(block_anfordern(roh, a, BLOCK_SCHREIBEN_FUA, backup, 1, p + 4096, bytes))
+        setze repariert: bool auf weitergeben(gpt_reparieren(medium))
+        setze wiederholt: bool auf weitergeben(gpt_reparieren(medium))
+        wenn nicht repariert oder wiederholt:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 6))
+        gib_zurück erfolg()
+
+@nativ
+funktion gpt_probe_platte(nr: u64, tsc: u64, bi: u64, map: u64, log_adr: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze ziel: u64 auf adresse_von(NVME_PROBE_ZIEL_512)
+        wenn nr == 1:
+            setze ziel auf adresse_von(NVME_PROBE_ZIEL_4K)
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze optionen: NvmeBlockStart auf NvmeBlockStart(ziel, 0x00101B36, ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN), apic, 4, 4096, wahr)
+        setze ctrl: ptr[NvmeBlockController] auf zeiger(adresse_von(GPT_PROBE_CTRL[nr]))
+        setze nvme: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(GPT_PROBE_NVME[nr]))
+        setze roh: u64 auf weitergeben(nvme_block_einrichten(ctrl, nvme, zeiger(adresse_von(optionen)), tsc, bi, map, log_adr))
+        setze geo: BlockGeometrie auf weitergeben(block_geometrie(roh))
+        setze medium: ptr[GptMedium] auf weitergeben(gpt_oeffnen(roh))
+        setze bytes: u64 auf geo.block_bytes
+        setze abstand: u64 auf 1048576 / bytes
+        setze disk: GptGuid auf GptGuid(0x4422334411223344 + nr, 0xAA7755FF2288CC44)
+        setze typ_guid: GptGuid auf GptGuid(0x477284830FC63DAF, 0xE47D47D8693D798E)
+        setze GPT_PROBE_ENTWURF[0].typ_guid auf typ_guid
+        setze GPT_PROBE_ENTWURF[0].teil_guid auf GptGuid(0x4433221100112233 + nr * 16, 0x9988776655443322)
+        setze GPT_PROBE_ENTWURF[0].erster auf abstand
+        setze GPT_PROBE_ENTWURF[0].letzter auf 2 * abstand - 1
+        GPT_PROBE_ENTWURF[0].name_utf16le[0] = 77
+        GPT_PROBE_ENTWURF[0].name_utf16le[1] = 111
+        GPT_PROBE_ENTWURF[0].name_utf16le[2] = 111
+        GPT_PROBE_ENTWURF[0].name_utf16le[3] = 252
+        setze GPT_PROBE_ENTWURF[1].typ_guid auf typ_guid
+        setze GPT_PROBE_ENTWURF[1].teil_guid auf GptGuid(0x4433221100112234 + nr * 16, 0x9988776655443322)
+        setze GPT_PROBE_ENTWURF[1].erster auf 3 * abstand
+        setze GPT_PROBE_ENTWURF[1].letzter auf 4 * abstand - 1
+        GPT_PROBE_ENTWURF[1].name_utf16le[0] = 80
+        GPT_PROBE_ENTWURF[1].name_utf16le[1] = 50
+        setze entwurf: ptr[GptEintrag] auf zeiger(adresse_von(GPT_PROBE_ENTWURF[0]))
+        log(adresse_von(GPT_T_SCHRITT), 1)
+        weitergeben(gpt_schreiben(medium, disk, entwurf, 2))
+
+        setze GPT_PROBE_ENTWURF[1].erster auf abstand + 1
+        setze abgelehnt: bool auf nvme_probe_fehler(gpt_schreiben(medium, disk, entwurf, 2), GPT_UNGUELTIG)
+        setze GPT_PROBE_ENTWURF[1].erster auf 3 * abstand
+        wenn nicht abgelehnt:
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 1))
+        log(adresse_von(GPT_T_SCHRITT), 2)
+        setze teil: ptr[GptPartition] auf zeiger(adresse_von(GPT_PROBE_TEILE[nr * 3]))
+        setze teil_ro: ptr[GptPartition] auf zeiger(adresse_von(GPT_PROBE_TEILE[nr * 3 + 1]))
+        setze id: u64 auf weitergeben(gpt_partition_registrieren(medium, teil, 1, falsch))
+        setze nur_lesen: u64 auf weitergeben(gpt_partition_registrieren(medium, teil_ro, 2, wahr))
+        setze p: u64 auf ar_rahmen_nehmen(2)
+        wenn p == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze anfrage: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+        wenn nicht nvme_probe_fehler(block_anfordern(id, a, BLOCK_LESEN, abstand, 1, p, bytes), BLOCK_BEREICH):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 2))
+        wenn nicht nvme_probe_fehler(block_anfordern(nur_lesen, a, BLOCK_SCHREIBEN, 0, 1, p, bytes), BLOCK_NUR_LESEN):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 3))
+        nvme_probe_muster(p, bytes, 0x62 + nr)
+        weitergeben(block_anfordern(id, a, BLOCK_SCHREIBEN_FUA, 2, 1, p, bytes))
+        weitergeben(block_anfordern(id, a, BLOCK_FLUSH, 0, 0, 0, 0))
+        weitergeben(block_anfordern(roh, a, BLOCK_LESEN, abstand + 2, 1, p, bytes))
+        wenn nicht nvme_probe_pruefe_muster(p, bytes, 0x62 + nr):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 7))
+        log(adresse_von(GPT_T_SCHRITT), 3)
+        weitergeben(gpt_probe_reparatur(medium, roh, geo, a, p))
+        wenn nicht nvme_probe_fehler(block_anfordern(id, a, BLOCK_LESEN, 2, 1, p, bytes), BLOCK_NICHT_BEREIT):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 8))
+        setze neu_gebunden: ptr[GptPartition] auf zeiger(adresse_von(GPT_PROBE_TEILE[nr * 3 + 2]))
+        setze neu_id: u64 auf weitergeben(gpt_partition_registrieren(medium, neu_gebunden, 1, wahr))
+        weitergeben(block_anfordern(neu_id, a, BLOCK_LESEN, 2, 1, p, bytes))
+        wenn nicht nvme_probe_pruefe_muster(p, bytes, 0x62 + nr):
+            gib_zurück fehlschlag(BlockFehler(GPT_UNGUELTIG, 9))
+        log(adresse_von(GPT_T_REPARATUR), bytes)
+        gib_zurück erfolg()
+
+@nativ
+funktion gpt_probe_starten(tsc: u64, bi: u64, map: u64, log_adr: u64) -> bool:
+    unsicher:
+        wenn tsc == 0:
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf gpt_probe_platte(0, tsc, bi, map, log_adr)
+        wenn ist_erfolg(r):
+            setze r auf gpt_probe_platte(1, tsc, bi, map, log_adr)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(GPT_T_FEHLER), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück falsch
+        gib_zurück wahr

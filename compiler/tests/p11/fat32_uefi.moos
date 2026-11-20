@@ -1,0 +1,29 @@
+# Diese UEFI-Anwendung wird ausschließlich durch Moo auf die Moo-formatierte
+# ESP geschrieben. OVMF muss EFI/BOOT/BOOTX64.EFI daraus selbst laden.
+@nativ
+@einstieg
+@aufrufkonvention("win64")
+funktion efi_main(image: u64, system: u64) -> u64:
+    unsicher:
+        port_schreibe(0xE9, 80)
+        port_schreibe(0xE9, 49)
+        port_schreibe(0xE9, 49)
+        port_schreibe(0xE9, 45)
+        port_schreibe(0xE9, 70)
+        port_schreibe(0xE9, 65)
+        port_schreibe(0xE9, 84)
+        port_schreibe(0xE9, 51)
+        port_schreibe(0xE9, 50)
+        port_schreibe(0xE9, 45)
+        port_schreibe(0xE9, 66)
+        port_schreibe(0xE9, 79)
+        port_schreibe(0xE9, 79)
+        port_schreibe(0xE9, 84)
+        port_schreibe(0xE9, 45)
+        port_schreibe(0xE9, 80)
+        port_schreibe(0xE9, 65)
+        port_schreibe(0xE9, 83)
+        port_schreibe(0xE9, 83)
+        port_schreibe(0xE9, 10)
+        port_schreibe32(0xF4, 0x2A)
+        gib_zurück 0

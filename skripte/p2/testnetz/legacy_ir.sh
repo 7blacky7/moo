@@ -154,8 +154,9 @@ if [[ -n "$profiles_file" ]]; then
       ([.cases[].path] | length == (unique | length)) and
       ([.cases[] | select(.category == "profile")] |
         all(.status == "ir_only_observed_success" and
-            (.args | type == "array" and length == 3 and .[0] == "--no-stdlib"
-             and .[1] == "--target" and (.[2] | type == "string" and length > 0 and (startswith("-") | not)))))
+            (.args | . == ["--target", "x86_64-moos"] or
+             (type == "array" and length == 3 and .[0] == "--no-stdlib" and .[1] == "--target" and
+              (.[2] | type == "string" and length > 0 and (startswith("-") | not))))))
     ' "$profiles_file" >/dev/null || { echo "Invalid profile manifest" >&2; exit 2; }
     profiles="$(jq -cS '[.cases[] | select(.category == "profile") | {key:.path,value:.args}] | from_entries' "$profiles_file")"
     while IFS= read -r path; do
@@ -174,13 +175,17 @@ fi
 : > "$work/entries"; fail=0; total=0
 while IFS= read -r -d '' source; do
     total=$((total + 1))
-    target="$(jq -r --arg path "$source" '.[$path][2] // ""' <<< "$profiles")"
+    profile="$(jq -c --arg path "$source" '.[$path] // []' <<< "$profiles")"
+    case "$profile" in
+        '[]') profile_args=() ;;
+        '["--target","x86_64-moos"]') profile_args=(--target x86_64-moos) ;;
+        *)
+            target="$(jq -r '.[2]' <<< "$profile")"
+            profile_args=(--no-stdlib --target "$target")
+            ;;
+    esac
     ir="$work/current.ll"; rm -f -- "$ir"; rc=0
-    if [[ -n "$target" ]]; then
-        timeout "$limit" "$compiler" compile "$source" --emit-ir -o "$ir" --no-stdlib --target "$target" >"$work/compile.log" 2>&1 || rc=$?
-    else
-        timeout "$limit" "$compiler" compile "$source" --emit-ir -o "$ir" >"$work/compile.log" 2>&1 || rc=$?
-    fi
+    timeout "$limit" "$compiler" compile "$source" --emit-ir -o "$ir" "${profile_args[@]}" >"$work/compile.log" 2>&1 || rc=$?
     if ((rc != 0)); then
         fail=$((fail + 1))
         if ((rc == 124)); then

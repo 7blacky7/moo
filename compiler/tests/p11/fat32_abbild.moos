@@ -1,0 +1,121 @@
+aus ds_fat importiere FatVolume, FatDatei, FatSektor, fat_formatieren, fat_oeffnen, fat_anlegen, fat_suchen, fat_schreiben, fat_lesen, fat_loeschen, fat_synchronisieren
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BLOCK_EA
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion open(name: ptr[u8], flags: i32) -> i32
+extern "C" funktion close(fd: i32) -> i32
+extern "C" funktion read(fd: i32, daten: ptr[u8], bytes: u64) -> i64
+
+@nativ
+funktion fat_test_schliessen(fd: i32) -> void:
+    unsicher:
+        setze status: i32 auf close(fd)
+
+@nativ
+funktion fat_test_import(v: ptr[FatVolume], dir: u64, name: puffer[u8], quelle: ptr[u8]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze fd: i32 auf open(quelle, 0)
+        wenn fd < 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 101))
+        aufräumen: fat_test_schliessen(fd)
+        setze datei: FatDatei auf weitergeben(fat_anlegen(v, dir, name, falsch))
+        setze f: ptr[FatDatei] auf zeiger(adresse_von(datei))
+        setze speicher: FatSektor auf 0
+        setze p: ptr[u8] auf zeiger(adresse_von(speicher.bytes[0]))
+        setze offset: u64 auf 0
+        solange wahr:
+            setze menge: i64 auf read(fd, p, 4096)
+            wenn menge < 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 102))
+            wenn menge == 0:
+                gib_zurück erfolg()
+            weitergeben(fat_schreiben(v, f, offset, byteansicht(p, u64(menge))))
+            setze offset auf offset + u64(menge)
+
+@nativ
+funktion fat32_abbild_ablauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze env_abbild: [u8; 15] auf [77, 79, 79, 95, 70, 65, 84, 95, 65, 66, 66, 73, 76, 68, 0]
+        setze pfad: ptr[u8] auf getenv(zeiger(adresse_von(env_abbild[0])))
+        wenn u64(pfad) == 0:
+            gib_zurück erfolg(101)
+        setze fd: i32 auf open(pfad, 2)
+        wenn fd < 0:
+            gib_zurück erfolg(102)
+        aufräumen: fat_test_schliessen(fd)
+        setze env_breite: [u8; 15] auf [77, 79, 79, 95, 70, 65, 84, 95, 66, 82, 69, 73, 84, 69, 0]
+        setze env_modus: [u8; 14] auf [77, 79, 79, 95, 70, 65, 84, 95, 77, 79, 68, 85, 83, 0]
+        setze breite_ptr: ptr[u8] auf getenv(zeiger(adresse_von(env_breite[0])))
+        setze modus_ptr: ptr[u8] auf getenv(zeiger(adresse_von(env_modus[0])))
+        setze breite: u64 auf 512
+        wenn u64(breite_ptr) != 0:
+            wenn breite_ptr[0] == 52:
+                setze breite auf 4096
+        setze formatieren: bool auf wahr
+        wenn u64(modus_ptr) != 0:
+            setze formatieren auf modus_ptr[0] != 114
+        setze adapter: FatPosix auf 0
+        setze a: ptr[FatPosix] auf zeiger(adresse_von(adapter))
+        weitergeben(fat_posix_einrichten(a, fd, breite, falsch))
+        setze transport: ptr[dyn FatTransport] auf a
+        wenn formatieren:
+            weitergeben(fat_formatieren(transport, 0x12345678))
+        setze volume: FatVolume auf 0
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(volume))
+        weitergeben(fat_oeffnen(v, transport))
+        setze payload_name: [u8; 27] auf [77, 111, 111, 32, 108, 97, 110, 103, 101, 32, 68, 97, 116, 101, 105, 32, 71, 114, 195, 188, 195, 159, 101, 46, 98, 105, 110]
+        setze daten_speicher: FatSektor auf 0
+        setze daten: puffer[u8] auf byteansicht(daten_speicher.bytes)
+        wenn formatieren:
+            setze datei: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(payload_name), falsch))
+            setze p: ptr[FatDatei] auf zeiger(adresse_von(datei))
+            setze i: u64 auf 0
+            solange i < länge(daten):
+                daten[i] = als_wrap(u8, i * 37 + 11)
+                setze i auf i + 1
+            setze offset: u64 auf 0
+            solange offset < 1048576:
+                weitergeben(fat_schreiben(v, p, offset, daten))
+                setze offset auf offset + länge(daten)
+            setze env_efi: [u8; 12] auf [77, 79, 79, 95, 70, 65, 84, 95, 69, 70, 73, 0]
+            setze quelle: ptr[u8] auf getenv(zeiger(adresse_von(env_efi[0])))
+            wenn u64(quelle) != 0:
+                setze efi_name: [u8; 3] auf [69, 70, 73]
+                setze boot_name: [u8; 4] auf [66, 79, 79, 84]
+                setze app_name: [u8; 11] auf [66, 79, 79, 84, 88, 54, 52, 46, 69, 70, 73]
+                setze efi: FatDatei auf weitergeben(fat_anlegen(v, v.layout.wurzel, byteansicht(efi_name), wahr))
+                setze boot: FatDatei auf weitergeben(fat_anlegen(v, efi.cluster, byteansicht(boot_name), wahr))
+                weitergeben(fat_test_import(v, boot.cluster, byteansicht(app_name), quelle))
+            weitergeben(fat_synchronisieren(v))
+        sonst:
+            setze fremd_name: [u8; 22] auf [70, 114, 101, 109, 100, 101, 32, 108, 97, 110, 103, 101, 32, 68, 97, 116, 101, 105, 46, 98, 105, 110]
+            setze fremd: FatDatei auf weitergeben(fat_suchen(v, v.layout.wurzel, byteansicht(fremd_name)))
+            wenn fremd.bytes != 1048576:
+                gib_zurück erfolg(103)
+            setze f: ptr[FatDatei] auf zeiger(adresse_von(fremd))
+            setze pos: u64 auf 0
+            solange pos < fremd.bytes:
+                weitergeben(fat_lesen(v, f, pos, daten))
+                setze k: u64 auf 0
+                solange k < länge(daten):
+                    wenn daten[k] != als_wrap(u8, (pos + k) * 37 + 11):
+                        gib_zurück erfolg(104)
+                    setze k auf k + 1
+                setze pos auf pos + länge(daten)
+            weitergeben(fat_loeschen(v, f))
+            weitergeben(fat_synchronisieren(v))
+        gib_zurück erfolg(0)
+
+@nativ
+funktion fat32_abbild_probe() -> u64:
+    setze r: ergebnis[u64, BlockFehler] auf fat32_abbild_ablauf()
+    wenn nicht ist_erfolg(r):
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück 1000000 + als(u64, f.code) * 100 + als(u64, f.geraete_status)
+    gib_zurück ergebnis_wert(r)
+
+# Das Abnahmeprogramm soll bei einem unerwarteten Sprachfehler abbrechen.
+unsicher:
+    zeige fat32_abbild_probe()

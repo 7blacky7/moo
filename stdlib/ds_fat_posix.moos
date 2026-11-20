@@ -1,0 +1,67 @@
+# POSIX-Hostadapter: geliehener regulärer Dateideskriptor, keine FAT-Algorithmen
+# außerhalb von Moo. Der Besitzer hält fd offen und serialisiert alle Zugriffe.
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_FLUSH, BLOCK_VERWERFEN, BLOCK_SCHREIBEN_FUA, BLOCK_UNBEKANNT, BLOCK_GEOMETRIE, BLOCK_EA, block_pruefen
+aus ds_fat_transport importiere FatTransport
+
+extern "C" funktion pread(fd: i32, puffer: ptr[u8], bytes: u64, offset: i64) -> i64
+extern "C" funktion pwrite(fd: i32, puffer: ptr[u8], bytes: u64, offset: i64) -> i64
+extern "C" funktion fsync(fd: i32) -> i32
+extern "C" funktion lseek(fd: i32, offset: i64, art: i32) -> i64
+extern "C" funktion __errno_location() -> ptr[i32]
+
+struktur FatPosix implementiert FatTransport:
+    fd: i32
+    geo: BlockGeometrie
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            weitergeben(block_pruefen(selbst.geo, art, lba, anzahl, puffer, bytes))
+            wenn art == BLOCK_FLUSH:
+                gib_zurück fat_posix_flush(selbst.fd)
+            wenn art == BLOCK_VERWERFEN:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 0))
+            setze position: u64 auf lba * selbst.geo.block_bytes
+            setze erledigt: u64 auf 0
+            solange erledigt < bytes:
+                setze zeig: ptr[u8] auf zeiger(puffer + erledigt)
+                setze menge: i64 auf 0
+                wenn art == BLOCK_LESEN:
+                    setze menge auf pread(selbst.fd, zeig, bytes - erledigt, i64(position + erledigt))
+                sonst:
+                    setze menge auf pwrite(selbst.fd, zeig, bytes - erledigt, i64(position + erledigt))
+                wenn menge < 0:
+                    setze nummer: ptr[i32] auf __errno_location()
+                    wenn nummer[0] != 4:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, u32(nummer[0])))
+                sonst:
+                    wenn menge == 0 oder u64(menge) > bytes - erledigt:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 0))
+                    setze erledigt auf erledigt + u64(menge)
+            wenn art == BLOCK_SCHREIBEN_FUA:
+                weitergeben(fat_posix_flush(selbst.fd))
+            gib_zurück erfolg()
+
+@nativ
+funktion fat_posix_flush(fd: i32) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        solange wahr:
+            wenn fsync(fd) == 0:
+                gib_zurück erfolg()
+            setze nummer: ptr[i32] auf __errno_location()
+            wenn nummer[0] != 4:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, u32(nummer[0])))
+
+@nativ
+funktion fat_posix_einrichten(t: ptr[FatPosix], fd: i32, block_bytes: u64, nur_lesend: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn fd < 0 oder block_bytes < 512 oder block_bytes > 4096 oder (block_bytes & (block_bytes - 1)) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze ende: i64 auf lseek(fd, 0, 2)
+        wenn ende <= 0 oder u64(ende) % block_bytes != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 1))
+        setze t.fd auf fd
+        setze t.geo auf BlockGeometrie(u64(ende) / block_bytes, block_bytes, nur_lesend)
+        gib_zurück erfolg()

@@ -1,0 +1,1223 @@
+# FAT32 auf synchronen Blocktransporten. Aufrufer serialisiert sämtliche
+# Operationen eines Volumes und hält Transport/Volume/Puffer gültig.
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_GEOMETRIE, BLOCK_NUR_LESEN, BLOCK_PUFFER, BLOCK_BEREICH, BLOCK_VOLL, BLOCK_EA
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_unicode importiere fat_unicode_gross
+aus ds_fat_formate importiere Fat32Bpb, Fat32FsInfo
+
+@nativ
+konstante FAT_FORMAT: u32 auf 0x20000
+@nativ
+konstante FAT_KETTE: u32 auf 0x20001
+@nativ
+konstante FAT_NICHT_GEFUNDEN: u32 auf 0x20002
+@nativ
+konstante FAT_NAME: u32 auf 0x20003
+@nativ
+konstante FAT_VORHANDEN: u32 auf 0x20004
+
+struktur FatSektor:
+    bytes: [u8; 4096]
+
+struktur FatLayout:
+    sektor_bytes: u64
+    cluster_sektoren: u64
+    sektoren: u64
+    fat_start: u64
+    fat_sektoren: u64
+    fat_anzahl: u64
+    daten_start: u64
+    cluster_anzahl: u64
+    wurzel: u64
+    fsinfo: u64
+    backup: u64
+    aktiv: u64
+    spiegeln: bool
+
+struktur FatVolume:
+    transport: ptr[dyn FatTransport]
+    layout: FatLayout
+    naechster_frei: u64
+    schmutzig: bool
+    nur_lesend: bool
+
+# Nur Datenprüfung: keine Gerätezustände oder Adressen aus ungeprüftem BPB.
+@nativ
+funktion fat_bpb_pruefen(geo: BlockGeometrie, bytes: puffer[u8]) -> ergebnis[FatLayout, BlockFehler]:
+    wenn länge(bytes) < 512 oder geo.block_bytes < 512 oder geo.block_bytes > 4096:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 1))
+    setze b: puffer[Fat32Bpb] auf sicht(bytes, Fat32Bpb, 0)
+    setze breite: u64 auf als(u64, b[0].sektor_bytes)
+    setze spc: u64 auf als(u64, b[0].cluster_sektoren)
+    setze reserviert: u64 auf als(u64, b[0].reservierte_sektoren)
+    setze fats: u64 auf als(u64, b[0].fat_anzahl)
+    setze fatsektoren: u64 auf als(u64, b[0].fat_sektoren32)
+    setze gesamt: u64 auf als(u64, b[0].sektor_anzahl32)
+    wenn b[0].signatur != 0xAA55 oder breite != geo.block_bytes oder (breite & (breite - 1)) != 0:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 2))
+    wenn spc == 0 oder spc > 128 oder (spc & (spc - 1)) != 0 oder breite * spc > 32768:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 3))
+    wenn reserviert == 0 oder fats == 0 oder fats > 2 oder fatsektoren == 0 oder b[0].version != 0:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 4))
+    wenn b[0].wurzel_eintraege16 != 0 oder b[0].fat_sektoren16 != 0 oder b[0].sektor_anzahl16 != 0:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 5))
+    setze daten: u64 auf reserviert + fats * fatsektoren
+    wenn gesamt > geo.bloecke oder gesamt <= daten:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 6))
+    setze cluster: u64 auf (gesamt - daten) / spc
+    wenn cluster < 65525 oder cluster > 0x0FFFFFEE oder cluster + 2 > fatsektoren * breite / 4:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 7))
+    setze wurzel: u64 auf als(u64, b[0].wurzel_cluster)
+    wenn wurzel < 2 oder wurzel > cluster + 1:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 8))
+    setze flags: u64 auf als(u64, b[0].kennzeichen)
+    setze spiegeln: bool auf (flags & 128) == 0
+    setze aktiv: u64 auf 0
+    wenn nicht spiegeln:
+        setze aktiv auf flags & 15
+        wenn aktiv >= fats:
+            gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 9))
+    setze fsinfo: u64 auf als(u64, b[0].fsinfo_sektor)
+    setze backup: u64 auf als(u64, b[0].backup_sektor)
+    wenn fsinfo != 0 und fsinfo != 65535 und fsinfo >= reserviert:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 10))
+    wenn backup != 0 und backup != 65535 und backup >= reserviert:
+        gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 11))
+    gib_zurück erfolg(FatLayout(breite, spc, gesamt, reserviert, fatsektoren, fats, daten, cluster, wurzel, fsinfo, backup, aktiv, spiegeln))
+
+@nativ
+funktion fat_sektor_io(v: ptr[FatVolume], art: u32, lba: u64, bytes: puffer[u8]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn länge(bytes) < v.layout.sektor_bytes oder lba >= v.layout.sektoren:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        wenn art == BLOCK_SCHREIBEN und v.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        setze ergebnis_io: ergebnis[void, BlockFehler] auf v.transport.uebertragen(art, lba, 1, u64(puffer_zeiger(bytes)), v.layout.sektor_bytes)
+        wenn nicht ist_erfolg(ergebnis_io):
+            setze v.nur_lesend auf wahr
+        gib_zurück ergebnis_io
+
+@nativ
+funktion fat_eintrag_lesen(v: ptr[FatVolume], cluster: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn cluster > v.layout.cluster_anzahl + 1:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 1))
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze versatz: u64 auf cluster * 4
+        setze lba: u64 auf v.layout.fat_start + v.layout.aktiv * v.layout.fat_sektoren + versatz / v.layout.sektor_bytes
+        weitergeben(fat_sektor_io(v, BLOCK_LESEN, lba, bytes))
+        gib_zurück erfolg(u64(byte_lesen_le32(bytes, versatz % v.layout.sektor_bytes)) & 0x0FFFFFFF)
+
+# Rohes FAT-Update: oberes reserviertes Nibble bleibt erhalten. Im Spiegelmodus
+# werden alle FATs geschrieben, sonst nur die im BPB bezeichnete aktive FAT.
+@nativ
+funktion fat_eintrag_setzen(v: ptr[FatVolume], cluster: u64, wert: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn cluster > v.layout.cluster_anzahl + 1 oder wert > 0x0FFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 2))
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze versatz: u64 auf cluster * 4
+        setze index: u64 auf v.layout.aktiv
+        setze ende: u64 auf index + 1
+        wenn v.layout.spiegeln:
+            setze index auf 0
+            setze ende auf v.layout.fat_anzahl
+        solange index < ende:
+            setze lba: u64 auf v.layout.fat_start + index * v.layout.fat_sektoren + versatz / v.layout.sektor_bytes
+            weitergeben(fat_sektor_io(v, BLOCK_LESEN, lba, bytes))
+            setze alt: u32 auf byte_lesen_le32(bytes, versatz % v.layout.sektor_bytes)
+            byte_schreiben_le32(bytes, versatz % v.layout.sektor_bytes, (alt & 0xF0000000) | u32(wert))
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, lba, bytes))
+            setze index auf index + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_oeffnen(v: ptr[FatVolume], transport: ptr[dyn FatTransport]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf transport.geometrie()
+        wenn geo.block_bytes < 512 oder geo.block_bytes > 4096 oder (geo.block_bytes & (geo.block_bytes - 1)) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        weitergeben(transport.uebertragen(BLOCK_LESEN, 0, 1, u64(puffer_zeiger(bytes)), geo.block_bytes))
+        setze layout: FatLayout auf weitergeben(fat_bpb_pruefen(geo, bytes))
+        setze kandidat: FatVolume auf FatVolume(transport, layout, 2, falsch, geo.nur_lesend)
+        setze p: ptr[FatVolume] auf zeiger(adresse_von(kandidat))
+        setze eins: u64 auf weitergeben(fat_eintrag_lesen(p, 1))
+        wenn (eins & 0x03FFFFFF) != 0x03FFFFFF:
+            gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 12))
+        # Ein schmutziges oder nach I/O-Fehler abgestelltes Volume wird lesend
+        # geöffnet. Reparatur gehört in ein Prüfwerkzeug, nicht in den Mount.
+        wenn (eins & 0x0C000000) != 0x0C000000:
+            setze kandidat.nur_lesend auf wahr
+        wenn layout.fsinfo != 0 und layout.fsinfo != 65535:
+            weitergeben(fat_sektor_io(p, BLOCK_LESEN, layout.fsinfo, bytes))
+            setze info: puffer[Fat32FsInfo] auf sicht(bytes, Fat32FsInfo, 0)
+            wenn info[0].anfang_signatur == 0x41615252 und info[0].struktur_signatur == 0x61417272 und info[0].ende_signatur == 0xAA550000:
+                setze hinweis: u64 auf u64(info[0].naechster_cluster)
+                wenn hinweis >= 2 und hinweis <= layout.cluster_anzahl + 1:
+                    setze kandidat.naechster_frei auf hinweis
+        # FSInfo ist nur ein Hinweis. Der Allokator prüft jeden Eintrag erneut.
+        setze v[0] auf kandidat
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_info_schreiben(v: ptr[FatVolume], freie: u32) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn v.layout.fsinfo == 0 oder v.layout.fsinfo == 65535:
+            gib_zurück erfolg()
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze info: puffer[Fat32FsInfo] auf sicht(bytes, Fat32FsInfo, 0)
+        info[0].anfang_signatur = 0x41615252
+        info[0].struktur_signatur = 0x61417272
+        info[0].freie_cluster = freie
+        info[0].naechster_cluster = u32(v.naechster_frei)
+        info[0].ende_signatur = 0xAA550000
+        weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, v.layout.fsinfo, bytes))
+        wenn v.layout.backup != 0 und v.layout.backup != 65535 und v.layout.backup + v.layout.fsinfo < v.layout.fat_start:
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, v.layout.backup + v.layout.fsinfo, bytes))
+        gib_zurück erfolg()
+
+# Vor jeder Änderung: Dirty-Markierung und ungültiger freier Clusterzähler
+# müssen persistent sein. Bei Fehler bleibt das Volume als schmutzig markiert.
+@nativ
+funktion fat_aenderung(v: ptr[FatVolume]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn v.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        wenn nicht v.schmutzig:
+            setze v.schmutzig auf wahr
+            weitergeben(fat_eintrag_setzen(v, 1, 0x07FFFFFF))
+            weitergeben(fat_info_schreiben(v, 0xFFFFFFFF))
+            weitergeben(fat_flush(v))
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_synchronisieren(v: ptr[FatVolume]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn v.schmutzig und v.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 2))
+        wenn nicht v.schmutzig:
+            gib_zurück erfolg()
+        setze freie: u64 auf weitergeben(fat_freie_zaehlen(v))
+        weitergeben(fat_info_schreiben(v, u32(freie)))
+        weitergeben(fat_flush(v))
+        weitergeben(fat_eintrag_setzen(v, 1, 0x0FFFFFFF))
+        weitergeben(fat_flush(v))
+        setze v.schmutzig auf falsch
+        gib_zurück erfolg()
+
+# FAT32-Formatierung: zwei FATs, BPB/FSInfo + Sicherung 6/7, Wurzelcluster2.
+# Clusterzahl bestimmt den FAT-Typ; kleine Medien werden deshalb abgelehnt.
+@nativ
+funktion fat_formatieren(transport: ptr[dyn FatTransport], seriennummer: u32) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf transport.geometrie()
+        setze breite: u64 auf geo.block_bytes
+        wenn geo.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 0))
+        wenn breite < 512 oder breite > 4096 oder (breite & (breite - 1)) != 0 oder geo.bloecke <= 32 oder geo.bloecke > 0xFFFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        setze spc: u64 auf 1
+        solange (geo.bloecke - 32) / spc > 0x0FFFFFEE:
+            setze spc auf spc * 2
+        wenn spc * breite > 32768:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 1))
+        # Sichere obere Grenze der benötigten FAT: Datenbereich zunächst ohne
+        # FATs zählen. Überzählige FAT-Sektoren werden vollständig genullt.
+        setze fatsektoren: u64 auf (((geo.bloecke - 32) / spc + 2) * 4 + breite - 1) / breite
+        setze daten: u64 auf 32 + 2 * fatsektoren
+        wenn daten >= geo.bloecke oder (geo.bloecke - daten) / spc < 65525:
+            gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 7))
+        setze cluster: u64 auf (geo.bloecke - daten) / spc
+        setze layout: FatLayout auf FatLayout(breite, spc, geo.bloecke, 32, fatsektoren, 2, daten, cluster, 2, 1, 6, 0, wahr)
+        setze volume: FatVolume auf FatVolume(transport, layout, 3, wahr, falsch)
+        setze v: ptr[FatVolume] auf zeiger(adresse_von(volume))
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        # Vollständig neue Metadaten; alte Nutzcluster werden erst bei späterer
+        # Allokation genullt, damit fremde Dateiinhalte nie sichtbar werden.
+        setze sektor: u64 auf 0
+        solange sektor < daten + spc:
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, sektor, bytes))
+            setze sektor auf sektor + 1
+        setze b: puffer[Fat32Bpb] auf sicht(bytes, Fat32Bpb, 0)
+        b[0].sprung[0] = 0xEB
+        b[0].sprung[1] = 0x58
+        b[0].sprung[2] = 0x90
+        b[0].sektor_bytes = u16(breite)
+        b[0].cluster_sektoren = u8(spc)
+        b[0].reservierte_sektoren = 32
+        b[0].fat_anzahl = 2
+        b[0].medium = 0xF8
+        b[0].spur_sektoren = 63
+        b[0].koepfe = 255
+        b[0].sektor_anzahl32 = u32(geo.bloecke)
+        b[0].fat_sektoren32 = u32(fatsektoren)
+        b[0].wurzel_cluster = 2
+        b[0].fsinfo_sektor = 1
+        b[0].backup_sektor = 6
+        b[0].laufwerk = 0x80
+        b[0].erweiterte_signatur = 0x29
+        b[0].seriennummer = seriennummer
+        b[0].signatur = 0xAA55
+        setze oem: [u8; 8] auf [0x4D, 0x4F, 0x4F, 0x46, 0x41, 0x54, 0x33, 0x32]
+        setze label: [u8; 11] auf [0x4E, 0x4F, 0x20, 0x4E, 0x41, 0x4D, 0x45, 0x20, 0x20, 0x20, 0x20]
+        setze typname: [u8; 8] auf [0x46, 0x41, 0x54, 0x33, 0x32, 0x20, 0x20, 0x20]
+        setze i: u64 auf 0
+        solange i < 11:
+            b[0].volumen_name[i] = label[i]
+            wenn i < 8:
+                b[0].oem_name[i] = oem[i]
+                b[0].dateisystem_name[i] = typname[i]
+            setze i auf i + 1
+        weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, 0, bytes))
+        weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, 6, bytes))
+        weitergeben(fat_info_schreiben(v, 0xFFFFFFFF))
+        weitergeben(fat_eintrag_setzen(v, 0, 0x0FFFFFF8))
+        weitergeben(fat_eintrag_setzen(v, 1, 0x07FFFFFF))
+        weitergeben(fat_eintrag_setzen(v, 2, 0x0FFFFFFF))
+        weitergeben(fat_synchronisieren(v))
+        gib_zurück erfolg()
+
+# Clusterketten: 0 ist nur die leere Datei, EOC ab 0x0FFFFFF8.
+@nativ
+funktion fat_cluster_lba(v: ptr[FatVolume], cluster: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn cluster < 2 oder cluster > v.layout.cluster_anzahl + 1:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 3))
+        gib_zurück erfolg(v.layout.daten_start + (cluster - 2) * v.layout.cluster_sektoren)
+
+@nativ
+funktion fat_folge(v: ptr[FatVolume], cluster: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(fat_cluster_lba(v, cluster))
+        setze wert: u64 auf weitergeben(fat_eintrag_lesen(v, cluster))
+        wenn wert >= 0x0FFFFFF8:
+            gib_zurück erfolg(0)
+        wenn wert < 2 oder wert > v.layout.cluster_anzahl + 1:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 4))
+        gib_zurück erfolg(wert)
+
+# Brent-Zyklenerkennung benötigt keinen Zusatzpuffer und keine Zusatz-I/O.
+@nativ
+funktion fat_kettenlaenge(v: ptr[FatVolume], erster: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn erster == 0:
+            gib_zurück erfolg(0)
+        setze aktuell: u64 auf erster
+        setze anker: u64 auf erster
+        setze blockgroesse: u64 auf 1
+        setze schritte: u64 auf 0
+        setze anzahl: u64 auf 0
+        solange aktuell != 0:
+            wenn anzahl >= v.layout.cluster_anzahl:
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 5))
+            setze aktuell auf weitergeben(fat_folge(v, aktuell))
+            setze anzahl auf anzahl + 1
+            setze schritte auf schritte + 1
+            wenn aktuell != 0 und aktuell == anker:
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 6))
+            wenn schritte == blockgroesse:
+                setze anker auf aktuell
+                setze blockgroesse auf blockgroesse * 2
+                setze schritte auf 0
+        gib_zurück erfolg(anzahl)
+
+@nativ
+funktion fat_cluster_an(v: ptr[FatVolume], erster: u64, index: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn index >= v.layout.cluster_anzahl:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 7))
+        setze aktuell: u64 auf erster
+        setze i: u64 auf 0
+        solange i < index:
+            setze aktuell auf weitergeben(fat_folge(v, aktuell))
+            wenn aktuell == 0:
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 8))
+            setze i auf i + 1
+        weitergeben(fat_cluster_lba(v, aktuell))
+        gib_zurück erfolg(aktuell)
+
+@nativ
+funktion fat_cluster_null(v: ptr[FatVolume], cluster: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze lba: u64 auf weitergeben(fat_cluster_lba(v, cluster))
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze i: u64 auf 0
+        solange i < v.layout.cluster_sektoren:
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, lba + i, bytes))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_cluster_nehmen(v: ptr[FatVolume]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(fat_aenderung(v))
+        setze kandidat: u64 auf v.naechster_frei
+        wenn kandidat < 2 oder kandidat > v.layout.cluster_anzahl + 1:
+            setze kandidat auf 2
+        setze gesucht: u64 auf 0
+        solange gesucht < v.layout.cluster_anzahl:
+            setze wert: u64 auf weitergeben(fat_eintrag_lesen(v, kandidat))
+            wenn wert == 0:
+                # Vor Verlinkung nullen: alte Nutzdaten werden nicht sichtbar.
+                weitergeben(fat_cluster_null(v, kandidat))
+                weitergeben(fat_eintrag_setzen(v, kandidat, 0x0FFFFFFF))
+                setze v.naechster_frei auf kandidat + 1
+                gib_zurück erfolg(kandidat)
+            setze kandidat auf kandidat + 1
+            wenn kandidat > v.layout.cluster_anzahl + 1:
+                setze kandidat auf 2
+            setze gesucht auf gesucht + 1
+        gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+
+@nativ
+funktion fat_kette_freigeben(v: ptr[FatVolume], erster: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        # Vor dem ersten Freigeben die gesamte Kette prüfen. Eine Zykluskette
+        # darf nicht teilweise freigegeben und später neu vergeben werden.
+        setze anzahl: u64 auf weitergeben(fat_kettenlaenge(v, erster))
+        weitergeben(fat_aenderung(v))
+        setze aktuell: u64 auf erster
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze folge: u64 auf weitergeben(fat_folge(v, aktuell))
+            weitergeben(fat_eintrag_setzen(v, aktuell, 0))
+            setze aktuell auf folge
+            setze i auf i + 1
+        wenn erster >= 2 und erster < v.naechster_frei:
+            setze v.naechster_frei auf erster
+        gib_zurück erfolg()
+
+# Ketten-I/O ohne Allokation. Alle Offsets und Längen sind Bytewerte;
+# der Aufrufer prüft die Dateigröße, Teilsektoren erhalten ihre übrigen Bytes.
+@nativ
+funktion fat_kette_io(v: ptr[FatVolume], erster: u64, offset: u64, daten: puffer[u8], schreiben: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn länge(daten) == 0:
+            gib_zurück erfolg()
+        setze cluster_bytes: u64 auf v.layout.cluster_sektoren * v.layout.sektor_bytes
+        setze kettenlaenge: u64 auf weitergeben(fat_kettenlaenge(v, erster))
+        setze kapazitaet: u64 auf kettenlaenge * cluster_bytes
+        wenn offset > kapazitaet oder länge(daten) > kapazitaet - offset:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 0))
+        wenn schreiben:
+            weitergeben(fat_aenderung(v))
+        setze aktuell: u64 auf weitergeben(fat_cluster_an(v, erster, offset / cluster_bytes))
+        setze innerhalb: u64 auf offset % cluster_bytes
+        setze erledigt: u64 auf 0
+        setze speicher: FatSektor auf 0
+        setze sektor: puffer[u8] auf byteansicht(speicher.bytes)
+        solange erledigt < länge(daten):
+            setze lba: u64 auf weitergeben(fat_cluster_lba(v, aktuell))
+            setze lba auf lba + innerhalb / v.layout.sektor_bytes
+            setze pos: u64 auf innerhalb % v.layout.sektor_bytes
+            setze menge: u64 auf v.layout.sektor_bytes - pos
+            wenn menge > länge(daten) - erledigt:
+                setze menge auf länge(daten) - erledigt
+            weitergeben(fat_sektor_io(v, BLOCK_LESEN, lba, sektor))
+            setze i: u64 auf 0
+            solange i < menge:
+                wenn schreiben:
+                    sektor[pos + i] = daten[erledigt + i]
+                sonst:
+                    daten[erledigt + i] = sektor[pos + i]
+                setze i auf i + 1
+            wenn schreiben:
+                weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, lba, sektor))
+            setze erledigt auf erledigt + menge
+            setze innerhalb auf innerhalb + menge
+            wenn innerhalb == cluster_bytes und erledigt < länge(daten):
+                setze aktuell auf weitergeben(fat_folge(v, aktuell))
+                setze innerhalb auf 0
+        gib_zurück erfolg()
+
+
+
+struktur FatName:
+    einheiten: [u16; 260]
+    anzahl: u64
+
+struktur FatDirPuffer:
+    bytes: [u8; 32]
+
+# Ein Handle ist nur bis zur nächsten Änderung desselben Verzeichniseintrags
+# gültig. Der Besitzer darf keine konkurrierenden Handles mutieren.
+struktur FatDatei:
+    cluster: u64
+    bytes: u64
+    verzeichnis: u64
+    eintrag: u64
+    lfn_start: u64
+    lfn_anzahl: u64
+    attribute: u8
+
+@nativ
+funktion fat_name_falten(punkt: u32) -> u32:
+    unsicher:
+        gib_zurück fat_unicode_gross(punkt)
+
+# UTF-8 wird strikt validiert, einschließlich Overlong-/Surrogat-/Maximalwert.
+# Namen werden als UTF-16 gespeichert, ohne Unicode-Normalisierung.
+# Der Vergleich verwendet localeunabhängiges Unicode-Simple-Upper.
+@nativ
+funktion fat_name_lesen(bytes: puffer[u8]) -> ergebnis[FatName, BlockFehler]:
+    unsicher:
+        wenn länge(bytes) > 1020:
+            gib_zurück fehlschlag(BlockFehler(FAT_NAME, 9))
+        setze name: FatName auf 0
+        setze i: u64 auf 0
+        solange i < länge(bytes):
+            setze erster: u64 auf u64(bytes[i])
+            setze punkt: u64 auf erster
+            setze folge: u64 auf 0
+            setze minimum: u64 auf 0
+            wenn erster >= 0xC2 und erster <= 0xDF:
+                setze punkt auf erster & 31
+                setze folge auf 1
+                setze minimum auf 0x80
+            sonst wenn erster >= 0xE0 und erster <= 0xEF:
+                setze punkt auf erster & 15
+                setze folge auf 2
+                setze minimum auf 0x800
+            sonst wenn erster >= 0xF0 und erster <= 0xF4:
+                setze punkt auf erster & 7
+                setze folge auf 3
+                setze minimum auf 0x10000
+            sonst wenn erster >= 0x80:
+                gib_zurück fehlschlag(BlockFehler(FAT_NAME, 1))
+            wenn folge > länge(bytes) - i - 1:
+                gib_zurück fehlschlag(BlockFehler(FAT_NAME, 2))
+            setze j: u64 auf 0
+            solange j < folge:
+                setze teil: u64 auf u64(bytes[i + 1 + j])
+                wenn teil < 0x80 oder teil > 0xBF:
+                    gib_zurück fehlschlag(BlockFehler(FAT_NAME, 3))
+                setze punkt auf punkt * 64 + (teil & 63)
+                setze j auf j + 1
+            wenn punkt < minimum oder punkt > 0x10FFFF oder punkt == 0xFFFF oder (punkt >= 0xD800 und punkt <= 0xDFFF):
+                gib_zurück fehlschlag(BlockFehler(FAT_NAME, 4))
+            wenn punkt < 32 oder punkt == 34 oder punkt == 42 oder punkt == 47 oder punkt == 58 oder punkt == 60 oder punkt == 62 oder punkt == 63 oder punkt == 92 oder punkt == 124:
+                gib_zurück fehlschlag(BlockFehler(FAT_NAME, 5))
+            wenn name.anzahl >= 255:
+                gib_zurück fehlschlag(BlockFehler(FAT_NAME, 6))
+            wenn punkt > 0xFFFF:
+                wenn name.anzahl >= 254:
+                    gib_zurück fehlschlag(BlockFehler(FAT_NAME, 7))
+                name.einheiten[name.anzahl] = u16(0xD800 + (punkt - 0x10000) / 1024)
+                setze name.anzahl auf name.anzahl + 1
+                setze punkt auf 0xDC00 + (punkt - 0x10000) % 1024
+            name.einheiten[name.anzahl] = u16(punkt)
+            setze name.anzahl auf name.anzahl + 1
+            setze i auf i + folge + 1
+        wenn name.anzahl == 0 oder name.einheiten[name.anzahl - 1] == 32 oder name.einheiten[name.anzahl - 1] == 46:
+            gib_zurück fehlschlag(BlockFehler(FAT_NAME, 8))
+        gib_zurück erfolg(name)
+
+@nativ
+funktion fat_name_gleich(a: ptr[FatName], b: ptr[FatName]) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        setze j: u64 auf 0
+        solange i < a.anzahl und j < b.anzahl:
+            setze ap: u32 auf fat_name_punkt(a, i)
+            setze bp: u32 auf fat_name_punkt(b, j)
+            wenn ap == 0xFFFFFFFF oder bp == 0xFFFFFFFF oder fat_name_falten(ap) != fat_name_falten(bp):
+                gib_zurück falsch
+            wenn ap > 0xFFFF:
+                setze i auf i + 1
+            wenn bp > 0xFFFF:
+                setze j auf j + 1
+            setze i auf i + 1
+            setze j auf j + 1
+        gib_zurück i == a.anzahl und j == b.anzahl
+
+@nativ
+funktion fat_name_punkt(name: ptr[FatName], index: u64) -> u32:
+    unsicher:
+        setze erster: u32 auf u32(name.einheiten[index])
+        wenn erster >= 0xD800 und erster <= 0xDBFF:
+            wenn index + 1 >= name.anzahl:
+                gib_zurück 0xFFFFFFFF
+            setze zweiter: u32 auf u32(name.einheiten[index + 1])
+            wenn zweiter < 0xDC00 oder zweiter > 0xDFFF:
+                gib_zurück 0xFFFFFFFF
+            gib_zurück 0x10000 + (erster - 0xD800) * 1024 + zweiter - 0xDC00
+        wenn erster >= 0xDC00 und erster <= 0xDFFF:
+            gib_zurück 0xFFFFFFFF
+        gib_zurück erster
+
+@nativ
+funktion fat_lfn_versatz(index: u64) -> u64:
+    wenn index < 5:
+        gib_zurück 1 + index * 2
+    wenn index < 11:
+        gib_zurück 14 + (index - 5) * 2
+    gib_zurück 28 + (index - 11) * 2
+
+@nativ
+funktion fat_kurz_pruefsumme(bytes: puffer[u8]) -> u8:
+    setze summe: u8 auf 0
+    setze i: u64 auf 0
+    solange i < 11:
+        setze summe auf rotieren_rechts(summe, 1) + bytes[i]
+        setze i auf i + 1
+    gib_zurück summe
+
+@nativ
+funktion fat_kurz_name(bytes: puffer[u8]) -> FatName:
+    unsicher:
+        setze name: FatName auf 0
+        setze i: u64 auf 0
+        solange i < 11:
+            wenn i == 8 und bytes[i] != 32:
+                name.einheiten[name.anzahl] = 46
+                setze name.anzahl auf name.anzahl + 1
+            wenn bytes[i] != 32:
+                name.einheiten[name.anzahl] = u16(bytes[i])
+                setze name.anzahl auf name.anzahl + 1
+            setze i auf i + 1
+        gib_zurück name
+
+@nativ
+funktion fat_dir_lesen(v: ptr[FatVolume], dir: u64, index: u64, bytes: puffer[u8]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn länge(bytes) != 32:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 0))
+        setze kettenlaenge: u64 auf weitergeben(fat_kettenlaenge(v, dir))
+        wenn index >= kettenlaenge * v.layout.cluster_sektoren * v.layout.sektor_bytes / 32:
+            gib_zurück erfolg(falsch)
+        weitergeben(fat_kette_io(v, dir, index * 32, bytes, falsch))
+        gib_zurück erfolg(wahr)
+
+struktur FatFund:
+    datei: FatDatei
+    name: FatName
+    kurz: FatName
+    naechster: u64
+
+# Der Cursor bezeichnet den Beginn einer LFN-Folge, nicht einen sichtbaren
+# Eintragsindex. Der Rückgabecursor setzt die Iteration ohne erneute Suche fort.
+@nativ
+funktion fat_verzeichnis_naechster(v: ptr[FatVolume], dir: u64, start: u64) -> ergebnis[FatFund, BlockFehler]:
+    unsicher:
+        setze lang: FatName auf 0
+        setze erwartet: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze summe: u8 auf 0
+        setze index: u64 auf start
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        solange weitergeben(fat_dir_lesen(v, dir, index, bytes)):
+            wenn bytes[0] == 0:
+                gib_zurück fehlschlag(BlockFehler(FAT_NICHT_GEFUNDEN, 0))
+            wenn bytes[0] == 0xE5:
+                setze erwartet auf 0
+                setze anzahl auf 0
+            sonst wenn bytes[11] == 15:
+                setze ordnung: u64 auf u64(bytes[0]) & 31
+                wenn (bytes[0] & 0x40) != 0:
+                    setze anzahl auf ordnung
+                    setze erwartet auf ordnung
+                    setze summe auf bytes[13]
+                    setze lang.anzahl auf ordnung * 13
+                wenn ordnung == 0 oder ordnung > 20 oder ordnung != erwartet oder bytes[13] != summe oder bytes[12] != 0 oder byte_lesen_le16(bytes, 26) != 0 oder (bytes[0] & 0xA0) != 0:
+                    setze erwartet auf 0
+                    setze anzahl auf 0
+                sonst:
+                    setze j: u64 auf 0
+                    solange j < 13:
+                        lang.einheiten[(ordnung - 1) * 13 + j] = byte_lesen_le16(bytes, fat_lfn_versatz(j))
+                        setze j auf j + 1
+                    setze erwartet auf erwartet - 1
+            sonst:
+                wenn (bytes[11] & 8) == 0:
+                    setze gueltig: bool auf anzahl != 0 und erwartet == 0 und summe == fat_kurz_pruefsumme(bytes)
+                    wenn gueltig:
+                        setze n: u64 auf 0
+                        solange n < lang.anzahl und lang.einheiten[n] != 0 und lang.einheiten[n] != 0xFFFF:
+                            setze n auf n + 1
+                        wenn n > 255 oder n == 0:
+                            setze gueltig auf falsch
+                        sonst:
+                            setze ende: u64 auf n
+                            wenn ende < lang.anzahl:
+                                wenn lang.einheiten[ende] != 0:
+                                    setze gueltig auf falsch
+                                setze ende auf ende + 1
+                                solange ende < lang.anzahl:
+                                    wenn lang.einheiten[ende] != 0xFFFF:
+                                        setze gueltig auf falsch
+                                    setze ende auf ende + 1
+                            setze lang.anzahl auf n
+                    setze kurz: FatName auf fat_kurz_name(bytes)
+                    setze name: FatName auf kurz
+                    wenn gueltig:
+                        setze name auf lang
+                    setze cluster: u64 auf ((u64(byte_lesen_le16(bytes, 20)) * 65536) | u64(byte_lesen_le16(bytes, 26))) & 0x0FFFFFFF
+                    setze lfn_start: u64 auf index
+                    setze lfn_anzahl: u64 auf 0
+                    wenn gueltig:
+                        setze lfn_start auf index - anzahl
+                        setze lfn_anzahl auf anzahl
+                    gib_zurück erfolg(FatFund(FatDatei(cluster, u64(byte_lesen_le32(bytes, 28)), dir, index, lfn_start, lfn_anzahl, bytes[11]), name, kurz, index + 1))
+                setze erwartet auf 0
+                setze anzahl auf 0
+            setze index auf index + 1
+        gib_zurück fehlschlag(BlockFehler(FAT_NICHT_GEFUNDEN, 0))
+
+
+@nativ
+funktion fat_suchen(v: ptr[FatVolume], dir: u64, utf8: puffer[u8]) -> ergebnis[FatDatei, BlockFehler]:
+    unsicher:
+        setze gesucht: FatName auf weitergeben(fat_name_lesen(utf8))
+        setze cursor: u64 auf 0
+        solange wahr:
+            setze fund: FatFund auf weitergeben(fat_verzeichnis_naechster(v, dir, cursor))
+            wenn fat_name_gleich(zeiger(adresse_von(gesucht)), zeiger(adresse_von(fund.name))) oder fat_name_gleich(zeiger(adresse_von(gesucht)), zeiger(adresse_von(fund.kurz))):
+                gib_zurück erfolg(fund.datei)
+            setze cursor auf fund.naechster
+        gib_zurück fehlschlag(BlockFehler(FAT_NICHT_GEFUNDEN, 0))
+
+
+struktur FatFreiraum:
+    start: u64
+    terminator: bool
+
+@nativ
+funktion fat_alias_vorhanden(v: ptr[FatVolume], dir: u64, alias: puffer[u8]) -> ergebnis[bool, BlockFehler]:
+    setze speicher: FatDirPuffer auf 0
+    setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+    setze index: u64 auf 0
+    solange weitergeben(fat_dir_lesen(v, dir, index, bytes)):
+        wenn bytes[0] == 0:
+            gib_zurück fat_alias_lang_vorhanden(v, dir, alias)
+        wenn bytes[0] != 0xE5 und bytes[11] != 15:
+            setze gleich: bool auf wahr
+            setze i: u64 auf 0
+            solange i < 11:
+                wenn bytes[i] != alias[i]:
+                    setze gleich auf falsch
+                setze i auf i + 1
+            wenn gleich:
+                gib_zurück erfolg(wahr)
+        setze index auf index + 1
+    gib_zurück fat_alias_lang_vorhanden(v, dir, alias)
+
+@nativ
+funktion fat_alias_bauen(name: ptr[FatName], nonce: u64, bytes: puffer[u8]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 11:
+            bytes[i] = 32
+            setze i auf i + 1
+        wenn nonce != 0:
+            bytes[0] = 77
+            setze rest: u64 auf nonce
+            setze pos: u64 auf 8
+            solange pos > 1:
+                setze pos auf pos - 1
+                setze ziffer: u64 auf rest % 16
+                setze rest auf rest / 16
+                wenn ziffer < 10:
+                    bytes[pos] = u8(48 + ziffer)
+                sonst:
+                    bytes[pos] = u8(65 + ziffer - 10)
+            gib_zurück
+        setze basis: u64 auf 0
+        setze endung: u64 auf 0
+        setze punkt: bool auf falsch
+        setze gueltig: bool auf wahr
+        setze j: u64 auf 0
+        solange j < name.anzahl:
+            setze zeichen: u16 auf name.einheiten[j]
+            wenn zeichen == 46 und nicht punkt und basis != 0:
+                setze punkt auf wahr
+            sonst:
+                wenn zeichen >= 97 und zeichen <= 122:
+                    setze zeichen auf zeichen - 32
+                wenn nicht ((zeichen >= 65 und zeichen <= 90) oder (zeichen >= 48 und zeichen <= 57) oder zeichen == 95):
+                    setze gueltig auf falsch
+                wenn punkt:
+                    wenn endung < 3:
+                        bytes[8 + endung] = u8(zeichen)
+                    sonst:
+                        setze gueltig auf falsch
+                    setze endung auf endung + 1
+                sonst:
+                    wenn basis < 8:
+                        bytes[basis] = u8(zeichen)
+                    sonst:
+                        setze gueltig auf falsch
+                    setze basis auf basis + 1
+            setze j auf j + 1
+        wenn nicht gueltig oder basis == 0:
+            bytes[0] = 0
+
+@nativ
+funktion fat_dir_reservieren(v: ptr[FatVolume], dir: u64, benoetigt: u64) -> ergebnis[FatFreiraum, BlockFehler]:
+    unsicher:
+        weitergeben(fat_aenderung(v))
+        setze kettenlaenge: u64 auf weitergeben(fat_kettenlaenge(v, dir))
+        wenn kettenlaenge == 0 oder benoetigt == 0 oder benoetigt > 21:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 9))
+        setze tail: u64 auf weitergeben(fat_cluster_an(v, dir, kettenlaenge - 1))
+        setze kapazitaet: u64 auf kettenlaenge * v.layout.cluster_sektoren * v.layout.sektor_bytes / 32
+        setze index: u64 auf 0
+        setze lauf: u64 auf 0
+        setze terminator: bool auf falsch
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        solange wahr:
+            wenn index == kapazitaet:
+                setze cluster: u64 auf weitergeben(fat_cluster_nehmen(v))
+                weitergeben(fat_eintrag_setzen(v, tail, cluster))
+                setze tail auf cluster
+                setze kapazitaet auf kapazitaet + v.layout.cluster_sektoren * v.layout.sektor_bytes / 32
+                setze terminator auf wahr
+            wenn nicht terminator:
+                weitergeben(fat_kette_io(v, dir, index * 32, bytes, falsch))
+                wenn bytes[0] == 0:
+                    setze terminator auf wahr
+            wenn terminator oder bytes[0] == 0xE5:
+                setze lauf auf lauf + 1
+            sonst:
+                setze lauf auf 0
+            wenn (terminator und lauf >= benoetigt + 1) oder (nicht terminator und lauf >= benoetigt):
+                setze start: u64 auf index + 1 - lauf
+                gib_zurück erfolg(FatFreiraum(start, terminator))
+            setze index auf index + 1
+
+@nativ
+funktion fat_dir_neu(v: ptr[FatVolume], cluster: u64, eltern: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze i: u64 auf 0
+        solange i < 11:
+            bytes[i] = 32
+            setze i auf i + 1
+        bytes[0] = 46
+        bytes[11] = 16
+        byte_schreiben_le16(bytes, 20, u16(cluster / 65536))
+        byte_schreiben_le16(bytes, 26, u16(cluster % 65536))
+        byte_schreiben_le16(bytes, 16, 0x21)
+        byte_schreiben_le16(bytes, 18, 0x21)
+        byte_schreiben_le16(bytes, 24, 0x21)
+        weitergeben(fat_kette_io(v, cluster, 0, bytes, wahr))
+        bytes[1] = 46
+        wenn eltern == v.layout.wurzel:
+            setze eltern auf 0
+        byte_schreiben_le16(bytes, 20, u16(eltern / 65536))
+        byte_schreiben_le16(bytes, 26, u16(eltern % 65536))
+        weitergeben(fat_kette_io(v, cluster, 32, bytes, wahr))
+        gib_zurück erfolg()
+
+# Sowohl Dateien als auch Verzeichnisse erhalten einen LFN mit gültigem
+# Kurzalias. Ohne Zeitquelle wird das dokumentierte FAT-Datum 1980-01-01 benutzt.
+@nativ
+funktion fat_anlegen(v: ptr[FatVolume], dir: u64, utf8: puffer[u8], verzeichnis: bool) -> ergebnis[FatDatei, BlockFehler]:
+    unsicher:
+        setze name: FatName auf weitergeben(fat_name_lesen(utf8))
+        setze vorhanden: ergebnis[FatDatei, BlockFehler] auf fat_suchen(v, dir, utf8)
+        wenn ist_erfolg(vorhanden):
+            gib_zurück fehlschlag(BlockFehler(FAT_VORHANDEN, 0))
+        setze fehler: BlockFehler auf ergebnis_fehler(vorhanden)
+        wenn fehler.code != FAT_NICHT_GEFUNDEN:
+            gib_zurück fehlschlag(fehler)
+        setze alias_speicher: FatDirPuffer auf 0
+        setze alias: puffer[u8] auf byteansicht(alias_speicher.bytes)
+        fat_alias_bauen(zeiger(adresse_von(name)), 0, alias)
+        setze nonce: u64 auf 0
+        solange alias[0] == 0 oder weitergeben(fat_alias_vorhanden(v, dir, alias)):
+            setze nonce auf nonce + 1
+            wenn nonce > 0x0FFFFFFF:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 1))
+            fat_alias_bauen(zeiger(adresse_von(name)), nonce, alias)
+        setze anzahl: u64 auf (name.anzahl + 12) / 13
+        setze platz: FatFreiraum auf weitergeben(fat_dir_reservieren(v, dir, anzahl + 1))
+        setze cluster: u64 auf 0
+        setze attribute: u8 auf 32
+        wenn verzeichnis:
+            setze cluster auf weitergeben(fat_cluster_nehmen(v))
+            weitergeben(fat_dir_neu(v, cluster, dir))
+            setze attribute auf 16
+        setze summe: u8 auf fat_kurz_pruefsumme(alias)
+        setze index: u64 auf 0
+        solange index < anzahl:
+            setze ordnung: u64 auf anzahl - index
+            setze lang_speicher: FatDirPuffer auf 0
+            setze lang: puffer[u8] auf byteansicht(lang_speicher.bytes)
+            lang[0] = u8(ordnung)
+            wenn index == 0:
+                lang[0] = lang[0] | 0x40
+            lang[11] = 15
+            lang[13] = summe
+            setze j: u64 auf 0
+            solange j < 13:
+                setze pos: u64 auf (ordnung - 1) * 13 + j
+                setze zeichen: u16 auf 0xFFFF
+                wenn pos < name.anzahl:
+                    setze zeichen auf name.einheiten[pos]
+                sonst wenn pos == name.anzahl:
+                    setze zeichen auf 0
+                byte_schreiben_le16(lang, fat_lfn_versatz(j), zeichen)
+                setze j auf j + 1
+            weitergeben(fat_kette_io(v, dir, (platz.start + index) * 32, lang, wahr))
+            setze index auf index + 1
+        alias[11] = attribute
+        byte_schreiben_le16(alias, 16, 0x21)
+        byte_schreiben_le16(alias, 18, 0x21)
+        byte_schreiben_le16(alias, 24, 0x21)
+        byte_schreiben_le16(alias, 20, u16(cluster / 65536))
+        byte_schreiben_le16(alias, 26, u16(cluster % 65536))
+        wenn platz.terminator:
+            setze ende_speicher: FatDirPuffer auf 0
+            weitergeben(fat_kette_io(v, dir, (platz.start + anzahl + 1) * 32, byteansicht(ende_speicher.bytes), wahr))
+        # Kurzverzeichniseintrag zuletzt veröffentlichen.
+        weitergeben(fat_kette_io(v, dir, (platz.start + anzahl) * 32, alias, wahr))
+        gib_zurück erfolg(FatDatei(cluster, 0, dir, platz.start + anzahl, platz.start, anzahl, attribute))
+
+
+@nativ
+funktion fat_datei_pruefen(v: ptr[FatVolume], datei: ptr[FatDatei]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        wenn nicht weitergeben(fat_dir_lesen(v, datei.verzeichnis, datei.eintrag, bytes)):
+            gib_zurück fehlschlag(BlockFehler(FAT_NICHT_GEFUNDEN, 1))
+        setze cluster: u64 auf ((u64(byte_lesen_le16(bytes, 20)) * 65536) | u64(byte_lesen_le16(bytes, 26))) & 0x0FFFFFFF
+        wenn bytes[0] == 0 oder bytes[0] == 0xE5 oder bytes[11] != datei.attribute oder cluster != datei.cluster oder u64(byte_lesen_le32(bytes, 28)) != datei.bytes:
+            gib_zurück fehlschlag(BlockFehler(FAT_NICHT_GEFUNDEN, 2))
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_datei_merken(v: ptr[FatVolume], datei: ptr[FatDatei]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        weitergeben(fat_kette_io(v, datei.verzeichnis, datei.eintrag * 32, bytes, falsch))
+        byte_schreiben_le16(bytes, 20, u16(datei.cluster / 65536))
+        byte_schreiben_le16(bytes, 26, u16(datei.cluster % 65536))
+        byte_schreiben_le32(bytes, 28, u32(datei.bytes))
+        weitergeben(fat_kette_io(v, datei.verzeichnis, datei.eintrag * 32, bytes, wahr))
+        gib_zurück erfolg()
+
+# Nur die schon vorhandene letzte Clusterhälfte muss bei Wiedervergrößerung
+# genullt werden: neu allokierte Cluster sind bereits vor Verlinkung null.
+@nativ
+funktion fat_datei_tail_null(v: ptr[FatVolume], erster: u64, offset: u64, anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze cluster_bytes: u64 auf v.layout.cluster_sektoren * v.layout.sektor_bytes
+        setze cluster: u64 auf weitergeben(fat_cluster_an(v, erster, offset / cluster_bytes))
+        setze lba: u64 auf weitergeben(fat_cluster_lba(v, cluster))
+        setze lba auf lba + (offset % cluster_bytes) / v.layout.sektor_bytes
+        setze pos: u64 auf offset % v.layout.sektor_bytes
+        solange anzahl != 0:
+            weitergeben(fat_sektor_io(v, BLOCK_LESEN, lba, bytes))
+            setze menge: u64 auf v.layout.sektor_bytes - pos
+            wenn menge > anzahl:
+                setze menge auf anzahl
+            setze i: u64 auf 0
+            solange i < menge:
+                bytes[pos + i] = 0
+                setze i auf i + 1
+            weitergeben(fat_sektor_io(v, BLOCK_SCHREIBEN, lba, bytes))
+            setze anzahl auf anzahl - menge
+            setze lba auf lba + 1
+            setze pos auf 0
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_datei_groesse(v: ptr[FatVolume], datei: ptr[FatDatei], neu_bytes: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(fat_datei_pruefen(v, datei))
+        wenn (datei.attribute & 17) != 0 oder neu_bytes > 0xFFFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 1))
+        weitergeben(fat_aenderung(v))
+        setze breite: u64 auf v.layout.cluster_sektoren * v.layout.sektor_bytes
+        setze alt_anzahl: u64 auf weitergeben(fat_kettenlaenge(v, datei.cluster))
+        wenn datei.bytes > alt_anzahl * breite:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 10))
+        setze ziel: u64 auf (neu_bytes + breite - 1) / breite
+        setze hinzu: u64 auf 0
+        setze letzter: u64 auf 0
+        setze anzahl: u64 auf alt_anzahl
+        solange anzahl < ziel:
+            setze genommen: ergebnis[u64, BlockFehler] auf fat_cluster_nehmen(v)
+            wenn nicht ist_erfolg(genommen):
+                setze fehler: BlockFehler auf ergebnis_fehler(genommen)
+                wenn fehler.code == BLOCK_VOLL und hinzu != 0:
+                    weitergeben(fat_kette_freigeben(v, hinzu))
+                gib_zurück fehlschlag(fehler)
+            setze cluster: u64 auf ergebnis_wert(genommen)
+            wenn hinzu == 0:
+                setze hinzu auf cluster
+            sonst:
+                weitergeben(fat_eintrag_setzen(v, letzter, cluster))
+            setze letzter auf cluster
+            setze anzahl auf anzahl + 1
+        wenn neu_bytes > datei.bytes und alt_anzahl != 0 und datei.bytes % breite != 0:
+            setze null_bytes: u64 auf breite - datei.bytes % breite
+            wenn null_bytes > neu_bytes - datei.bytes:
+                setze null_bytes auf neu_bytes - datei.bytes
+            weitergeben(fat_datei_tail_null(v, datei.cluster, datei.bytes, null_bytes))
+        wenn hinzu != 0:
+            wenn datei.cluster == 0:
+                setze datei.cluster auf hinzu
+            sonst:
+                setze alter_tail: u64 auf weitergeben(fat_cluster_an(v, datei.cluster, alt_anzahl - 1))
+                weitergeben(fat_eintrag_setzen(v, alter_tail, hinzu))
+        setze freigeben: u64 auf 0
+        setze behalten: u64 auf 0
+        wenn ziel < alt_anzahl:
+            wenn ziel == 0:
+                setze freigeben auf datei.cluster
+                setze datei.cluster auf 0
+            sonst:
+                setze behalten auf weitergeben(fat_cluster_an(v, datei.cluster, ziel - 1))
+                setze freigeben auf weitergeben(fat_folge(v, behalten))
+        setze datei.bytes auf neu_bytes
+        # Neue kleinere Größe zuerst veröffentlichen, dann überschüssige
+        # Cluster abhängen. Absturz hinterlässt höchstens verlorene Cluster.
+        weitergeben(fat_datei_merken(v, datei))
+        wenn freigeben != 0:
+            wenn behalten != 0:
+                weitergeben(fat_eintrag_setzen(v, behalten, 0x0FFFFFFF))
+            weitergeben(fat_kette_freigeben(v, freigeben))
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_lesen(v: ptr[FatVolume], datei: ptr[FatDatei], offset: u64, daten: puffer[u8]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(fat_datei_pruefen(v, datei))
+        wenn (datei.attribute & 16) != 0 oder offset > datei.bytes oder länge(daten) > datei.bytes - offset:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 2))
+        gib_zurück fat_kette_io(v, datei.cluster, offset, daten, falsch)
+
+# Ein Schreibaufruf ist kein Journal: I/O-Fehler können Teiländerungen hinterlassen.
+# Nach Wachstum ist jeder bisher unbeschriebene Bereich null.
+@nativ
+funktion fat_schreiben(v: ptr[FatVolume], datei: ptr[FatDatei], offset: u64, daten: puffer[u8]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(fat_datei_pruefen(v, datei))
+        wenn (datei.attribute & 17) != 0 oder offset > 0xFFFFFFFF oder länge(daten) > 0xFFFFFFFF - offset:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 3))
+        wenn länge(daten) == 0:
+            gib_zurück erfolg()
+        wenn offset + länge(daten) > datei.bytes:
+            weitergeben(fat_datei_groesse(v, datei, offset + länge(daten)))
+        gib_zurück fat_kette_io(v, datei.cluster, offset, daten, wahr)
+
+@nativ
+funktion fat_loeschen(v: ptr[FatVolume], datei: ptr[FatDatei]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(fat_datei_pruefen(v, datei))
+        wenn (datei.attribute & 1) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 1))
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        wenn (datei.attribute & 16) != 0:
+            weitergeben(fat_dir_punkte_pruefen(v, datei.cluster, datei.verzeichnis))
+            setze index: u64 auf 2
+            solange weitergeben(fat_dir_lesen(v, datei.cluster, index, bytes)):
+                wenn bytes[0] == 0:
+                    stopp
+                wenn bytes[0] != 0xE5:
+                    gib_zurück fehlschlag(BlockFehler(FAT_VORHANDEN, 1))
+                setze index auf index + 1
+        weitergeben(fat_kettenlaenge(v, datei.cluster))
+        weitergeben(fat_aenderung(v))
+        # Kurzname zuerst unsichtbar machen, dann LFN entfernen und Kette frei.
+        weitergeben(fat_dir_abtrennen(v, datei))
+        weitergeben(fat_kette_freigeben(v, datei.cluster))
+        setze datei.cluster auf 0
+        setze datei.bytes auf 0
+        gib_zurück erfolg()
+
+
+@nativ
+funktion fat_flush(v: ptr[FatVolume]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r: ergebnis[void, BlockFehler] auf v.transport.uebertragen(BLOCK_FLUSH, 0, 0, 0, 0)
+        wenn nicht ist_erfolg(r):
+            setze v.nur_lesend auf wahr
+        gib_zurück r
+
+
+# FSInfo wird beim kontrollierten Synchronisieren aus der FAT neu bestimmt;
+# während Änderungen bleibt der Zähler ausdrücklich unbekannt.
+@nativ
+funktion fat_freie_zaehlen(v: ptr[FatVolume]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze speicher: FatSektor auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze cluster: u64 auf 2
+        setze frei: u64 auf 0
+        setze geladen: u64 auf 0xFFFFFFFFFFFFFFFF
+        solange cluster <= v.layout.cluster_anzahl + 1:
+            setze sektor: u64 auf cluster * 4 / v.layout.sektor_bytes
+            wenn sektor != geladen:
+                weitergeben(fat_sektor_io(v, BLOCK_LESEN, v.layout.fat_start + v.layout.aktiv * v.layout.fat_sektoren + sektor, bytes))
+                setze geladen auf sektor
+            wenn (byte_lesen_le32(bytes, cluster * 4 % v.layout.sektor_bytes) & 0x0FFFFFFF) == 0:
+                setze frei auf frei + 1
+            setze cluster auf cluster + 1
+        gib_zurück erfolg(frei)
+
+
+@nativ
+funktion fat_dir_punkte_pruefen(v: ptr[FatVolume], dir: u64, eltern: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn dir == v.layout.wurzel:
+            gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 11))
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze index: u64 auf 0
+        solange index < 2:
+            wenn nicht weitergeben(fat_dir_lesen(v, dir, index, bytes)):
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 12))
+            wenn bytes[0] != 46 oder (bytes[11] & 24) != 16 oder byte_lesen_le32(bytes, 28) != 0:
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 13))
+            setze i: u64 auf 1
+            solange i < 11:
+                setze soll: u8 auf 32
+                wenn index == 1 und i == 1:
+                    setze soll auf 46
+                wenn bytes[i] != soll:
+                    gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 14))
+                setze i auf i + 1
+            setze erwartet: u64 auf dir
+            wenn index == 1:
+                setze erwartet auf eltern
+                wenn eltern == v.layout.wurzel:
+                    setze erwartet auf 0
+            setze cluster: u64 auf ((u64(byte_lesen_le16(bytes, 20)) * 65536) | u64(byte_lesen_le16(bytes, 26))) & 0x0FFFFFFF
+            wenn cluster != erwartet:
+                gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 15))
+            setze index auf index + 1
+        gib_zurück erfolg()
+
+
+# FAT§7.4: Kurz- und Langnamen bilden einen gemeinsamen Namensraum.
+@nativ
+funktion fat_alias_lang_vorhanden(v: ptr[FatVolume], dir: u64, alias: puffer[u8]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 11:
+            wenn i == 8 und alias[i] != 32:
+                bytes[anzahl] = 46
+                setze anzahl auf anzahl + 1
+            wenn alias[i] != 32:
+                bytes[anzahl] = alias[i]
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        setze p: ptr[u8] auf puffer_zeiger(bytes)
+        setze r: ergebnis[FatDatei, BlockFehler] auf fat_suchen(v, dir, byteansicht(p, anzahl))
+        wenn ist_erfolg(r):
+            gib_zurück erfolg(wahr)
+        setze fehler: BlockFehler auf ergebnis_fehler(r)
+        wenn fehler.code == FAT_NICHT_GEFUNDEN:
+            gib_zurück erfolg(falsch)
+        gib_zurück fehlschlag(fehler)
+
+
+# Entfernt nur den Namen. Die Datenkette bleibt für Rename erhalten.
+@nativ
+funktion fat_dir_abtrennen(v: ptr[FatVolume], datei: ptr[FatDatei]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        weitergeben(fat_kette_io(v, datei.verzeichnis, datei.eintrag * 32, bytes, falsch))
+        bytes[0] = 0xE5
+        weitergeben(fat_kette_io(v, datei.verzeichnis, datei.eintrag * 32, bytes, wahr))
+        setze lfn: u64 auf 0
+        solange lfn < datei.lfn_anzahl:
+            weitergeben(fat_kette_io(v, datei.verzeichnis, (datei.lfn_start + lfn) * 32, bytes, falsch))
+            bytes[0] = 0xE5
+            weitergeben(fat_kette_io(v, datei.verzeichnis, (datei.lfn_start + lfn) * 32, bytes, wahr))
+            setze lfn auf lfn + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion fat_dir_eltern(v: ptr[FatVolume], dir: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn dir == v.layout.wurzel:
+            gib_zurück erfolg(dir)
+        setze speicher: FatDirPuffer auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        wenn nicht weitergeben(fat_dir_lesen(v, dir, 1, bytes)):
+            gib_zurück fehlschlag(BlockFehler(FAT_FORMAT, 1))
+        setze eltern: u64 auf (u64(byte_lesen_le16(bytes, 20)) * 65536 + u64(byte_lesen_le16(bytes, 26))) & 0x0FFFFFFF
+        wenn eltern == 0:
+            setze eltern auf v.layout.wurzel
+        weitergeben(fat_dir_punkte_pruefen(v, dir, eltern))
+        gib_zurück erfolg(eltern)
+
+# Quelle und Ziel referenzieren kurzzeitig dieselbe Kette. FAT32 besitzt kein
+# Journal: bei I/O-Fehler nach Veröffentlichung zwingend nur-lesend weiter.
+@nativ
+funktion fat_verschieben_aendern(v: ptr[FatVolume], datei: ptr[FatDatei], ziel: ptr[FatDatei]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze alt_speicher: FatDirPuffer auf 0
+        setze neu_speicher: FatDirPuffer auf 0
+        setze alt: puffer[u8] auf byteansicht(alt_speicher.bytes)
+        setze zielbytes: puffer[u8] auf byteansicht(neu_speicher.bytes)
+        weitergeben(fat_kette_io(v, datei.verzeichnis, datei.eintrag * 32, alt, falsch))
+        weitergeben(fat_kette_io(v, ziel.verzeichnis, ziel.eintrag * 32, zielbytes, falsch))
+        setze i: u64 auf 11
+        solange i < 32:
+            zielbytes[i] = alt[i]
+            setze i auf i + 1
+        weitergeben(fat_kette_io(v, ziel.verzeichnis, ziel.eintrag * 32, zielbytes, wahr))
+        wenn (datei.attribute & 16) != 0 und datei.verzeichnis != ziel.verzeichnis:
+            weitergeben(fat_kette_io(v, datei.cluster, 32, alt, falsch))
+            setze eltern: u64 auf ziel.verzeichnis
+            wenn eltern == v.layout.wurzel:
+                setze eltern auf 0
+            byte_schreiben_le16(alt, 20, u16(eltern / 65536))
+            byte_schreiben_le16(alt, 26, u16(eltern % 65536))
+            weitergeben(fat_kette_io(v, datei.cluster, 32, alt, wahr))
+        weitergeben(fat_dir_abtrennen(v, datei))
+        setze ziel.cluster auf datei.cluster
+        setze ziel.bytes auf datei.bytes
+        setze ziel.attribute auf datei.attribute
+        setze datei[0] auf ziel[0]
+        gib_zurück erfolg()
+
+# Kein Ersetzen eines vorhandenen Ziels; bestehende Quelldaten bleiben gleich.
+# Der Aufrufer führt seine offenen Handles auf den zurückgegebenen Eintrag nach.
+@nativ
+funktion fat_verschieben(v: ptr[FatVolume], datei: ptr[FatDatei], dir: u64, name: puffer[u8]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(fat_datei_pruefen(v, datei))
+        wenn (datei.attribute & 1) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 1))
+        wenn (datei.attribute & 16) != 0:
+            weitergeben(fat_dir_punkte_pruefen(v, datei.cluster, datei.verzeichnis))
+            setze vorfahr: u64 auf dir
+            setze schritte: u64 auf 0
+            solange wahr:
+                wenn vorfahr == datei.cluster:
+                    gib_zurück fehlschlag(BlockFehler(FAT_NAME, 1))
+                wenn vorfahr == v.layout.wurzel:
+                    stopp
+                wenn schritte >= v.layout.cluster_anzahl:
+                    gib_zurück fehlschlag(BlockFehler(FAT_KETTE, 1))
+                setze vorfahr auf weitergeben(fat_dir_eltern(v, vorfahr))
+                setze schritte auf schritte + 1
+        setze ziel: FatDatei auf weitergeben(fat_anlegen(v, dir, name, falsch))
+        setze resultat: ergebnis[void, BlockFehler] auf fat_verschieben_aendern(v, datei, zeiger(adresse_von(ziel)))
+        wenn nicht ist_erfolg(resultat):
+            setze v.nur_lesend auf wahr
+        gib_zurück resultat

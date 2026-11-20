@@ -1,125 +1,264 @@
-# P7-T27: NVMe nur lesend, Polling mit eigenen Admin-/I/O-Queues und GPT.
-# NVMe Base2.0c / NVM Command Set1.0c; Linuxv6.12 include/linux/nvme.h:
-# 837/1150 Opcodes,958/976/1312/1326 SQEs,2018 CQE.
-# AdminQ0 und I/OQ1 haben GETRENNTE Whitelists: 01h ist nur in AdminQ erlaubt.
-# DMA-Aufteilung:0 ASQ,1 ACQ,2 IOSQ,3 IOCQ,4 Daten,5 GPT-Kopf/Kontext,
-# 6 CRC-Tabelle,7..38 vollstaendige GPT-Eintragstabelle (128KiB).
-# Zustand:0 DMA,1 MMIO,2 TSC/us,3 Logger,4 BDF,5 CAP,6 Tiefe,7 DB-Schritt,
-# 8 Controller bereit,9 ASQ-Tail,10 ACQ-Head,11 ACQ-Phase,12 ASQ-Head,
-# 13 IOSQ-Tail,14 IOCQ-Head,15 IOCQ-Phase,16 IOSQ-Head,17 CID,
-# 18 Blockbytes,19 letzteLBA,20 NSID,21 IOCQ erstellt,22 IOSQ erstellt,
-# 23 defekt,24 letzterStatus,25/26 CompletionDW0/1,27 Opcode,28 Start-TSC,
-# 29 Kommandozeitlimit,30/31 Zielserie/Länge,32 Read-Anzahl,
-# 33/34 I/O-/Admin-CQ-Umlaeufe,35 letzterSQHD,36 NN,37 MDTS,
-# 38 Identitaet geprueft,39 letzteQueue,40 PCI-Command vorher,
-# 41 RDY-Zeitlimit/us,42 PCI-Zugriff aktiviert,43 GPT-Partitionsanzahl,44 Inventar.
-@nativ
-statisch NVME_WERTE: [u64; 48] auf 0
-@nativ
-statisch NVME_BEFEHL: [u64; 8] auf 0
+# NVMe Base 2.0c und NVM Command Set 1.0c. Linux v6.12 include/linux/nvme.h
+# 837/1150 Opcodes, 958/976/1312/1326 SQEs, 2018 CQE.
+# Vier Queue-Seiten, danach eine DMA-Seite für Befehlsdaten.
+# Die GPT-Probe belegt zusätzlich Seiten 5..38 für Kopf, CRC und Einträge.
+struktur NvmeWarteschlange:
+    sq_ende: u64
+    sq_kopf: u64
+    cq_kopf: u64
+    cq_phase: u64
+    cq_umlaeufe: u64
 
-@nativ
-funktion nvme_wert(feld: u64) -> u64:
-    unsicher:
-        gib_zurück speicher_lesen(adresse_von(NVME_WERTE) + feld * 8, 8)
+struktur NvmeController:
+    dma: u64
+    mmio: u64
+    tsc_us: u64
+    log: u64
+    bdf: u64
+    tiefe: u64
+    doorbell_schritt: u64
+    bereit: u64
+    cid: u64
+    cq_aktiv: u64
+    sq_aktiv: u64
+    defekt: u64
+    cqe_wort0: u64
+    start_tsc: u64
+    befehl_us: u64
+    namespace_anzahl: u64
+    mdts: u64
+    oncs: u64
+    daten_seiten: u64
+    identitaet: u64
+    pci_vorher: u64
+    rdy_us: u64
+    pci_aktiv: u64
+    inventar: u64
+    dauerbetrieb: bool
+    pci_ziel: u64
+    io_irq_index: u64
+    irq_zaehler: atom[u64]
+    abbruch_wort: u64
+    fehler_stufe: u64
+    cqe_status: u64
+    admin: NvmeWarteschlange
+    io: NvmeWarteschlange
+    befehl: [u64; 8]
 
-@nativ
-funktion nvme_setze(feld: u64, wert: u64) -> void:
-    unsicher:
-        speicher_schreiben(adresse_von(NVME_WERTE) + feld * 8, wert, 8)
+struktur NvmeNamespace:
+    kontroller: ptr[NvmeController]
+    block_bytes: u64
+    letzte_lba: u64
+    nsid: u64
+    serie: u64
+    serienlaenge: u64
+    lesezahl: u64
+    schreibbar: bool
 
 # Einzige Opcodefreigabe, auch unmittelbar vor jeder spaeteren Submission.
 @nativ
-funktion nvme_opcode_erlaubt(warteschlange: u64, opcode: u64) -> bool:
+funktion nvme_opcode_erlaubt(warteschlange: u64, opcode: u64, schreibbar: bool, abbruch: bool) -> bool:
     unsicher:
         wenn warteschlange == 1:
-            gib_zurück opcode == 0x02
+            gib_zurück opcode == 0x02 oder (schreibbar und (opcode == 0x00 oder opcode == 0x01 oder opcode == 0x09))
         wenn warteschlange != 0:
             gib_zurück falsch
-        gib_zurück opcode == 0x00 oder opcode == 0x01 oder opcode == 0x02 oder opcode == 0x04 oder opcode == 0x05 oder opcode == 0x06 oder opcode == 0x0A
+        gib_zurück opcode == 0x00 oder opcode == 0x01 oder opcode == 0x02 oder opcode == 0x04 oder opcode == 0x05 oder opcode == 0x06 oder opcode == 0x0A oder (opcode == 0x08 und abbruch)
 
-# PRP1 darf nur eigener Queue-/Daten-RAM sein. Kein SGL, Fused, Metadata,
-# Mehrblocktransfer, Offset-Log oder fremder Namespace in diesem Anfangspfad.
+# Linux v6.12 nvme.h:976–987 (NLB nullbasiert) und :1021–1044 (DSM).
+# Der Geräte-DMA-Bereich ist zusammenhängend und 4-KiB-ausgerichtet.
 @nativ
-funktion nvme_befehl_lesend(warteschlange: u64, befehl: u64) -> bool:
+funktion nvme_io_bereich(ns: ptr[NvmeNamespace], lba: u64, anzahl: u64) -> bool:
     unsicher:
-        wenn befehl == 0 oder nvme_wert(0) == 0 oder nvme_wert(6) < 2 oder nvme_wert(6) > 8:
+        gib_zurück anzahl != 0 und lba <= ns.letzte_lba und anzahl - 1 <= ns.letzte_lba - lba
+
+@nativ
+funktion nvme_io_maxbytes(ctrl: ptr[NvmeController]) -> u64:
+    unsicher:
+        wenn ctrl.daten_seiten == 0 oder ctrl.daten_seiten > 64:
+            gib_zurück 0
+        setze bytes: u64 auf ctrl.daten_seiten * 4096
+        wenn ctrl.mdts != 0 und ctrl.mdts < 6:
+            setze mdts_bytes: u64 auf u64(4096) << ctrl.mdts
+            wenn mdts_bytes < bytes:
+                gib_zurück mdts_bytes
+        gib_zurück bytes
+
+@nativ
+funktion nvme_rw_bytes(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], lba: u64, anzahl: u64) -> u64:
+    unsicher:
+        setze block_bytes: u64 auf ns.block_bytes
+        wenn anzahl > 65536 oder nicht nvme_io_bereich(ns, lba, anzahl):
+            gib_zurück 0
+        wenn block_bytes < 512 oder block_bytes > 4096 oder (block_bytes & (block_bytes - 1)) != 0:
+            gib_zurück 0
+        setze bytes: u64 auf anzahl * block_bytes
+        wenn bytes > nvme_io_maxbytes(ctrl):
+            gib_zurück 0
+        gib_zurück bytes
+
+# Für zwei DMA-Seiten zeigt PRP2 direkt auf Seite 2. Ab drei DMA-Seiten
+# zeigt PRP2 auf die separate Liste hinter dem Datenbereich.
+# Linux v6.12 drivers/nvme/host/pci.c:579 (nvme_pci_setup_prps).
+@nativ
+funktion nvme_prp2(ctrl: ptr[NvmeController], bytes: u64) -> u64:
+    unsicher:
+        wenn bytes <= 4096:
+            gib_zurück 0
+        wenn bytes <= 8192:
+            gib_zurück ctrl.dma + 5 * 4096
+        gib_zurück ctrl.dma + (4 + ctrl.daten_seiten) * 4096
+
+@nativ
+funktion nvme_io_gueltig(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], befehl: u64, opcode: u64) -> bool:
+    unsicher:
+        wenn ns.nsid == 0 oder ns.nsid >= 0xFFFFFFFF oder u64(speicher_lesen(befehl + 4, 4)) != ns.nsid:
+            gib_zurück falsch
+        setze prp1: u64 auf speicher_lesen(befehl + 24, 8)
+        setze prp2: u64 auf speicher_lesen(befehl + 32, 8)
+        setze lba: u64 auf speicher_lesen(befehl + 40, 8)
+        setze nlb: u64 auf speicher_lesen(befehl + 48, 8)
+        wenn opcode == 0:
+            gib_zurück prp1 == 0 und prp2 == 0 und lba == 0 und nlb == 0
+        wenn prp1 != ctrl.dma + 4 * 4096:
+            gib_zurück falsch
+        wenn opcode == 9:
+            wenn (ctrl.oncs & 4) == 0 oder prp2 != 0 oder lba != 0x0000000400000000 oder nlb != 0:
+                gib_zurück falsch
+            gib_zurück u64(speicher_lesen(prp1, 4)) == 0 und nvme_io_bereich(ns, speicher_lesen(prp1 + 8, 8), u64(speicher_lesen(prp1 + 4, 4)))
+        wenn nlb > 65535:
+            gib_zurück falsch
+        setze bytes: u64 auf nvme_rw_bytes(ctrl, ns, lba, nlb + 1)
+        wenn bytes == 0 oder prp2 != nvme_prp2(ctrl, bytes):
+            gib_zurück falsch
+        wenn bytes > 8192:
+            setze seite: u64 auf 1
+            solange seite < (bytes + 4095) / 4096:
+                wenn speicher_lesen(prp2 + (seite - 1) * 8, 8) != prp1 + seite * 4096:
+                    gib_zurück falsch
+                setze seite auf seite + 1
+        gib_zurück wahr
+
+@nativ
+funktion nvme_io_bauen(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], befehl: u64, opcode: u64, lba: u64, anzahl: u64) -> bool:
+    unsicher:
+        speicher_schreiben(befehl + 4, als(u32, ns.nsid), 4)
+        wenn opcode == 0:
+            gib_zurück lba == 0 und anzahl == 0
+        setze prp1: u64 auf ctrl.dma + 4 * 4096
+        speicher_schreiben(befehl + 24, prp1, 8)
+        wenn opcode == 9:
+            wenn (ctrl.oncs & 4) == 0 oder anzahl > 0xFFFFFFFF oder nicht nvme_io_bereich(ns, lba, anzahl):
+                gib_zurück falsch
+            speicher_schreiben(prp1, 0, 4)
+            speicher_schreiben(prp1 + 4, als(u32, anzahl), 4)
+            speicher_schreiben(prp1 + 8, lba, 8)
+            # CDW10.NR=0 (ein Bereich), CDW11.AD=1.
+            speicher_schreiben(befehl + 44, 4, 4)
+            gib_zurück wahr
+        setze bytes: u64 auf nvme_rw_bytes(ctrl, ns, lba, anzahl)
+        wenn bytes == 0:
+            gib_zurück falsch
+        setze prp2: u64 auf nvme_prp2(ctrl, bytes)
+        speicher_schreiben(befehl + 32, prp2, 8)
+        speicher_schreiben(befehl + 40, lba, 8)
+        speicher_schreiben(befehl + 48, als(u16, anzahl - 1), 2)
+        wenn bytes > 8192:
+            setze seite: u64 auf 1
+            solange seite < (bytes + 4095) / 4096:
+                speicher_schreiben(prp2 + (seite - 1) * 8, prp1 + seite * 4096, 8)
+                setze seite auf seite + 1
+        gib_zurück wahr
+
+# Keine freie SQE-API: Queue, Opcode, Namespace und alle DMA-Adressen
+# werden unmittelbar vor Übermittlung erneut geprüft.
+@nativ
+funktion nvme_befehl_gueltig(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], warteschlange: u64, befehl: u64) -> bool:
+    unsicher:
+        wenn befehl == 0 oder ctrl.dma == 0 oder ctrl.tiefe < 2 oder ctrl.tiefe > 64:
             gib_zurück falsch
         setze opcode: u64 auf u64(speicher_lesen(befehl, 1))
         setze nsid: u64 auf u64(speicher_lesen(befehl + 4, 4))
         setze prp: u64 auf speicher_lesen(befehl + 24, 8)
         setze wort10: u64 auf u64(speicher_lesen(befehl + 40, 4))
         setze wort11: u64 auf u64(speicher_lesen(befehl + 44, 4))
-        wenn nicht nvme_opcode_erlaubt(warteschlange, opcode) oder u64(speicher_lesen(befehl + 1, 1)) != 0 oder u64(speicher_lesen(befehl + 8, 8)) != 0 oder u64(speicher_lesen(befehl + 16, 8)) != 0 oder u64(speicher_lesen(befehl + 32, 8)) != 0:
-            gib_zurück falsch
-        wenn u64(speicher_lesen(befehl + 48, 8)) != 0 oder u64(speicher_lesen(befehl + 56, 8)) != 0:
+        wenn nicht nvme_opcode_erlaubt(warteschlange, opcode, ns.schreibbar, ctrl.abbruch_wort != 0) oder u64(speicher_lesen(befehl + 1, 1)) != 0 oder u64(speicher_lesen(befehl + 8, 8)) != 0 oder u64(speicher_lesen(befehl + 16, 8)) != 0 oder u64(speicher_lesen(befehl + 56, 8)) != 0:
             gib_zurück falsch
         wenn warteschlange == 1:
-            wenn nvme_wert(20) == 0 oder nvme_wert(20) >= 0xFFFFFFFF oder nsid != nvme_wert(20) oder prp != nvme_wert(0) + 4 * 4096:
-                gib_zurück falsch
-            wenn nvme_wert(18) < 512 oder nvme_wert(18) > 4096 oder (nvme_wert(18) & (nvme_wert(18) - 1)) != 0:
-                gib_zurück falsch
-            gib_zurück u64(speicher_lesen(befehl + 40, 8)) <= nvme_wert(19)
+            gib_zurück nvme_io_gueltig(ctrl, ns, befehl, opcode)
+        wenn u64(speicher_lesen(befehl + 32, 8)) != 0 oder u64(speicher_lesen(befehl + 48, 8)) != 0:
+            gib_zurück falsch
+        wenn opcode == 0x08:
+            gib_zurück nsid == 0 und prp == 0 und wort10 == ctrl.abbruch_wort und wort11 == 0
         wenn opcode == 0x00 oder opcode == 0x04:
             gib_zurück nsid == 0 und prp == 0 und wort10 == 1 und wort11 == 0
         wenn opcode == 0x01 oder opcode == 0x05:
-            wenn nsid != 0 oder wort10 != (1 | ((nvme_wert(6) - 1) << 16)):
+            wenn nsid != 0 oder wort10 != (1 | ((ctrl.tiefe - 1) << 16)):
                 gib_zurück falsch
             wenn opcode == 0x01:
-                gib_zurück prp == nvme_wert(0) + 2 * 4096 und wort11 == 0x00010001
-            gib_zurück prp == nvme_wert(0) + 3 * 4096 und wort11 == 1
+                gib_zurück prp == ctrl.dma + 2 * 4096 und wort11 == 0x00010001
+            setze flaggen: u64 auf 1
+            wenn ctrl.io_irq_index != 0:
+                setze flaggen auf 3 | (ctrl.io_irq_index << 16)
+            gib_zurück prp == ctrl.dma + 3 * 4096 und wort11 == flaggen
         wenn opcode == 0x06:
-            wenn prp != nvme_wert(0) + 4 * 4096 oder wort11 != 0:
+            wenn prp != ctrl.dma + 4 * 4096 oder wort11 != 0:
                 gib_zurück falsch
             wenn wort10 == 1:
                 gib_zurück nsid == 0
             wenn wort10 == 2:
                 # Linux v6.12 nvme.h NVME_ID_CNS_NS_ACTIVE_LIST / host/core.c:4128.
-                gib_zurück nsid == 0 und nvme_wert(44) != 0
-            gib_zurück wort10 == 0 und nvme_wert(20) > 0 und nvme_wert(20) < 0xFFFFFFFF und nsid == nvme_wert(20)
+                gib_zurück nsid == 0 und ctrl.inventar != 0
+            gib_zurück wort10 == 0 und ns.nsid > 0 und ns.nsid < 0xFFFFFFFF und nsid == ns.nsid
         wenn opcode == 0x0A:
             gib_zurück nsid == 0 und prp == 0 und wort10 == 7 und wort11 == 0
         # Error-Log,64Byte,RAE=1: vorhandenes Asynchronous Event nicht loeschen.
-        gib_zurück nsid == 0xFFFFFFFF und prp == nvme_wert(0) + 4 * 4096 und wort10 == 0x000F8001 und wort11 == 0
+        gib_zurück nsid == 0xFFFFFFFF und prp == ctrl.dma + 4 * 4096 und wort10 == 0x000F8001 und wort11 == 0
 
 @nativ
-funktion nvme_bauen(warteschlange: u64, opcode: u64, argument: u64) -> bool:
+funktion nvme_bauen(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], warteschlange: u64, opcode: u64, argument: u64, anzahl: u64) -> bool:
     unsicher:
-        setze befehl: u64 auf adresse_von(NVME_BEFEHL)
+        setze befehl: u64 auf adresse_von(ctrl.befehl)
         setze i: u64 auf 0
         solange i < 8:
             speicher_schreiben(befehl + i * 8, 0, 8)
             setze i auf i + 1
-        wenn nicht nvme_opcode_erlaubt(warteschlange, opcode):
+        wenn ctrl.dma == 0 oder (ctrl.dma & 4095) != 0 oder nicht nvme_opcode_erlaubt(warteschlange, opcode, ns.schreibbar, ctrl.abbruch_wort != 0):
             gib_zurück falsch
         wenn warteschlange == 1 oder (opcode == 0x06 und argument == 0):
-            wenn nvme_wert(20) == 0 oder nvme_wert(20) >= 0xFFFFFFFF:
+            wenn ns.nsid == 0 oder ns.nsid >= 0xFFFFFFFF:
                 gib_zurück falsch
         speicher_schreiben(befehl, u8(opcode), 1)
         wenn warteschlange == 1:
-            speicher_schreiben(befehl + 4, u32(nvme_wert(20)), 4)
-            speicher_schreiben(befehl + 24, nvme_wert(0) + 4 * 4096, 8)
-            speicher_schreiben(befehl + 40, argument, 8)
+            wenn nicht nvme_io_bauen(ctrl, ns, befehl, opcode, argument, anzahl):
+                gib_zurück falsch
+        sonst wenn opcode == 0x08:
+            wenn argument != ctrl.abbruch_wort:
+                gib_zurück falsch
+            speicher_schreiben(befehl + 40, als(u32, argument), 4)
         sonst wenn opcode == 0x00 oder opcode == 0x04:
             wenn argument != 1:
                 gib_zurück falsch
             speicher_schreiben(befehl + 40, 1, 4)
         sonst wenn opcode == 0x01 oder opcode == 0x05:
-            wenn argument != 1 oder nvme_wert(6) < 2 oder nvme_wert(6) > 8:
+            wenn argument != 1 oder ctrl.tiefe < 2 oder ctrl.tiefe > 64:
                 gib_zurück falsch
-            speicher_schreiben(befehl + 40, u32(1 | ((nvme_wert(6) - 1) << 16)), 4)
+            speicher_schreiben(befehl + 40, u32(1 | ((ctrl.tiefe - 1) << 16)), 4)
             wenn opcode == 0x01:
-                speicher_schreiben(befehl + 24, nvme_wert(0) + 2 * 4096, 8)
+                speicher_schreiben(befehl + 24, ctrl.dma + 2 * 4096, 8)
                 speicher_schreiben(befehl + 44, 0x00010001, 4)
             sonst:
-                speicher_schreiben(befehl + 24, nvme_wert(0) + 3 * 4096, 8)
-                speicher_schreiben(befehl + 44, 1, 4)
+                speicher_schreiben(befehl + 24, ctrl.dma + 3 * 4096, 8)
+                setze flaggen: u64 auf 1
+                wenn ctrl.io_irq_index != 0:
+                    setze flaggen auf 3 | (ctrl.io_irq_index << 16)
+                speicher_schreiben(befehl + 44, als(u32, flaggen), 4)
         sonst wenn opcode == 0x06:
-            wenn argument > 1 und (argument != 2 oder nvme_wert(44) == 0):
+            wenn argument > 1 und (argument != 2 oder ctrl.inventar == 0):
                 gib_zurück falsch
             wenn argument == 0:
-                speicher_schreiben(befehl + 4, u32(nvme_wert(20)), 4)
-            speicher_schreiben(befehl + 24, nvme_wert(0) + 4 * 4096, 8)
+                speicher_schreiben(befehl + 4, u32(ns.nsid), 4)
+            speicher_schreiben(befehl + 24, ctrl.dma + 4 * 4096, 8)
             speicher_schreiben(befehl + 40, u32(argument), 4)
         sonst wenn opcode == 0x0A:
             wenn argument != 7:
@@ -129,42 +268,34 @@ funktion nvme_bauen(warteschlange: u64, opcode: u64, argument: u64) -> bool:
             wenn argument != 1:
                 gib_zurück falsch
             speicher_schreiben(befehl + 4, 0xFFFFFFFF, 4)
-            speicher_schreiben(befehl + 24, nvme_wert(0) + 4 * 4096, 8)
+            speicher_schreiben(befehl + 24, ctrl.dma + 4 * 4096, 8)
             speicher_schreiben(befehl + 40, 0x000F8001, 4)
-        gib_zurück nvme_befehl_lesend(warteschlange, befehl)
+        gib_zurück nvme_befehl_gueltig(ctrl, ns, warteschlange, befehl)
 
-# Fehlerstatus gehoert ebenfalls zu einer gueltigen Completion und wird
-# spaeter vom Transport ausgewertet; hier nur Phase/CID/SQID/SQHD prüfen.
+# Fehlerstatus gehört ebenfalls zu einer gültigen Completion.
 @nativ
-funktion nvme_cqe_passend(warteschlange: u64, cid: u64, eintrag: u64, phase: u64) -> bool:
+funktion nvme_cqe_passend(tiefe: u64, warteschlange: u64, cid: u64, eintrag: u64, phase: u64) -> bool:
     unsicher:
-        wenn warteschlange > 1 oder cid > 65535 oder phase > 1 oder eintrag == 0 oder nvme_wert(6) < 2 oder nvme_wert(6) > 8:
+        wenn warteschlange > 1 oder cid > 65535 oder phase > 1 oder eintrag == 0 oder tiefe < 2 oder tiefe > 64:
             gib_zurück falsch
-        gib_zurück (u64(speicher_lesen(eintrag + 14, 2)) & 1) == phase und u64(speicher_lesen(eintrag + 12, 2)) == cid und u64(speicher_lesen(eintrag + 10, 2)) == warteschlange und u64(speicher_lesen(eintrag + 8, 2)) < nvme_wert(6)
+        gib_zurück (u64(speicher_lesen(eintrag + 14, 2)) & 1) == phase und u64(speicher_lesen(eintrag + 12, 2)) == cid und u64(speicher_lesen(eintrag + 10, 2)) == warteschlange und u64(speicher_lesen(eintrag + 8, 2)) < tiefe
 
 @nativ
-funktion nvme_cq_weiter(warteschlange: u64) -> void:
+funktion nvme_cq_weiter(queue: ptr[NvmeWarteschlange], tiefe: u64) -> void:
     unsicher:
-        setze feld: u64 auf 10
-        setze umlauf: u64 auf 34
-        wenn warteschlange == 1:
-            setze feld auf 14
-            setze umlauf auf 33
-        wenn warteschlange > 1 oder nvme_wert(6) < 2 oder nvme_wert(6) > 8:
+        wenn tiefe < 2 oder tiefe > 64 oder queue.cq_kopf >= tiefe oder queue.cq_phase > 1:
             gib_zurück
-        wenn nvme_wert(feld) >= nvme_wert(6) oder nvme_wert(feld + 1) > 1:
-            gib_zurück
-        setze kopf: u64 auf nvme_wert(feld) + 1
-        wenn kopf == nvme_wert(6):
+        setze kopf: u64 auf queue.cq_kopf + 1
+        wenn kopf == tiefe:
             setze kopf auf 0
-            nvme_setze(feld + 1, nvme_wert(feld + 1) ^ 1)
-            nvme_setze(umlauf, nvme_wert(umlauf) + 1)
-        nvme_setze(feld, kopf)
+            setze queue.cq_phase auf queue.cq_phase ^ 1
+            setze queue.cq_umlaeufe auf queue.cq_umlaeufe + 1
+        setze queue.cq_kopf auf kopf
 
 # NVM-Identify-Namespace: fuer diesen Pfad LBAF0..15, keine Metadaten/DPS.
 # Alle Eigenschaften erst nach kompletter Pruefung in den Zustand uebernehmen.
 @nativ
-funktion nvme_namespace_pruefen(daten: u64) -> bool:
+funktion nvme_namespace_pruefen(ns: ptr[NvmeNamespace], daten: u64) -> bool:
     unsicher:
         wenn daten == 0:
             gib_zurück falsch
@@ -180,8 +311,8 @@ funktion nvme_namespace_pruefen(daten: u64) -> bool:
         setze exponent auf u64(speicher_lesen(eintrag + 2, 1))
         wenn u64(speicher_lesen(eintrag, 2)) != 0 oder exponent < 9 oder exponent > 12:
             gib_zurück falsch
-        nvme_setze(18, u64(1) << exponent)
-        nvme_setze(19, bloecke - 1)
+        setze ns.block_bytes auf u64(1) << exponent
+        setze ns.letzte_lba auf bloecke - 1
         gib_zurück wahr
 
 # Identify Controller SN: alle 20 Bytes vergleichen. Normale Leerzeichen
@@ -273,39 +404,40 @@ konstante NV_T_ERRORLOG: [u8; _] auf "ERRORLOG-COUNT "
 konstante NV_T_GESPERRT: [u8; _] auf "OPCODE-GESPERRT "
 
 @nativ
-funktion nvme_log(text: u64, wert: u64) -> void:
+funktion nvme_log(ctrl: ptr[NvmeController], text: u64, wert: u64) -> void:
     unsicher:
-        wenn nvme_wert(3) != 0:
-            gp_log(nvme_wert(3), adresse_von(NV_T_PRAEFIX), text, wert)
+        wenn ctrl.log != 0:
+            gp_log(ctrl.log, adresse_von(NV_T_PRAEFIX), text, wert)
 
 @nativ
-funktion nvme_fehler(grund: u64) -> bool:
+funktion nvme_fehler(ctrl: ptr[NvmeController], grund: u64) -> bool:
     unsicher:
-        nvme_setze(23, 1)
-        nvme_log(adresse_von(NV_T_FEHLER), grund)
+        setze ctrl.defekt auf 1
+        setze ctrl.fehler_stufe auf grund
+        nvme_log(ctrl, adresse_von(NV_T_FEHLER), grund)
         gib_zurück falsch
 
 @nativ
-funktion nvme_rdy(erwartet: u32, zeit_us: u64) -> bool:
+funktion nvme_rdy(ctrl: ptr[NvmeController], erwartet: u32, zeit_us: u64) -> bool:
     unsicher:
         setze start: u64 auf takt()
         setze status: u32 auf 0
-        solange takt() - start < zeit_us * nvme_wert(2):
-            setze status auf nt_mmio_lese32(nvme_wert(1) + 0x1C)
+        solange takt() - start < zeit_us * ctrl.tsc_us:
+            setze status auf nt_mmio_lese32(ctrl.mmio + 0x1C)
             wenn (status & 1) == erwartet:
                 gib_zurück erwartet == 0 oder (status & 2) == 0
             wenn erwartet == 1 und (status & 2) != 0:
                 gib_zurück falsch
             assembler(ziel="x86_64", code="pause", clobber=["memory"])
-        nvme_log(adresse_von(NV_T_CSTS), u64(status))
+        nvme_log(ctrl, adresse_von(NV_T_CSTS), u64(status))
         gib_zurück falsch
 
 # Registerpaare: niedrige/hohe DWORDs, nur bei CC.EN=0 (Base Fig50/51).
 @nativ
-funktion nvme_basis_setzen(offset: u64, wert: u64) -> void:
+funktion nvme_basis_setzen(ctrl: ptr[NvmeController], offset: u64, wert: u64) -> void:
     unsicher:
-        nt_mmio_schreibe32(nvme_wert(1) + offset, u32(wert & 0xFFFFFFFF))
-        nt_mmio_schreibe32(nvme_wert(1) + offset + 4, u32(wert >> 32))
+        nt_mmio_schreibe32(ctrl.mmio + offset, u32(wert & 0xFFFFFFFF))
+        nt_mmio_schreibe32(ctrl.mmio + offset + 4, u32(wert >> 32))
 
 # PCI INTx, MSI und MSI-X ausschalten; INTMS wird NICHT angefasst, weil
 # Base §3.1.3.3 INTMS-Zugriffe bei aktivem MSI-X als undefiniert beschreibt.
@@ -333,111 +465,130 @@ funktion nvme_interrupts_aus(bdf: u64) -> bool:
 # Ein Kommando gleichzeitig. Keine freie SQE-API: nur interner Builder,
 # volle Queue-/Opcode-/Payloadpruefung direkt vor Kopie und Doorbell.
 @nativ
-funktion nvme_senden(warteschlange: u64, opcode: u64, argument: u64) -> bool:
+funktion nvme_senden(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], warteschlange: u64, opcode: u64, argument: u64, anzahl: u64) -> bool:
     unsicher:
-        wenn nvme_wert(8) == 0 oder nvme_wert(23) != 0 oder warteschlange > 1:
+        setze abbruch: bool auf warteschlange == 0 und opcode == 8 und ctrl.abbruch_wort != 0
+        wenn ctrl.bereit == 0 oder (ctrl.defekt != 0 und nicht abbruch) oder warteschlange > 1:
             gib_zurück falsch
-        setze inventar: bool auf nvme_wert(44) != 0
-        wenn nvme_wert(38) == 0 oder inventar:
+        setze inventar: bool auf ctrl.inventar != 0
+        wenn ctrl.identitaet == 0 oder inventar:
             wenn nicht (warteschlange == 0 und opcode == 6 und (argument == 1 oder (inventar und argument == 2))):
-                gib_zurück nvme_fehler(0x31)
-        wenn warteschlange == 1 und nvme_wert(22) == 0:
-            gib_zurück nvme_fehler(0x32)
-        wenn takt() - nvme_wert(28) > 30000000 * nvme_wert(2):
-            gib_zurück nvme_fehler(0x33)
-        wenn nicht nvme_opcode_erlaubt(warteschlange, opcode) oder nicht nvme_bauen(warteschlange, opcode, argument):
-            nvme_log(adresse_von(NV_T_GESPERRT), (warteschlange << 32) | opcode)
-            gib_zurück nvme_fehler(0x34)
-        setze feld: u64 auf 9
-        setze sq: u64 auf nvme_wert(0)
-        setze cq: u64 auf nvme_wert(0) + 4096
+                gib_zurück nvme_fehler(ctrl, 0x31)
+        wenn warteschlange == 1 und ctrl.sq_aktiv == 0:
+            gib_zurück nvme_fehler(ctrl, 0x32)
+        wenn nicht ctrl.dauerbetrieb und takt() - ctrl.start_tsc > 30000000 * ctrl.tsc_us:
+            gib_zurück nvme_fehler(ctrl, 0x33)
+        wenn nicht nvme_opcode_erlaubt(warteschlange, opcode, ns.schreibbar, ctrl.abbruch_wort != 0) oder nicht nvme_bauen(ctrl, ns, warteschlange, opcode, argument, anzahl):
+            nvme_log(ctrl, adresse_von(NV_T_GESPERRT), (warteschlange << 32) | opcode)
+            gib_zurück nvme_fehler(ctrl, 0x34)
+        setze queue: ptr[NvmeWarteschlange] auf zeiger(adresse_von(ctrl.admin))
+        setze sq: u64 auf ctrl.dma
+        setze cq: u64 auf ctrl.dma + 4096
         wenn warteschlange == 1:
-            setze feld auf 13
+            setze queue auf zeiger(adresse_von(ctrl.io))
             setze sq auf sq + 2 * 4096
             setze cq auf cq + 2 * 4096
-        setze ende: u64 auf nvme_wert(feld)
-        setze naechste: u64 auf (ende + 1) % nvme_wert(6)
-        setze kopf: u64 auf nvme_wert(feld + 1)
-        wenn ende >= nvme_wert(6) oder kopf >= nvme_wert(6) oder naechste == nvme_wert(feld + 3):
-            gib_zurück nvme_fehler(0x35)
-        setze cid: u64 auf (nvme_wert(17) + 1) & 0xFFFF
+        setze ende: u64 auf queue.sq_ende
+        setze naechste: u64 auf (ende + 1) % ctrl.tiefe
+        setze kopf: u64 auf queue.cq_kopf
+        wenn ende >= ctrl.tiefe oder kopf >= ctrl.tiefe oder naechste == queue.sq_kopf:
+            gib_zurück nvme_fehler(ctrl, 0x35)
+        setze cid: u64 auf (ctrl.cid + 1) & 0xFFFF
         wenn cid == 0:
             setze cid auf 1
-        setze befehl: u64 auf adresse_von(NVME_BEFEHL)
+        setze befehl: u64 auf adresse_von(ctrl.befehl)
         speicher_schreiben(befehl + 2, u16(cid), 2)
-        wenn nicht nvme_befehl_lesend(warteschlange, befehl):
-            gib_zurück nvme_fehler(0x36)
-        nt_null(nvme_wert(0) + 4 * 4096, 4096)
+        wenn nicht nvme_befehl_gueltig(ctrl, ns, warteschlange, befehl):
+            gib_zurück nvme_fehler(ctrl, 0x36)
+        wenn warteschlange == 0:
+            nt_null(ctrl.dma + 4 * 4096, 4096)
         nt_kopiere(sq + ende * 64, befehl, 64)
-        nvme_setze(17, cid)
-        nvme_setze(27, opcode)
-        nvme_setze(39, warteschlange)
-        nvme_setze(feld, naechste)
-        nvme_log(adresse_von(NV_T_QUEUE), warteschlange)
-        nvme_log(adresse_von(NV_T_OPCODE), opcode)
-        nvme_log(adresse_von(NV_T_CID), cid)
-        nt_mmio_glocke32(nvme_wert(1) + 0x1000 + 2 * warteschlange * nvme_wert(7), u32(naechste))
+        setze ctrl.cid auf cid
+        setze queue.sq_ende auf naechste
+        nvme_log(ctrl, adresse_von(NV_T_QUEUE), warteschlange)
+        nvme_log(ctrl, adresse_von(NV_T_OPCODE), opcode)
+        nvme_log(ctrl, adresse_von(NV_T_CID), cid)
+        setze ctrl.cqe_status auf 0
+        setze irq_vorher: u64 auf atom_laden(ctrl.irq_zaehler, ordnung=erwerben)
+        nt_mmio_glocke32(ctrl.mmio + 0x1000 + 2 * warteschlange * ctrl.doorbell_schritt, u32(naechste))
         setze start: u64 auf takt()
         setze eintrag: u64 auf cq + kopf * 16
         setze status_ptr: ptr[u32] auf zeiger(eintrag + 12)
         setze letzte: u32 auf 0
-        solange takt() - start < nvme_wert(29) * nvme_wert(2):
+        setze zeit_us: u64 auf ctrl.befehl_us
+        wenn abbruch:
+            setze zeit_us auf 250000
+        solange takt() - start < zeit_us * ctrl.tsc_us:
+            setze irq_eingetroffen: bool auf warteschlange == 0 oder ctrl.io_irq_index == 0 oder atom_laden(ctrl.irq_zaehler, ordnung=erwerben) != irq_vorher
             setze letzte auf volatile_lesen(status_ptr)
-            wenn ((u64(letzte) >> 16) & 1) == nvme_wert(feld + 2):
+            wenn irq_eingetroffen und ((u64(letzte) >> 16) & 1) == queue.cq_phase:
                 lesebarriere()
-                setze sicherung: u64 auf nvme_wert(0) + 5 * 4096
-                nt_kopiere(sicherung, eintrag, 16)
-                nvme_log(adresse_von(NV_T_DW0), u64(speicher_lesen(sicherung, 4)))
-                nvme_log(adresse_von(NV_T_DW1), u64(speicher_lesen(sicherung + 4, 4)))
-                nvme_log(adresse_von(NV_T_DW2), u64(speicher_lesen(sicherung + 8, 4)))
-                nvme_log(adresse_von(NV_T_DW3), u64(speicher_lesen(sicherung + 12, 4)))
-                wenn nicht nvme_cqe_passend(warteschlange, cid, sicherung, nvme_wert(feld + 2)):
-                    gib_zurück nvme_fehler(0x37)
-                setze status: u64 auf u64(speicher_lesen(sicherung + 14, 2))
-                nvme_setze(24, status)
-                nvme_setze(25, u64(speicher_lesen(sicherung, 4)))
-                nvme_setze(26, u64(speicher_lesen(sicherung + 4, 4)))
-                nvme_setze(35, u64(speicher_lesen(sicherung + 8, 2)))
-                nvme_setze(feld + 3, nvme_wert(35))
-                nvme_cq_weiter(warteschlange)
-                nt_mmio_glocke32(nvme_wert(1) + 0x1000 + (2 * warteschlange + 1) * nvme_wert(7), u32(nvme_wert(feld + 1)))
-                nvme_log(adresse_von(NV_T_SC), (status >> 1) & 255)
-                nvme_log(adresse_von(NV_T_SCT), (status >> 9) & 7)
-                nvme_log(adresse_von(NV_T_DNR), (status >> 15) & 1)
+                nvme_log(ctrl, adresse_von(NV_T_DW0), u64(speicher_lesen(eintrag, 4)))
+                nvme_log(ctrl, adresse_von(NV_T_DW1), u64(speicher_lesen(eintrag + 4, 4)))
+                nvme_log(ctrl, adresse_von(NV_T_DW2), u64(speicher_lesen(eintrag + 8, 4)))
+                nvme_log(ctrl, adresse_von(NV_T_DW3), u64(speicher_lesen(eintrag + 12, 4)))
+                wenn nicht nvme_cqe_passend(ctrl.tiefe, warteschlange, cid, eintrag, queue.cq_phase):
+                    gib_zurück nvme_fehler(ctrl, 0x37)
+                setze status: u64 auf u64(speicher_lesen(eintrag + 14, 2))
+                setze ctrl.cqe_status auf status
+                setze ctrl.cqe_wort0 auf u64(speicher_lesen(eintrag, 4))
+                setze queue.sq_kopf auf u64(speicher_lesen(eintrag + 8, 2))
+                nvme_cq_weiter(queue, ctrl.tiefe)
+                nt_mmio_glocke32(ctrl.mmio + 0x1000 + (2 * warteschlange + 1) * ctrl.doorbell_schritt, u32(queue.cq_kopf))
+                nvme_log(ctrl, adresse_von(NV_T_SC), (status >> 1) & 255)
+                nvme_log(ctrl, adresse_von(NV_T_SCT), (status >> 9) & 7)
+                nvme_log(ctrl, adresse_von(NV_T_DNR), (status >> 15) & 1)
                 gib_zurück (status & 0xFFE) == 0
-            wenn (nt_mmio_lese32(nvme_wert(1) + 0x1C) & 2) != 0:
-                gib_zurück nvme_fehler(0x38)
+            wenn (nt_mmio_lese32(ctrl.mmio + 0x1C) & 2) != 0:
+                gib_zurück nvme_fehler(ctrl, 0x38)
             assembler(ziel="x86_64", code="pause", clobber=["memory"])
-        gib_zurück nvme_fehler(0x39)
+        gib_zurück nvme_fehler(ctrl, 0x39)
+
+# Admin Abort betrifft genau die letzte I/O-CID. Auch bei positiver
+# Abort-Antwort wird der Controller vor einer Pufferfreigabe zurückgesetzt.
+# Linux v6.12 include/linux/nvme.h:1350–1356 und drivers/nvme/host/pci.c:1316–1415.
+@nativ
+funktion nvme_abbrechen(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> bool:
+    unsicher:
+        wenn nicht ctrl.dauerbetrieb oder ctrl.fehler_stufe != 0x39 oder ctrl.cid == 0:
+            gib_zurück falsch
+        setze ctrl.abbruch_wort auf (ctrl.cid << 16) | 1
+        setze gut: bool auf nvme_senden(ctrl, ns, 0, 8, ctrl.abbruch_wort, 1)
+        setze ctrl.abbruch_wort auf 0
+        gib_zurück gut
 
 # Auch bei Timeout keine Queue weiterbenutzen. RAM bleibt beim Aufrufer
 # reserviert; erst RDY=0, danach PCI-Busmaster aus, keine Freigabe im PFA.
 @nativ
-funktion nvme_anhalten() -> bool:
+funktion nvme_anhalten(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> bool:
     unsicher:
         setze ok: bool auf wahr
-        wenn nvme_wert(8) != 0 und nvme_wert(23) == 0:
-            wenn nvme_wert(22) != 0:
-                wenn nicht nvme_senden(0, 0, 1):
+        wenn ctrl.bereit != 0 und ctrl.defekt == 0:
+            wenn ctrl.sq_aktiv != 0:
+                wenn nicht nvme_senden(ctrl, ns, 0, 0, 1, 1):
                     setze ok auf falsch
-                nvme_setze(22, 0)
-            wenn nvme_wert(21) != 0 und nvme_wert(23) == 0:
-                wenn nicht nvme_senden(0, 4, 1):
+                setze ctrl.sq_aktiv auf 0
+            wenn ctrl.cq_aktiv != 0 und ctrl.defekt == 0:
+                wenn nicht nvme_senden(ctrl, ns, 0, 4, 1, 1):
                     setze ok auf falsch
-                nvme_setze(21, 0)
-        wenn nvme_wert(1) != 0:
-            nt_mmio_schreibe32(nvme_wert(1) + 0x14, nt_mmio_lese32(nvme_wert(1) + 0x14) & 0xFFFFFFFE)
-            wenn nicht nvme_rdy(0, nvme_wert(41)):
+                setze ctrl.cq_aktiv auf 0
+        wenn ctrl.mmio != 0 und ctrl.pci_aktiv != 0:
+            nt_mmio_schreibe32(ctrl.mmio + 0x14, nt_mmio_lese32(ctrl.mmio + 0x14) & 0xFFFFFFFE)
+            wenn nicht nvme_rdy(ctrl, 0, ctrl.rdy_us):
                 setze ok auf falsch
-            nvme_log(adresse_von(NV_T_CC), u64(nt_mmio_lese32(nvme_wert(1) + 0x14)))
-            nvme_log(adresse_von(NV_T_CSTS), u64(nt_mmio_lese32(nvme_wert(1) + 0x1C)))
-        wenn nvme_wert(42) != 0:
-            pci_schreibe32(adresse_von(NVME_PCI), nvme_wert(4), 4, (nvme_wert(40) | 0x402) & 0xFFFB)
-        nvme_setze(8, 0)
+            nvme_log(ctrl, adresse_von(NV_T_CC), u64(nt_mmio_lese32(ctrl.mmio + 0x14)))
+            nvme_log(ctrl, adresse_von(NV_T_CSTS), u64(nt_mmio_lese32(ctrl.mmio + 0x1C)))
+        wenn ctrl.pci_aktiv != 0:
+            pci_schreibe32(adresse_von(NVME_PCI), ctrl.bdf, 4, (ctrl.pci_vorher | 0x402) & 0xFFFB)
+            wenn (pci_lese32(adresse_von(NVME_PCI), ctrl.bdf, 4) & 4) != 0:
+                setze ok auf falsch
+            sonst:
+                setze ctrl.pci_aktiv auf 0
+        setze ctrl.bereit auf 0
         gib_zurück ok
 
 aus "../uefi/hardware_crc" importiere hw_crc_tabelle
-aus "speicher_gpt" importiere gp_kontext, gp_lesen, gp_anzahl
+aus "speicher_gpt" importiere gp_kontext, gp_lesen
 # pci_lese32 erwartet einen Kontextzeiger, auch beim CF8/CFC-Fallback.
 @nativ
 statisch NVME_PCI: [u64; 1] auf 0
@@ -456,12 +607,12 @@ konstante NV_T_INV_BEREIT: [u8; _] auf "MOO-KERNEL NVME INVENTAR BEREIT "
 # Identify Controller SN[20], danach die erste aktive Namespace-Liste
 # (Linux v6.12 include/linux/nvme.h und drivers/nvme/host/core.c:4128).
 @nativ
-funktion nvme_inventar(daten: u64) -> bool:
+funktion nvme_inventar(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], daten: u64) -> bool:
     unsicher:
-        nvme_log(adresse_von(NV_T_INV_SN0), speicher_lesen(daten + 4, 8))
-        nvme_log(adresse_von(NV_T_INV_SN1), speicher_lesen(daten + 12, 8))
-        nvme_log(adresse_von(NV_T_INV_SN2), u64(speicher_lesen(daten + 20, 4)))
-        wenn nicht nvme_senden(0, 6, 2):
+        nvme_log(ctrl, adresse_von(NV_T_INV_SN0), speicher_lesen(daten + 4, 8))
+        nvme_log(ctrl, adresse_von(NV_T_INV_SN1), speicher_lesen(daten + 12, 8))
+        nvme_log(ctrl, adresse_von(NV_T_INV_SN2), u64(speicher_lesen(daten + 20, 4)))
+        wenn nicht nvme_senden(ctrl, ns, 0, 6, 2, 1):
             gib_zurück falsch
         setze i: u64 auf 0
         setze letzte: u64 auf 0
@@ -471,7 +622,7 @@ funktion nvme_inventar(daten: u64) -> bool:
                 gib_zurück wahr
             wenn id <= letzte oder id == 0xFFFFFFFF:
                 gib_zurück falsch
-            nvme_log(adresse_von(NV_T_INV_NSID), id)
+            nvme_log(ctrl, adresse_von(NV_T_INV_NSID), id)
             setze letzte auf id
             setze i auf i + 1
         # Vollstaendigkeit ist bei einer vollen Seite nicht belegt.
@@ -480,57 +631,68 @@ funktion nvme_inventar(daten: u64) -> bool:
 # Zielkontext: u64 Magic,BDF,NSID,Serienlaenge; anschliessend 20 ASCII-Bytes.
 # NSID und Serienlaenge beide null: ausschliesslich Identify-Inventar.
 @nativ
-funktion nvme_oeffnen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel: u64) -> bool:
+funktion nvme_oeffnen(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace], dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel: u64) -> bool:
     unsicher:
-        nt_null(adresse_von(NVME_WERTE), 48 * 8)
-        nvme_setze(3, log)
+        setze ctrl.log auf log
+        setze ns.kontroller auf ctrl
         wenn dma == 0 oder (dma & 4095) != 0 oder dma > 0xFFF00000 oder tsc_us == 0 oder tsc_us > 1000000 oder map == 0 oder ziel == 0:
-            gib_zurück nvme_fehler(0x10)
+            gib_zurück nvme_fehler(ctrl, 0x10)
         wenn speicher_lesen(ziel, 8) != 0x4E564D45524F3031:
-            gib_zurück nvme_fehler(0x11)
+            gib_zurück nvme_fehler(ctrl, 0x11)
         setze bdf: u64 auf speicher_lesen(ziel + 8, 8)
         setze nsid: u64 auf speicher_lesen(ziel + 16, 8)
         setze serienlaenge: u64 auf speicher_lesen(ziel + 24, 8)
         setze inventar: bool auf nsid == 0 und serienlaenge == 0
         wenn bdf >= 65536 oder (nicht inventar und (nsid == 0 oder nsid >= 0xFFFFFFFF oder serienlaenge != 20)):
-            gib_zurück nvme_fehler(0x12)
-        nvme_setze(44, u64(inventar))
-        nvme_setze(0, dma)
-        nvme_setze(2, tsc_us)
-        nvme_setze(4, bdf)
-        nvme_setze(20, nsid)
-        nvme_setze(30, ziel + 32)
-        nvme_setze(31, serienlaenge)
-        nvme_setze(41, 1000000)
-        nvme_log(adresse_von(NV_T_BDF), bdf)
-        wenn (pci_lese32(adresse_von(NVME_PCI), bdf, 0) & 0xFFFF) == 0xFFFF oder (pci_lese32(adresse_von(NVME_PCI), bdf, 8) >> 8) != 0x010802 oder ((pci_lese32(adresse_von(NVME_PCI), bdf, 12) >> 16) & 0x7F) != 0:
-            gib_zurück nvme_fehler(0x13)
+            gib_zurück nvme_fehler(ctrl, 0x12)
+        setze ctrl.inventar auf u64(inventar)
+        setze ctrl.dma auf dma
+        setze ctrl.daten_seiten auf 1
+        wenn ctrl.dauerbetrieb:
+            setze ctrl.daten_seiten auf 64
+            wenn inventar oder ctrl.pci_ziel == 0:
+                gib_zurück nvme_fehler(ctrl, 0x12)
+        setze ctrl.tsc_us auf tsc_us
+        setze ctrl.bdf auf bdf
+        setze ns.nsid auf nsid
+        setze ns.serie auf ziel + 32
+        setze ns.serienlaenge auf serienlaenge
+        setze ctrl.rdy_us auf 1000000
+        nvme_log(ctrl, adresse_von(NV_T_BDF), bdf)
+        setze pci_id: u64 auf pci_lese32(adresse_von(NVME_PCI), bdf, 0)
+        wenn ctrl.pci_ziel != 0 und pci_id != ctrl.pci_ziel:
+            gib_zurück nvme_fehler(ctrl, 0x13)
+        wenn (pci_id & 0xFFFF) == 0xFFFF oder (pci_lese32(adresse_von(NVME_PCI), bdf, 8) >> 8) != 0x010802 oder ((pci_lese32(adresse_von(NVME_PCI), bdf, 12) >> 16) & 0x7F) != 0:
+            gib_zurück nvme_fehler(ctrl, 0x13)
         setze phys: u64 auf nt_bar(adresse_von(NVME_PCI), bdf)
         wenn phys == 0 oder (phys & 4095) != 0:
-            gib_zurück nvme_fehler(0x14)
-        nvme_setze(40, pci_lese32(adresse_von(NVME_PCI), bdf, 4) & 0xFFFF)
-        pci_schreibe32(adresse_von(NVME_PCI), bdf, 4, nvme_wert(40) | 0x402)
-        nvme_setze(42, 1)
+            gib_zurück nvme_fehler(ctrl, 0x14)
+        setze ctrl.pci_vorher auf pci_lese32(adresse_von(NVME_PCI), bdf, 4) & 0xFFFF
+        pci_schreibe32(adresse_von(NVME_PCI), bdf, 4, ctrl.pci_vorher | 0x402)
+        setze ctrl.pci_aktiv auf 1
         wenn nicht nvme_interrupts_aus(bdf):
-            gib_zurück nvme_fehler(0x15)
+            gib_zurück nvme_fehler(ctrl, 0x15)
         setze abbilden: ptr[fn[sysv64](u64, u64, u64) -> u64] auf zeiger(map)
         # Max DSTRD=15: vier Doorbells liegen unter 1MiB.
         setze mmio: u64 auf abbilden(bi, phys, 0x100000)
         wenn mmio == 0:
-            gib_zurück nvme_fehler(0x16)
-        nvme_setze(1, mmio)
+            gib_zurück nvme_fehler(ctrl, 0x16)
+        setze ctrl.mmio auf mmio
         setze cap: u64 auf u64(nt_mmio_lese32(mmio)) | (u64(nt_mmio_lese32(mmio + 4)) << 32)
         setze version: u64 auf u64(nt_mmio_lese32(mmio + 8))
-        nvme_log(adresse_von(NV_T_CAP), cap)
-        nvme_log(adresse_von(NV_T_VERSION), version)
+        nvme_log(ctrl, adresse_von(NV_T_CAP), cap)
+        nvme_log(ctrl, adresse_von(NV_T_VERSION), version)
         wenn (cap & 0xFFFF) < 1 oder ((cap >> 48) & 15) != 0 oder (cap & (u64(1) << 37)) == 0 oder version < 0x00010300 oder version == 0xFFFFFFFF:
-            gib_zurück nvme_fehler(0x17)
-        nvme_setze(5, cap)
+            gib_zurück nvme_fehler(ctrl, 0x17)
         setze tiefe: u64 auf (cap & 0xFFFF) + 1
-        wenn tiefe > 8:
+        wenn ctrl.dauerbetrieb:
+            wenn tiefe < 64:
+                gib_zurück nvme_fehler(ctrl, 0x17)
+            setze tiefe auf 64
+        sonst wenn tiefe > 8:
             setze tiefe auf 8
-        nvme_setze(6, tiefe)
-        nvme_setze(7, u64(4) << ((cap >> 32) & 15))
+        setze ctrl.tiefe auf tiefe
+        setze ctrl.doorbell_schritt auf u64(4) << ((cap >> 32) & 15)
         setze zeit: u64 auf (((cap >> 24) & 255) + 1) * 500000
         wenn (cap & (u64(1) << 59)) != 0:
             setze medienzeit: u64 auf (u64(nt_mmio_lese32(mmio + 0x68)) & 0xFFFF) * 500000
@@ -538,92 +700,105 @@ funktion nvme_oeffnen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel: 
                 setze zeit auf medienzeit
         # Diagnosebudget: laengere CRTO-Werte explizit nicht unterstuetzt.
         wenn zeit > 128000000:
-            gib_zurück nvme_fehler(0x18)
-        nvme_setze(41, zeit)
+            gib_zurück nvme_fehler(ctrl, 0x18)
+        setze ctrl.rdy_us auf zeit
         nt_mmio_schreibe32(mmio + 0x14, nt_mmio_lese32(mmio + 0x14) & 0xFFFFFFFE)
-        wenn nicht nvme_rdy(0, zeit):
-            gib_zurück nvme_fehler(0x19)
-        nt_null(dma, 39 * 4096)
-        nvme_setze(11, 1)
-        nvme_setze(15, 1)
-        nvme_setze(29, 2000000)
+        wenn nicht nvme_rdy(ctrl, 0, zeit):
+            gib_zurück nvme_fehler(ctrl, 0x19)
+        wenn ctrl.dauerbetrieb:
+            nt_null(dma, (5 + ctrl.daten_seiten) * 4096)
+        sonst:
+            nt_null(dma, 39 * 4096)
+        setze ctrl.admin.cq_phase auf 1
+        setze ctrl.io.cq_phase auf 1
+        setze ctrl.befehl_us auf 2000000
         nt_mmio_schreibe32(mmio + 0x24, u32((tiefe - 1) | ((tiefe - 1) << 16)))
-        nvme_basis_setzen(0x28, dma)
-        nvme_basis_setzen(0x30, dma + 4096)
-        pci_schreibe32(adresse_von(NVME_PCI), bdf, 4, nvme_wert(40) | 0x406)
+        nvme_basis_setzen(ctrl, 0x28, dma)
+        nvme_basis_setzen(ctrl, 0x30, dma + 4096)
+        pci_schreibe32(adresse_von(NVME_PCI), bdf, 4, ctrl.pci_vorher | 0x406)
         # CSS=NVM, MPS=4KiB, round-robin, CRIME=0, SHN=0, SQE64/CQE16.
         nt_mmio_glocke32(mmio + 0x14, u32(0x00460001))
-        wenn nicht nvme_rdy(1, zeit):
-            gib_zurück nvme_fehler(0x1A)
-        nvme_setze(8, 1)
-        nvme_setze(28, takt())
-        wenn nicht nvme_senden(0, 6, 1):
-            gib_zurück nvme_fehler(0x1B)
+        wenn nicht nvme_rdy(ctrl, 1, zeit):
+            gib_zurück nvme_fehler(ctrl, 0x1A)
+        setze ctrl.bereit auf 1
+        setze ctrl.start_tsc auf takt()
+        wenn nicht nvme_senden(ctrl, ns, 0, 6, 1, 1):
+            gib_zurück nvme_fehler(ctrl, 0x1B)
         setze daten: u64 auf dma + 4 * 4096
         wenn inventar:
-            gib_zurück nvme_inventar(daten)
-        wenn nicht nvme_serie(daten, nvme_wert(30), nvme_wert(31)):
-            nvme_log(adresse_von(NV_T_SERIE), 0)
-            gib_zurück nvme_fehler(0x1C)
-        nvme_setze(38, 1)
-        nvme_log(adresse_von(NV_T_SERIE), 1)
-        nvme_setze(36, u64(speicher_lesen(daten + 516, 4)))
-        nvme_setze(37, u64(speicher_lesen(daten + 77, 1)))
+            gib_zurück nvme_inventar(ctrl, ns, daten)
+        wenn nicht nvme_serie(daten, ns.serie, ns.serienlaenge):
+            nvme_log(ctrl, adresse_von(NV_T_SERIE), 0)
+            gib_zurück nvme_fehler(ctrl, 0x1C)
+        setze ctrl.identitaet auf 1
+        nvme_log(ctrl, adresse_von(NV_T_SERIE), 1)
+        setze ctrl.namespace_anzahl auf u64(speicher_lesen(daten + 516, 4))
+        setze ctrl.mdts auf u64(speicher_lesen(daten + 77, 1))
+        setze ctrl.oncs auf u64(speicher_lesen(daten + 520, 2))
         setze sqes: u64 auf u64(speicher_lesen(daten + 512, 1))
         setze cqes: u64 auf u64(speicher_lesen(daten + 513, 1))
-        wenn nvme_wert(36) == 0 oder (sqes & 15) > 6 oder (sqes >> 4) < 6 oder (cqes & 15) > 4 oder (cqes >> 4) < 4:
-            gib_zurück nvme_fehler(0x1D)
-        wenn nicht nvme_senden(0, 6, 0) oder nicht nvme_namespace_pruefen(daten):
-            gib_zurück nvme_fehler(0x1E)
-        nvme_log(adresse_von(NV_T_NSID), nsid)
-        nvme_log(adresse_von(NV_T_BLOCK), nvme_wert(18))
-        nvme_log(adresse_von(NV_T_LETZTE), nvme_wert(19))
+        wenn ctrl.namespace_anzahl == 0 oder (sqes & 15) > 6 oder (sqes >> 4) < 6 oder (cqes & 15) > 4 oder (cqes >> 4) < 4:
+            gib_zurück nvme_fehler(ctrl, 0x1D)
+        wenn nicht nvme_senden(ctrl, ns, 0, 6, 0, 1) oder nicht nvme_namespace_pruefen(ns, daten):
+            gib_zurück nvme_fehler(ctrl, 0x1E)
+        nvme_log(ctrl, adresse_von(NV_T_NSID), nsid)
+        nvme_log(ctrl, adresse_von(NV_T_BLOCK), ns.block_bytes)
+        nvme_log(ctrl, adresse_von(NV_T_LETZTE), ns.letzte_lba)
         # Kein Set Features: nur den aktuellen Queue-Bestand abfragen.
-        wenn nicht nvme_senden(0, 0x0A, 7):
-            gib_zurück nvme_fehler(0x1F)
-        nvme_log(adresse_von(NV_T_GETFEATURES), nvme_wert(25))
-        wenn (nvme_wert(25) & 0xFFFF) == 0xFFFF oder (nvme_wert(25) >> 16) == 0xFFFF:
-            gib_zurück nvme_fehler(0x20)
-        wenn nicht nvme_senden(0, 2, 1):
-            gib_zurück nvme_fehler(0x21)
-        nvme_log(adresse_von(NV_T_ERRORLOG), speicher_lesen(daten, 8))
-        wenn nicht nvme_senden(0, 5, 1):
-            gib_zurück nvme_fehler(0x22)
-        nvme_setze(21, 1)
-        wenn nicht nvme_senden(0, 1, 1):
-            gib_zurück nvme_fehler(0x23)
-        nvme_setze(22, 1)
+        wenn nicht nvme_senden(ctrl, ns, 0, 0x0A, 7, 1):
+            gib_zurück nvme_fehler(ctrl, 0x1F)
+        nvme_log(ctrl, adresse_von(NV_T_GETFEATURES), ctrl.cqe_wort0)
+        wenn (ctrl.cqe_wort0 & 0xFFFF) == 0xFFFF oder (ctrl.cqe_wort0 >> 16) == 0xFFFF:
+            gib_zurück nvme_fehler(ctrl, 0x20)
+        wenn nicht nvme_senden(ctrl, ns, 0, 2, 1, 1):
+            gib_zurück nvme_fehler(ctrl, 0x21)
+        nvme_log(ctrl, adresse_von(NV_T_ERRORLOG), speicher_lesen(daten, 8))
+        gib_zurück wahr
+
+@nativ
+funktion nvme_io_einrichten(ctrl: ptr[NvmeController], ns: ptr[NvmeNamespace]) -> bool:
+    unsicher:
+        wenn nicht nvme_senden(ctrl, ns, 0, 5, 1, 1):
+            gib_zurück nvme_fehler(ctrl, 0x22)
+        setze ctrl.cq_aktiv auf 1
+        wenn nicht nvme_senden(ctrl, ns, 0, 1, 1, 1):
+            gib_zurück nvme_fehler(ctrl, 0x23)
+        setze ctrl.sq_aktiv auf 1
         gib_zurück wahr
 
 @nativ
 @aufrufkonvention("sysv64")
-funktion nvme_lese_block(lba: u64) -> bool:
+funktion nvme_lese_block(lba: u64, geraet: u64) -> bool:
     unsicher:
-        wenn lba > nvme_wert(19) oder nicht nvme_senden(1, 2, lba):
+        setze ns: ptr[NvmeNamespace] auf zeiger(geraet)
+        wenn lba > ns.letzte_lba oder nicht nvme_senden(ns.kontroller, ns, 1, 2, lba, 1):
             gib_zurück falsch
-        nvme_setze(32, nvme_wert(32) + 1)
+        setze ns.lesezahl auf ns.lesezahl + 1
         gib_zurück wahr
 
 @nativ
 funktion nvme_pruefen(dma: u64, tsc_us: u64, bi: u64, map: u64, log: u64, ziel: u64) -> bool:
     unsicher:
+        setze kontroller: NvmeController auf 0
+        setze namespace: NvmeNamespace auf 0
+        setze ctrl: ptr[NvmeController] auf zeiger(adresse_von(kontroller))
+        setze ns: ptr[NvmeNamespace] auf zeiger(adresse_von(namespace))
         setze ok: bool auf falsch
-        wenn nvme_oeffnen(dma, tsc_us, bi, map, log, ziel):
-            wenn nvme_wert(44) != 0:
+        wenn nvme_oeffnen(ctrl, ns, dma, tsc_us, bi, map, log, ziel):
+            wenn ctrl.inventar != 0:
                 setze ok auf wahr
-            sonst:
+            sonst wenn nvme_io_einrichten(ctrl, ns):
                 setze kontext: u64 auf dma + 5 * 4096 + 256
                 hw_crc_tabelle(dma + 6 * 4096)
-                gp_kontext(kontext, dma + 4 * 4096, dma + 5 * 4096 + 128, dma + 7 * 4096, dma + 6 * 4096, nvme_wert(18), nvme_wert(19))
-                setze ok auf gp_lesen(kontext, adresse_von(nvme_lese_block), log, adresse_von(NV_T_PRAEFIX))
-                nvme_setze(43, gp_anzahl(kontext))
-        wenn nicht nvme_anhalten():
+                gp_kontext(kontext, dma + 4 * 4096, dma + 5 * 4096 + 128, dma + 7 * 4096, dma + 6 * 4096, ns.block_bytes, ns.letzte_lba)
+                setze ok auf gp_lesen(kontext, adresse_von(nvme_lese_block), u64(ns), log, adresse_von(NV_T_PRAEFIX))
+        wenn nicht nvme_anhalten(ctrl, ns):
             setze ok auf falsch
-        nvme_log(adresse_von(NV_T_READS), nvme_wert(32))
-        nvme_log(adresse_von(NV_T_UMLAUF), nvme_wert(33))
-        nvme_log(adresse_von(NV_T_ADMINUMLAUF), nvme_wert(34))
-        wenn nvme_wert(44) != 0:
-            nvme_log(adresse_von(NV_T_INV_BEREIT), u64(ok))
+        nvme_log(ctrl, adresse_von(NV_T_READS), ns.lesezahl)
+        nvme_log(ctrl, adresse_von(NV_T_UMLAUF), ctrl.io.cq_umlaeufe)
+        nvme_log(ctrl, adresse_von(NV_T_ADMINUMLAUF), ctrl.admin.cq_umlaeufe)
+        wenn ctrl.inventar != 0:
+            nvme_log(ctrl, adresse_von(NV_T_INV_BEREIT), u64(ok))
         sonst:
-            nvme_log(adresse_von(NV_T_BEREIT), u64(ok))
+            nvme_log(ctrl, adresse_von(NV_T_BEREIT), u64(ok))
         gib_zurück ok

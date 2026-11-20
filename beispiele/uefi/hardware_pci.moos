@@ -33,19 +33,31 @@ funktion nt_mmio_glocke32(adresse: u64, wert: u32) -> void:
         setze p: ptr[u32] auf zeiger(adresse)
         volatile_schreiben(p, wert)
 
-# PCI-Konfigurationsmechanismus #1 (Port CF8/CFC), adresse inkl. Bit 31.
-# Reine Hardwarekoerper (nur Intrinsics), seit P7-T22 dynamisch aufrufbar.
+aus "../kernel/kern_sperre" importiere KernSperre, spin_nimm, spin_gib
+
+# PCI-Konfigurationsmechanismus 1. CF8 ist die gemeinsame Adressauswahl
+# für CFC, daher immer beide Portzugriffe unter derselben Sperre ausführen.
+@nativ
+statisch NT_PCI_CFG_SPERRE: KernSperre auf 0
+
 @nativ
 funktion nt_cfg_lese32(adresse: u32) -> u32:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(NT_PCI_CFG_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
         port_schreibe32(u16(0xCF8), adresse)
-        gib_zurück port_lese32(u16(0xCFC))
+        setze wert: u32 auf port_lese32(u16(0xCFC))
+        spin_gib(sperre, irq)
+        gib_zurück wert
 
 @nativ
 funktion nt_cfg_schreibe32(adresse: u32, wert: u32) -> void:
     unsicher:
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(NT_PCI_CFG_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
         port_schreibe32(u16(0xCF8), adresse)
         port_schreibe32(u16(0xCFC), wert)
+        spin_gib(sperre, irq)
 
 # Gemeinsame CPU-Zeitbasis fuer den Kern und seine PCI-Treiber.
 @nativ

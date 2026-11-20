@@ -1,0 +1,235 @@
+# P11-T7: nur im privaten QEMU-ELF aktivierte Schreib- und Fehlerprobe.
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten, nvme_block_stoppen
+aus "kern_block" importiere BlockAnfrage, BlockFehler, BlockGeometrie, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_VERWERFEN, BLOCK_FLUSH, BLOCK_EA, BLOCK_ZEIT, BLOCK_NUR_LESEN, BLOCK_NICHT_BEREIT, block_anfordern, block_geometrie
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_nullseiten
+aus "kern_smp" importiere smp_kern, smp_nummer
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "kern_irq" importiere kern_irq_stoppen
+aus "../uefi/hardware_pci" importiere takt, nt_null
+
+@nativ
+statisch NVME_PROBE_CTRL: [NvmeBlockController; 2] auf 0
+@nativ
+statisch NVME_PROBE_GERAETE: [NvmeBlockGeraet; 2] auf 0
+@nativ
+statisch NVME_PROBE_ZIEL_512: [u64; 7] auf [0x4E564D45524F3031, 0x70, 1, 20, 0x4e2d3131504f4f4d, 0x2d3231352d454d56, 0x0000000031303030]
+@nativ
+statisch NVME_PROBE_ZIEL_4K: [u64; 7] auf [0x4E564D45524F3031, 0x78, 1, 20, 0x4e2d3131504f4f4d, 0x2d4e4b342d454d56, 0x0000000032303030]
+
+@nativ
+konstante NVME_PROBE_T_LBA: [u8; _] auf "MOO-NVME-PROBE BLOCKBYTES "
+@nativ
+konstante NVME_PROBE_T_OFFEN: [u8; _] auf "MOO-NVME-PROBE EINRICHTEN FEHLER "
+@nativ
+konstante NVME_PROBE_T_EIO: [u8; _] auf "MOO-NVME-PROBE EIO STATUS "
+@nativ
+konstante NVME_PROBE_T_LAT_START: [u8; _] auf "MOO-NVME-PROBE LATENZ START "
+@nativ
+konstante NVME_PROBE_T_LAT_US: [u8; _] auf "MOO-NVME-PROBE LATENZ US "
+@nativ
+konstante NVME_PROBE_T_ZEIT: [u8; _] auf "MOO-NVME-PROBE TIMEOUT US "
+@nativ
+konstante NVME_PROBE_T_IRQ: [u8; _] auf "MOO-NVME-PROBE IRQS "
+@nativ
+konstante NVME_PROBE_T_UMLAUF: [u8; _] auf "MOO-NVME-PROBE UMLAUF "
+@nativ
+konstante NVME_PROBE_T_ABSCHNITT: [u8; _] auf "MOO-NVME-PROBE ABSCHNITT "
+
+@nativ
+funktion nvme_probe_muster(basis: u64, bytes: u64, saat: u64) -> void:
+    unsicher:
+        setze p: ptr[u64] auf zeiger(basis)
+        setze i: u64 auf 0
+        solange i < bytes / 8:
+            volatile_schreiben(p, i, (saat << 56) | i)
+            setze i auf i + 1
+
+@nativ
+funktion nvme_probe_pruefe_muster(basis: u64, bytes: u64, saat: u64) -> bool:
+    unsicher:
+        setze p: ptr[u64] auf zeiger(basis)
+        setze i: u64 auf 0
+        solange i < bytes / 8:
+            wenn volatile_lesen(p, i) != ((saat << 56) | i):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion nvme_probe_null(basis: u64, bytes: u64) -> bool:
+    unsicher:
+        setze p: ptr[u64] auf zeiger(basis)
+        setze i: u64 auf 0
+        solange i < bytes / 8:
+            wenn volatile_lesen(p, i) != 0:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion nvme_probe_fehler(r: ergebnis[void, BlockFehler], code: u32) -> bool:
+    unsicher:
+        wenn ist_erfolg(r):
+            gib_zurück falsch
+        setze fehler: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück fehler.code == code
+
+@nativ
+funktion nvme_probe_ro(kennung: u64, block_bytes: u64, a: ptr[BlockAnfrage], p: u64) -> bool:
+    unsicher:
+        nvme_probe_muster(p, block_bytes, 0x5F)
+        wenn nicht nvme_probe_fehler(block_anfordern(kennung, a, BLOCK_SCHREIBEN, 64, 1, p, block_bytes), BLOCK_NUR_LESEN):
+            gib_zurück falsch
+        wenn nicht nvme_probe_fehler(block_anfordern(kennung, a, BLOCK_VERWERFEN, 64, 1, 0, 0), BLOCK_NUR_LESEN):
+            gib_zurück falsch
+        gib_zurück ist_erfolg(block_anfordern(kennung, a, BLOCK_LESEN, 64, 1, p, block_bytes)) und nvme_probe_null(p, block_bytes)
+
+@nativ
+funktion nvme_probe_eio(kennung: u64, a: ptr[BlockAnfrage], p: u64, log_adr: u64) -> bool:
+    unsicher:
+        nvme_probe_muster(p, 512, 0x51)
+        setze r: ergebnis[void, BlockFehler] auf block_anfordern(kennung, a, BLOCK_SCHREIBEN, 8, 1, p, 512)
+        wenn ist_erfolg(r):
+            gib_zurück falsch
+        setze fehler: BlockFehler auf ergebnis_fehler(r)
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(NVME_PROBE_T_EIO), u64(fehler.geraete_status))
+        wenn fehler.code != BLOCK_EA oder (fehler.geraete_status & 0xFFE) == 0:
+            gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_LESEN, 8, 1, p, 512)) oder nicht nvme_probe_null(p, 512):
+            gib_zurück falsch
+        nvme_probe_muster(p, 512, 0x51)
+        gib_zurück ist_erfolg(block_anfordern(kennung, a, BLOCK_SCHREIBEN, 8, 1, p, 512))
+
+@nativ
+funktion nvme_probe_daten(kennung: u64, nr: u64, block_bytes: u64, a: ptr[BlockAnfrage], p: u64, tsc: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze bytes: u64 auf 307200
+        setze anzahl: u64 auf bytes / block_bytes
+        setze saat: u64 auf 0x60 + nr
+        nvme_probe_muster(p, bytes, saat)
+        wenn nr == 1:
+            log(adresse_von(NVME_PROBE_T_LAT_START), 1)
+        setze start: u64 auf takt()
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_SCHREIBEN, 64, anzahl, p, bytes)):
+            gib_zurück falsch
+        wenn nr == 1:
+            setze dauer: u64 auf (takt() - start) / tsc
+            log(adresse_von(NVME_PROBE_T_LAT_US), dauer)
+            wenn dauer < 100000 oder dauer >= 2000000:
+                gib_zurück falsch
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_FLUSH, 0, 0, 0, 0)):
+            gib_zurück falsch
+        nt_null(p, bytes)
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_LESEN, 64, anzahl, p, bytes)) oder nicht nvme_probe_pruefe_muster(p, bytes, saat):
+            gib_zurück falsch
+        setze trim: u64 auf 4096 / block_bytes
+        setze lba: u64 auf 64 + anzahl - trim
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_VERWERFEN, lba, trim, 0, 0)):
+            gib_zurück falsch
+        nvme_probe_muster(p, 4096, 0x5F)
+        wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_LESEN, lba, trim, p, 4096)) oder nicht nvme_probe_null(p, 4096):
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < 66:
+            wenn nicht ist_erfolg(block_anfordern(kennung, a, BLOCK_LESEN, 64, 1, p, block_bytes)) oder nicht nvme_probe_pruefe_muster(p, block_bytes, saat):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück ist_erfolg(block_anfordern(kennung, a, BLOCK_FLUSH, 0, 0, 0, 0))
+
+@nativ
+funktion nvme_probe_timeout(erstes: u64, zweites: u64, a: ptr[BlockAnfrage], p: u64, tsc: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze eigner: ptr[NvmeBlockController] auf zeiger(adresse_von(NVME_PROBE_CTRL[0]))
+        # Einen ausbleibenden Geräteinterrupt auf genau einem Controller prüfen.
+        kern_irq_stoppen(eigner.vektor)
+        setze eigner.vektor auf 0
+        setze start: u64 auf takt()
+        setze r: ergebnis[void, BlockFehler] auf block_anfordern(erstes, a, BLOCK_LESEN, 64, 1, p, 512)
+        setze dauer: u64 auf (takt() - start) / tsc
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(NVME_PROBE_T_ZEIT), dauer)
+        wenn nicht nvme_probe_fehler(r, BLOCK_ZEIT) oder dauer < 1900000 oder dauer > 5000000:
+            gib_zurück falsch
+        wenn eigner.transport.bereit != 0 oder eigner.transport.pci_aktiv != 0:
+            gib_zurück falsch
+        wenn nicht nvme_probe_fehler(block_anfordern(erstes, a, BLOCK_LESEN, 64, 1, p, 512), BLOCK_NICHT_BEREIT):
+            gib_zurück falsch
+        gib_zurück ist_erfolg(block_anfordern(zweites, a, BLOCK_LESEN, 64, 1, p, 4096)) und nvme_probe_pruefe_muster(p, 4096, 0x61)
+
+@nativ
+funktion nvme_probe_lauf(schreiben: bool, tsc: u64, bi: u64, abbilden: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze puffer: u64 auf ar_rahmen_nehmen(75)
+        wenn puffer == 0:
+            gib_zurück falsch
+        ar_nullseiten(puffer, 75)
+        setze anfrage: BlockAnfrage auf 0
+        setze a: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+        setze nr: u64 auf 0
+        setze erstes: u64 auf 0
+        setze zweites: u64 auf 0
+        solange nr < 2:
+            setze dma: u64 auf ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN)
+            setze ziel: u64 auf adresse_von(NVME_PROBE_ZIEL_512)
+            setze block_bytes: u64 auf 512
+            wenn nr == 1:
+                setze ziel auf adresse_von(NVME_PROBE_ZIEL_4K)
+                setze block_bytes auf 4096
+            # QEMU msix-exclusive-bar, zwei Vektoren. PCI-ID 1b36:0010.
+            setze vorgabe: NvmeBlockStart auf NvmeBlockStart(ziel, 0x00101B36, dma, u64(smp_kern(smp_nummer()).apic_id), 4, 4096, schreiben)
+            setze eigner: ptr[NvmeBlockController] auf zeiger(adresse_von(NVME_PROBE_CTRL[nr]))
+            setze geraet: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(NVME_PROBE_GERAETE[nr]))
+            setze r: ergebnis[u64, BlockFehler] auf nvme_block_einrichten(eigner, geraet, zeiger(adresse_von(vorgabe)), tsc, bi, abbilden, log_adr)
+            wenn nicht ist_erfolg(r):
+                setze f: BlockFehler auf ergebnis_fehler(r)
+                log(adresse_von(NVME_PROBE_T_OFFEN), (u64(f.code) << 32) | u64(f.geraete_status))
+                gib_zurück falsch
+            setze kennung: u64 auf ergebnis_wert(r)
+            setze info: ergebnis[BlockGeometrie, BlockFehler] auf block_geometrie(kennung)
+            wenn nicht ist_erfolg(info):
+                gib_zurück falsch
+            setze geo: BlockGeometrie auf ergebnis_wert(info)
+            wenn geo.block_bytes != block_bytes oder geo.bloecke != 67108864 / block_bytes oder geo.nur_lesend == schreiben:
+                gib_zurück falsch
+            log(adresse_von(NVME_PROBE_T_LBA), geo.block_bytes)
+            wenn schreiben:
+                wenn nr == 0 und nicht nvme_probe_eio(kennung, a, puffer, log_adr):
+                    gib_zurück falsch
+                wenn nicht nvme_probe_daten(kennung, nr, block_bytes, a, puffer, tsc, log_adr):
+                    gib_zurück falsch
+                setze umlauf: u64 auf eigner.transport.io.cq_umlaeufe
+                setze irqs: u64 auf atom_laden(eigner.transport.irq_zaehler, ordnung=erwerben)
+                log(adresse_von(NVME_PROBE_T_IRQ), irqs)
+                log(adresse_von(NVME_PROBE_T_UMLAUF), umlauf)
+                wenn umlauf == 0 oder irqs < 64:
+                    gib_zurück falsch
+            sonst:
+                wenn nicht nvme_probe_ro(kennung, block_bytes, a, puffer):
+                    gib_zurück falsch
+            log(adresse_von(NVME_PROBE_T_ABSCHNITT), nr + 1)
+            wenn nr == 0:
+                setze erstes auf kennung
+            sonst:
+                setze zweites auf kennung
+            setze nr auf nr + 1
+        wenn schreiben und nicht nvme_probe_timeout(erstes, zweites, a, puffer, tsc, log_adr):
+            gib_zurück falsch
+        setze links: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(NVME_PROBE_GERAETE[0]))
+        setze rechts: ptr[NvmeBlockGeraet] auf zeiger(adresse_von(NVME_PROBE_GERAETE[1]))
+        setze aus_links: bool auf nvme_block_stoppen(links)
+        setze aus_rechts: bool auf nvme_block_stoppen(rechts)
+        gib_zurück aus_links und aus_rechts
+
+@nativ
+funktion nvme_probe_starten(modus: u64, tsc: u64, bi: u64, abbilden: u64, log: u64) -> bool:
+    unsicher:
+        wenn tsc == 0 oder (modus != 1 und modus != 2):
+            gib_zurück falsch
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze gut: bool auf nvme_probe_lauf(modus == 1, tsc, bi, abbilden, log)
+        irq_wiederherstellen(irq)
+        gib_zurück gut
