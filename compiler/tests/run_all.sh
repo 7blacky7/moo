@@ -129,6 +129,60 @@ if ! "${CC:-cc}" -std=c11 -Wall -Wextra -Werror \
 fi
 echo "P2-Strukturbox-Harness: PASS"
 
+# P1-T456: Absichtlich fehlerhafte Programme prüfen die Compilerdiagnose.
+compile_timeout=""
+if timeout --version >/dev/null 2>&1; then
+    compile_timeout=timeout
+elif gtimeout --version >/dev/null 2>&1; then
+    compile_timeout=gtimeout
+fi
+
+check_compile_failure() {
+    local base="$1" expected_error compile_output compile_rc=0
+    if [[ ! -f "$base.moos" || ! -f "$base.expected_error" ]]; then
+        printf '%s\n' 'Erwartet eine .moos-Quelle und eine gleichnamige .expected_error'
+        return 1
+    fi
+    if [[ -e "$base.expected" ]]; then
+        printf '%s\n' 'Konflikt: .expected und .expected_error'
+        return 1
+    fi
+
+    expected_error="$(< "$base.expected_error")"
+    expected_error="${expected_error%$'\r'}"
+    if [[ -z "${expected_error//[[:space:]]/}" || "$expected_error" == *$'\n'* ]]; then
+        printf '%s\n' '.expected_error braucht einen nichtleeren, einzeiligen Diagnose-Teilstring'
+        return 1
+    fi
+
+    local -a compile_cmd=("$COMPILER" compile "$base.moos" --emit-ir -o "$WORK_DIR/must_fail_${base##*/}.ll")
+    if [[ -n "$compile_timeout" ]]; then
+        compile_cmd=("$compile_timeout" --kill-after=5s 60s "${compile_cmd[@]}")
+    fi
+    compile_output=$("${compile_cmd[@]}" 2>&1) || compile_rc=$?
+    if [[ "$compile_rc" -ne 1 || "$compile_output" != *"$expected_error"* ]]; then
+        printf 'Erwartet Compiler-Exit 1 und Diagnose [%s], erhalten Exit %s\n%s\n' \
+            "$expected_error" "$compile_rc" "$compile_output"
+        return 1
+    fi
+}
+
+for fixture in "$SCRIPT_DIR"/must_fail/*.moos "$SCRIPT_DIR"/must_fail/*.expected_error; do
+    [[ -f "$fixture" ]] || continue
+    base="${fixture%.*}"
+    # Eine vorhandene Quelle verarbeitet ihr Paar bereits.
+    [[ "$fixture" == *.expected_error && -f "$base.moos" ]] && continue
+    test_name="must_fail/${base##*/}"
+    if detail="$(check_compile_failure "$base")"; then
+        pass=$((pass + 1))
+        echo -e "${GREEN}PASS${NC} $test_name (erwarteter Kompilierfehler)"
+    else
+        fail=$((fail + 1))
+        errors="${errors}\n  ${test_name}: ${detail}"
+        echo -e "${RED}FAIL${NC} $test_name (Kompilierfehler-Vertrag)"
+    fi
+done
+
 # Alle .moos Dateien mit .expected durchgehen (top-level + regression/)
 for moo_file in "$SCRIPT_DIR"/*.moos "$SCRIPT_DIR"/regression/*.moos "$SCRIPT_DIR"/p2/test_p2_dispatch.moos "$SCRIPT_DIR"/p2/methode_vorrang.moos "$SCRIPT_DIR"/p2/klasse_eltern_konstruktor.moos "$SCRIPT_DIR"/p2/nichts_hinzufuegen.moos "$SCRIPT_DIR"/p2/test_p2_frontend_legacy.moos "$SCRIPT_DIR"/p2/ffi_deklaration.moos "$SCRIPT_DIR"/p2/struktur_layout.moos; do
     [[ -f "$moo_file" ]] || continue

@@ -1,4 +1,4 @@
-# P2 Testnetz (Vorbereitung)
+# P2-Testnetz
 
 Der IR-Runner nutzt das vorhandene Release-Binary, baut nichts und führt keine
 Moo-Programme aus. Der separate Ausgabe-Runner unten führt ausgewählte
@@ -61,20 +61,23 @@ führt zu Exit 1. Die Batchnummer ist eine nicht verifizierte Angabe; die sechs
 Fälle belegen keine vollständige Abdeckung aller Beispiele. Zielverzeichnisse
 müssen neu sein und unter build/p2-ir liegen.
 
-## Entwurf erwarteter Compilefehler (P1-T456)
+## Erwartete Compilefehler
 
-P1-T456 und `compiler/tests/run_all.sh` bleiben unverändert. Künftiger Runner:
-separates `compiler/tests/must_fail/*.moos` und gleichnamige
-`.expected_error`-Datei mit einem nichtleeren UTF-8-Teilstring der
-Compiler-Diagnose. Compiler-Exit muss ungleich null sein, die Diagnose
-(stdout+stderr) muss den Teilstring wörtlich enthalten; Timeout, Signal,
-fehlender Compiler, fehlende/leere Erwartungsdatei und unerwarteter Erfolg
-sind FAIL. Kein Ausführen eines möglicherweise entstandenen Programms.
-Optional später eine strukturierte Zeilenangabe vereinbaren; zunächst kann
-ein stabiler Zeilentext als Teilstring geprüft werden. Gegentests: korrekter
-Fehler PASS, falscher Text FAIL, erfolgreiche Kompilierung FAIL. Der
-bestehende `.expected`-Lauf bleibt unverändert; Konflikte beider Endungen
-für denselben Test sind explizit abzulehnen.
+Der Core-Runner verarbeitet `compiler/tests/must_fail/*.moos`. Zu jeder
+Quelle gehört eine gleichnamige `.expected_error` mit einem einzeiligen,
+nichtleeren UTF-8-Teilstring der Diagnose. Der Teilstring kann die Zeile und
+Spalte enthalten, wie bei `syntax_fehler.expected_error`.
+
+Der Test endet nach `compile --emit-ir`. Compiler-Exit 1 und ein wörtlicher
+Treffer in der gemeinsamen stdout-/stderr-Ausgabe ergeben PASS. Andere
+Rückgabecodes, eine abweichende Diagnose, fehlende Paare und ein Konflikt mit
+`.expected` ergeben FAIL. Wo GNU `timeout` oder `gtimeout` verfügbar ist,
+begrenzt der Runner die Kompilierung auf 60 Sekunden. Der Test erscheint in der
+normalen Zusammenfassung von `mise run test-compiler`.
+
+Die absichtlich fehlerhaften Quellen liegen in einem Unterverzeichnis. Sie
+sind Teil des Legacy-Import-Snapshots. Die zu kompilierende Legacy-Dateiliste
+besteht aus den direkten `compiler/tests/*.moos` und den Beispielen.
 
 
 
@@ -100,13 +103,11 @@ müssen Quellen-, Import- und Toolchain-Snapshot exakt übereinstimmen; der
 Compiler-Binary-Hash und das Compiler-/Runtime-Produktinventar bleiben
 informativ, weil gerade Änderungen am Compiler geprüft werden.
 
-Die neun offenen Produktfälle werden nicht verschwiegen: Compilefehler enthalten
-einen Hash der pfadnormalisierten Diagnose, IR mit sonstigem absolutem
-Projektpfad einen unveränderten Roh-IR-Hash. Nur der Root-Task verwendet
-`--allow-baseline-failures`; er akzeptiert diese Fälle ausschließlich bei
-vollständig identischem Baselineeintrag und meldet ausdrücklich, dass dies kein
-Compile-Erfolg ist. Timeout und fehlendes IR bleiben immer FAIL. T4/T33 bleiben
-bis zur Produktbereinigung und drei vollständig erfolgreichen Läufen offen.
+Das Root-Gate verlangt Exit 0 und `Comparison: IDENTICAL`. Ein absolutes
+`CARGO_TARGET_DIR` bestimmt das gebaute und vom IR-Runner verwendete Binary.
+Der direkte IR-Runner bietet `--allow-baseline-failures` als Diagnosemodus
+für vollständig identische Baseline-Fehlereinträge. Timeout und fehlendes IR
+führen auch dort zu FAIL.
 
 `legacy_ir_selftest.sh` verändert nur temporäre Kopien der Baseline. Es
 mutiert einen IR-Hash und den Import-Snapshot und verlangt in beiden Fällen

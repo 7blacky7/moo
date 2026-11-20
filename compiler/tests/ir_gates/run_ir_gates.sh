@@ -26,7 +26,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPILER_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"   # compiler/
-COMPILER="$COMPILER_DIR/target/release/moo-compiler"
+COMPILER="${CARGO_TARGET_DIR:-$COMPILER_DIR/target}/release/moo-compiler"
 PROBE="$SCRIPT_DIR/probe_loop_alloca.moos"
 IR_OUT="$(mktemp "${TMPDIR:-/tmp}/moo_ir_gate.XXXXXX")"
 trap 'rm -f "$IR_OUT"' EXIT

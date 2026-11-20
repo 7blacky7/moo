@@ -5,7 +5,8 @@ export LC_ALL=C
 export TZ=UTC
 ROOT="$(cd "$(dirname "$BASH_SOURCE")/../../.." && pwd)"
 cd "$ROOT"
-compiler="$ROOT/compiler/target/release/moo-compiler"
+cargo_release="${CARGO_TARGET_DIR:-compiler/target}/release"
+compiler="$cargo_release/moo-compiler"
 output=""; baseline=""; profiles_file=""; save_dir=""; snapshot_ref=""; batch_ref=""; limit=30
 allow_baseline_failures=false
 while (($#)); do
@@ -99,8 +100,8 @@ product_inventory() {
       [[ ! -d stdlib ]] || find stdlib -type f -print0
       [[ ! -d compiler/stdlib ]] || find compiler/stdlib -type f -print0
       printf "%s\0" compiler/build.rs
-      find compiler/target/release/build -type f -name libmoo_runtime.a -print0
-      [[ ! -f compiler/target/release/libmoo_runtime.a ]] || printf "%s\0" compiler/target/release/libmoo_runtime.a
+      find "$cargo_release/build" -type f -name libmoo_runtime.a -print0
+      [[ ! -f "$cargo_release/libmoo_runtime.a" ]] || printf "%s\0" "$cargo_release/libmoo_runtime.a"
     } | sort -zu | xargs -0 sha256sum
 }
 tool_info() {

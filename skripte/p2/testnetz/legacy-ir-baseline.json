@@ -692,8 +692,9 @@
   },
   "import_snapshot": {
     "contract": "moo-find-module-candidates-v1",
-    "sha256": "c39442696a588691ed0a2b22b8dccaff934fde5f34fa407dd7094455f07e0d0d",
+    "sha256": "7fb7411a965432447e944d7d9f558d1a1ff36c2ba310a208367e75a5bafdd04a",
     "files": {
+      "compiler/tests/must_fail/syntax_fehler.moos": "90c2db2ce64faecf7fd7ecc78e0903b1639f528623d383bc56cd703fb47ebedd",
       "compiler/tests/regression/p2_byteansicht_grenzen.moos": "4f85e2900ac2dce942d0dcaad1939df2e8c92b7bc8fb411896c83a7575227e48",
       "compiler/tests/regression/p2_cast_system_grenzen.moos": "bbbe71cb77d9c06e429ab7ea996caf3d10903e52923d9643328fadcf3bd2bfb2",
       "compiler/tests/p2/p127_modulo.moos": "fcdfb46164a981936fc365c8a13a7ead431007e5a2290a08e34c7afd67f614ba",

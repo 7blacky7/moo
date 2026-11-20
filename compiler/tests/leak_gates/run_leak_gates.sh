@@ -35,7 +35,7 @@ if [ "$HOST_UNAME" != "Linux" ]; then
   echo "[leak-gate] SKIP: ru_maxrss-1M/4M-Gate ist Linux-spezifisch (Host=$HOST_UNAME)"
   exit 2
 fi
-COMPILER="$COMPILER_DIR/target/release/moo-compiler"
+COMPILER="${CARGO_TARGET_DIR:-$COMPILER_DIR/target}/release/moo-compiler"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/moo_leak_gate.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
