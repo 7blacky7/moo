@@ -28,8 +28,9 @@ llvm-ar rcs "$archive" "$out/adapter.o"
 cat "$out/bindung.moo" "$src/probe.moos" > "$out/program.moos"
 "$compiler" compile "$out/program.moos" --lib-pfad "$out" -o "$out/program$exe" > "$out/compile.log" 2>&1
 "$out/program$exe" > "$out/program.out"
-tr -d '\r' < "$out/program.out" > "$out/program.normalized"
-diff -u "$src/probe.expected" "$out/program.normalized"
+sed 's/\r$//' "$src/probe.expected" > "$out/expected.normalized"
+sed 's/\r$//' "$out/program.out" > "$out/program.normalized"
+diff -u "$out/expected.normalized" "$out/program.normalized"
 "$compiler" compile "$out/program.moos" --emit-ir -o "$out/program.ll" > "$out/ir.log" 2>&1
 opt -passes=verify -disable-output "$out/program.ll"
 for name in Vorlage Erbe Referenz Zeiger BoolTyp Variadisch Virtuell Standardarg Statisch OhneKonstruktor Privat; do
@@ -57,7 +58,7 @@ if [[ "$target" == x86_64-unknown-linux-gnu ]]; then
  chmod +x "$out/gcc-bin/cc"
  PATH="$PWD/$out/gcc-bin:$PATH" "$compiler" compile "$out/program.moos" --lib-pfad "$out" -o "$out/program-gcc" > "$out/compile-gcc.log" 2>&1
  "$out/program-gcc" > "$out/program-gcc.out"
- diff -u "$src/probe.expected" "$out/program-gcc.out"
+ diff -u "$out/expected.normalized" "$out/program-gcc.out"
  clang++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -I"$out" "$src/referenz.cpp" -o "$out/referenz-san"
  ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 "$out/referenz-san"
  "$compiler" bindgen-cpp "$src/probe.hpp" --class Zaehler --prefix tg --library p2_cpp_generated --target x86_64-pc-windows-msvc --emit moo > "$out/windows.moo"
