@@ -1,0 +1,4 @@
+@nativ
+funktion ansicht_array_typ(bytes: puffer[u64]) -> void:
+    setze ansichten: [puffer[u8]; 1] auf 0
+    setze ansichten[0] auf bytes

@@ -119,12 +119,260 @@ funktion array_q_kopieren(ziel: puffer[u8], quelle: puffer[u8]) -> void:
             ziel[i] = quelle[i]
             setze i auf i + 1
 
+@nativ
+funktion array_q_ueberlappt(a: u64, na: u64, b: u64, nb: u64) -> bool:
+    wenn na == 0 oder nb == 0:
+        gib_zurück falsch
+    wenn a >= b:
+        gib_zurück a - b < nb
+    gib_zurück b - a < na
+
+@nativ
+funktion array_q_getrennt(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], fehlt: u64) -> bool:
+    unsicher:
+        setze a: u64 auf u64(puffer_zeiger(p))
+        setze b: u64 auf u64(puffer_zeiger(q))
+        setze n: u64 auf länge(p)
+        wenn array_q_ueberlappt(a, n, b, n):
+            gib_zurück falsch
+        setze meta: u64 auf u64(puffer_zeiger(daten))
+        setze meta_bytes: u64 auf länge(daten) * groesse_von(ArrayQQuelle)
+        wenn array_q_ueberlappt(a, n, meta, meta_bytes) oder array_q_ueberlappt(b, n, meta, meta_bytes):
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            setze aktuell: ArrayQQuelle auf daten[i]
+            wenn (fehlt & (1 << aktuell.slot)) == 0:
+                setze quelle: u64 auf u64(puffer_zeiger(aktuell.bytes))
+                wenn array_q_ueberlappt(a, n, quelle, n) oder array_q_ueberlappt(b, n, quelle, n):
+                    gib_zurück falsch
+            setze i auf i + 1
+        # Quellen duerfen einander ueberlappen: beide werden ausschliesslich
+        # gelesen, und keine Ausgabe beruehrt ihre Bytes oder Metadaten.
+        gib_zurück wahr
+
+
+# Nach Quellenpruefung und positivem Aliasguard: vier 32-Byte-Kacheln.
+# Erzeugung beginnt im Register bei null; Recovery addiert vorhandene Deltas.
+@nativ
+@simd
+funktion array_q_summen_fusion(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], fehlt: u64, vorhanden: bool) -> void:
+    unsicher:
+        setze quellen: [puffer[u8]; 16] auf 0
+        setze faktoren: [u8; 16] auf 0
+        setze zahl: u64 auf 0
+        setze j: u64 auf 0
+        solange j < länge(daten):
+            setze eingang: ArrayQQuelle auf daten[j]
+            wenn (fehlt & (1 << eingang.slot)) == 0:
+                setze quellen[zahl] auf eingang.bytes
+                setze faktoren[zahl] auf array_gf256_koeffizient(eingang.slot)
+                setze zahl auf zahl + 1
+            setze j auf j + 1
+        setze i: u64 auf 0
+        solange länge(p) - i >= 128:
+            setze kachel_p: puffer[u8] auf pufferansicht(p, i, 128)
+            setze kachel_q: puffer[u8] auf pufferansicht(q, i, 128)
+            setze vp0: u8x32 auf u8x32()
+            setze vq0: u8x32 auf u8x32()
+            setze vp1: u8x32 auf u8x32()
+            setze vq1: u8x32 auf u8x32()
+            setze vp2: u8x32 auf u8x32()
+            setze vq2: u8x32 auf u8x32()
+            setze vp3: u8x32 auf u8x32()
+            setze vq3: u8x32 auf u8x32()
+            wenn vorhanden:
+                setze vp0 auf simd_laden(u8x32, kachel_p, 0)
+                setze vq0 auf simd_laden(u8x32, kachel_q, 0)
+                setze vp1 auf simd_laden(u8x32, kachel_p, 32)
+                setze vq1 auf simd_laden(u8x32, kachel_q, 32)
+                setze vp2 auf simd_laden(u8x32, kachel_p, 64)
+                setze vq2 auf simd_laden(u8x32, kachel_q, 64)
+                setze vp3 auf simd_laden(u8x32, kachel_p, 96)
+                setze vq3 auf simd_laden(u8x32, kachel_q, 96)
+            setze j auf 0
+            wenn nicht vorhanden und zahl > 0:
+                setze erste_quelle: puffer[u8] auf quellen[0]
+                setze erster_faktor: u8 auf faktoren[0]
+                setze erste_kachel: puffer[u8] auf pufferansicht(erste_quelle, i, 128)
+                setze vp0 auf simd_laden(u8x32, erste_kachel, 0)
+                setze vq0 auf vp0
+                setze vp1 auf simd_laden(u8x32, erste_kachel, 32)
+                setze vq1 auf vp1
+                setze vp2 auf simd_laden(u8x32, erste_kachel, 64)
+                setze vq2 auf vp2
+                setze vp3 auf simd_laden(u8x32, erste_kachel, 96)
+                setze vq3 auf vp3
+                wenn erster_faktor != 1:
+                    setze vq0 auf simd_gf256_mal_faktor(vp0, erster_faktor)
+                    setze vq1 auf simd_gf256_mal_faktor(vp1, erster_faktor)
+                    setze vq2 auf simd_gf256_mal_faktor(vp2, erster_faktor)
+                    setze vq3 auf simd_gf256_mal_faktor(vp3, erster_faktor)
+                setze j auf 1
+            solange j < zahl:
+                setze quelle: puffer[u8] auf quellen[j]
+                setze faktor: u8 auf faktoren[j]
+                setze kachel: puffer[u8] auf pufferansicht(quelle, i, 128)
+                setze v0: u8x32 auf simd_laden(u8x32, kachel, 0)
+                setze vp0 auf vp0 ^ v0
+                setze vq0 auf vq0 ^ simd_gf256_mal_faktor(v0, faktor)
+                setze v1: u8x32 auf simd_laden(u8x32, kachel, 32)
+                setze vp1 auf vp1 ^ v1
+                setze vq1 auf vq1 ^ simd_gf256_mal_faktor(v1, faktor)
+                setze v2: u8x32 auf simd_laden(u8x32, kachel, 64)
+                setze vp2 auf vp2 ^ v2
+                setze vq2 auf vq2 ^ simd_gf256_mal_faktor(v2, faktor)
+                setze v3: u8x32 auf simd_laden(u8x32, kachel, 96)
+                setze vp3 auf vp3 ^ v3
+                setze vq3 auf vq3 ^ simd_gf256_mal_faktor(v3, faktor)
+                setze j auf j + 1
+            simd_speichern(kachel_p, 0, vp0)
+            simd_speichern(kachel_q, 0, vq0)
+            simd_speichern(kachel_p, 32, vp1)
+            simd_speichern(kachel_q, 32, vq1)
+            simd_speichern(kachel_p, 64, vp2)
+            simd_speichern(kachel_q, 64, vq2)
+            simd_speichern(kachel_p, 96, vp3)
+            simd_speichern(kachel_q, 96, vq3)
+            setze i auf i + 128
+        solange länge(p) - i >= 32:
+            setze vp: u8x32 auf u8x32()
+            setze vq: u8x32 auf u8x32()
+            wenn vorhanden:
+                setze vp auf simd_laden(u8x32, p, i)
+                setze vq auf simd_laden(u8x32, q, i)
+            setze j auf 0
+            wenn nicht vorhanden und zahl > 0:
+                setze vp auf simd_laden(u8x32, quellen[0], i)
+                setze vq auf vp
+                wenn faktoren[0] != 1:
+                    setze vq auf simd_gf256_mal_faktor(vp, faktoren[0])
+                setze j auf 1
+            solange j < zahl:
+                setze v: u8x32 auf simd_laden(u8x32, quellen[j], i)
+                setze vp auf vp ^ v
+                setze vq auf vq ^ simd_gf256_mal_faktor(v, faktoren[j])
+                setze j auf j + 1
+            simd_speichern(p, i, vp)
+            simd_speichern(q, i, vq)
+            setze i auf i + 32
+        solange i < länge(p):
+            setze byte_p: u8 auf 0
+            setze byte_q: u8 auf 0
+            wenn vorhanden:
+                setze byte_p auf p[i]
+                setze byte_q auf q[i]
+            setze j auf 0
+            wenn nicht vorhanden und zahl > 0:
+                setze byte_p auf quellen[0][i]
+                setze byte_q auf array_gf256_mal(byte_p, faktoren[0])
+                setze j auf 1
+            solange j < zahl:
+                setze wert: u8 auf quellen[j][i]
+                setze byte_p auf byte_p ^ wert
+                setze byte_q auf byte_q ^ array_gf256_mal(wert, faktoren[j])
+                setze j auf j + 1
+            p[i] = byte_p
+            q[i] = byte_q
+            setze i auf i + 1
+
+# Zwei Daten direkt aus P/Q und gesunden Quellen, ohne Workspace-Zwischenpass.
+@nativ
+@simd
+funktion array_q_zwei_fusion(a: puffer[u8], b: puffer[u8], p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], fehlt: u64, cb: u8, invers: u8) -> void:
+    unsicher:
+        setze quellen: [puffer[u8]; 16] auf 0
+        setze faktoren: [u8; 16] auf 0
+        setze zahl: u64 auf 0
+        setze j: u64 auf 0
+        solange j < länge(daten):
+            setze eingang: ArrayQQuelle auf daten[j]
+            wenn (fehlt & (1 << eingang.slot)) == 0:
+                setze quellen[zahl] auf eingang.bytes
+                setze faktoren[zahl] auf array_gf256_koeffizient(eingang.slot)
+                setze zahl auf zahl + 1
+            setze j auf j + 1
+        setze i: u64 auf 0
+        solange länge(p) - i >= 128:
+            setze kachel_p: puffer[u8] auf pufferansicht(p, i, 128)
+            setze kachel_q: puffer[u8] auf pufferansicht(q, i, 128)
+            setze vp0: u8x32 auf simd_laden(u8x32, kachel_p, 0)
+            setze vq0: u8x32 auf simd_laden(u8x32, kachel_q, 0)
+            setze vp1: u8x32 auf simd_laden(u8x32, kachel_p, 32)
+            setze vq1: u8x32 auf simd_laden(u8x32, kachel_q, 32)
+            setze vp2: u8x32 auf simd_laden(u8x32, kachel_p, 64)
+            setze vq2: u8x32 auf simd_laden(u8x32, kachel_q, 64)
+            setze vp3: u8x32 auf simd_laden(u8x32, kachel_p, 96)
+            setze vq3: u8x32 auf simd_laden(u8x32, kachel_q, 96)
+            setze j auf 0
+            solange j < zahl:
+                setze quelle: puffer[u8] auf quellen[j]
+                setze faktor: u8 auf faktoren[j]
+                setze kachel: puffer[u8] auf pufferansicht(quelle, i, 128)
+                setze v0: u8x32 auf simd_laden(u8x32, kachel, 0)
+                setze vp0 auf vp0 ^ v0
+                setze vq0 auf vq0 ^ simd_gf256_mal_faktor(v0, faktor)
+                setze v1: u8x32 auf simd_laden(u8x32, kachel, 32)
+                setze vp1 auf vp1 ^ v1
+                setze vq1 auf vq1 ^ simd_gf256_mal_faktor(v1, faktor)
+                setze v2: u8x32 auf simd_laden(u8x32, kachel, 64)
+                setze vp2 auf vp2 ^ v2
+                setze vq2 auf vq2 ^ simd_gf256_mal_faktor(v2, faktor)
+                setze v3: u8x32 auf simd_laden(u8x32, kachel, 96)
+                setze vp3 auf vp3 ^ v3
+                setze vq3 auf vq3 ^ simd_gf256_mal_faktor(v3, faktor)
+                setze j auf j + 1
+            setze kachel_a: puffer[u8] auf pufferansicht(a, i, 128)
+            setze kachel_b: puffer[u8] auf pufferansicht(b, i, 128)
+            setze va0: u8x32 auf simd_gf256_mal_faktor(vq0 ^ simd_gf256_mal_faktor(vp0, cb), invers)
+            simd_speichern(kachel_a, 0, va0)
+            simd_speichern(kachel_b, 0, vp0 ^ va0)
+            setze va1: u8x32 auf simd_gf256_mal_faktor(vq1 ^ simd_gf256_mal_faktor(vp1, cb), invers)
+            simd_speichern(kachel_a, 32, va1)
+            simd_speichern(kachel_b, 32, vp1 ^ va1)
+            setze va2: u8x32 auf simd_gf256_mal_faktor(vq2 ^ simd_gf256_mal_faktor(vp2, cb), invers)
+            simd_speichern(kachel_a, 64, va2)
+            simd_speichern(kachel_b, 64, vp2 ^ va2)
+            setze va3: u8x32 auf simd_gf256_mal_faktor(vq3 ^ simd_gf256_mal_faktor(vp3, cb), invers)
+            simd_speichern(kachel_a, 96, va3)
+            simd_speichern(kachel_b, 96, vp3 ^ va3)
+            setze i auf i + 128
+        solange länge(p) - i >= 32:
+            setze vp: u8x32 auf simd_laden(u8x32, p, i)
+            setze vq: u8x32 auf simd_laden(u8x32, q, i)
+            setze j auf 0
+            solange j < zahl:
+                setze v: u8x32 auf simd_laden(u8x32, quellen[j], i)
+                setze vp auf vp ^ v
+                setze vq auf vq ^ simd_gf256_mal_faktor(v, faktoren[j])
+                setze j auf j + 1
+            setze va: u8x32 auf simd_gf256_mal_faktor(vq ^ simd_gf256_mal_faktor(vp, cb), invers)
+            simd_speichern(a, i, va)
+            simd_speichern(b, i, vp ^ va)
+            setze i auf i + 32
+        solange i < länge(p):
+            setze dp: u8 auf p[i]
+            setze dq: u8 auf q[i]
+            setze j auf 0
+            solange j < zahl:
+                setze wert: u8 auf quellen[j][i]
+                setze dp auf dp ^ wert
+                setze dq auf dq ^ array_gf256_mal(wert, faktoren[j])
+                setze j auf j + 1
+            setze ergebnis_a: u8 auf array_gf256_mal(dq ^ array_gf256_mal(dp, cb), invers)
+            a[i] = ergebnis_a
+            b[i] = dp ^ ergebnis_a
+            setze i auf i + 1
+
 # Nur hinter den öffentlichen Guards, und nur im SIMD-Modus. Der äußere
 # @simd-Aufruf wählt/sichert das Profil einmal für die vollständige P/Q-Zeile.
 @nativ
 @simd
 funktion array_q_erzeugen_simd(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle]) -> void:
     unsicher:
+        wenn array_q_getrennt(p, q, daten, 0):
+            array_q_summen_fusion(p, q, daten, 0, falsch)
+            gib_zurück
         array_q_leeren(p)
         array_q_leeren(q)
         setze i: u64 auf 0
@@ -210,6 +458,20 @@ funktion array_q_retten(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle
             setze i auf i + 1
         wenn ausfaelle > 2:
             gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 43))
+        wenn modus == ARRAY_Q_SIMD und b_index != 16 und nicht fehlt_p und nicht fehlt_q:
+            setze schnell_a: ArrayQQuelle auf daten[a_index]
+            setze schnell_b: ArrayQQuelle auf daten[b_index]
+            setze n: u64 auf länge(p)
+            setze ziel_a: u64 auf u64(puffer_zeiger(schnell_a.bytes))
+            setze ziel_b: u64 auf u64(puffer_zeiger(schnell_b.bytes))
+            setze quelle_p: u64 auf u64(puffer_zeiger(p))
+            setze quelle_q: u64 auf u64(puffer_zeiger(q))
+            wenn array_q_getrennt(schnell_a.bytes, schnell_b.bytes, daten, fehlt) und nicht array_q_ueberlappt(ziel_a, n, quelle_p, n) und nicht array_q_ueberlappt(ziel_a, n, quelle_q, n) und nicht array_q_ueberlappt(ziel_b, n, quelle_p, n) und nicht array_q_ueberlappt(ziel_b, n, quelle_q, n):
+                setze schnell_ca: u8 auf array_gf256_koeffizient(schnell_a.slot)
+                setze schnell_cb: u8 auf array_gf256_koeffizient(schnell_b.slot)
+                setze schnell_invers: u8 auf array_gf256_invers(schnell_ca ^ schnell_cb)
+                array_q_zwei_fusion(schnell_a.bytes, schnell_b.bytes, p, q, daten, fehlt, schnell_cb, schnell_invers)
+                gib_zurück erfolg()
         setze dp_zeiger: ptr[u8] auf zeiger(adresse_von(w.p[0]))
         setze dq_zeiger: ptr[u8] auf zeiger(adresse_von(w.q[0]))
         setze dp: puffer[u8] auf byteansicht(dp_zeiger, länge(p))
@@ -220,13 +482,16 @@ funktion array_q_retten(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle
             array_q_kopieren(dp, p)
         wenn nicht fehlt_q:
             array_q_kopieren(dq, q)
-        setze i auf 0
-        solange i < länge(daten):
-            setze gesund: ArrayQQuelle auf daten[i]
-            wenn (fehlt & (1 << gesund.slot)) == 0:
-                array_q_xor(dp, gesund.bytes, 1, modus, t)
-                array_q_xor(dq, gesund.bytes, array_gf256_koeffizient(gesund.slot), modus, t)
-            setze i auf i + 1
+        wenn modus == ARRAY_Q_SIMD und b_index != 16 und nicht fehlt_p und nicht fehlt_q und array_q_getrennt(dp, dq, daten, 0):
+            array_q_summen_fusion(dp, dq, daten, fehlt, wahr)
+        sonst:
+            setze i auf 0
+            solange i < länge(daten):
+                setze gesund: ArrayQQuelle auf daten[i]
+                wenn (fehlt & (1 << gesund.slot)) == 0:
+                    array_q_xor(dp, gesund.bytes, 1, modus, t)
+                    array_q_xor(dq, gesund.bytes, array_gf256_koeffizient(gesund.slot), modus, t)
+                setze i auf i + 1
         wenn b_index != 16:
             setze a: ArrayQQuelle auf daten[a_index]
             setze b: ArrayQQuelle auf daten[b_index]

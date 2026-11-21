@@ -8,7 +8,8 @@ use inkwell::values::FunctionValue;
 /// Vom Compiler erzeugte native Helfer gehoeren auch hosted zum O2-Pfad.
 pub(crate) fn ist_helfer(f: FunctionValue<'_>) -> bool {
     matches!(f.get_name().to_bytes(), b"__moo_crc32c_update" | b"__moo_crc32c_fallback"
-        | b"__moo_crc32c_fast" | b"__moo_crc32c_shift")
+        | b"__moo_crc32c_fast" | b"__moo_crc32c_shift" | b"__moo_crc32c_shift_64"
+        | b"__moo_crc32c_shift_16" | b"__moo_crc32c_shift_8" | b"__moo_crc32c_shift_1024")
 }
 
 fn byte(mut crc: u32) -> u32 {
@@ -16,8 +17,8 @@ fn byte(mut crc: u32) -> u32 {
     crc
 }
 
-fn shift256(mut crc: u32) -> u32 {
-    for _ in 0..256 { crc = byte(crc); }
+fn shift(mut crc: u32, bytes: usize) -> u32 {
+    for _ in 0..bytes { crc = byte(crc); }
     crc
 }
 
@@ -60,47 +61,43 @@ done:
 }
 "#);
     if x86 {
-        ir.push_str(&table("__moo_crc32c_shift256", (0..1024).map(|v| shift256((v % 256) << (8 * (v / 256))))));
-        ir.push_str("define internal i32 @__moo_crc32c_shift(i32 %crc) alwaysinline {\nentry:\n");
-        for lane in 0..4 {
-            ir.push_str(&format!("  %s{lane} = lshr i32 %crc, {}\n  %b{lane} = and i32 %s{lane}, 255\n  %j{lane} = add i32 %b{lane}, {}\n  %p{lane} = getelementptr [1024 x i32], ptr @__moo_crc32c_shift256, i32 0, i32 %j{lane}\n  %v{lane} = load i32, ptr %p{lane}, align 4\n", lane * 8, lane * 256));
-        }
-        ir.push_str("  %a = xor i32 %v0, %v1\n  %b = xor i32 %v2, %v3\n  %r = xor i32 %a, %b\n  ret i32 %r\n}\n");
-        ir.push_str(r#"
-define internal i32 @__moo_crc32c_fast(i32 %state, ptr %data, i64 %len) noinline {
-entry:
-  br label %groups
-groups:
-  %offset = phi i64 [ 0, %entry ], [ %after, %group ]
-  %current = phi i32 [ %state, %entry ], [ %combined, %group ]
-  %remaining = sub i64 %len, %offset
-  %whole = icmp uge i64 %remaining, 768
-  br i1 %whole, label %group, label %words
-group:
-  %start0 = zext i32 %current to i64
-"#);
-        // Drei unabhaengige Ketten; 256-Byte-Abstand und maximal 8-Byte-Loads.
-        for step in 0..32 {
-            for lane in 0..3 {
-                let prev = if step == 0 {
-                    if lane == 0 { "%start0".into() } else { "0".into() }
-                } else { format!("%c{lane}_{}", step - 1) };
-                ir.push_str(&format!("  %i{lane}_{step} = add i64 %offset, {}\n  %p{lane}_{step} = getelementptr i8, ptr %data, i64 %i{lane}_{step}\n  %v{lane}_{step} = load i64, ptr %p{lane}_{step}, align 1\n  %c{lane}_{step} = call i64 asm \"crc32q $2, $0\", \"=r,0,r,~{{flags}}\"(i64 {prev}, i64 %v{lane}_{step})\n", lane * 256 + step * 8));
+        for size in [1024usize, 256, 64, 16, 8] {
+            ir.push_str(&table(&format!("__moo_crc32c_shift{size}"), (0..1024).map(|v| shift((v % 256) << (8 * (v / 256)), size))));
+            let name = if size == 256 { "__moo_crc32c_shift".into() } else { format!("__moo_crc32c_shift_{size}") };
+            ir.push_str(&format!("define internal i32 @{name}(i32 %crc) alwaysinline {{\nentry:\n"));
+            for lane in 0..4 {
+                ir.push_str(&format!("  %s{lane} = lshr i32 %crc, {}\n  %b{lane} = and i32 %s{lane}, 255\n  %j{lane} = add i32 %b{lane}, {}\n  %p{lane} = getelementptr [1024 x i32], ptr @__moo_crc32c_shift{size}, i32 0, i32 %j{lane}\n  %v{lane} = load i32, ptr %p{lane}, align 4\n", lane * 8, lane * 256));
             }
+            ir.push_str("  %a = xor i32 %v0, %v1\n  %b = xor i32 %v2, %v3\n  %r = xor i32 %a, %b\n  ret i32 %r\n}\n");
+        }
+        ir.push_str("define internal i32 @__moo_crc32c_fast(i32 %state, ptr %data, i64 %len) noinline {\nentry:\n  br label %groups1024\n");
+        // Vier Ketten je Potenz-zwei-Kachel; auch Reste bleiben parallel (<32 Byte seriell).
+        for (level, size) in [1024usize, 256, 64, 16, 8].into_iter().enumerate() {
+            let (incoming_offset, incoming_crc, from) = if level == 0 {
+                ("0".to_string(), "%state".to_string(), "entry".to_string())
+            } else {
+                let previous = [1024, 256, 64, 16][level - 1];
+                (format!("%offset{previous}"), format!("%current{previous}"), format!("groups{previous}"))
+            };
+            let next = match size { 1024 => "groups256", 256 => "groups64", 64 => "groups16", 16 => "groups8", _ => "words" };
+            let group_bytes = 4 * size;
+            ir.push_str(&format!("groups{size}:\n  %offset{size} = phi i64 [ {incoming_offset}, %{from} ], [ %after{size}, %group{size} ]\n  %current{size} = phi i32 [ {incoming_crc}, %{from} ], [ %combined{size}, %group{size} ]\n  %remaining{size} = sub i64 %len, %offset{size}\n  %whole{size} = icmp uge i64 %remaining{size}, {group_bytes}\n  br i1 %whole{size}, label %group{size}, label %{next}\ngroup{size}:\n  %start{size} = zext i32 %current{size} to i64\n"));
+            for step in 0..size / 8 {
+                for lane in 0..4 {
+                    let prev = if step == 0 {
+                        if lane == 0 { format!("%start{size}") } else { "0".into() }
+                    } else { format!("%c{lane}_{}_{size}", step - 1) };
+                    ir.push_str(&format!("  %i{lane}_{step}_{size} = add i64 %offset{size}, {}\n  %p{lane}_{step}_{size} = getelementptr i8, ptr %data, i64 %i{lane}_{step}_{size}\n  %v{lane}_{step}_{size} = load i64, ptr %p{lane}_{step}_{size}, align 1\n  %c{lane}_{step}_{size} = call i64 asm \"crc32q $2, $0\", \"=r,0,r,~{{flags}}\"(i64 {prev}, i64 %v{lane}_{step}_{size})\n", lane * size + step * 8));
+                }
+            }
+            let last = size / 8 - 1;
+            let name = if size == 256 { "__moo_crc32c_shift".into() } else { format!("__moo_crc32c_shift_{size}") };
+            ir.push_str(&format!("  %a0_{size} = trunc i64 %c0_{last}_{size} to i32\n  %a1_{size} = trunc i64 %c1_{last}_{size} to i32\n  %a2_{size} = trunc i64 %c2_{last}_{size} to i32\n  %shift0_{size} = call i32 @{name}(i32 %a0_{size})\n  %joined{size} = xor i32 %shift0_{size}, %a1_{size}\n  %shift1_{size} = call i32 @{name}(i32 %joined{size})\n  %joined2_{size} = xor i32 %shift1_{size}, %a2_{size}\n  %a3_{size} = trunc i64 %c3_{last}_{size} to i32\n  %shift2_{size} = call i32 @{name}(i32 %joined2_{size})\n  %combined{size} = xor i32 %shift2_{size}, %a3_{size}\n  %after{size} = add i64 %offset{size}, {group_bytes}\n  br label %groups{size}\n"));
         }
         ir.push_str(r#"
-  %a0 = trunc i64 %c0_31 to i32
-  %a1 = trunc i64 %c1_31 to i32
-  %a2 = trunc i64 %c2_31 to i32
-  %shift0 = call i32 @__moo_crc32c_shift(i32 %a0)
-  %joined = xor i32 %shift0, %a1
-  %shift1 = call i32 @__moo_crc32c_shift(i32 %joined)
-  %combined = xor i32 %shift1, %a2
-  %after = add i64 %offset, 768
-  br label %groups
 words:
-  %pos = phi i64 [ %offset, %groups ], [ %nextword, %word ]
-  %acc32 = phi i32 [ %current, %groups ], [ %word32, %word ]
+  %pos = phi i64 [ %offset8, %groups8 ], [ %nextword, %word ]
+  %acc32 = phi i32 [ %current8, %groups8 ], [ %word32, %word ]
   %left = sub i64 %len, %pos
   %hasword = icmp uge i64 %left, 8
   br i1 %hasword, label %word, label %tail
@@ -117,8 +114,16 @@ tail:
   %result = call i32 @__moo_crc32c_fallback(i32 %acc32, ptr %tp, i64 %left)
   ret i32 %result
 }
-define i32 @__moo_crc32c_update(i32 %state, ptr %data, i64 %len) {
+define i32 @__moo_crc32c_update(i32 %state, ptr %data, i64 %len, i64 %cpu_features) {
 entry:
+  %scope_bit = and i64 %cpu_features, 256
+  %scope_valid = icmp ne i64 %scope_bit, 0
+  br i1 %scope_valid, label %scope, label %length
+scope:
+  %sse42 = and i64 %cpu_features, 512
+  %scope_hardware = icmp ne i64 %sse42, 0
+  br i1 %scope_hardware, label %fast, label %fallback
+length:
   %long = icmp uge i64 %len, 64
   br i1 %long, label %feature, label %fallback
 feature:
@@ -137,7 +142,7 @@ fallback:
 "#);
     } else {
         ir.push_str(r#"
-define i32 @__moo_crc32c_update(i32 %state, ptr %data, i64 %len) {
+define i32 @__moo_crc32c_update(i32 %state, ptr %data, i64 %len, i64 %cpu_features) {
   %r = call i32 @__moo_crc32c_fallback(i32 %state, ptr %data, i64 %len)
   ret i32 %r
 }

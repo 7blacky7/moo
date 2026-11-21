@@ -69,13 +69,22 @@ pub(crate) fn prepare<'ctx>(
 ) -> Result<(), String> {
     let needed = statements.iter().any(|s| matches!(s,
         Stmt::FunctionDef { decorators, body, .. }
-        if decorators.iter().any(|d| matches!(d.name.as_str(), "nativ" | "native")) && contains(body)));
-    if !needed || enabled(module) { return Ok(()); }
+        if decorators.iter().any(|d| matches!(d.name.as_str(), "nativ" | "native")) && contains(body))) || crate::native_cpu_scope::gebraucht(statements);
+    if !needed { return Ok(()); }
+    if enabled(module) { return Ok(()); }
     let p = context.ptr_type(AddressSpace::default());
     let top = module.add_global(p, None, TOP);
     top.set_linkage(Linkage::Internal);
     top.set_initializer(&p.const_null());
-    if !bare { top.set_thread_local_mode(Some(ThreadLocalMode::GeneralDynamicTLSModel)); }
+    // --no-stdlib benutzt ebenfalls bare_mode, auch beim Linux-Test-/FFI-Modul.
+    // Ein Linux-CPU-Bereich ist trotzdem threadlokal und braucht dieselbe
+    // Isolation fuer seine Cleanup-Frames wie fuer den CPU-Merkmalsbeweis.
+    let triple = module.get_triple();
+    let linux_cpu_scope = crate::native_cpu_scope::gebraucht(statements)
+        && matches!(triple.as_str().to_str(), Ok("x86_64-unknown-linux-gnu" | "x86_64-pc-linux-gnu"));
+    if !bare || linux_cpu_scope {
+        top.set_thread_local_mode(Some(ThreadLocalMode::GeneralDynamicTLSModel));
+    }
     if bare {
         if let Some(Stmt::FunctionDef { param_types, return_type, decorators, body, .. }) =
             statements.iter().find(|s| matches!(s, Stmt::FunctionDef { name, .. } if name == PROVIDER))

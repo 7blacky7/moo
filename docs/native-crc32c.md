@@ -21,12 +21,15 @@ Teilupdates müssen den unkomplementierten Zwischenstand weiterreichen.
 Für die ASCII-Bytes `123456789` liefert die Standardform `0xE3069283`.
 Eigene Funktionen namens `crc32c_aktualisieren` behalten Vorrang.
 
-Auf x86-64 prüft der Compiler für längere Puffer SSE4.2 per CPUID und benutzt
-drei unabhängige CRC32-Ganzzahlketten mit mathematischem Zusammenfügen.
-Es werden keine XMM-/YMM-/ZMM-Register benötigt. Ohne Merkmal sowie auf
-anderen Zielen läuft der portable Tabellenpfad. Es gibt kein globales
-CPU-Merkmalscache. CRC32C ist eine Fehlerprüfsumme; die Tabellenpfade
-haben datenabhängige Adressen und versprechen keine Konstantzeit.
+Auf x86-64 verwendet der Compiler vier unabhängige CRC32-Ganzzahlketten
+mit mathematischer Faltung und generischen Potenz-zwei-Kacheln; der serielle
+Rest bleibt unter 32 Byte. Es werden keine XMM-/YMM-/ZMM-Register benötigt.
+Außerhalb eines gültigen [CPU-Bereichs](native-cpu-bereich.md) bleibt die
+SSE4.2-Prüfung per CPUID aktiv. Innerhalb des gebundenen Bereichs gilt dessen
+threadlokale Freigabe. Ohne Merkmal sowie auf anderen Zielen läuft der
+portable Tabellenpfad. Es gibt keinen prozessweiten Erst-CPU-Cache.
+CRC32C ist eine Fehlerprüfsumme; die Tabellenpfade haben datenabhängige
+Adressen und versprechen keine Konstantzeit.
 
 MooFS benutzt sichere Teilbereiche und vier logische Nullbytes für das
 Prüfsummenfeld bei Offset 40; das Eingabeabbild bleibt unverändert.

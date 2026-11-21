@@ -32,3 +32,16 @@ funktion block_kopieren(ziel: puffer[u8], quelle: puffer[u8]) -> void:
 ```
 
 Regression: `mise run -C skripte/p11/array-q simd-puffer`.
+
+
+`pufferansicht(view)` übernimmt einen vorhandenen geliehenen Pufferdeskriptor.
+`pufferansicht(view, start:u64, anzahl:u64)` leiht einen Teilbereich gleichen
+Elementtyps; Zahlen- und nominale Strukturpuffer bleiben typidentisch.
+Es gelten `start <= länge(view)` und `anzahl <= länge(view) - start`.
+Der leere Endbereich ist gültig. Die Ansicht besitzt und kopiert keine Daten;
+die Leihe darf ihren Speicher nicht überleben. Fehler benutzen Cleanup.
+Für vier SIMD-Blöcke kann eine 128-Byte-Teilansicht einmal geprüft werden;
+Offsets 0, 32, 64 und 96 sind dann statisch innerhalb dieser Ansicht.
+Feste lokale Arrays dürfen geliehene `puffer[T]` speichern. Literale behalten
+die Borrow-Herkunft; Rückgaben mit einer lokalen Leihe bleiben M-M002.
+Explizite getypte Arraydeklarationen `setze a: [T; N] auf 0` nullen jedes Element.

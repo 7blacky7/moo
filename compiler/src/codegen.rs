@@ -1238,6 +1238,9 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
         }
+        // CPU-Libc-Signaturen erst nach Benutzer-Externs zusammenfuehren;
+        // identische Deklarationen sind legal und werden wiederverwendet.
+        crate::native_cpu_scope::prepare(self.context, &self.module, &program.statements)?;
         // Native Signaturen zuerst deklarieren, damit reine Vorwaertsaufrufe
         // die gleiche Typpruefung wie Rueckwaertsaufrufe erhalten.
         let mut pure_bodies: HashMap<String, &[Stmt]> = HashMap::new();
@@ -1273,7 +1276,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // P2-T23/T53: @verbraucht(n) - Pruefung beim dyn-Adapter.
                         || matches!(d.name.as_str(), "verbraucht" | "consumes")
                         // P2-T83: @liest(n) - Pruefung beim dyn-Adapter.
-                        || matches!(d.name.as_str(), "liest" | "reads" | "simd")
+                        || matches!(d.name.as_str(), "liest" | "reads" | "simd" | "cpu_bereich")
                         || crate::ffi_types::is_call_convention_decorator(d))
                     || program.statements.iter().filter(|s| matches!(s, Stmt::FunctionDef { name: other, .. } if other == name)).count() != 1
                     || self.module.get_function(name).is_some()
@@ -1288,6 +1291,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .map_err(|e| format!("Native Funktion '{name}': {e}"))?
                 };
                 let simd = crate::native_simd_dispatch::marker(decorators)?;
+                let cpu_scope = crate::native_cpu_scope::marker(decorators)?;
                 // P7-T4 (3A): @nackt nur fuer reine Assemblerkoerper (Pruefung im Emitter).
                 let naked = decorators.iter().any(|d| d.name == "nackt" || d.name == "naked");
                 if !naked && decorators.iter().any(|d| matches!(d.name.as_str(), "verschiebbar" | "relocatable")) {
@@ -1316,7 +1320,7 @@ impl<'ctx> CodeGen<'ctx> {
                     return Err(crate::diagnose::vormerken_span("M-M005", zeile, spalten, format!(
                         "Native Funktion '{name}': Aufruf '{roh}' ist nur innerhalb von unsicher: erlaubt (Rohzugriff erfordert unsicher); Vorschlag: den Rohzugriff '{roh}(...)' in eine eigene, passend typisierte Variable innerhalb eines engen unsicher:-Blocks herausziehen und diese Variable im umgebenden Ausdruck verwenden")));
                 }
-                match if simd.is_some() { crate::native_hardware::BodyKind::Other }
+                match if simd.is_some() || cpu_scope { crate::native_hardware::BodyKind::Other }
                     else { crate::native_hardware::classify_body(body) } {
                     crate::native_hardware::BodyKind::MissingUnsafe(zeile) => {
                         // P2-T98 S3: M-M005 mit Zeile des ersten Hardwarezugriffs.
@@ -1477,7 +1481,7 @@ impl<'ctx> CodeGen<'ctx> {
                     && !(self.bare_mode && returns_struct)
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct || has_buffer))
-                    || hosted_system || sicher_system || simd.is_some()
+                    || hosted_system || sicher_system || simd.is_some() || cpu_scope
                 {
                     let sig = crate::native_system::SystemSignature::from_annotations(
                         param_types, return_type.as_ref(), &native_nominals,
@@ -2154,7 +2158,8 @@ impl<'ctx> CodeGen<'ctx> {
                 for fun in self.module.get_functions() {
                     if fun.count_basic_blocks() == 0 || native.contains(&fun.as_value_ref())
                         || crate::native_simd_dispatch::ist_helfer(fun)
-                        || crate::native_crc32c::ist_helfer(fun) { continue; }
+                        || crate::native_crc32c::ist_helfer(fun)
+                        || crate::native_cpu_scope::ist_helfer(fun) { continue; }
                     let mut added = [false; 2];
                     for (i, kind) in shield_kinds.iter().enumerate() {
                         if fun.get_enum_attribute(AttributeLoc::Function, *kind).is_none() {

@@ -57,3 +57,12 @@ funktion cbench_zwei(a: ptr[u8], b: ptr[u8], dp: ptr[u8], dq: ptr[u8], n: u64, c
 funktion cbench_crc(p: ptr[u8], n: u64) -> u32:
     unsicher:
         gib_zurück crc32c(byteansicht(p, n))
+
+
+extern "C" funktion cbench_cpu_treiber() -> i32
+@nativ
+@einstieg
+@cpu_bereich
+funktion cbench_cpu_messung() -> i32:
+    unsicher:
+        gib_zurück cbench_cpu_treiber()

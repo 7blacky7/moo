@@ -1,0 +1,5 @@
+@nativ
+@cpu_bereich
+@simd
+funktion cpu_unzulaessig(x: u64) -> u64:
+    gib_zurück x

@@ -33,3 +33,51 @@ funktion simd_io_normal() -> u64:
     setze view: puffer[u8] auf byteansicht(bytes)
     simd_speichern(view, 0, u8x16(9))
     gib_zurück simd_io_liest(view)
+
+
+@nativ
+@simd
+funktion simd_io_array(index: u64) -> u64:
+    aufräumen: simd_io_markieren()
+    setze klein: [u8; 16] auf 0
+    setze gross: [u8; 32] auf 0
+    setze ansichten: [puffer[u8]; 2] auf [byteansicht(klein), byteansicht(gross)]
+    simd_speichern(ansichten[0], 0, u8x16(21))
+    simd_speichern(ansichten[1], 16, u8x16(37))
+    setze ausgewaehlt: puffer[u8] auf ansichten[index]
+    gib_zurück als(u64, ausgewaehlt[länge(ausgewaehlt) - 1])
+
+@nativ
+@simd
+funktion simd_io_array_kurz(index: u64) -> u64:
+    aufräumen: simd_io_markieren()
+    setze bytes: [u8; 16] auf 0
+    setze ansichten: [puffer[u8]; 1] auf 0
+    setze ansichten[0] auf byteansicht(bytes)
+    setze wert: u8x32 auf simd_laden(u8x32, ansichten[index], 0)
+    gib_zurück als(u64, wert[0])
+
+
+@nativ
+@simd
+funktion simd_io_slice(start: u64, anzahl: u64) -> u64:
+    aufräumen: simd_io_markieren()
+    setze bytes: [u8; 32] auf 0
+    setze voll: puffer[u8] auf byteansicht(bytes)
+    setze kopie: puffer[u8] auf pufferansicht(voll)
+    setze teil: puffer[u8] auf pufferansicht(kopie, start, anzahl)
+    wenn anzahl == 0:
+        gib_zurück länge(teil)
+    simd_speichern(teil, 0, u8x16(51))
+    gib_zurück als(u64, bytes[0]) + als(u64, bytes[31])
+
+struktur SliceRecord:
+    wert: u64
+@nativ
+funktion simd_io_strukturslice() -> u64:
+    setze daten: [SliceRecord; 2] auf 0
+    setze voll: puffer[SliceRecord] auf pufferansicht(daten)
+    setze teil: puffer[SliceRecord] auf pufferansicht(voll, 1, 1)
+    setze datensatz: SliceRecord auf SliceRecord(73)
+    teil[0] = datensatz
+    gib_zurück daten[1].wert

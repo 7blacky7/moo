@@ -26,6 +26,17 @@ for fall in typ versatz liest schatten_typ; do
     rg -q 'M-C000' "$out/$fall-$target.log"
   done
 done
+for fall in flucht typ; do
+  if "$compiler" compile "compiler/tests/p11/simd_puffer_array_$fall.moos" --no-stdlib --target x86_64-unknown-linux-gnu --emit-ir -o "$out/neg-array.ll" > "$out/array-$fall.log" 2>&1; then
+    echo "FAIL buffer array accepted: $fall" >&2; exit 1
+  fi
+done
+if "$compiler" compile compiler/tests/p11/simd_puffer_slice_typ.moos --no-stdlib --target x86_64-unknown-linux-gnu --emit-ir -o "$out/neg-slice.ll" > "$out/slice-typ.log" 2>&1; then
+  echo 'FAIL signed slice offset accepted' >&2; exit 1
+fi
+rg -q 'M-C000' "$out/slice-typ.log"
+rg -q 'M-M002' "$out/array-flucht.log"
+rg -q 'M-C000' "$out/array-typ.log"
 "$compiler" compile compiler/tests/p11/simd_puffer_host.moos -o "$out/cleanup"
 "$out/cleanup" > "$out/cleanup.txt"
 diff -u compiler/tests/p11/simd_puffer.expected "$out/cleanup.txt"

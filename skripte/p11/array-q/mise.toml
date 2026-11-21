@@ -29,3 +29,7 @@ run = "bash gegen-c.sh"
 
 [tasks.vergleich-n100]
 run = "bash n100.sh"
+
+
+[tasks.cpu-bereich]
+run = "bash cpu-bereich.sh"

@@ -16,3 +16,52 @@ fange fehler:
 unsicher:
     zeige simd_io_marke()
     zeige simd_io_normal()
+
+unsicher:
+    zeige simd_io_array(0)
+    zeige simd_io_array(1)
+versuche:
+    unsicher:
+        zeige simd_io_array(2)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Ansichtarray gefangen"
+versuche:
+    unsicher:
+        zeige simd_io_array_kurz(0)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Innere Ansicht gefangen"
+unsicher:
+    zeige simd_io_marke()
+
+unsicher:
+    zeige simd_io_slice(16, 16)
+    zeige simd_io_slice(32, 0)
+    zeige simd_io_strukturslice()
+versuche:
+    unsicher:
+        zeige simd_io_slice(33, 0)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Teilansicht gefangen"
+versuche:
+    unsicher:
+        zeige simd_io_slice(16, 17)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Teilansicht gefangen"
+versuche:
+    unsicher:
+        zeige simd_io_slice(0xFFFFFFFFFFFFFFFF, 1)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Teilansicht gefangen"
+versuche:
+    unsicher:
+        zeige simd_io_slice(32, 0xFFFFFFFFFFFFFFFF)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Teilansicht gefangen"
+unsicher:
+    zeige simd_io_marke()

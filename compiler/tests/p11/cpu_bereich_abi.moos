@@ -1,0 +1,6 @@
+extern "C" funktion sched_getcpu() -> u64
+
+@nativ
+@cpu_bereich
+funktion cpu_unpassende_abi(x: u64) -> u64:
+    gib_zurück x

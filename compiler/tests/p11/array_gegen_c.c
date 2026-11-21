@@ -28,7 +28,8 @@ extern uint64_t ref_cbench_scrub_init(uint8_t *, uint64_t);
 extern uint64_t ref_cbench_scrub(void);
 /* Nur Kontrollobjekt: gleicher MooFS-Pruefer, CRC-Backend ersetzt durch ISA-L.
  * Der Produktcompiler/Stdlib wird dafuer NICHT umgestellt. */
-uint32_t __moo_crc32c_update(uint32_t seed, uint8_t *data, uint64_t len) {
+uint32_t __moo_crc32c_update(uint32_t seed, uint8_t *data, uint64_t len, uint64_t features) {
+    (void)features;
     while (len) {
         int chunk = len > 0x7fffffffu ? 0x7fffffff : (int)len;
         seed = crc32_iscsi(data, chunk, seed);
@@ -220,7 +221,9 @@ static void measure(const char *name, const char *implementation, work fn,
            rate,checksum);
     fflush(stdout);
 }
-int main(void) {
+extern int32_t cbench_cpu_messung(void);
+int main(void) { return cbench_cpu_messung(); }
+int cbench_cpu_treiber(void) {
     alias_test();
     alias_two_test();
     uint8_t coefficient=1, matrix[2*K], survivor_matrix[K*K];
@@ -228,6 +231,7 @@ int main(void) {
     struct utsname sys;
     if (uname(&sys)) fail("uname");
     printf("{\"system\":\"%s\",\"maschine\":\"%s\",\"referenz\":\"ISA-L 2.32.1\","
+           "\"cpu_bereich\":\"gemeinsamer gebundener Startup-Bereich\","
            "\"zaehlung\":\"dezimal MB/s logischer Datenbytes; CRC nur Eingabebytes\"}\n",
            sys.sysname,sys.machine);
     for(unsigned i=0;i<16;++i) {

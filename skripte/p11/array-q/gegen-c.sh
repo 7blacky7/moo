@@ -31,7 +31,7 @@ mise exec -- llvm-objcopy --redefine-syms="$out/ref-symbols.txt" "$out/ref.o" "$
 
 # Nur Messkontrolle: identischer CRC-Hardwarekoerper ohne inneren Dispatch.
 # C-Treiber prueft SSE4.2; taskset haelt die Messung auf derselben CPU.
-mise exec -- llvm-extract --recursive --func=__moo_crc32c_fast --glob=__moo_crc32c_table --glob=__moo_crc32c_shift256 -S "$out/moo.ll" -o "$out/crc-control-source.ll"
+mise exec -- llvm-extract --recursive --func=__moo_crc32c_fast --glob=__moo_crc32c_table --glob=__moo_crc32c_shift1024 --glob=__moo_crc32c_shift256 --glob=__moo_crc32c_shift64 --glob=__moo_crc32c_shift16 --glob=__moo_crc32c_shift8 -S "$out/moo.ll" -o "$out/crc-control-source.ll"
 sed -e 's/@__moo_crc32c_fast(/@crc32c_ohne_dispatch(/g' \
     -e 's/define internal i32 @crc32c_ohne_dispatch/define i32 @crc32c_ohne_dispatch/' \
     -e 's/@__moo_crc32c_/@__moo_crc32c_control_/g' \

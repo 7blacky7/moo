@@ -1,5 +1,5 @@
 # Binäres unabhängiges Orakelprotokoll: drei vollständige 256x256-Tabellen.
-aus array_gf256 importiere ArrayGf256, array_gf256_starten, array_gf256_mal, array_gf256_tabelle
+aus array_gf256 importiere ArrayGf256, array_gf256_starten, array_gf256_mal, array_gf256_tabelle, array_gf256_invers, array_gf256_koeffizient
 struktur ArrayQGfBytes:
     bytes: [u8; 4096]
 
@@ -60,6 +60,23 @@ funktion array_q_gf_ausgabe() -> void:
                     setze pos auf pos + als(u64, anzahl)
                 setze start auf start + 4096
             setze modus auf modus + 1
+        setze probe: u64 auf 0
+        solange probe < 256:
+            block.bytes[probe] = array_gf256_invers(als(u8, probe))
+            setze probe auf probe + 1
+        setze gewicht: u64 auf 0
+        solange gewicht < 16:
+            block.bytes[256 + gewicht] = array_gf256_koeffizient(gewicht)
+            setze gewicht auf gewicht + 1
+        block.bytes[272] = array_gf256_koeffizient(16)
+        block.bytes[273] = array_gf256_koeffizient(0xFFFFFFFFFFFFFFFF)
+        setze gesendet: u64 auf 0
+        solange gesendet < 274:
+            setze rest: i64 auf write(1, daten + gesendet, 274 - gesendet)
+            wenn rest <= 0:
+                _exit(1)
+                gib_zurück
+            setze gesendet auf gesendet + als(u64, rest)
 
 unsicher:
     array_q_gf_ausgabe()

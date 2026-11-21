@@ -1,5 +1,8 @@
 # P11-T26: Parität, CRC32C und vollständiger MooFS-Scrub
 
+Historische Ausgangsmessung. Der nachfolgende Produkt- und Leistungsstand ist
+in [P11-T27](p11-t27-messung.md) dokumentiert.
+
 Stand: Synapse-Produktbatch 35506, Messung 21.11.2026. Die Messaufgabe und
 allgemeine Compilerverbesserungen sind umgesetzt. Das übergeordnete Ziel
 „mindestens so schnell wie C“ ist nicht durchgehend erreicht.
@@ -138,6 +141,6 @@ Legacy und QEMU beziehen sich auf diesen späteren Compiler.
   6860a0d8af699a73d7b291d54c37c2cc46ebcc06e1b05bda3c43a3cf596ce479.
   Gemeinsame P7-Baseline wurde nicht verändert.
 
-Reproduktion: mise run -C skripte/p11/array-q gegen-c; für alle Jobs eigenes
+Reproduktion: mise run -C skripte/p11/array-q vergleich; für alle Jobs eigenes
 CARGO_TARGET_DIR=/home/blacky/dev/moo/build/p2-t123/target.
 Kernel-/CI-Veröffentlichung erfolgt erst im koordinierten Meilenstein.

@@ -113,7 +113,7 @@ fn xcr0<'ctx>(c: &'ctx Context, b: &Builder<'ctx>) -> Result<IntValue<'ctx>, Str
     b.build_or(lo, hi, "simd.xcr0.maske").map_err(e)
 }
 
-fn cpu<'ctx>(c: &'ctx Context, m: &Module<'ctx>) -> Result<FunctionValue<'ctx>, String> {
+pub(crate) fn cpu<'ctx>(c: &'ctx Context, m: &Module<'ctx>) -> Result<FunctionValue<'ctx>, String> {
     let name = "__moo_simd_cpu";
     if let Some(f) = m.get_function(name) { return Ok(f); }
     let f = m.add_function(name, c.i64_type().fn_type(&[], false), Some(Linkage::Internal));
@@ -125,6 +125,18 @@ fn cpu<'ctx>(c: &'ctx Context, m: &Module<'ctx>) -> Result<FunctionValue<'ctx>, 
     let choose = c.append_basic_block(f, "auswahl");
     let fallback = c.append_basic_block(f, "skalar");
     b.position_at_end(entry);
+    if let Some(features) = m.get_global("__moo_native.cpu_scope.features") {
+        let flags = b.build_load(c.i64_type(), features.as_pointer_value(), "cpu.bereich.freigabe").map_err(e)?.into_int_value();
+        let valid = b.build_and(flags, c.i64_type().const_int(crate::native_cpu_scope::VALID, false), "cpu.bereich.aktiv").map_err(e)?;
+        let valid = b.build_int_compare(IntPredicate::NE, valid, c.i64_type().const_zero(), "cpu.bereich.gueltig").map_err(e)?;
+        let cached = c.append_basic_block(f, "cpu.bereich");
+        let query = c.append_basic_block(f, "cpu.pruefen");
+        b.build_conditional_branch(valid, cached, query).map_err(e)?;
+        b.position_at_end(cached);
+        let profile = b.build_and(flags, c.i64_type().const_int(255, false), "cpu.bereich.profil").map_err(e)?;
+        b.build_return(Some(&profile)).map_err(e)?;
+        b.position_at_end(query);
+    }
     let max = crate::native_crypto::cpuid(c, &b, 0, 0)?;
     let has1 = b.build_int_compare(IntPredicate::UGE, max, c.i32_type().const_int(1, false), "simd.leaf1").map_err(e)?;
     let leaf1 = c.append_basic_block(f, "leaf1");

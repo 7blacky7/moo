@@ -113,9 +113,6 @@ impl STy {
             },
             TypeKind::Array { element, length } => {
                 let element = Self::from_type_ref(element, nominal)?;
-                if matches!(element, STy::Buffer(_) | STy::StrukturPuffer(_)) {
-                    return Err("Systemkoerper: Arrays aus puffer[T] sind nicht freigegeben".into());
-                }
                 let length = crate::native_struct::array_laenge(length)?;
                 Ok(STy::Array { element: Box::new(element), length })
             }
@@ -896,6 +893,7 @@ impl FluchtPruefung<'_> {
                 if matches!(op, BinOp::Sub) && l.is_some() && r.is_some() { return None; }
                 l.or(r)
             }
+            Expr::List(elements) => elements.iter().find_map(|element| self.quelle(element)),
             Expr::UnaryOp { op: UnaryOpKind::Not, .. } => None,
             Expr::UnaryOp { operand, .. } => self.quelle(operand),
             Expr::Ternary { then_val, else_val, .. } => self.quelle(then_val).or_else(|| self.quelle(else_val)),
@@ -1843,6 +1841,7 @@ struct Emitter<'a, 'ctx> {
     loop_cleanups: Vec<Option<PointerValue<'ctx>>>,
     cleanup_root: Option<PointerValue<'ctx>>,
     cleanup_error: Option<PointerValue<'ctx>>,
+    cpu_scope: bool,
     trap: Option<BasicBlock<'ctx>>,
     /// Nie erreichter Block fuer Operationen ohne Fehlerfall (siehe never_block).
     never: Option<BasicBlock<'ctx>>,
@@ -2237,7 +2236,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
     fn cleanup_start(&mut self, body: &[Stmt]) -> Result<(), String> {
-        if !crate::native_cleanup::contains(body) { return Ok(()); }
+        if !crate::native_cleanup::contains(body) && !self.cpu_scope { return Ok(()); }
         let root = self.cleanup_alloca(self.ptrt().into(), "cleanup.function")?;
         let top = crate::native_cleanup::top(&self.builder, self.module)?;
         let current = self.builder.build_load(self.ptrt(), top, "cleanup.top").map_err(e)?;
@@ -2248,6 +2247,19 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let enter = crate::native_cleanup::error_helper(self.context, self.module, "moo_native_cleanup_enter")?;
             self.builder.build_call(enter, &[saved.into()], "").map_err(e)?;
             self.cleanup_error = Some(saved);
+        }
+        if self.cpu_scope {
+            let storage = self.cleanup_alloca(self.context.i64_type().array_type(20).into(), "cpu.bereich.kontext")?;
+            let leave = crate::native_cpu_scope::begin(self.context, &self.builder, self.module, storage)?;
+            let frame_ty = crate::native_cleanup::frame_type(self.context);
+            let frame = self.cleanup_alloca(frame_ty.into(), "cpu.bereich.cleanup")?;
+            let top = crate::native_cleanup::top(&self.builder, self.module)?;
+            let previous = self.builder.build_load(self.ptrt(), top, "cpu.bereich.vorher").map_err(e)?.into_pointer_value();
+            for (index, value) in [previous, leave.as_global_value().as_pointer_value(), storage].into_iter().enumerate() {
+                let field = self.builder.build_struct_gep(frame_ty, frame, index as u32, "cpu.bereich.frame").map_err(e)?;
+                self.builder.build_store(field, value).map_err(e)?;
+            }
+            self.builder.build_store(top, frame).map_err(e)?;
         }
         Ok(())
     }
@@ -2332,7 +2344,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             x86: self.x86, hosted: self.hosted, function: thunk, entry,
             sret: None, builder: self.context.create_builder(), slots: HashMap::new(),
             globals: self.globals.clone(), loops: Vec::new(), loop_cleanups: Vec::new(),
-            cleanup_root: None, cleanup_error: None,
+            cleanup_root: None, cleanup_error: None, cpu_scope: false,
             trap: None, never: None, weiter: None, pow_fehler: None, result: None,
             callees: self.callees, externs: self.externs, sicher: self.sicher,
             unsicher_tiefe: self.unsicher_tiefe, export: false, zeile: line,
@@ -2379,10 +2391,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         if constant && !declaring {
             return Err(format!("Systemkoerper: Konstante '{name}' kann nicht neu gesetzt werden"));
         }
-        // Ein explizites getyptes Struktur-Nullinitialisieren ist kein Cast.
+        // Explizites getyptes Struktur-/Array-Nullinitialisieren ist kein Cast.
         // Im Statement speichern: Schleifendeklarationen nullen bei jedem Durchlauf.
         // NativeNumber.text vermeidet Rundung/Unterlauf über legacy:f64.
-        if declaring && matches!(&ty, STy::Struct(_))
+        if declaring && ty.ist_aggregat()
             && matches!(value, Expr::NativeNumber { text, .. } if text == "0")
         {
             let alignment = self.storage_alignment(name, &ty)?;
@@ -3204,27 +3216,38 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     /// Leiht vorhandenen Arrayspeicher; Deskriptor besitzt oder kopiert keine Daten.
     fn pufferansicht(&mut self, args: &[Expr]) -> Result<SVal<'ctx>, String> {
         if !matches!(args.len(), 1 | 3) {
-            return Err("pufferansicht erwartet (array) oder (array, start, anzahl)".into());
+            return Err("pufferansicht erwartet (array oder puffer) oder (array oder puffer, start, anzahl)".into());
         }
         let array = &args[0];
-        if FluchtPruefung::wurzel(array).is_none() {
-            return Err("pufferansicht braucht vorhandenen Arrayspeicher".into());
-        }
-        let (element, length) = self.pufferansicht_array(array)
-            .ok_or("pufferansicht erwartet ein festes Zahlen- oder Strukturarray")?;
-        let ty = STy::puffer_element(&element.identity())?;
-        self.global_access(array, true)?;
-        if FluchtPruefung::wurzel(array).and_then(|n| self.slot(n)).is_some_and(|s| s.constant) {
-            return Err("pufferansicht: eine Konstante darf nicht schreibbar geliehen werden".into());
-        }
-        let array_ty = STy::Array { element: Box::new(element.clone()), length };
-        let base = if let Expr::PropertyAccess { object, property } = array {
-            self.field_address(object, property)?.0
+        let (ty, element, base, len) = if let Some(ty @ (STy::Buffer(_) | STy::StrukturPuffer(_))) = self.infer(array) {
+            let value = self.expr(array, Some(&ty))?;
+            self.expect(&value, &ty, "Pufferansicht")?;
+            let view = value.value.into_struct_value();
+            let base = self.builder.build_extract_value(view, 0, "sys.view.data").map_err(e)?.into_pointer_value();
+            let len = self.builder.build_extract_value(view, 1, "sys.view.len").map_err(e)?.into_int_value();
+            let element = STy::from_identity(&ty.identity_element())?.ok_or("Pufferansicht: Elementtyp fehlt")?;
+            (ty, element, base, len)
         } else {
-            self.struct_place(array, &array_ty, "Pufferansicht")?.ptr
+            if FluchtPruefung::wurzel(array).is_none() {
+                return Err("pufferansicht braucht vorhandenen Array- oder Pufferspeicher".into());
+            }
+            let (element, length) = self.pufferansicht_array(array)
+                .ok_or("pufferansicht erwartet ein Zahlen- oder Strukturarray oder puffer[T]")?;
+            let ty = STy::puffer_element(&element.identity())?;
+            self.global_access(array, true)?;
+            if FluchtPruefung::wurzel(array).and_then(|n| self.slot(n)).is_some_and(|s| s.constant) {
+                return Err("pufferansicht: eine Konstante darf nicht schreibbar geliehen werden".into());
+            }
+            let array_ty = STy::Array { element: Box::new(element.clone()), length };
+            let base = if let Expr::PropertyAccess { object, property } = array {
+                self.field_address(object, property)?.0
+            } else {
+                self.struct_place(array, &array_ty, "Pufferansicht")?.ptr
+            };
+            (ty, element, base, self.i64t().const_int(u64::from(length), false))
         };
         let (start, count) = if args.len() == 1 {
-            (self.i64t().const_zero(), self.i64t().const_int(u64::from(length), false))
+            (self.i64t().const_zero(), len)
         } else {
             let want = STy::Int(NType::U64);
             let start = self.expr(&args[1], Some(&want))?;
@@ -3233,7 +3256,6 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             self.expect(&count, &want, "Pufferansicht-Anzahl")?;
             let start = start.value.into_int_value();
             let count = count.value.into_int_value();
-            let len = self.i64t().const_int(u64::from(length), false);
             let outside = self.builder.build_int_compare(IntPredicate::UGT, start, len, "sys.array.offset").map_err(e)?;
             let rest = self.builder.build_int_sub(len, start, "sys.array.rest").map_err(e)?;
             let short = self.builder.build_int_compare(IntPredicate::UGT, count, rest, "sys.array.short").map_err(e)?;
@@ -4208,6 +4230,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         };
                     }
                     if matches!(name.as_str(), "pufferansicht" | "array_view") {
+                        if let Some(ty @ (STy::Buffer(_) | STy::StrukturPuffer(_))) = args.first().and_then(|arg| self.infer(arg)) {
+                            return Some(ty);
+                        }
                         let (element, _) = self.pufferansicht_array(args.first()?)?;
                         return STy::puffer_element(&element.identity()).ok();
                     }
@@ -5435,7 +5460,8 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             len = count;
         }
         let f = crate::native_crc32c::update(self.context, self.module)?;
-        let call = self.builder.build_call(f, &[state.value.into(), data.into(), len.into()], "crc.result").map_err(e)?;
+        let features = crate::native_cpu_scope::merkmale(self.context, &self.builder, self.module)?;
+        let call = self.builder.build_call(f, &[state.value.into(), data.into(), len.into(), features.into()], "crc.result").map_err(e)?;
         self.call_result(call, Some(state_ty))
     }
 
@@ -6240,11 +6266,13 @@ pub(crate) fn emit_system_function<'ctx>(
     }
     let symbol = function.get_name().to_string_lossy();
     let source = symbol.strip_prefix("__moo_native.").unwrap_or(&symbol);
+    let mut cpu_scope = false;
     if !source.starts_with("__simd.") {
         if let Some(decorators) = global_declarations.iter().find_map(|stmt| match stmt {
             Stmt::FunctionDef { name, decorators, .. } if name == source => Some(decorators),
             _ => None,
         }) {
+            cpu_scope = crate::native_cpu_scope::marker(decorators)?;
             if let Some(limit) = crate::native_simd_dispatch::marker(decorators)? {
                 if signature.params.iter().chain(signature.result.iter()).any(|t| matches!(t, STy::Float(_))) {
                     return Err("@simd verwendet die GPR-/Speicher-ABI: Fließkommawerte in einer Struktur übergeben".into());
@@ -6311,7 +6339,7 @@ pub(crate) fn emit_system_function<'ctx>(
         sret: None, builder: context.create_builder(), slots: HashMap::new(), globals: HashMap::new(), loops: Vec::new(),
         trap: None, never: None, weiter: None, pow_fehler: None, result: me.result.clone(), callees, externs,
         sicher, unsicher_tiefe: 0, export, zeile: 0,
-        loop_cleanups: Vec::new(), cleanup_root: None, cleanup_error: None,
+        loop_cleanups: Vec::new(), cleanup_root: None, cleanup_error: None, cpu_scope,
     };
     // Struktur-Rueckgabe: Parameter 0 ist der sret-Puffer des Aufrufers.
     let offset = u32::from(signature.returns_struct());

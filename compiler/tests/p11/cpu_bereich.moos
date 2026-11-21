@@ -1,0 +1,58 @@
+extern "C" funktion cpu_beobachten() -> void
+extern "C" funktion cpu_cleanup_erhoehen() -> void
+
+@nativ
+@simd
+funktion cpu_vektor(bytes: puffer[u8]) -> u64:
+    setze v: u8x32 auf simd_laden(u8x32, bytes, 0)
+    gib_zurück als(u64, v[0])
+
+@nativ
+funktion cpu_ungebunden_rechnung(runden: u64) -> u64:
+    setze bytes: [u8; 64] auf 0
+    setze i: u64 auf 0
+    solange i < 64:
+        bytes[i] = 7
+        setze i auf i + 1
+    setze view: puffer[u8] auf byteansicht(bytes)
+    setze summe: u64 auf 0
+    setze i auf 0
+    solange i < runden:
+        setze summe auf summe + cpu_vektor(view) + als(u64, crc32c_aktualisieren(0, view))
+        setze i auf i + 1
+    gib_zurück summe
+
+@nativ
+@cpu_bereich
+funktion cpu_bereich_innen(runden: u64) -> u64:
+    unsicher:
+        cpu_beobachten()
+    gib_zurück cpu_ungebunden_rechnung(runden)
+
+@nativ
+@einstieg
+@cpu_bereich
+funktion cpu_bereich_probe(runden: u64) -> u64:
+    unsicher:
+        cpu_beobachten()
+    setze summe: u64 auf cpu_bereich_innen(runden)
+    unsicher:
+        cpu_beobachten()
+    gib_zurück summe
+
+@nativ
+@einstieg
+funktion cpu_bereich_unguard(runden: u64) -> u64:
+    wenn runden == 0:
+        gib_zurück 0
+    gib_zurück cpu_ungebunden_rechnung(runden)
+
+@nativ
+@einstieg
+@cpu_bereich
+funktion cpu_bereich_fehler(index: u64) -> u64:
+    unsicher:
+        aufräumen: cpu_cleanup_erhoehen()
+    setze bytes: [u8; 1] auf 0
+    setze view: puffer[u8] auf byteansicht(bytes)
+    gib_zurück als(u64, view[index])

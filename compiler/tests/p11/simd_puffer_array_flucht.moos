@@ -1,0 +1,7 @@
+struktur ArrayLeihe:
+    bytes: puffer[u8]
+@nativ
+funktion ansicht_array_flucht() -> ArrayLeihe:
+    setze bytes: [u8; 16] auf 0
+    setze ansichten: [puffer[u8]; 1] auf [byteansicht(bytes)]
+    gib_zurück ArrayLeihe(pufferansicht(ansichten[0], 0, 16))

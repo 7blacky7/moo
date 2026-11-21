@@ -7,7 +7,7 @@ $rc = Join-Path $root 'p11-t26-wsl.rc'
 if ($Worker) {
     # Bereits laufende Synapse-Distribution, kein Neustart und kein Service-Eingriff.
     $ErrorActionPreference = 'Continue'
-    $text = & wsl.exe -d Synapse -- sh -lc 'set -eu; export LC_ALL=C; uname -a; getconf GNU_LIBC_VERSION; lscpu | head -n 22; taskset -c 2 /mnt/d/MooTest/moo-p11-gegen-c; taskset -c 2 /mnt/d/MooTest/moo-p11-faktor; taskset -c 2 /mnt/d/MooTest/moo-p11-simd-puffer' 2>&1
+    $text = & wsl.exe -d Synapse -- sh -lc 'set -eu; export LC_ALL=C; uname -a; getconf GNU_LIBC_VERSION; lscpu | head -n 22; taskset -c 2 /mnt/d/MooTest/moo-p11-gegen-c; taskset -c 2 /mnt/d/MooTest/moo-p11-faktor; taskset -c 2 /mnt/d/MooTest/moo-p11-simd-puffer; taskset -c 2 /mnt/d/MooTest/cpu-bereich' 2>&1
     $result = $LASTEXITCODE
     $ErrorActionPreference = 'Stop'
     [IO.File]::WriteAllLines($log, [string[]]$text)
