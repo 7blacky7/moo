@@ -53,6 +53,7 @@ pub(crate) struct NativeStructLayout<'ctx> {
     /// Original fields are retained; canonical identities are resolved later.
     pub fields: Vec<(String, TypeRef)>,
     pub bitfelder: Vec<crate::ast::BitfeldBereich>,
+    pub varianten: Vec<crate::ast::AufzaehlungsVariante>,
 }
 
 /// Layout wird ausschließlich aus den Daten der Ziel-TargetMachine ermittelt.
@@ -114,7 +115,7 @@ pub(crate) fn native_struct_layout<'ctx>(
         }
         offsets.push(offset);
     }
-    Ok(NativeStructLayout { llvm_type, size, alignment, offsets, fields: Vec::new(), bitfelder: Vec::new() })
+    Ok(NativeStructLayout { llvm_type, size, alignment, offsets, fields: Vec::new(), bitfelder: Vec::new(), varianten: Vec::new() })
 }
 
 /// Registry owned by one compiler/module. A name becomes usable only after its
@@ -570,6 +571,16 @@ impl<'ctx> NativeStructRegistry<'ctx> {
             }
         }
         for (_, ty) in &layout.fields { feld(self, ty)?; }
+        Ok(())
+    }
+
+    pub(crate) fn register_aufzaehlung(
+        &mut self, name: &str, varianten: &[crate::ast::AufzaehlungsVariante],
+    ) -> Result<(), String> {
+        if !varianten.is_empty() {
+            let layout = self.layouts.get_mut(name).ok_or("Aufzählungslayout fehlt")?;
+            layout.varianten = varianten.to_vec();
+        }
         Ok(())
     }
 

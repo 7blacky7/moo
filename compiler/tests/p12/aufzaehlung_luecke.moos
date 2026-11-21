@@ -1,0 +1,16 @@
+aufzählung Anschluss:
+    fall Leer
+    fall Wartet(folge: u64)
+
+@nativ
+funktion unvollstaendig(a: Anschluss) -> u64:
+    prüfe a:
+        fall Leer:
+            gib_zurück 2
+
+@nativ
+funktion probe() -> u64:
+    gib_zurück unvollstaendig(Anschluss.Leer())
+
+unsicher:
+    zeige probe()

@@ -54,6 +54,8 @@
 //! per llvm.memcpy, Konstruktoren als Feldstores, interne Moo-Aufrufe geben
 //! Zeiger auf exklusive Kopien weiter und schreiben Rueckgaben per sret.
 
+mod aufzaehlung;
+
 use std::collections::{HashMap, HashSet};
 
 use inkwell::basic_block::BasicBlock;
@@ -422,6 +424,7 @@ fn byte_zugriff(name: &str) -> Option<(bool, NType, bool)> {
 pub(crate) fn schreibt_puffer(stmts: &[Stmt], name: &str) -> bool {
     stmts.iter().any(|stmt| match stmt {
         Stmt::IndexAssignment { object: Expr::Identifier(ziel), .. } => ziel == name,
+        Stmt::Match { cases, .. } => cases.iter().any(|(_, _, arm)| schreibt_puffer(arm, name)),
         Stmt::If { body, else_body, .. } => schreibt_puffer(body, name) || schreibt_puffer(else_body, name),
         Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => schreibt_puffer(body, name),
         _ => false,
@@ -480,6 +483,10 @@ impl LiestPruefung<'_> {
                 .or_else(|| self.block(body, u)).or_else(|| self.block(else_body, u)),
             Stmt::While { condition, body, .. } => self.expr(condition, u).or_else(|| self.block(body, u)),
             Stmt::For { iterable, body, .. } => self.expr(iterable, u).or_else(|| self.block(body, u)),
+            Stmt::Match { value, cases, .. } => self.expr(value, u)
+                .or_else(|| cases.iter().find_map(|(_, w, arm)| {
+                    w.as_ref().and_then(|w| self.expr(w, u)).or_else(|| self.block(arm, u))
+                })),
             Stmt::UnsafeBlock { body, .. } => self.block(body, true),
             _ => None,
         }
@@ -774,6 +781,7 @@ pub(crate) fn flucht_verletzung(
     }
 }
 
+#[derive(Clone)]
 struct FluchtPruefung<'a> {
     lokal: HashSet<String>,
     zeiger: HashSet<String>,
@@ -811,6 +819,9 @@ impl FluchtPruefung<'_> {
                     }
                 }
                 Stmt::If { body, else_body, .. } => { self.lokale(body); self.lokale(else_body); }
+                Stmt::Match { cases, .. } => {
+                    for (_, _, body) in cases { self.lokale(body); }
+                }
                 Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.lokale(body),
                 _ => {}
             }
@@ -893,6 +904,9 @@ impl FluchtPruefung<'_> {
                 if matches!(op, BinOp::Sub) && l.is_some() && r.is_some() { return None; }
                 l.or(r)
             }
+            Expr::MethodCall { object, args, .. }
+                if matches!(object.as_ref(), Expr::Identifier(n) if !self.lokal.contains(n) && (self.ist_struktur)(n)) =>
+                    args.iter().find_map(|arg| self.quelle(arg)),
             Expr::List(elements) => elements.iter().find_map(|element| self.quelle(element)),
             Expr::UnaryOp { op: UnaryOpKind::Not, .. } => None,
             Expr::UnaryOp { operand, .. } => self.quelle(operand),
@@ -972,6 +986,23 @@ impl FluchtPruefung<'_> {
         }
     }
 
+    fn mit_nutzbindungen(&self, wert: &Expr, muster: Option<&Expr>) -> Self {
+        let mut arm = self.clone();
+        let quelle = self.quelle(wert);
+        if let Some((_, bindungen)) = muster.and_then(|m| aufzaehlung::variantenmuster(m).ok()) {
+            for bindung in bindungen {
+                if let Expr::Identifier(name) = bindung {
+                    if name == "_" { continue; }
+                    arm.lokal.insert(name.clone());
+                    if let Some(ref grund) = quelle {
+                        arm.geliehen.insert(name.clone(), grund.clone());
+                    }
+                }
+            }
+        }
+        arm
+    }
+
     fn markiere(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             match stmt {
@@ -990,6 +1021,21 @@ impl FluchtPruefung<'_> {
                     }
                 }
                 Stmt::If { body, else_body, .. } => { self.markiere(body); self.markiere(else_body); }
+                Stmt::Match { value, cases, .. } => {
+                    for (muster, _, body) in cases {
+                        let mut fall = self.mit_nutzbindungen(value, muster.as_ref());
+                        fall.markiere(body);
+                        for (ziel, quelle) in [
+                            (&mut self.geliehen, fall.geliehen),
+                            (&mut self.erfolg_geliehen, fall.erfolg_geliehen),
+                            (&mut self.fehler_geliehen, fall.fehler_geliehen),
+                        ] {
+                            for (name, grund) in quelle {
+                                if self.lokal.contains(&name) { ziel.entry(name).or_insert(grund); }
+                            }
+                        }
+                    }
+                }
                 Stmt::While { body, .. } | Stmt::UnsafeBlock { body, .. } | Stmt::For { body, .. } => self.markiere(body),
                 _ => {}
             }
@@ -1004,6 +1050,16 @@ impl FluchtPruefung<'_> {
                 .map(|g| ("M-M002", g, stmt.zeile())).or_else(|| self.pruefe(body)).or_else(|| self.pruefe(else_body)),
             Stmt::While { condition, body, .. } | Stmt::For { iterable: condition, body, .. } =>
                 self.weitergabe_flucht(condition).map(|g| ("M-M002", g, stmt.zeile())).or_else(|| self.pruefe(body)),
+            Stmt::Match { value, cases, .. } => self.weitergabe_flucht(value)
+                .map(|grund| ("M-M002", grund, stmt.zeile())).or_else(|| {
+                    cases.iter().find_map(|(muster, waechter, body)| {
+                        let mut fall = self.mit_nutzbindungen(value, muster.as_ref());
+                        fall.markiere(body);
+                        waechter.as_ref().and_then(|w| fall.weitergabe_flucht(w))
+                            .map(|grund| ("M-M002", grund, stmt.zeile()))
+                            .or_else(|| fall.pruefe(body))
+                    })
+                }),
             Stmt::UnsafeBlock { body, .. } => self.pruefe(body),
             _ => self.pruefe_anweisung(stmt).map(|grund| ("M-M002", grund, stmt.zeile())),
         })
@@ -1107,6 +1163,13 @@ impl FluchtPruefung<'_> {
                 }
                 Stmt::While { condition: e, body, .. } | Stmt::For { iterable: e, body, .. } => {
                     Self::adressen_expr(e, out); Self::adressen(body, out);
+                }
+                Stmt::Match { value, cases, .. } => {
+                    Self::adressen_expr(value, out);
+                    for (_, waechter, body) in cases {
+                        if let Some(w) = waechter { Self::adressen_expr(w, out); }
+                        Self::adressen(body, out);
+                    }
                 }
                 Stmt::UnsafeBlock { body, .. } => Self::adressen(body, out),
                 _ => {}
@@ -1302,6 +1365,8 @@ fn endet_mit_rueckgabe(body: &[Stmt]) -> bool {
     match body.last() {
         Some(Stmt::Return(_, _)) => true,
         Some(Stmt::UnsafeBlock { body, .. }) => endet_mit_rueckgabe(body),
+        Some(Stmt::Match { cases, .. }) => !cases.is_empty()
+            && cases.iter().all(|(_, _, arm)| endet_mit_rueckgabe(arm)),
         _ => false,
     }
 }
@@ -1534,6 +1599,7 @@ fn stmt_baut_struktur(stmt: &Stmt, n: &NominalTypes) -> bool {
     let e = |x: &Expr| expr_baut_struktur(x, n);
     let b = |body: &[Stmt]| body.iter().any(|s| stmt_baut_struktur(s, n));
     match stmt {
+        Stmt::Match { .. } => true,
         Stmt::Assignment { value, .. } | Stmt::ConstAssignment { value, .. }
         | Stmt::CompoundAssignment { value, .. } | Stmt::Show(value, _)
         | Stmt::Expression(value, _) | Stmt::Return(Some(value), _) | Stmt::Defer(value, _) => e(value),
@@ -1622,6 +1688,7 @@ fn enthaelt_rueckgabe_oder_schleife(body: &[Stmt]) -> bool {
     body.iter().any(|stmt| match stmt {
         Stmt::Return(_, _) | Stmt::While { .. } | Stmt::For { .. } => true,
         Stmt::UnsafeBlock { body, .. } => enthaelt_rueckgabe_oder_schleife(body),
+        Stmt::Match { cases, .. } => cases.iter().any(|(_, _, arm)| enthaelt_rueckgabe_oder_schleife(arm)),
         Stmt::If { body, else_body, .. } =>
             enthaelt_rueckgabe_oder_schleife(body) || enthaelt_rueckgabe_oder_schleife(else_body),
         _ => false,
@@ -2214,6 +2281,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     let constant = matches!(stmt, Stmt::ConstAssignment { .. });
                     self.slots.insert(name.clone(), Slot { ty: sty, ptr, constant });
                 }
+                Stmt::Match { cases, .. } => {
+                    for (_, _, arm) in cases { self.declare_locals(arm, entry)?; }
+                }
                 Stmt::UnsafeBlock { body, .. } | Stmt::While { body, .. } | Stmt::For { body, .. } => self.declare_locals(body, entry)?,
                 Stmt::If { body, else_body, .. } => {
                     self.declare_locals(body, entry)?;
@@ -2469,6 +2539,12 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
         }
         if let Expr::MethodCall { object, method, args } = expr {
+            if let Some(gebaut) = self.aufzaehlungstyp(object) {
+                if &gebaut != ty {
+                    return Err(format!("Systemkoerper: {what} erwartet {}, erhalten {}", ty.name(), gebaut.name()));
+                }
+                return self.aufzaehlung_bauen(ty, method, args);
+            }
             let (name, mut inputs) = self.method_target(object, method)?;
             inputs.extend(args.iter().cloned());
             let call = Expr::FunctionCall { name, type_args: Vec::new(), args: inputs, zeile: self.zeile, spalten: (0,0) };
@@ -2603,6 +2679,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     ) -> Result<(), String> {
         let layout = self.layouts.layout(name)
             .ok_or_else(|| format!("Systemkoerper: unbekannte Struktur '{name}'"))?;
+        if !layout.varianten.is_empty() {
+            return Err(format!("Aufzählung '{name}' braucht den Konstruktor Name.Variante(...)"));
+        }
         let fields = layout.fields.clone();
         let offsets = layout.offsets.clone();
         // P2-T48 A4: Name() ohne Argumente = Nullwert (wie die 0-Vorbelegung der Slots).
@@ -2644,29 +2723,35 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             ));
         }
         for (index, ((field_name, field_ref), expr)) in fields.iter().zip(args).enumerate() {
-            let field_ty = self.feld_werttyp(field_ref).map_err(|_| {
-                format!("Systemkoerper: '{name}.{field_name}' hat keinen nativen Werttyp")
-            })?;
             let label = format!("{name}.{field_name}");
-            let offset = offsets[index];
-            let address = unsafe {
-                self.builder.build_gep(
-                    self.context.i8_type(), target.ptr,
-                    &[self.i64t().const_int(offset, false)], "sys.struct.feld",
-                )
-            }.map_err(e)?;
-            let alignment = field_alignment(target.alignment, offset);
-            if field_ty.ist_aggregat() {
-                let from = self.struct_place(expr, &field_ty, &label)?;
-                let to = Place { ptr: address, alignment, origin: target.origin.clone() };
-                self.copy_struct(&field_ty, to, from)?;
+            self.strukturfeld_bauen(field_ref, expr, target, offsets[index], &label)?;
+        }
+        Ok(())
+    }
+
+    fn strukturfeld_bauen(
+        &mut self, field_ref: &TypeRef, expr: &Expr, target: &Place<'ctx>, offset: u64, label: &str,
+    ) -> Result<(), String> {
+        let field_ty = self.feld_werttyp(field_ref).map_err(|_| {
+            format!("Systemkoerper: '{label}' hat keinen nativen Werttyp")
+        })?;
+        let address = unsafe {
+            self.builder.build_gep(
+                self.context.i8_type(), target.ptr,
+                &[self.i64t().const_int(offset, false)], "sys.struct.feld",
+            )
+        }.map_err(e)?;
+        let alignment = field_alignment(target.alignment, offset);
+        if field_ty.ist_aggregat() {
+            let from = self.struct_place(expr, &field_ty, label)?;
+            let to = Place { ptr: address, alignment, origin: target.origin.clone() };
+            self.copy_struct(&field_ty, to, from)?;
+        } else {
+            let value = self.expr(expr, Some(&field_ty))?;
+            self.expect(&value, &field_ty, label)?;
+            if let Some((nt, be)) = crate::native_struct::endian_feld(field_ref) {
+                self.byte_roh(address, self.i64t().const_zero(), nt, be, Some(value.value.into_int_value()))?;
             } else {
-                let value = self.expr(expr, Some(&field_ty))?;
-                self.expect(&value, &field_ty, &label)?;
-                if let Some((nt, be)) = crate::native_struct::endian_feld(field_ref) {
-                    self.byte_roh(address, self.i64t().const_zero(), nt, be, Some(value.value.into_int_value()))?;
-                    continue;
-                }
                 self.builder.build_store(address, value.value).map_err(e)?
                     .set_alignment(alignment).map_err(e)?;
             }
@@ -3779,6 +3864,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             self.zeile = stmt.zeile();
         }
         match stmt {
+            Stmt::Match { value, cases, .. } => self.pruefe_aufzaehlung(value, cases),
             Stmt::UnsafeBlock { body, .. } => {
                 self.unsicher_tiefe += 1;
                 let result = self.block(body);
@@ -4062,6 +4148,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn infer(&self, expr: &Expr) -> Option<STy> {
         match expr {
             Expr::MethodCall { object, method, .. } => {
+                if let Some(ty) = self.aufzaehlungstyp(object) { return Some(ty); }
                 let (name, _) = self.method_target(object, method).ok()?;
                 self.callees.get(&name)?.result.clone()
             },

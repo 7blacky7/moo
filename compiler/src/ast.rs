@@ -147,6 +147,14 @@ impl BitfeldBereich {
     pub fn maximum(&self) -> u64 { u64::MAX >> (64 - self.breite) }
 }
 
+/// Ein zusammenhängender Bereich von Nutzfeldern einer nativen Aufzählung.
+#[derive(Debug, Clone)]
+pub struct AufzaehlungsVariante {
+    pub name: std::string::String,
+    pub erster_nutzwert: usize,
+    pub nutzwerte: usize,
+}
+
 /// Decorator mit optionalen Literal-Argumenten: @name oder @name(arg, ...)
 /// P011-A1: getrennter Typ statt blossem String — "weniger Magie an den tiefsten Stellen".
 #[derive(Debug, Clone)]
@@ -386,6 +394,7 @@ pub enum Stmt {
         fields: Vec<(std::string::String, TypeRef)>,
         decorators: Vec<Decorator>,
         bitfelder: Vec<BitfeldBereich>,
+        varianten: Vec<AufzaehlungsVariante>,
         /// Native Methodentabellen werden nach der Modulauflösung geprüft.
         interfaces: Vec<std::string::String>,
         methods: Vec<Stmt>,

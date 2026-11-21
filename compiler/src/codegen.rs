@@ -819,8 +819,9 @@ impl<'ctx> CodeGen<'ctx> {
                 .ok_or_else(|| "Ziel-Datenlayout für Struktur fehlt".to_string())?;
             self.native_structs.register_all(self.context, target, &definitions)?;
             for stmt in &program.statements {
-                if let Stmt::StructDef { name, bitfelder, .. } = stmt {
+                if let Stmt::StructDef { name, bitfelder, varianten, .. } = stmt {
                     self.native_structs.register_bitfelder(name, bitfelder)?;
+                    self.native_structs.register_aufzaehlung(name, varianten)?;
                 }
             }
         }
@@ -6953,6 +6954,9 @@ impl<'ctx> CodeGen<'ctx> {
     /// Argumente = Nullwert, sonst genau ein Wert je Feld; statisch geprueft); die
     /// Werte prueft moo_struct_new_values wie das Feldschreiben (fangbar).
     fn compile_struktur_konstruktor(&mut self, name: &str, args: &[Expr], guard_args: bool) -> Result<StructValue<'ctx>, String> {
+        if self.native_structs.layout(name).is_some_and(|layout| !layout.varianten.is_empty()) {
+            return Err(format!("Aufzählung '{name}' braucht einen nativen Variantenkonstruktor"));
+        }
         if self.bare_mode {
             return Err(format!("Struktur '{name}': Strukturwerte in dynamischem Moo brauchen die hosted Runtime (nicht im Bare-Profil)"));
         }

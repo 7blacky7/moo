@@ -59,7 +59,7 @@ fn returned(expr: Expr, result: &TypeRef) -> Vec<Stmt> {
 }
 fn structure(name: &str, fields: Vec<(String,TypeRef)>) -> Stmt {
     Stmt::StructDef { zeile: 0, name: name.into(), fields, decorators: Vec::new(),
-        bitfelder: Vec::new(), interfaces: Vec::new(), methods: Vec::new() }
+        bitfelder: Vec::new(), varianten: Vec::new(), interfaces: Vec::new(), methods: Vec::new() }
 }
 fn error(line: usize, text: impl std::fmt::Display) -> String {
     crate::diagnose::vormerken("M-C000", line, format!("Native Schnittstelle: {text}"))

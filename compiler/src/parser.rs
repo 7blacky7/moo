@@ -540,6 +540,11 @@ impl Parser {
                             Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
                             Some(TokenType::Colon | TokenType::Implements)) => self.parse_struct_def(vec![]),
+            TokenType::Identifier(kw) if (kw == "aufzählung" || kw == "aufzaehlung")
+                && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
+                            Some(TokenType::Identifier(_)))
+                && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
+                            Some(TokenType::Colon)) => self.parse_aufzaehlung(),
             TokenType::Identifier(kw) if kw == "bitfeld"
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type), Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type), Some(TokenType::Colon)) =>
@@ -1238,7 +1243,7 @@ impl Parser {
             return Err(ParseError { message: "bitfeld braucht mindestens einen benannten Bereich".into(),
                 ..ParseError::bei(self.current()) });
         }
-        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder, interfaces: Vec::new(), methods: Vec::new() })
+        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder, varianten: Vec::new(), interfaces: Vec::new(), methods: Vec::new() })
     }
 
     fn parse_bitposition(&mut self) -> Result<u32, ParseError> {
@@ -1251,6 +1256,85 @@ impl Parser {
             _ => Err(ParseError { message: "Bitposition muss eine ganze Zahl von 0 bis 63 sein".into(),
                 ..ParseError::bei(self.current()) }),
         }
+    }
+
+    fn parse_aufzaehlung(&mut self) -> Result<Stmt, ParseError> {
+        let deklaration = self.current().clone();
+        self.pos += 1;
+        let name = self.eat_identifier()?;
+        self.eat(&TokenType::Colon)?;
+        self.skip_newlines();
+        self.eat(&TokenType::Indent)?;
+        let vorher = self.native_context;
+        self.native_context = true;
+        let ergebnis = (|| {
+            let mut fields = vec![("aufzaehlung.tag".into(), crate::ast::TypeRef {
+                kind: crate::ast::TypeKind::Name("u32".into()),
+                line: deklaration.line, column: deklaration.column,
+                end_line: deklaration.line, end_column: deklaration.column,
+            })];
+            let mut varianten = Vec::new();
+            let mut namen = std::collections::HashSet::new();
+            loop {
+                self.skip_newlines();
+                if matches!(self.current_type(), TokenType::Dedent) {
+                    self.pos += 1;
+                    break;
+                }
+                self.eat(&TokenType::Case)?;
+                let stelle = self.current().clone();
+                let variante = self.eat_identifier()?;
+                if variante == "_" || !namen.insert(variante.clone()) {
+                    return Err(ParseError {
+                        message: format!("Ungültiger oder doppelter Variantenname '{variante}'"),
+                        ..ParseError::bei(&stelle)
+                    });
+                }
+                let erster_nutzwert = fields.len();
+                if matches!(self.current_type(), TokenType::LParen) {
+                    self.pos += 1;
+                    let mut nutznamen = std::collections::HashSet::new();
+                    if !matches!(self.current_type(), TokenType::RParen) {
+                        loop {
+                            let stelle = self.current().clone();
+                            let feld = self.eat_identifier()?;
+                            if feld == "_" || !nutznamen.insert(feld.clone()) {
+                                return Err(ParseError {
+                                    message: format!("Ungültiger oder doppelter Nutzfeldname '{feld}'"),
+                                    ..ParseError::bei(&stelle)
+                                });
+                            }
+                            self.eat(&TokenType::Colon)?;
+                            fields.push((format!("{variante}.{feld}"), self.parse_type()?));
+                            if !matches!(self.current_type(), TokenType::Comma) { break; }
+                            self.pos += 1;
+                        }
+                    }
+                    self.eat(&TokenType::RParen)?;
+                }
+                if !matches!(self.current_type(), TokenType::Newline | TokenType::Dedent) {
+                    return Err(ParseError {
+                        message: "Zeilenende nach der Variante erwartet".into(),
+                        ..ParseError::bei(self.current())
+                    });
+                }
+                varianten.push(crate::ast::AufzaehlungsVariante {
+                    name: variante, erster_nutzwert, nutzwerte: fields.len() - erster_nutzwert,
+                });
+            }
+            if varianten.is_empty() {
+                return Err(ParseError {
+                    message: format!("Aufzählung '{name}' braucht mindestens eine Variante"),
+                    ..ParseError::bei(&deklaration)
+                });
+            }
+            Ok(Stmt::StructDef {
+                zeile: 0, name, fields, decorators: Vec::new(), bitfelder: Vec::new(),
+                varianten, interfaces: Vec::new(), methods: Vec::new(),
+            })
+        })();
+        self.native_context = vorher;
+        ergebnis
     }
 
     fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
@@ -1269,7 +1353,7 @@ impl Parser {
             && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
         {
             return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators,
-                bitfelder: Vec::new(), interfaces, methods: Vec::new() });
+                bitfelder: Vec::new(), varianten: Vec::new(), interfaces, methods: Vec::new() });
         }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
@@ -1319,7 +1403,7 @@ impl Parser {
                     }
                 }
             }
-            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new(), interfaces, methods })
+            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new(), varianten: Vec::new(), interfaces, methods })
         })();
         self.native_context = previous_native;
         result

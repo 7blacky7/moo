@@ -1,0 +1,40 @@
+struktur Fenster:
+    beginn: u64
+    breite: u32
+
+aufzählung Anschluss:
+    fall Leer
+    fall Wartet(folge: u64)
+    fall Verbunden(fenster: Fenster, marke: bool)
+
+@nativ
+funktion auswerten(a: Anschluss) -> u64:
+    prüfe a:
+        fall Leer:
+            gib_zurück 2
+        fall Wartet(n):
+            gib_zurück n
+        fall Verbunden(f, _):
+            setze breite: u64 auf als(u64, f.breite)
+            gib_zurück f.beginn + breite
+
+@nativ
+funktion bewacht(n: u64) -> u64:
+    prüfe Anschluss.Wartet(n):
+        fall Wartet(k) wenn k == 11:
+            gib_zurück k
+        standard:
+            gib_zurück 4
+
+@nativ
+funktion rueckgabe(n: u64) -> Anschluss:
+    gib_zurück Anschluss.Verbunden(Fenster(n, 30), wahr)
+
+@nativ
+funktion probe() -> u64:
+    setze leer: Anschluss auf Anschluss.Leer()
+    setze wartet: Anschluss auf Anschluss.Wartet(7)
+    gib_zurück auswerten(leer) + auswerten(wartet) + auswerten(rueckgabe(9)) + bewacht(11) + bewacht(12)
+
+unsicher:
+    zeige probe()

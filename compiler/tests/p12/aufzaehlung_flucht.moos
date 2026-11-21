@@ -1,0 +1,12 @@
+aufzählung Nutzdaten:
+    fall Referenz(ort: ptr[u64])
+
+@nativ
+funktion unerlaubt() -> ptr[u64]:
+    unsicher:
+        setze lokal: u64 auf 6
+        setze bezug: ptr[u64] auf zeiger(adresse_von(lokal))
+        setze summe: Nutzdaten auf Nutzdaten.Referenz(bezug)
+        prüfe summe:
+            fall Referenz(a):
+                gib_zurück a
