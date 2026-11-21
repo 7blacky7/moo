@@ -1,0 +1,22 @@
+aus nativ_crc32c importiere crc32c_fortsetzen
+aus ds_moofs importiere moofs_crc, MooFsFehler
+@nativ
+@einstieg
+funktion crc_gate(p: ptr[u8], n: u64, seed: u32) -> u32:
+    unsicher:
+        gib_zurück crc32c_fortsetzen(seed, byteansicht(p, n))
+
+@nativ
+@einstieg
+funktion crc_bereich(p: ptr[u8], n: u64, seed: u32, start: u64, anzahl: u64) -> u32:
+    unsicher:
+        gib_zurück crc32c_aktualisieren(seed, byteansicht(p, n), start, anzahl)
+
+@nativ
+@einstieg
+funktion crc_moofs(p: ptr[u8], n: u64) -> u64:
+    unsicher:
+        setze r: ergebnis[u32, MooFsFehler] auf moofs_crc(byteansicht(p, n))
+        wenn ist_erfolg(r):
+            gib_zurück als(u64, ergebnis_wert(r))
+        gib_zurück 0x100000000

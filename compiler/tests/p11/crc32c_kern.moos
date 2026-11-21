@@ -1,0 +1,4 @@
+aus nativ_crc32c importiere crc32c_fortsetzen
+@nativ
+funktion crc_kern(daten: puffer[u8], seed: u32) -> u32:
+    gib_zurück crc32c_fortsetzen(seed, daten)

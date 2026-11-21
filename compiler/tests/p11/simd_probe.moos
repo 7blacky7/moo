@@ -29,6 +29,17 @@ funktion simd_ergebnis_weiter(x: u8) -> ergebnis[u8x16, u32]:
     gib_zurück erfolg(v + u8x16(1))
 
 @nativ
+funktion simd_unmarkiert(frueh: bool) -> u64:
+    unsicher:
+        gib_zurück simd_cleanup_probe(frueh)
+
+@nativ
+@simd("gfni128")
+funktion simd_deckel(x: u8) -> u64:
+    setze v: u8x32 auf simd_gf256_mal(u8x32(x), u8x32(2))
+    gib_zurück als(u64, v[31])
+
+@nativ
 @simd
 funktion simd_probe() -> u64:
     setze a: u8x16 auf u8x16(250)
@@ -88,4 +99,8 @@ funktion simd_probe() -> u64:
     unsicher:
         wenn atom_laden(SIMD_CLEANUP_WERT, ordnung=locker) != 3:
             gib_zurück 15
+    wenn simd_unmarkiert(wahr) != 1:
+        gib_zurück 16
+    wenn simd_deckel(128) != 29:
+        gib_zurück 17
     gib_zurück 0

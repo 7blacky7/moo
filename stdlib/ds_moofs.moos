@@ -82,14 +82,12 @@ funktion moofs_schluessel_vergleichen(a: MooFsSchluessel, b: MooFsSchluessel) ->
 funktion moofs_crc(bytes: puffer[u8]) -> ergebnis[u32, MooFsFehler]:
     wenn länge(bytes) != 4096:
         gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 1, 0))
-    setze crc: u32 auf 0xFFFFFFFF
+    setze crc: u32 auf crc32c_aktualisieren(0xFFFFFFFF, bytes, 0, 40)
     setze i: u64 auf 0
-    solange i < 4096:
-        setze wert: u8 auf bytes[i]
-        wenn i >= 40 und i < 44:
-            setze wert auf 0
-        setze crc auf crc32c_byte(crc, wert)
+    solange i < 4:
+        setze crc auf crc32c_byte(crc, 0)
         setze i auf i + 1
+    setze crc auf crc32c_aktualisieren(crc, bytes, 44, 4052)
     gib_zurück erfolg(crc ^ 0xFFFFFFFF)
 
 @nativ

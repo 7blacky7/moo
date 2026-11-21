@@ -12,3 +12,20 @@ run = "uv run python gate.py"
 
 [tasks.gf]
 run = "uv run python gf.py"
+
+
+[tasks.simd-puffer]
+run = "bash simd-puffer.sh"
+
+[tasks.faktor]
+run = "bash faktor.sh"
+
+[tasks.crc32c]
+run = "bash crc32c.sh"
+
+[tasks.vergleich]
+run = "bash gegen-c.sh"
+
+
+[tasks.vergleich-n100]
+run = "bash n100.sh"

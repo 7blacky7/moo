@@ -525,6 +525,7 @@ impl LiestPruefung<'_> {
             "länge" | "laenge" | "length" | "len" => None,
             _ if i < 2 && matches!(callee, "konstantzeit_gleich" | "ct_equal") => None,
             _ if i == 0 && byte_zugriff(callee).is_some_and(|(schreiben, _, _)| !schreiben) => None,
+            _ if i == 1 && matches!(callee,"simd_laden" | "crc32c_aktualisieren") => None,
             "puffer_zeiger" | "buffer_pointer" if unsicher => None,
             "puffer_zeiger" | "buffer_pointer" =>
                 Some(format!("puffer_zeiger({name}) steht ausserhalb von unsicher: (dort nur als bewusstes Escape)")),
@@ -1353,7 +1354,7 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::FunctionCall { name, args, .. } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
-            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view" | "pufferansicht" | "array_view" | "sicht")
+            matches!(name.as_str(), "simd_laden" | "simd_speichern") || (name == "crc32c_aktualisieren" && args.len() == 4) || k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view" | "pufferansicht" | "array_view" | "sicht")
                 || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
                 || k.fremd.contains(name.as_str())
                 || (!k.fremd.is_empty() && k.typen.contains_key(name.as_str()))
@@ -1593,7 +1594,7 @@ pub(crate) fn is_pure_slice(body: &[Stmt]) -> bool {
     fn cpu(expr: &Expr) -> bool {
         match expr {
             Expr::FunctionCall { name, args, .. } => crate::native_crypto::rng_name(name).is_some()
-                || args.iter().any(cpu),
+                || name == "crc32c_aktualisieren" || args.iter().any(cpu),
             Expr::BinaryOp { left, right, .. } => cpu(left) || cpu(right),
             Expr::UnaryOp { operand, .. } => cpu(operand),
             _ => false,
@@ -4116,6 +4117,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                         .and_then(|ty| registration_component(&ty, name == "rueckruf_zeiger"));
                 }
                 if !self.callees.contains_key(name) {
+                    if name == "simd_laden" {
+                        return self.simd_lade_art(args).ok().and_then(|art| self.struct_ty(art.name()).ok());
+                    }
                     if crate::native_simd::byte_operation(name) {
                         let art = args.first().and_then(|arg| self.simd_von(arg))?;
                         return self.struct_ty(art.name()).ok();
@@ -4139,6 +4143,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 }
                 if self.layouts.layout(name).is_some() { return self.struct_ty(name).ok(); }
                 if !self.callees.contains_key(name) {
+                    if name == "crc32c_aktualisieren" { return Some(STy::Int(NType::U32)); }
                     if crate::native_crypto::rng_name(name).is_some() { return Some(STy::Bool); }
                     if let Some(art) = crate::native_arithmetic::bit_art(name) {
                         return if art.liefert_bool() { Some(STy::Bool) }
@@ -4517,10 +4522,82 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         let value = crate::native_simd::binaer(&self.builder, op, a, b)?;
         Ok(Some((art, value)))
     }
+    fn simd_lade_art(&self, args: &[Expr]) -> Result<crate::native_simd::SimdArt, String> {
+        let [Expr::Identifier(name), _, _] = args else {
+            return Err("simd_laden erwartet (u8x16 oder u8x32, puffer[u8], versatz:u64)".into());
+        };
+        self.layouts.simd_art(name).filter(|art| *art != crate::native_simd::SimdArt::U64x4)
+            .ok_or("simd_laden erwartet den eingebauten Typ u8x16 oder u8x32".into())
+    }
+
+    fn simd_puffer_ort(&mut self, buffer: &Expr, offset: &Expr, bytes: u64) -> Result<PointerValue<'ctx>, String> {
+        let ty = STy::Buffer(NType::U8);
+        let view = self.expr(buffer, Some(&ty))?;
+        self.expect(&view, &ty, "SIMD-Byteansicht")?;
+        let view = view.value.into_struct_value();
+        let data = self.builder.build_extract_value(view,0,"simd.bytes.data").map_err(e)?.into_pointer_value();
+        let len = self.builder.build_extract_value(view,1,"simd.bytes.len").map_err(e)?.into_int_value();
+        let u64_ty = STy::Int(NType::U64);
+        let offset = self.expr(offset,Some(&u64_ty))?;
+        self.expect(&offset,&u64_ty,"SIMD-Byteversatz")?;
+        let offset = offset.value.into_int_value();
+        let outside = self.builder.build_int_compare(IntPredicate::UGT,offset,len,"simd.bytes.outside").map_err(e)?;
+        let rest = self.builder.build_int_sub(len,offset,"simd.bytes.remaining").map_err(e)?;
+        let short = self.builder.build_int_compare(IntPredicate::ULT,rest,self.i64t().const_int(bytes,false),"simd.bytes.short").map_err(e)?;
+        let bad = self.builder.build_or(outside,short,"simd.bytes.bounds").map_err(e)?;
+        self.byte_pruefung(bad)?;
+        unsafe { self.builder.build_gep(self.context.i8_type(),data,&[offset],"simd.bytes.address") }.map_err(e)
+    }
+
+    fn simd_laden(&mut self, args: &[Expr]) -> Result<(crate::native_simd::SimdArt, VectorValue<'ctx>), String> {
+        let art = self.simd_lade_art(args)?;
+        let p = self.simd_puffer_ort(&args[1],&args[2],art.bytes())?;
+        let profile = crate::native_simd_dispatch::Profil::von_funktion(self.function);
+        if profile != crate::native_simd_dispatch::Profil::Skalar {
+            let value = self.builder.build_load(art.llvm(self.context),p,"simd.bytes.load").map_err(e)?;
+            value.as_instruction_value().ok_or("SIMD-Load fehlt")?.set_alignment(1).map_err(e)?;
+            return Ok((art,value.into_vector_value()));
+        }
+        // Das Skalarprofil darf auch durch einen Vektor-Load kein SIMD einfuehren.
+        let mut value = art.llvm(self.context).get_undef();
+        for i in 0..art.bahnen() {
+            let index = self.i64t().const_int(u64::from(i),false);
+            let lane = unsafe { self.builder.build_gep(self.context.i8_type(),p,&[index],"simd.bytes.scalar.ptr") }.map_err(e)?;
+            let byte = self.builder.build_load(self.context.i8_type(),lane,"simd.bytes.scalar.load").map_err(e)?;
+            byte.as_instruction_value().ok_or("SIMD-Skalarload fehlt")?.set_alignment(1).map_err(e)?;
+            value = self.builder.build_insert_element(value,byte,self.context.i32_type().const_int(u64::from(i),false),"simd.bytes.scalar.join").map_err(e)?;
+        }
+        Ok((art,value))
+    }
+
+    fn simd_speichern(&mut self, args: &[Expr]) -> Result<Option<SVal<'ctx>>, String> {
+        let [buffer,offset,expr] = args else {
+            return Err("simd_speichern erwartet (puffer[u8], versatz:u64, u8x16 oder u8x32)".into());
+        };
+        let art = self.simd_von(expr).filter(|art| *art != crate::native_simd::SimdArt::U64x4)
+            .ok_or("simd_speichern erwartet u8x16 oder u8x32 als Wert")?;
+        let p = self.simd_puffer_ort(buffer,offset,art.bytes())?;
+        let value = self.simd_wert(expr,art)?;
+        let profile = crate::native_simd_dispatch::Profil::von_funktion(self.function);
+        if profile != crate::native_simd_dispatch::Profil::Skalar {
+            self.builder.build_store(p,value).map_err(e)?.set_alignment(1).map_err(e)?;
+        } else {
+            for i in 0..art.bahnen() {
+                let index = self.i64t().const_int(u64::from(i),false);
+                let lane = unsafe { self.builder.build_gep(self.context.i8_type(),p,&[index],"simd.bytes.scalar.ptr") }.map_err(e)?;
+                let byte = self.builder.build_extract_element(value,self.context.i32_type().const_int(u64::from(i),false),"simd.bytes.scalar.byte").map_err(e)?;
+                self.builder.build_store(lane,byte).map_err(e)?.set_alignment(1).map_err(e)?;
+            }
+        }
+        Ok(None)
+    }
+
     fn simd_rechnung(&mut self, expr: &Expr)
         -> Result<Option<(crate::native_simd::SimdArt, VectorValue<'ctx>)>, String>
     {
         match expr {
+            Expr::FunctionCall { name, args, .. } if name == "simd_laden" && !self.callees.contains_key(name) =>
+                self.simd_laden(args).map(Some),
             Expr::FunctionCall { name, args, .. }
                 if !self.callees.contains_key(name) && crate::native_simd::byte_operation(name) =>
             {
@@ -4532,10 +4609,18 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                     return Err(format!("{name} erwartet u8x16 oder u8x32"));
                 }
                 let a = self.simd_wert(left, art)?;
-                let b = self.simd_wert(right, art)?;
                 let profile = crate::native_simd_dispatch::Profil::von_funktion(self.function);
-                let value = crate::native_simd::byte_rechnung(self.context, self.module, &self.builder,
-                    profile, name, a, b)?;
+                let value = if name == "simd_gf256_mal_faktor" {
+                    let ty = STy::Int(NType::U8);
+                    let factor = self.expr(right, Some(&ty))?;
+                    self.expect(&factor, &ty, "simd_gf256_mal_faktor Faktor")?;
+                    crate::native_simd::gf256_faktor(self.context, self.module, &self.builder,
+                        profile, a, factor.value.into_int_value())?
+                } else {
+                    let b = self.simd_wert(right, art)?;
+                    crate::native_simd::byte_rechnung(self.context, self.module, &self.builder,
+                        profile, name, a, b)?
+                };
                 Ok(Some((art, value)))
             }
             Expr::BinaryOp { left, op, right } => self.simd_binaer(left, op, right),
@@ -5267,10 +5352,11 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
         }
         let named = matches!(callee.result, Some(ref ty) if !matches!(ty, STy::Struct(_)));
+        let target = crate::native_simd_dispatch::aufruf_ziel(self.module, self.function, callee.function);
         let call = self.builder.build_call(
-            callee.function, &call_args, if named { "sys.direkt" } else { "" },
+            target, &call_args, if named { "sys.direkt" } else { "" },
         ).map_err(e)?;
-        call.set_call_convention(callee.function.get_call_conventions());
+        call.set_call_convention(target.get_call_conventions());
         for (position, list) in attributes {
             for attribute in list { call.add_attribute(AttributeLoc::Param(position), attribute); }
         }
@@ -5318,6 +5404,40 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     }
 
 
+
+    fn crc32c_update(&mut self, args: &[Expr]) -> Result<Option<SVal<'ctx>>, String> {
+        if args.len() != 2 && args.len() != 4 {
+            return Err("crc32c_aktualisieren erwartet (u32, puffer[u8]) oder (u32, puffer[u8], start:u64, anzahl:u64)".into());
+        }
+        let state_ty = STy::Int(NType::U32);
+        let state = self.expr(&args[0], Some(&state_ty))?;
+        self.expect(&state, &state_ty, "CRC32C-Zustand")?;
+        let view_ty = STy::Buffer(NType::U8);
+        let view = self.expr(&args[1], Some(&view_ty))?;
+        self.expect(&view, &view_ty, "CRC32C-Byteansicht")?;
+        let view = view.value.into_struct_value();
+        let mut data = self.builder.build_extract_value(view, 0, "crc.data").map_err(e)?.into_pointer_value();
+        let mut len = self.builder.build_extract_value(view, 1, "crc.len").map_err(e)?.into_int_value();
+        if args.len() == 4 {
+            let u64_ty = STy::Int(NType::U64);
+            let start = self.expr(&args[2], Some(&u64_ty))?;
+            self.expect(&start, &u64_ty, "CRC32C-Start")?;
+            let count = self.expr(&args[3], Some(&u64_ty))?;
+            self.expect(&count, &u64_ty, "CRC32C-Anzahl")?;
+            let start = start.value.into_int_value();
+            let count = count.value.into_int_value();
+            let outside = self.builder.build_int_compare(IntPredicate::UGT, start, len, "crc.outside").map_err(e)?;
+            let rest = self.builder.build_int_sub(len, start, "crc.remaining").map_err(e)?;
+            let short = self.builder.build_int_compare(IntPredicate::UGT, count, rest, "crc.short").map_err(e)?;
+            let bad = self.builder.build_or(outside, short, "crc.bounds").map_err(e)?;
+            self.byte_pruefung(bad)?;
+            data = unsafe { self.builder.build_gep(self.context.i8_type(), data, &[start], "crc.start") }.map_err(e)?;
+            len = count;
+        }
+        let f = crate::native_crc32c::update(self.context, self.module)?;
+        let call = self.builder.build_call(f, &[state.value.into(), data.into(), len.into()], "crc.result").map_err(e)?;
+        self.call_result(call, Some(state_ty))
+    }
 
     fn crypto_bytes(&mut self, args: &[Expr], wipe: bool) -> Result<Option<SVal<'ctx>>, String> {
         if args.len() != if wipe { 1 } else { 2 } {
@@ -5412,6 +5532,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 return Ok(Some(SVal { ty, value }));
             }
         }
+        if name == "simd_speichern" && !self.callees.contains_key(name) { return self.simd_speichern(args); }
         if crate::native_simd::byte_operation(name) && !self.callees.contains_key(name) {
             let expr = Expr::FunctionCall { name: name.into(), type_args: Vec::new(), args: args.to_vec(),
                 zeile: self.zeile, spalten: (0, 0) };
@@ -5440,6 +5561,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             let erlaubt = crate::native_arithmetic::pruef_art(name).is_some()
                 || crate::native_arithmetic::bit_art(name).is_some()
                 || crate::native_crypto::wipe_name(name)
+                || name == "crc32c_aktualisieren"
                 || crate::native_crypto::rng_name(name).is_some_and(|(_, query)| query)
                 || crate::native_arithmetic::cast_art(name).is_some()
                 || self.callees.contains_key(name) || eigener
@@ -5453,6 +5575,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 // P2-T98 S3: M-M005 mit Zeile.
                 return Err(crate::diagnose::vormerken("M-M005", self.zeile, format!("Systemkoerper: Aufruf '{name}' ist nur innerhalb von unsicher: erlaubt (sicherer @nativ-Koerper; ohne unsicher: erlaubt: als/als_wrap/als_saettigend, teilbar/verschiebbar/potenzierbar, andere @nativ-Funktionen, Strukturkonstruktoren, länge/puffer_zeiger)")));
             }
+        }
+        if !self.callees.contains_key(name) && name == "crc32c_aktualisieren" {
+            return self.crc32c_update(args);
         }
         if !self.callees.contains_key(name) && name == "bitfeld_wert" {
             let [arg] = args else { return Err("bitfeld_wert(bitfeld) erwartet genau einen Wert".into()); };
@@ -5911,8 +6036,9 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             }
             let values = self.args_for(name, args, &callee.params)?;
             let call_args: Vec<BasicMetadataValueEnum<'ctx>> = values.iter().map(|v| v.value.into()).collect();
-            let call = self.builder.build_call(callee.function, &call_args, if callee.result.is_some() { "sys.direkt" } else { "" }).map_err(e)?;
-            call.set_call_convention(callee.function.get_call_conventions());
+            let target = crate::native_simd_dispatch::aufruf_ziel(self.module, self.function, callee.function);
+            let call = self.builder.build_call(target, &call_args, if callee.result.is_some() { "sys.direkt" } else { "" }).map_err(e)?;
+            call.set_call_convention(target.get_call_conventions());
             self.nach_aufruf_pruefen(&callee)?;
             return self.call_result(call, callee.result.clone());
         }

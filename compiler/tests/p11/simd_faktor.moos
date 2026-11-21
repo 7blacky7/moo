@@ -1,0 +1,159 @@
+@nativ
+@einstieg
+@simd("skalar")
+funktion faktor_16_skalar(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x16 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("skalar")
+funktion faktor_32_skalar(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x32 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion faktor_16_ssse3(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x16 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion faktor_32_ssse3(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x32 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion faktor_16_avx2(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x16 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion faktor_32_avx2(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x32 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("gfni128")
+funktion faktor_16_gfni128(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x16 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("gfni128")
+funktion faktor_32_gfni128(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x32 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("gfni")
+funktion faktor_16_gfni256(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x16 auf u8x16()
+        setze i: u64 auf 0
+        solange i < 16:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x16 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 16:
+            ziel[i] = r[i]
+            setze i auf i + 1
+
+@nativ
+@einstieg
+@simd("gfni")
+funktion faktor_32_gfni256(p: ptr[u8], factor: u8, ziel: ptr[u8]) -> void:
+    unsicher:
+        setze a: u8x32 auf u8x32()
+        setze i: u64 auf 0
+        solange i < 32:
+            a[i] = p[i]
+            setze i auf i + 1
+        setze r: u8x32 auf simd_gf256_mal_faktor(a, factor)
+        setze i auf 0
+        solange i < 32:
+            ziel[i] = r[i]
+            setze i auf i + 1

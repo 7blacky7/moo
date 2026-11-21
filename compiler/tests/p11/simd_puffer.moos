@@ -1,0 +1,99 @@
+@nativ
+@einstieg
+@simd("skalar")
+funktion simd_puffer_16_skalar(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x16 auf simd_laden(u8x16, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("skalar")
+funktion simd_puffer_32_skalar(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x32 auf simd_laden(u8x32, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion simd_puffer_16_ssse3(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x16 auf simd_laden(u8x16, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("ssse3")
+funktion simd_puffer_32_ssse3(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x32 auf simd_laden(u8x32, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion simd_puffer_16_avx2(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x16 auf simd_laden(u8x16, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("avx2")
+funktion simd_puffer_32_avx2(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x32 auf simd_laden(u8x32, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("gfni128")
+funktion simd_puffer_16_gfni128(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x16 auf simd_laden(u8x16, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("gfni128")
+funktion simd_puffer_32_gfni128(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x32 auf simd_laden(u8x32, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("gfni")
+funktion simd_puffer_16_gfni(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x16 auf simd_laden(u8x16, daten, start)
+        simd_speichern(ausgabe, ziel, v)
+
+@nativ
+@einstieg
+@simd("gfni")
+funktion simd_puffer_32_gfni(p: ptr[u8], len: u64, start: u64, q: ptr[u8], qlen: u64, ziel: u64) -> void:
+    unsicher:
+        setze daten: puffer[u8] auf byteansicht(p, len)
+        setze ausgabe: puffer[u8] auf byteansicht(q, qlen)
+        setze v: u8x32 auf simd_laden(u8x32, daten, start)
+        simd_speichern(ausgabe, ziel, v)

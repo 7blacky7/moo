@@ -37,6 +37,25 @@ impl Profil {
     }
 }
 
+/// Ein bereits gewähltes Profil darf denselben geschützten Unterhelfer direkt
+/// aufrufen. Bei fehlender Variante (z. B. engerem ISA-Deckel) bleibt der Guard.
+pub(crate) fn aufruf_ziel<'ctx>(
+    module: &Module<'ctx>, caller: FunctionValue<'ctx>, callee: FunctionValue<'ctx>,
+) -> FunctionValue<'ctx> {
+    let profile = Profil::von_funktion(caller);
+    let caller_name = caller.get_name().to_string_lossy();
+    if !caller_name.starts_with(&format!("__moo_native.__simd.{}.", profile.name())) {
+        return callee;
+    }
+    let name = callee.get_name().to_string_lossy();
+    let source = name.strip_prefix("__moo_native.").unwrap_or(&name);
+    let variant = format!("__moo_native.__simd.{}.{source}", profile.name());
+    module.get_function(&variant)
+        .filter(|f| f.get_type() == callee.get_type()
+            && f.get_call_conventions() == callee.get_call_conventions())
+        .unwrap_or(callee)
+}
+
 /// Optionaler ISA-Deckel ist eine Funktionsanforderung, keine CPUID-Umgehung.
 /// Auch @simd("gfni") fällt auf einer CPU ohne GFNI sicher zurück.
 pub(crate) fn marker(decorators: &[Decorator]) -> Result<Option<u64>, String> {

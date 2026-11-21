@@ -38,21 +38,16 @@ funktion array_q_mal(modus: u32, t: ptr[ArrayGf256], a: u8, b: u8) -> u8:
 @simd
 funktion array_q_xor_simd(q: ptr[u8], daten: ptr[u8], n: u64, koeff: u8) -> void:
     unsicher:
+        setze ziel: puffer[u8] auf byteansicht(q, n)
+        setze quelle: puffer[u8] auf byteansicht(daten, n)
         setze i: u64 auf 0
-        setze faktor: u8x32 auf u8x32(koeff)
         solange n - i >= 32:
-            setze a: u8x32 auf u8x32()
-            setze b: u8x32 auf u8x32()
-            setze lane: u64 auf 0
-            solange lane < 32:
-                a[lane] = daten[i + lane]
-                b[lane] = q[i + lane]
-                setze lane auf lane + 1
-            setze wert: u8x32 auf b ^ simd_gf256_mal(a, faktor)
-            setze lane auf 0
-            solange lane < 32:
-                q[i + lane] = wert[lane]
-                setze lane auf lane + 1
+            setze a: u8x32 auf simd_laden(u8x32, quelle, i)
+            setze b: u8x32 auf simd_laden(u8x32, ziel, i)
+            setze wert: u8x32 auf b ^ a
+            wenn koeff != 1:
+                setze wert auf b ^ simd_gf256_mal_faktor(a, koeff)
+            simd_speichern(ziel, i, wert)
             setze i auf i + 32
         solange i < n:
             q[i] = q[i] ^ array_gf256_mal(daten[i], koeff)
@@ -60,6 +55,7 @@ funktion array_q_xor_simd(q: ptr[u8], daten: ptr[u8], n: u64, koeff: u8) -> void
 
 # Interner Mul-Xor nach vollständiger Längen-/Modusprüfung.
 @nativ
+@simd
 funktion array_q_xor(q: puffer[u8], daten: puffer[u8], koeff: u8, modus: u32, t: ptr[ArrayGf256]) -> void:
     unsicher:
         wenn modus == ARRAY_Q_SIMD:
@@ -123,10 +119,28 @@ funktion array_q_kopieren(ziel: puffer[u8], quelle: puffer[u8]) -> void:
             ziel[i] = quelle[i]
             setze i auf i + 1
 
+# Nur hinter den öffentlichen Guards, und nur im SIMD-Modus. Der äußere
+# @simd-Aufruf wählt/sichert das Profil einmal für die vollständige P/Q-Zeile.
+@nativ
+@simd
+funktion array_q_erzeugen_simd(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle]) -> void:
+    unsicher:
+        array_q_leeren(p)
+        array_q_leeren(q)
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            setze quelle: ArrayQQuelle auf daten[i]
+            array_q_xor_simd(puffer_zeiger(p), puffer_zeiger(quelle.bytes), länge(p), 1)
+            array_q_xor_simd(puffer_zeiger(q), puffer_zeiger(quelle.bytes), länge(q), array_gf256_koeffizient(quelle.slot))
+            setze i auf i + 1
+
 @nativ
 funktion array_q_erzeugen(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], modus: u32, t: ptr[ArrayGf256]) -> ergebnis[void, BlockFehler]:
     unsicher:
         setze maske: u64 auf weitergeben(array_q_quellen_pruefen(p, q, daten, modus, t))
+        wenn modus == ARRAY_Q_SIMD:
+            array_q_erzeugen_simd(p, q, daten)
+            gib_zurück erfolg()
         array_q_leeren(p)
         array_q_leeren(q)
         setze i: u64 auf 0
@@ -141,24 +155,31 @@ funktion array_q_erzeugen(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuel
 @simd
 funktion array_q_zwei_simd(a: ptr[u8], b: ptr[u8], dp: ptr[u8], dq: ptr[u8], n: u64, cb: u8, invers: u8) -> void:
     unsicher:
+        setze ziel_a: puffer[u8] auf byteansicht(a, n)
+        setze ziel_b: puffer[u8] auf byteansicht(b, n)
+        setze quelle_p: puffer[u8] auf byteansicht(dp, n)
+        setze quelle_q: puffer[u8] auf byteansicht(dq, n)
+        setze getrennt: bool auf wahr
+        wenn u64(a) > u64(b):
+            setze getrennt auf u64(a) - u64(b) >= n
+        sonst wenn u64(b) > u64(a):
+            setze getrennt auf u64(b) - u64(a) >= n
         setze i: u64 auf 0
-        setze faktor_b: u8x32 auf u8x32(cb)
-        setze faktor_inv: u8x32 auf u8x32(invers)
         solange n - i >= 32:
-            setze vp: u8x32 auf u8x32()
-            setze vq: u8x32 auf u8x32()
-            setze lane: u64 auf 0
-            solange lane < 32:
-                vp[lane] = dp[i + lane]
-                vq[lane] = dq[i + lane]
-                setze lane auf lane + 1
-            setze va: u8x32 auf simd_gf256_mal(vq ^ simd_gf256_mal(vp, faktor_b), faktor_inv)
+            setze vp: u8x32 auf simd_laden(u8x32, quelle_p, i)
+            setze vq: u8x32 auf simd_laden(u8x32, quelle_q, i)
+            setze va: u8x32 auf simd_gf256_mal_faktor(vq ^ simd_gf256_mal_faktor(vp, cb), invers)
             setze vb: u8x32 auf vp ^ va
-            setze lane auf 0
-            solange lane < 32:
-                a[i + lane] = va[lane]
-                b[i + lane] = vb[lane]
-                setze lane auf lane + 1
+            wenn getrennt:
+                simd_speichern(ziel_a, i, va)
+                simd_speichern(ziel_b, i, vb)
+            sonst:
+                # Teilüberlappende Ausgaben behalten die bisherige Schreibfolge.
+                setze lane: u64 auf 0
+                solange lane < 32:
+                    a[i + lane] = va[lane]
+                    b[i + lane] = vb[lane]
+                    setze lane auf lane + 1
             setze i auf i + 32
         solange i < n:
             setze wert: u8 auf array_gf256_mal(dq[i] ^ array_gf256_mal(dp[i], cb), invers)
@@ -169,6 +190,7 @@ funktion array_q_zwei_simd(a: ptr[u8], b: ptr[u8], dp: ptr[u8], dq: ptr[u8], n: 
 # Bis zu zwei bekannte Ausfälle. Bits beziehen sich auf stabile Mitgliedsslots,
 # nicht auf die Reihenfolge der Quellen. P/Q-Views sind bei Ausfall Ausgaben.
 @nativ
+@simd
 funktion array_q_retten(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], fehlt: u64, fehlt_p: bool, fehlt_q: bool, modus: u32, t: ptr[ArrayGf256], w: ptr[ArrayQArbeitsraum]) -> ergebnis[void, BlockFehler]:
     unsicher:
         setze maske: u64 auf weitergeben(array_q_quellen_pruefen(p, q, daten, modus, t))

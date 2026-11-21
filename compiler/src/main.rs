@@ -14,6 +14,7 @@ mod native_arithmetic;
 mod native_control_flow;
 mod native_cleanup;
 mod native_crypto;
+mod native_crc32c;
 mod native_struct;
 mod native_interface;
 mod ffi_abi;

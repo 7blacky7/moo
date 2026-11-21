@@ -2153,7 +2153,8 @@ impl<'ctx> CodeGen<'ctx> {
                     .map(|f| f.as_value_ref()).collect();
                 for fun in self.module.get_functions() {
                     if fun.count_basic_blocks() == 0 || native.contains(&fun.as_value_ref())
-                        || crate::native_simd_dispatch::ist_helfer(fun) { continue; }
+                        || crate::native_simd_dispatch::ist_helfer(fun)
+                        || crate::native_crc32c::ist_helfer(fun) { continue; }
                     let mut added = [false; 2];
                     for (i, kind) in shield_kinds.iter().enumerate() {
                         if fun.get_enum_attribute(AttributeLoc::Function, *kind).is_none() {

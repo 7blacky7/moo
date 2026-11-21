@@ -1,0 +1,35 @@
+@nativ
+statisch SIMD_IO_CLEANUP: atom[u64] auf 0
+@nativ
+funktion simd_io_markieren() -> void:
+    unsicher:
+        atom_speichern(SIMD_IO_CLEANUP, 17, ordnung=locker)
+@nativ
+funktion simd_io_marke() -> u64:
+    unsicher:
+        gib_zurück atom_laden(SIMD_IO_CLEANUP, ordnung=locker)
+@nativ
+@simd
+@liest(1)
+funktion simd_io_liest(bytes: puffer[u8]) -> u64:
+    setze v: u8x16 auf simd_laden(u8x16, bytes, 0)
+    gib_zurück als(u64, v[0])
+@nativ
+@simd
+funktion simd_io_fehler(schreiben: bool) -> u64:
+    aufräumen: simd_io_markieren()
+    setze bytes: [u8; 16] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze view: puffer[u8] auf byteansicht(bytes)
+    wenn schreiben:
+        simd_speichern(view, 1, u8x16(3))
+    sonst:
+        setze wert: u8x32 auf simd_laden(u8x32, view, 0)
+        gib_zurück als(u64, wert[0])
+    gib_zurück 0
+@nativ
+@simd
+funktion simd_io_normal() -> u64:
+    setze bytes: [u8; 16] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    setze view: puffer[u8] auf byteansicht(bytes)
+    simd_speichern(view, 0, u8x16(9))
+    gib_zurück simd_io_liest(view)

@@ -1,0 +1,5 @@
+@nativ
+@simd
+@liest(1)
+funktion io_falsch(bytes: puffer[u8]) -> void:
+    simd_speichern(bytes, 0, u8x16(0))

@@ -1,0 +1,59 @@
+# Messadapter: Produktmath unverändert, öffentliche Prüfpfade bleiben enthalten.
+importiere "moofs_gegen_c"
+aus array_q importiere ArrayQQuelle, ArrayQArbeitsraum, array_q_erzeugen, array_q_retten, array_q_zwei_simd
+aus array_gf256 importiere ArrayGf256
+aus nativ_crc32c importiere crc32c
+aus nativ_block importiere BlockFehler
+
+struktur CBenchArbeit:
+    quellen: [ArrayQQuelle; 14]
+    loesung: ArrayQArbeitsraum
+@nativ
+statisch C_BENCH: CBenchArbeit auf 0
+
+@nativ
+funktion cbench_quellen(p: ptr[ptr[u8]], n: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 14:
+            setze C_BENCH.quellen[i] auf ArrayQQuelle(i, byteansicht(p[i], n))
+            setze i auf i + 1
+
+@nativ
+@einstieg
+funktion cbench_erzeugen(p: ptr[ptr[u8]], n: u64) -> u64:
+    unsicher:
+        wenn n > 4096:
+            gib_zurück 1
+        cbench_quellen(p, n)
+        setze t: ptr[ArrayGf256] auf zeiger(0)
+        setze r: ergebnis[void, BlockFehler] auf array_q_erzeugen(byteansicht(p[14], n), byteansicht(p[15], n), pufferansicht(C_BENCH.quellen), 2, t)
+        wenn ist_erfolg(r):
+            gib_zurück 0
+        gib_zurück u64(ergebnis_fehler(r).code)
+
+@nativ
+@einstieg
+funktion cbench_retten(p: ptr[ptr[u8]], n: u64) -> u64:
+    unsicher:
+        wenn n > 4096:
+            gib_zurück 1
+        cbench_quellen(p, n)
+        setze t: ptr[ArrayGf256] auf zeiger(0)
+        setze w: ptr[ArrayQArbeitsraum] auf zeiger(adresse_von(C_BENCH.loesung))
+        setze r: ergebnis[void, BlockFehler] auf array_q_retten(byteansicht(p[14], n), byteansicht(p[15], n), pufferansicht(C_BENCH.quellen), 8193, falsch, falsch, 2, t, w)
+        wenn ist_erfolg(r):
+            gib_zurück 0
+        gib_zurück u64(ergebnis_fehler(r).code)
+
+@nativ
+@einstieg
+funktion cbench_zwei(a: ptr[u8], b: ptr[u8], dp: ptr[u8], dq: ptr[u8], n: u64, cb: u8, invers: u8) -> void:
+    unsicher:
+        array_q_zwei_simd(a, b, dp, dq, n, cb, invers)
+
+@nativ
+@einstieg
+funktion cbench_crc(p: ptr[u8], n: u64) -> u32:
+    unsicher:
+        gib_zurück crc32c(byteansicht(p, n))

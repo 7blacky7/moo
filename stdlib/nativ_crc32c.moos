@@ -14,12 +14,7 @@ funktion crc32c_byte(zustand: u32, wert: u8) -> u32:
 
 @nativ
 funktion crc32c_fortsetzen(zustand: u32, daten: puffer[u8]) -> u32:
-    setze crc: u32 auf zustand
-    setze i: u64 auf 0
-    solange i < länge(daten):
-        setze crc auf crc32c_byte(crc, daten[i])
-        setze i auf i + 1
-    gib_zurück crc
+    gib_zurück crc32c_aktualisieren(zustand, daten)
 
 @nativ
 funktion crc32c(daten: puffer[u8]) -> u32:

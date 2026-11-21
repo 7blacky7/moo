@@ -1,0 +1,18 @@
+importiere "simd_puffer_cleanup"
+versuche:
+    unsicher:
+        zeige simd_io_fehler(falsch)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Laden gefangen"
+unsicher:
+    zeige simd_io_marke()
+versuche:
+    unsicher:
+        zeige simd_io_fehler(wahr)
+    zeige "FALSCH"
+fange fehler:
+    zeige "Speichern gefangen"
+unsicher:
+    zeige simd_io_marke()
+    zeige simd_io_normal()

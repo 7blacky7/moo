@@ -1,0 +1,62 @@
+# T26-Messadapter fuer den echten vollstaendigen Produktpruefer.
+aus "moofs_probe" importiere MOOFS_TEST, MooFsTestSpeicher, moofs_test_quellen
+aus ds_moofs importiere MooFsFehler
+aus nativ_block importiere BlockFehler
+aus ds_moofs_format importiere moofs_formatieren
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs_pruefen importiere MooFsPruefung, MooFsPruefRecord, moofs_pruefung_starten, moofs_pruefung_schritt
+
+struktur CBenchScrub:
+    ram: FatRam
+    records: [MooFsPruefRecord; 512]
+    karte: [u8; 64]
+    pruefung: MooFsPruefung
+@nativ
+statisch C_BENCH_SCRUB: CBenchScrub auf 0
+
+@nativ
+@einstieg
+funktion cbench_scrub_init(bytes: ptr[u8], n: u64) -> u64:
+    unsicher:
+        wenn n != 2097152:
+            gib_zurück 1
+        setze a: ptr[CBenchScrub] auf zeiger(adresse_von(C_BENCH_SCRUB))
+        setze p: ptr[MooFsTestSpeicher] auf zeiger(adresse_von(MOOFS_TEST))
+        setze ram: ptr[FatRam] auf zeiger(adresse_von(a.ram))
+        setze r: ergebnis[void, BlockFehler] auf fat_ram_einrichten(ram, u64(bytes), n, 512, falsch)
+        wenn nicht ist_erfolg(r):
+            gib_zurück als(u64, ergebnis_fehler(r).code)
+        setze t: ptr[dyn FatTransport] auf ram
+        moofs_test_quellen(p)
+        setze i: u64 auf 0
+        solange i < 20:
+            wenn p.quellen[i].art == 1:
+                setze p.quellen[i].daten auf adresse_von(p.daten[0])
+                setze p.quellen[i].bytes auf 12289
+            setze i auf i + 1
+        setze f: ergebnis[void, MooFsFehler] auf moofs_formatieren(t, zeiger(adresse_von(p.quellen[0])), 20, 11, 22, zeiger(adresse_von(p.arbeit)))
+        wenn nicht ist_erfolg(f):
+            gib_zurück als(u64, ergebnis_fehler(f).code)
+        gib_zurück 0
+
+@nativ
+funktion cbench_scrub_laufen() -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze a: ptr[CBenchScrub] auf zeiger(adresse_von(C_BENCH_SCRUB))
+        setze s: ptr[MooFsPruefung] auf zeiger(adresse_von(a.pruefung))
+        setze ram: ptr[FatRam] auf zeiger(adresse_von(a.ram))
+        setze t: ptr[dyn FatTransport] auf ram
+        weitergeben(moofs_pruefung_starten(s, t, zeiger(adresse_von(a.records[0])), 512, zeiger(adresse_von(a.karte[0])), 64))
+        setze fertig: bool auf falsch
+        solange nicht fertig:
+            setze fertig auf weitergeben(moofs_pruefung_schritt(s, 1024))
+        gib_zurück erfolg((s.superbloecke + s.knoten + s.daten) * 4096)
+
+@nativ
+@einstieg
+funktion cbench_scrub() -> u64:
+    setze r: ergebnis[u64, MooFsFehler] auf cbench_scrub_laufen()
+    wenn ist_erfolg(r):
+        gib_zurück ergebnis_wert(r)
+    gib_zurück 0

@@ -1,0 +1,4 @@
+@nativ
+funktion crc32c_aktualisieren(a: u64, b: u64) -> u64:
+    gib_zurück a + b + 5
+zeige crc32c_aktualisieren(7, 9)

@@ -1,0 +1,4 @@
+@nativ
+@simd
+funktion faktor_falsch(a: u64x4, faktor: u8) -> u64x4:
+    gib_zurück simd_gf256_mal_faktor(a, faktor)

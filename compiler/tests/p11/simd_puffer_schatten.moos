@@ -1,0 +1,8 @@
+@nativ
+funktion simd_laden(a: u64, b: u64, c: u64) -> u64:
+    gib_zurück a + b + c
+@nativ
+funktion simd_speichern(a: u64, b: u64, c: u64) -> u64:
+    gib_zurück a + b + c
+zeige simd_laden(1, 2, 3)
+zeige simd_speichern(4, 5, 6)

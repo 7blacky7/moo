@@ -156,9 +156,131 @@ pub(crate) fn gf256_skalar<'ctx>(context: &'ctx Context, builder: &Builder<'ctx>
 }
 
 pub(crate) fn byte_operation(name: &str) -> bool {
-    matches!(name, "simd_mischen" | "simd_gf256_mal")
+    matches!(name, "simd_mischen" | "simd_gf256_mal" | "simd_gf256_mal_faktor" | "simd_laden")
 }
 
+
+
+fn gf_konst(mut a: u8, mut b: u8) -> u8 {
+    let mut r = 0;
+    for _ in 0..8 {
+        if b & 1 != 0 { r ^= a; }
+        a = a.wrapping_shl(1) ^ if a & 0x80 != 0 { 0x1d } else { 0 };
+        b >>= 1;
+    }
+    r
+}
+
+fn faktor_isa<'ctx>(c: &'ctx Context, m: &inkwell::module::Module<'ctx>, b: &Builder<'ctx>,
+    profile: crate::native_simd_dispatch::Profil, a: VectorValue<'ctx>, factor: IntValue<'ctx>)
+    -> Result<VectorValue<'ctx>, String>
+{
+    use inkwell::module::Linkage;
+    let index = b.build_int_z_extend(factor, c.i64_type(), "simd.gf.faktor.index").map_err(|e|e.to_string())?;
+    let zero = c.i32_type().const_zero();
+    if profile.gfni() {
+        let name = "__moo_gf256_factor_matrix";
+        let global = if let Some(g) = m.get_global(name) { g } else {
+            let values = (0..256).map(|factor| {
+                let mut matrix = 0u64;
+                for row in 0..8 {
+                    let mut bits = 0u64;
+                    for col in 0..8 {
+                        if gf_konst(1 << col, factor as u8) & (1 << row) != 0 { bits |= 1 << col; }
+                    }
+                    matrix |= bits << ((7-row)*8);
+                }
+                c.i64_type().const_int(matrix, false)
+            }).collect::<Vec<_>>();
+            let value = c.i64_type().const_array(&values);
+            let g = m.add_global(value.get_type(), None, name);
+            g.set_linkage(Linkage::Private);
+            g.set_constant(true);
+            g.set_initializer(&value);
+            g.set_alignment(8);
+            g
+        };
+        let ptr = unsafe { b.build_gep(c.i64_type().array_type(256), global.as_pointer_value(), &[zero, index], "simd.gf.matrix.ptr") }.map_err(|e|e.to_string())?;
+        let word = b.build_load(c.i64_type(), ptr, "simd.gf.matrix").map_err(|e|e.to_string())?.into_int_value();
+        let mut matrix = c.i64_type().vec_type(a.get_type().get_size()/8).get_undef();
+        for i in 0..a.get_type().get_size()/8 {
+            matrix = b.build_insert_element(matrix, word, c.i32_type().const_int(u64::from(i), false), "simd.gf.matrix.splat").map_err(|e|e.to_string())?;
+        }
+        let matrix = b.build_bit_cast(matrix, a.get_type(), "simd.gf.matrix.bytes").map_err(|e|e.to_string())?.into_vector_value();
+        return intrinsic(c, m, b, if a.get_type().get_size()==32 { "llvm.x86.vgf2p8affineqb.256" }
+            else { "llvm.x86.vgf2p8affineqb.128" }, a, matrix, true);
+    }
+    let name = "__moo_gf256_factor_nibbles";
+    let global = if let Some(g) = m.get_global(name) { g } else {
+        let rows = (0..256).map(|factor| {
+            let entries = (0..32).map(|n| {
+                let v = if n < 16 { n } else { (n-16)*16 };
+                c.i8_type().const_int(u64::from(gf_konst(v as u8, factor as u8)), false)
+            }).collect::<Vec<_>>();
+            c.i8_type().const_array(&entries)
+        }).collect::<Vec<_>>();
+        let value = c.i8_type().array_type(32).const_array(&rows);
+        let g = m.add_global(value.get_type(), None, name);
+        g.set_linkage(Linkage::Private);
+        g.set_constant(true);
+        g.set_initializer(&value);
+        g.set_alignment(32);
+        g
+    };
+    let table_ty = c.i8_type().array_type(32).array_type(256);
+    let mut tables = Vec::new();
+    for offset in [0u64,16] {
+        let ptr = unsafe { b.build_gep(table_ty, global.as_pointer_value(), &[zero,index,c.i32_type().const_int(offset,false)], "simd.gf.nibble.ptr") }.map_err(|e|e.to_string())?;
+        let low = b.build_load(c.i8_type().vec_type(16), ptr, "simd.gf.nibble.table").map_err(|e|e.to_string())?.into_vector_value();
+        let table = if a.get_type().get_size()==16 { low } else {
+            let mut wide = a.get_type().get_undef();
+            for i in 0u32..32 {
+                let byte = b.build_extract_element(low,c.i32_type().const_int(u64::from(i%16),false),"simd.gf.nibble.byte").map_err(|e|e.to_string())?;
+                wide = b.build_insert_element(wide,byte,c.i32_type().const_int(u64::from(i),false),"simd.gf.nibble.repeat").map_err(|e|e.to_string())?;
+            }
+            wide
+        };
+        tables.push(table);
+    }
+    let mask = splat_byte(c,b,a.get_type(),15)?;
+    let shift = splat_byte(c,b,a.get_type(),4)?;
+    let lo = b.build_and(a,mask,"simd.gf.low.nibble").map_err(|e|e.to_string())?;
+    let hi = b.build_right_shift(a,shift,false,"simd.gf.high.nibble").map_err(|e|e.to_string())?;
+    let op = if a.get_type().get_size()==32 { "llvm.x86.avx2.pshuf.b" } else { "llvm.x86.ssse3.pshuf.b.128" };
+    let lo = intrinsic(c,m,b,op,tables[0],lo,false)?;
+    let hi = intrinsic(c,m,b,op,tables[1],hi,false)?;
+    b.build_xor(lo,hi,"simd.gf.nibble.product").map_err(|e|e.to_string())
+}
+
+/// GF(0x11D) mit einem gemeinsamen, explizit typisierten u8-Faktor.
+pub(crate) fn gf256_faktor<'ctx>(c: &'ctx Context, m: &inkwell::module::Module<'ctx>, b: &Builder<'ctx>,
+    profile: crate::native_simd_dispatch::Profil, a: VectorValue<'ctx>, factor: IntValue<'ctx>)
+    -> Result<VectorValue<'ctx>, String>
+{
+    if factor.get_type().get_bit_width()!=8 || !matches!(a.get_type().get_size(),16|32)
+        || !a.get_type().get_element_type().is_int_type()
+        || a.get_type().get_element_type().into_int_type().get_bit_width()!=8 {
+        return Err("simd_gf256_mal_faktor erwartet (u8x16 oder u8x32, u8)".into());
+    }
+    if profile == crate::native_simd_dispatch::Profil::Skalar {
+        let mut second = a.get_type().get_undef();
+        for i in 0..a.get_type().get_size() {
+            second = b.build_insert_element(second,factor,c.i32_type().const_int(u64::from(i),false),"simd.gf.scalar.factor").map_err(|e|e.to_string())?;
+        }
+        return gf256_skalar(c,b,a,second);
+    }
+    if a.get_type().get_size()==16 || profile.avx() { return faktor_isa(c,m,b,profile,a,factor); }
+    let mut result = a.get_type().get_undef();
+    for start in [0,16] {
+        let half = halb(c,b,a,start)?;
+        let value = faktor_isa(c,m,b,profile,half,factor)?;
+        for i in 0..16 {
+            let lane = b.build_extract_element(value,c.i32_type().const_int(u64::from(i),false),"simd.gf.factor.lane").map_err(|e|e.to_string())?;
+            result = b.build_insert_element(result,lane,c.i32_type().const_int(u64::from(start+i),false),"simd.gf.factor.join").map_err(|e|e.to_string())?;
+        }
+    }
+    Ok(result)
+}
 
 fn halb<'ctx>(c: &'ctx Context, b: &Builder<'ctx>, value: VectorValue<'ctx>, start: u32)
     -> Result<VectorValue<'ctx>, String>

@@ -55,3 +55,30 @@ grep -q 'gf2p8mulb' "$out/orakel.s"
 grep -q 'gf2p8affineqb' "$out/orakel.s"
 awk '/^__moo_native.__simd.gfni128.simd_orakel_32_gfni128:/{aktiv=1; gefunden=1} aktiv && /%[yz]mm/{fehler++} aktiv && /gf2p8mulb/{gfni++} aktiv && /^.Lfunc_end/{aktiv=0} END{print "GFNI128 gefunden=" gefunden " YMM-ZMM=" fehler+0 " GFNI-MUL=" gfni+0; exit (!gefunden || fehler || !gfni)}' "$out/orakel.s"
 echo "PASS Skalar-ASM ohne SIMD-Register; PSHUFB und GFNI in separaten ISA-Varianten"
+
+
+# T26: Nur schon geprüfte, exakt gleiche Profile umgehen den inneren Dispatcher.
+for target in x86_64-unknown-linux-gnu x86_64-bare x86_64-unknown-uefi; do
+  for profil in skalar ssse3 avx2 gfni128 gfni256; do
+    awk -v p="$profil" '
+      /^define / { aktiv=index($0, "@__moo_native.__simd." p ".simd_ergebnis_weiter(")>0 }
+      aktiv && /call / && index($0, "@__moo_native.__simd." p ".simd_ergebnis_blatt(") { direkt++ }
+      aktiv && /call / && index($0, "@__moo_native.simd_ergebnis_blatt(") { dispatcher++ }
+      /^}/ { aktiv=0 }
+      END { if (!direkt || dispatcher) exit 1 }
+    ' "$out/$target.ll"
+  done
+  awk '
+    /^define / { aktiv=index($0, "@__moo_native.simd_unmarkiert(")>0 }
+    aktiv && /call / && index($0, "@__moo_native.simd_cleanup_probe(") { guard++ }
+    /^}/ { aktiv=0 }
+    END { if (!guard) exit 1 }
+  ' "$out/$target.ll"
+  awk '
+    /^define / { aktiv=index($0, "@__moo_native.__simd.avx2.simd_probe(")>0 }
+    aktiv && /call / && index($0, "@__moo_native.simd_deckel(") { guard++ }
+    /^}/ { aktiv=0 }
+    END { if (!guard) exit 1 }
+  ' "$out/$target.ll"
+done
+echo "PASS verschachtelte gleiche ISA-Profile direkt, unmarkierte und engere Deckel geschützt"

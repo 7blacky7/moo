@@ -1,0 +1,4 @@
+@nativ
+@simd
+funktion io_falsch(bytes: puffer[u8], start: i64) -> u8x16:
+    gib_zurück simd_laden(u8x16, bytes, start)
