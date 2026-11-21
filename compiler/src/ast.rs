@@ -395,6 +395,7 @@ pub enum Stmt {
         decorators: Vec<Decorator>,
         bitfelder: Vec<BitfeldBereich>,
         varianten: Vec<AufzaehlungsVariante>,
+        typparameter: Vec<std::string::String>,
         /// Native Methodentabellen werden nach der Modulauflösung geprüft.
         interfaces: Vec<std::string::String>,
         methods: Vec<Stmt>,

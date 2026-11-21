@@ -1,0 +1,24 @@
+struktur Schachtel[T]:
+    wert: T
+    naechste: ptr[Schachtel[T]]
+    funktion ablegen(selbst, wert: T) -> void:
+        unsicher:
+            selbst.wert = wert
+    funktion lesen(selbst) -> T:
+        unsicher:
+            gib_zurück selbst.wert
+    funktion layout(selbst) -> u64:
+        gib_zurück groesse_von(T) * 10 + ausrichtung_von(T)
+
+@nativ
+funktion pruefwert() -> u64:
+    unsicher:
+        setze z: Schachtel[u32] auf 0
+        setze zeiger_z: ptr[Schachtel[u32]] auf zeiger(adresse_von(z))
+        zeiger_z.ablegen(7)
+        setze p: Schachtel[ptr[u8]] auf 0
+        setze zeiger_p: ptr[Schachtel[ptr[u8]]] auf zeiger(adresse_von(p))
+        gib_zurück u64(zeiger_z.lesen()) + zeiger_z.layout() + zeiger_p.layout()
+
+unsicher:
+    zeige pruefwert()

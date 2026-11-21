@@ -539,7 +539,7 @@ impl Parser {
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::Identifier(_)))
                 && matches!(self.tokens.get(self.pos + 2).map(|t| &t.token_type),
-                            Some(TokenType::Colon | TokenType::Implements)) => self.parse_struct_def(vec![]),
+                            Some(TokenType::Colon | TokenType::Implements | TokenType::LBracket)) => self.parse_struct_def(vec![]),
             TokenType::Identifier(kw) if (kw == "aufzählung" || kw == "aufzaehlung")
                 && matches!(self.tokens.get(self.pos + 1).map(|t| &t.token_type),
                             Some(TokenType::Identifier(_)))
@@ -1243,7 +1243,7 @@ impl Parser {
             return Err(ParseError { message: "bitfeld braucht mindestens einen benannten Bereich".into(),
                 ..ParseError::bei(self.current()) });
         }
-        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder, varianten: Vec::new(), interfaces: Vec::new(), methods: Vec::new() })
+        Ok(Stmt::StructDef { zeile: 0, name, fields: vec![("__bits".into(), basis)], decorators, bitfelder, varianten: Vec::new(), typparameter: Vec::new(), interfaces: Vec::new(), methods: Vec::new() })
     }
 
     fn parse_bitposition(&mut self) -> Result<u32, ParseError> {
@@ -1330,7 +1330,7 @@ impl Parser {
             }
             Ok(Stmt::StructDef {
                 zeile: 0, name, fields, decorators: Vec::new(), bitfelder: Vec::new(),
-                varianten, interfaces: Vec::new(), methods: Vec::new(),
+                varianten, typparameter: Vec::new(), interfaces: Vec::new(), methods: Vec::new(),
             })
         })();
         self.native_context = vorher;
@@ -1340,6 +1340,24 @@ impl Parser {
     fn parse_struct_def(&mut self, decorators: Vec<crate::ast::Decorator>) -> Result<Stmt, ParseError> {
         self.pos += 1;
         let name = self.eat_identifier()?;
+        let mut typparameter = Vec::new();
+        if matches!(self.current_type(), TokenType::LBracket) {
+            self.pos += 1;
+            loop {
+                let ort = self.current().clone();
+                let parameter = self.eat_identifier()?;
+                if parameter == "_" || parameter == "Self" || typparameter.contains(&parameter) {
+                    return Err(ParseError {
+                        message: format!("Ungültiger oder doppelter Typparameter '{parameter}'"),
+                        ..ParseError::bei(&ort)
+                    });
+                }
+                typparameter.push(parameter);
+                if !matches!(self.current_type(), TokenType::Comma) { break; }
+                self.pos += 1;
+            }
+            self.eat(&TokenType::RBracket)?;
+        }
         let mut interfaces = Vec::new();
         if matches!(self.current_type(), TokenType::Implements) {
             self.pos += 1;
@@ -1353,7 +1371,7 @@ impl Parser {
             && matches!(self.current_type(), TokenType::Newline | TokenType::Eof)
         {
             return Ok(Stmt::StructDef { zeile: 0, name, fields: Vec::new(), decorators,
-                bitfelder: Vec::new(), varianten: Vec::new(), interfaces, methods: Vec::new() });
+                bitfelder: Vec::new(), varianten: Vec::new(), typparameter, interfaces, methods: Vec::new() });
         }
         self.eat(&TokenType::Colon)?;
         self.skip_newlines();
@@ -1403,7 +1421,7 @@ impl Parser {
                     }
                 }
             }
-            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new(), varianten: Vec::new(), interfaces, methods })
+            Ok(Stmt::StructDef { zeile: 0, name, fields, decorators, bitfelder: Vec::new(), varianten: Vec::new(), typparameter, interfaces, methods })
         })();
         self.native_context = previous_native;
         result

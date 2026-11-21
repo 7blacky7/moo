@@ -1,0 +1,3 @@
+[tasks.test]
+description = "Tabelle mit 10000 Einträgen, Liste und Ring auf Linux mit ASan prüfen"
+run = "bash test.sh"

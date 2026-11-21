@@ -1,5 +1,7 @@
 //! Native Schnittstellen: geprüfte Strukturmethoden, fette Zeiger und SysV-Vtables.
 //! Die beiden Zeiger werden über den bestehenden nativen Strukturwert-ABI geführt.
+mod strukturtypen;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::ast::{self, Decorator, DecoratorArg, Expr, InterfaceSignature, Program, Stmt, TypeKind, TypeRef};
 use crate::native_type_id::{resolve_type, NominalTypes};
@@ -59,7 +61,7 @@ fn returned(expr: Expr, result: &TypeRef) -> Vec<Stmt> {
 }
 fn structure(name: &str, fields: Vec<(String,TypeRef)>) -> Stmt {
     Stmt::StructDef { zeile: 0, name: name.into(), fields, decorators: Vec::new(),
-        bitfelder: Vec::new(), varianten: Vec::new(), interfaces: Vec::new(), methods: Vec::new() }
+        bitfelder: Vec::new(), varianten: Vec::new(), typparameter: Vec::new(), interfaces: Vec::new(), methods: Vec::new() }
 }
 fn error(line: usize, text: impl std::fmt::Display) -> String {
     crate::diagnose::vormerken("M-C000", line, format!("Native Schnittstelle: {text}"))
@@ -69,7 +71,8 @@ fn error(line: usize, text: impl std::fmt::Display) -> String {
 #[derive(Default)]
 struct LoweredTypes {
     interfaces: BTreeSet<String>,
-    results: BTreeMap<String, Vec<(String, TypeRef)>>,
+    strukturen: BTreeMap<String, Vec<(String, TypeRef)>>,
+    strukturtypen: strukturtypen::Strukturtypen,
     nominals: NominalTypes,
 }
 impl LoweredTypes {
@@ -80,6 +83,7 @@ impl LoweredTypes {
 /// Native generische Wertformen werden vor der Layoutprüfung nominalisiert.
 /// Der interne Name ist kein deklarierbarer Bezeichner und bewahrt die Diagnoseform.
 fn lower_type(ty: &mut TypeRef, used: &mut LoweredTypes) -> Result<(),String> {
+    if strukturtypen::typ(ty, used)? { return Ok(()); }
     if let TypeKind::Generic { name, args } = &mut ty.kind {
         if name == "ergebnis" {
             if args.len() != 2 { return Err(crate::diagnose::vormerken("M-C000", ty.line, "Nativer Ergebnistyp: ergebnis[T, F] benötigt genau zwei Typen".into())); }
@@ -95,7 +99,7 @@ fn lower_type(ty: &mut TypeRef, used: &mut LoweredTypes) -> Result<(),String> {
                     fields.push((label.into(), field));
                 }
             }
-            used.results.entry(name.clone()).or_insert(fields);
+            used.strukturen.entry(name.clone()).or_insert(fields);
             used.nominals.insert(name.clone(), ("native_generic".into(), name.clone()));
             ty.kind = TypeKind::Name(name);
             return Ok(());
@@ -136,7 +140,8 @@ fn optional(ty: &mut Option<TypeRef>, used: &mut LoweredTypes) -> Result<(),Stri
 }
 fn lower_expr(expr: &mut Expr, used: &mut LoweredTypes) -> Result<(),String> {
     match expr {
-        Expr::FunctionCall { type_args,args,.. } => {
+        Expr::FunctionCall { name,type_args,args,.. } => {
+            strukturtypen::layout_argument(name, args, used)?;
             for ty in type_args { lower_type(ty,used)?; }
             for arg in args { lower_expr(arg,used)?; }
         }
@@ -189,7 +194,8 @@ fn lower_statements(statements: &mut [Stmt], used: &mut LoweredTypes) -> Result<
                 for e in defaults.iter_mut().flatten() { lower_expr(e,used)?; }
                 lower_statements(body,used)?;
             }
-            Stmt::StructDef { fields,methods,interfaces,.. } => {
+            Stmt::StructDef { typparameter, fields,methods,interfaces,zeile,.. } => {
+                if !typparameter.is_empty() { return Err(error(*zeile, "Strukturvorlage gehört auf Modulebene")); }
                 used.extend(interfaces.iter().cloned());
                 for (_,ty) in fields { lower_type(ty,used)?; }
                 lower_statements(methods,used)?;
@@ -332,6 +338,7 @@ fn prototype(interface: &str, sig: &InterfaceSignature, line: usize) -> Result<M
 pub(crate) fn prepare(source: &Program) -> Result<(Program,NativeInterfaces),String> {
     let mut program=source.clone();
     let mut used=LoweredTypes::default();
+    used.strukturtypen.vorlagen_sammeln(&mut program.statements)?;
     for stmt in &program.statements {
         if let Stmt::StructDef { name, .. } = stmt {
             used.nominals.insert(name.clone(), ("native_generic".into(), name.clone()));
@@ -341,7 +348,8 @@ pub(crate) fn prepare(source: &Program) -> Result<(Program,NativeInterfaces),Str
         used.nominals.entry((*name).into()).or_insert_with(|| ("native_generic".into(), (*name).into()));
     }
     lower_statements(&mut program.statements,&mut used)?;
-    for (name, fields) in &used.results {
+    program.statements.extend(used.strukturtypen.instanzen());
+    for (name, fields) in &used.strukturen {
         program.statements.push(structure(name, fields.clone()));
     }
     let mut registry=NativeInterfaces::default();

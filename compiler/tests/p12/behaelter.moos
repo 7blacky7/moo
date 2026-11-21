@@ -1,0 +1,86 @@
+aus nativ_behaelter importiere BehaelterAllokator, tabelle, liste, ring
+extern "C" funktion p12_allokation_stoppen(stoppt: bool) -> void
+
+struktur P12Wert:
+    nummer: u64
+    pruefwert: u64
+
+@nativ
+@einstieg
+funktion p12_behaelter_probe(kontext: u64, holen: ptr[fn(u64, u64, u64) -> ptr[u8]], geben: ptr[fn(u64, ptr[u8], u64, u64) -> void], hash_funktion: ptr[fn(ptr[u64]) -> u64], gleich_funktion: ptr[fn(ptr[u64], ptr[u64]) -> bool]) -> u64:
+    unsicher:
+        setze allokator: BehaelterAllokator auf BehaelterAllokator(kontext, holen, geben)
+        setze tabelle_wert: tabelle[u64, P12Wert] auf 0
+        setze tab: ptr[tabelle[u64, P12Wert]] auf zeiger(adresse_von(tabelle_wert))
+        wenn nicht tab.initialisieren(allokator, hash_funktion, gleich_funktion):
+            gib_zurück 1
+        p12_allokation_stoppen(wahr)
+        wenn tab.einfuegen(1, P12Wert(1, 7)) oder tab.anzahl != 0:
+            gib_zurück 2
+        p12_allokation_stoppen(falsch)
+        setze index: u64 auf 0
+        solange index < 10000:
+            wenn nicht tab.einfuegen(index, P12Wert(index, index * 7)):
+                gib_zurück 3
+            setze index auf index + 1
+        wenn tab.anzahl != 10000:
+            gib_zurück 4
+        setze kapazitaet: u64 auf tab.block.kapazitaet
+        p12_allokation_stoppen(wahr)
+        wenn tab.umsetzen(kapazitaet * 2) oder tab.block.kapazitaet != kapazitaet:
+            gib_zurück 5
+        p12_allokation_stoppen(falsch)
+        setze ausgabe: P12Wert auf 0
+        setze ziel: ptr[P12Wert] auf zeiger(adresse_von(ausgabe))
+        setze index auf 0
+        solange index < 10000:
+            wenn nicht tab.lesen(index, ziel) oder ausgabe.nummer != index oder ausgabe.pruefwert != index * 7:
+                gib_zurück 6
+            setze index auf index + 1
+        wenn nicht tab.einfuegen(123, P12Wert(123, 999)) oder tab.anzahl != 10000:
+            gib_zurück 7
+        wenn nicht tab.lesen(123, ziel) oder ausgabe.pruefwert != 999:
+            gib_zurück 8
+        wenn nicht tab.loeschen(123) oder tab.loeschen(123) oder tab.lesen(123, ziel):
+            gib_zurück 9
+        wenn nicht tab.einfuegen(123, P12Wert(123, 144)) oder tab.anzahl != 10000:
+            gib_zurück 10
+        tab.freigeben()
+        tab.freigeben()
+
+        setze liste_wert: liste[P12Wert] auf 0
+        setze li: ptr[liste[P12Wert]] auf zeiger(adresse_von(liste_wert))
+        wenn nicht li.initialisieren(allokator):
+            gib_zurück 11
+        setze index auf 0
+        solange index < 40:
+            wenn nicht li.anhaengen(P12Wert(index, index * 3)):
+                gib_zurück 12
+            setze index auf index + 1
+        p12_allokation_stoppen(wahr)
+        wenn li.reservieren(4096) oder li.anzahl != 40:
+            gib_zurück 13
+        p12_allokation_stoppen(falsch)
+        wenn li.lesen(40, ziel) oder nicht li.entnehmen(ziel) oder ausgabe.nummer != 39 oder ausgabe.pruefwert != 117:
+            gib_zurück 14
+        li.freigeben()
+
+        setze ring_wert: ring[u64] auf 0
+        setze ri: ptr[ring[u64]] auf zeiger(adresse_von(ring_wert))
+        wenn nicht ri.initialisieren(allokator, 3):
+            gib_zurück 15
+        wenn nicht ri.einfuegen(10) oder nicht ri.einfuegen(11) oder nicht ri.einfuegen(12) oder ri.einfuegen(13):
+            gib_zurück 16
+        setze nummer: u64 auf 0
+        setze ring_ziel: ptr[u64] auf zeiger(adresse_von(nummer))
+        wenn nicht ri.entnehmen(ring_ziel) oder nummer != 10 oder nicht ri.einfuegen(13):
+            gib_zurück 17
+        setze index auf 11
+        solange index <= 13:
+            wenn nicht ri.entnehmen(ring_ziel) oder nummer != index:
+                gib_zurück 18
+            setze index auf index + 1
+        wenn ri.entnehmen(ring_ziel):
+            gib_zurück 19
+        ri.freigeben()
+        gib_zurück 0

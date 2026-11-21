@@ -1,0 +1,304 @@
+# Der Allokator übernimmt Größe und Ausrichtung des Ziel-ABI. Null meldet
+# fehlenden Speicher. Jeder Block wird mit demselben Auftrag freigegeben.
+struktur BehaelterAllokator:
+    kontext: u64
+    anfordern: ptr[fn(u64, u64, u64) -> ptr[u8]]
+    abgeben: ptr[fn(u64, ptr[u8], u64, u64) -> void]
+
+struktur BehaelterBlock[T]:
+    allokator: BehaelterAllokator
+    daten: ptr[T]
+    kapazitaet: u64
+
+    funktion anlegen(selbst, allokator: BehaelterAllokator, anzahl: u64) -> bool:
+        unsicher:
+            setze groesse: u64 auf groesse_von(T)
+            setze ausrichtung: u64 auf ausrichtung_von(T)
+            wenn selbst.kapazitaet != 0 oder anzahl == 0 oder groesse == 0:
+                gib_zurück falsch
+            wenn anzahl > 0xFFFFFFFFFFFFFFFF / groesse:
+                gib_zurück falsch
+            setze holen: ptr[fn(u64, u64, u64) -> ptr[u8]] auf allokator.anfordern
+            setze geben: ptr[fn(u64, ptr[u8], u64, u64) -> void] auf allokator.abgeben
+            wenn holen == nichts oder geben == nichts:
+                gib_zurück falsch
+            setze bytes: u64 auf anzahl * groesse
+            setze roh: ptr[u8] auf holen(allokator.kontext, bytes, ausrichtung)
+            wenn roh == nichts:
+                gib_zurück falsch
+            wenn (u64(roh) & (ausrichtung - 1)) != 0:
+                geben(allokator.kontext, roh, bytes, ausrichtung)
+                gib_zurück falsch
+            selbst.allokator = allokator
+            selbst.daten = zeiger(u64(roh))
+            selbst.kapazitaet = anzahl
+            gib_zurück wahr
+
+    funktion freigeben(selbst) -> void:
+        unsicher:
+            wenn selbst.kapazitaet != 0:
+                setze geben: ptr[fn(u64, ptr[u8], u64, u64) -> void] auf selbst.allokator.abgeben
+                setze roh: ptr[u8] auf zeiger(u64(selbst.daten))
+                geben(selbst.allokator.kontext, roh, selbst.kapazitaet * groesse_von(T), ausrichtung_von(T))
+                selbst.daten = nichts
+                selbst.kapazitaet = 0
+
+# Besitzende Instanzen werden am ursprünglichen Speicherort benutzt und
+# freigegeben. Die Methoden führen keine implizite Kopie des Behälters durch.
+struktur liste[T]:
+    block: BehaelterBlock[T]
+    anzahl: u64
+
+    funktion initialisieren(selbst, allokator: BehaelterAllokator) -> bool:
+        unsicher:
+            wenn selbst.block.kapazitaet != 0:
+                gib_zurück falsch
+            selbst.block.allokator = allokator
+            selbst.anzahl = 0
+            gib_zurück wahr
+
+    funktion reservieren(selbst, minimum: u64) -> bool:
+        unsicher:
+            setze alt: ptr[BehaelterBlock[T]] auf zeiger(adresse_von(selbst.block))
+            wenn minimum <= alt.kapazitaet:
+                gib_zurück wahr
+            setze kapazitaet: u64 auf 8
+            wenn alt.kapazitaet != 0 und alt.kapazitaet <= 0x7FFFFFFFFFFFFFFF:
+                setze kapazitaet auf alt.kapazitaet * 2
+            wenn kapazitaet < minimum:
+                setze kapazitaet auf minimum
+            setze neuer_block: BehaelterBlock[T] auf 0
+            setze zielblock: ptr[BehaelterBlock[T]] auf zeiger(adresse_von(neuer_block))
+            wenn nicht zielblock.anlegen(alt.allokator, kapazitaet):
+                gib_zurück falsch
+            setze quelle: ptr[T] auf alt.daten
+            setze ziel: ptr[T] auf zielblock.daten
+            setze index: u64 auf 0
+            solange index < selbst.anzahl:
+                ziel[index] = quelle[index]
+                setze index auf index + 1
+            alt.freigeben()
+            selbst.block = neuer_block
+            gib_zurück wahr
+
+    funktion anhaengen(selbst, wert: T) -> bool:
+        unsicher:
+            wenn selbst.anzahl == 0xFFFFFFFFFFFFFFFF oder nicht selbst.reservieren(selbst.anzahl + 1):
+                gib_zurück falsch
+            setze daten: ptr[T] auf selbst.block.daten
+            daten[selbst.anzahl] = wert
+            selbst.anzahl = selbst.anzahl + 1
+            gib_zurück wahr
+
+    funktion lesen(selbst, index: u64, ziel: ptr[T]) -> bool:
+        unsicher:
+            wenn index >= selbst.anzahl oder ziel == nichts:
+                gib_zurück falsch
+            setze daten: ptr[T] auf selbst.block.daten
+            ziel[0] = daten[index]
+            gib_zurück wahr
+
+    funktion entnehmen(selbst, ziel: ptr[T]) -> bool:
+        unsicher:
+            wenn selbst.anzahl == 0 oder nicht selbst.lesen(selbst.anzahl - 1, ziel):
+                gib_zurück falsch
+            selbst.anzahl = selbst.anzahl - 1
+            gib_zurück wahr
+
+    funktion freigeben(selbst) -> void:
+        unsicher:
+            setze block: ptr[BehaelterBlock[T]] auf zeiger(adresse_von(selbst.block))
+            block.freigeben()
+            selbst.anzahl = 0
+
+struktur ring[T]:
+    block: BehaelterBlock[T]
+    kopf: u64
+    anzahl: u64
+
+    funktion initialisieren(selbst, allokator: BehaelterAllokator, kapazitaet: u64) -> bool:
+        unsicher:
+            setze block: ptr[BehaelterBlock[T]] auf zeiger(adresse_von(selbst.block))
+            wenn nicht block.anlegen(allokator, kapazitaet):
+                gib_zurück falsch
+            selbst.kopf = 0
+            selbst.anzahl = 0
+            gib_zurück wahr
+
+    funktion einfuegen(selbst, wert: T) -> bool:
+        unsicher:
+            setze kapazitaet: u64 auf selbst.block.kapazitaet
+            wenn selbst.anzahl == kapazitaet:
+                gib_zurück falsch
+            setze rand: u64 auf kapazitaet - selbst.kopf
+            setze platz: u64 auf 0
+            wenn selbst.anzahl < rand:
+                setze platz auf selbst.kopf + selbst.anzahl
+            sonst:
+                setze platz auf selbst.anzahl - rand
+            setze daten: ptr[T] auf selbst.block.daten
+            daten[platz] = wert
+            selbst.anzahl = selbst.anzahl + 1
+            gib_zurück wahr
+
+    funktion entnehmen(selbst, ziel: ptr[T]) -> bool:
+        unsicher:
+            wenn selbst.anzahl == 0 oder ziel == nichts:
+                gib_zurück falsch
+            setze daten: ptr[T] auf selbst.block.daten
+            ziel[0] = daten[selbst.kopf]
+            selbst.kopf = selbst.kopf + 1
+            wenn selbst.kopf == selbst.block.kapazitaet:
+                selbst.kopf = 0
+            selbst.anzahl = selbst.anzahl - 1
+            gib_zurück wahr
+
+    funktion freigeben(selbst) -> void:
+        unsicher:
+            setze block: ptr[BehaelterBlock[T]] auf zeiger(adresse_von(selbst.block))
+            block.freigeben()
+            selbst.kopf = 0
+            selbst.anzahl = 0
+
+struktur BehaelterTabellenplatz[K, V]:
+    zustand: u8
+    hashwert: u64
+    schluessel: K
+    wert: V
+
+# Hash und Gleichheit lesen die übergebenen Schlüssel. Gleiche Schlüssel
+# müssen denselben Hash liefern. Zustand 2 hält eine Sondierkette offen.
+struktur tabelle[K, V]:
+    block: BehaelterBlock[BehaelterTabellenplatz[K, V]]
+    anzahl: u64
+    hash_funktion: ptr[fn(ptr[K]) -> u64]
+    gleich_funktion: ptr[fn(ptr[K], ptr[K]) -> bool]
+
+    funktion initialisieren(selbst, allokator: BehaelterAllokator, berechnen: ptr[fn(ptr[K]) -> u64], gleich: ptr[fn(ptr[K], ptr[K]) -> bool]) -> bool:
+        unsicher:
+            wenn selbst.block.kapazitaet != 0 oder berechnen == nichts oder gleich == nichts:
+                gib_zurück falsch
+            selbst.block.allokator = allokator
+            selbst.hash_funktion = berechnen
+            selbst.gleich_funktion = gleich
+            selbst.anzahl = 0
+            gib_zurück wahr
+
+    funktion umsetzen(selbst, kapazitaet: u64) -> bool:
+        unsicher:
+            wenn kapazitaet <= selbst.anzahl oder (kapazitaet & (kapazitaet - 1)) != 0:
+                gib_zurück falsch
+            setze alt: ptr[BehaelterBlock[BehaelterTabellenplatz[K, V]]] auf zeiger(adresse_von(selbst.block))
+            setze neuer_block: BehaelterBlock[BehaelterTabellenplatz[K, V]] auf 0
+            setze zielblock: ptr[BehaelterBlock[BehaelterTabellenplatz[K, V]]] auf zeiger(adresse_von(neuer_block))
+            wenn nicht zielblock.anlegen(alt.allokator, kapazitaet):
+                gib_zurück falsch
+            setze ziel: ptr[BehaelterTabellenplatz[K, V]] auf zielblock.daten
+            setze quelle: ptr[BehaelterTabellenplatz[K, V]] auf alt.daten
+            setze maske: u64 auf kapazitaet - 1
+            setze index: u64 auf 0
+            solange index < kapazitaet:
+                ziel[index].zustand = 0
+                setze index auf index + 1
+            setze index auf 0
+            solange index < alt.kapazitaet:
+                wenn quelle[index].zustand == 1:
+                    setze platz: u64 auf quelle[index].hashwert & maske
+                    solange ziel[platz].zustand == 1:
+                        setze platz auf (platz + 1) & maske
+                    ziel[platz] = quelle[index]
+                setze index auf index + 1
+            alt.freigeben()
+            selbst.block = neuer_block
+            gib_zurück wahr
+
+    funktion platz_finden(selbst, hashwert: u64, schluessel: ptr[K]) -> u64:
+        unsicher:
+            setze kapazitaet: u64 auf selbst.block.kapazitaet
+            wenn kapazitaet == 0:
+                gib_zurück 0
+            setze daten: ptr[BehaelterTabellenplatz[K, V]] auf selbst.block.daten
+            setze gleich: ptr[fn(ptr[K], ptr[K]) -> bool] auf selbst.gleich_funktion
+            setze maske: u64 auf kapazitaet - 1
+            setze platz: u64 auf hashwert & maske
+            setze geloescht: u64 auf kapazitaet
+            setze versuche_anzahl: u64 auf 0
+            solange versuche_anzahl < kapazitaet:
+                setze zustand: u8 auf daten[platz].zustand
+                wenn zustand == 0:
+                    wenn geloescht != kapazitaet:
+                        gib_zurück geloescht
+                    gib_zurück platz
+                wenn zustand == 2:
+                    wenn geloescht == kapazitaet:
+                        setze geloescht auf platz
+                sonst wenn daten[platz].hashwert == hashwert:
+                    setze vorhanden: ptr[K] auf zeiger(adresse_von(daten[platz].schluessel))
+                    wenn gleich(schluessel, vorhanden):
+                        gib_zurück platz
+                setze platz auf (platz + 1) & maske
+                setze versuche_anzahl auf versuche_anzahl + 1
+            gib_zurück geloescht
+
+    funktion einfuegen(selbst, schluessel: K, wert: V) -> bool:
+        unsicher:
+            setze berechnen: ptr[fn(ptr[K]) -> u64] auf selbst.hash_funktion
+            wenn berechnen == nichts:
+                gib_zurück falsch
+            wenn selbst.block.kapazitaet == 0 und nicht selbst.umsetzen(8):
+                gib_zurück falsch
+            setze suchschluessel: ptr[K] auf zeiger(adresse_von(schluessel))
+            setze hashwert: u64 auf berechnen(suchschluessel)
+            setze platz: u64 auf selbst.platz_finden(hashwert, suchschluessel)
+            setze daten: ptr[BehaelterTabellenplatz[K, V]] auf selbst.block.daten
+            setze kapazitaet: u64 auf selbst.block.kapazitaet
+            wenn platz < kapazitaet und daten[platz].zustand == 1:
+                daten[platz].wert = wert
+                gib_zurück wahr
+            wenn selbst.anzahl >= kapazitaet - kapazitaet / 4:
+                wenn kapazitaet > 0x7FFFFFFFFFFFFFFF oder nicht selbst.umsetzen(kapazitaet * 2):
+                    gib_zurück falsch
+                setze daten auf selbst.block.daten
+                setze kapazitaet auf selbst.block.kapazitaet
+                setze platz auf selbst.platz_finden(hashwert, suchschluessel)
+            wenn platz >= kapazitaet:
+                gib_zurück falsch
+            daten[platz].schluessel = schluessel
+            daten[platz].wert = wert
+            daten[platz].hashwert = hashwert
+            daten[platz].zustand = 1
+            selbst.anzahl = selbst.anzahl + 1
+            gib_zurück wahr
+
+    funktion lesen(selbst, schluessel: K, ziel: ptr[V]) -> bool:
+        unsicher:
+            wenn selbst.anzahl == 0 oder ziel == nichts:
+                gib_zurück falsch
+            setze berechnen: ptr[fn(ptr[K]) -> u64] auf selbst.hash_funktion
+            setze suchschluessel: ptr[K] auf zeiger(adresse_von(schluessel))
+            setze platz: u64 auf selbst.platz_finden(berechnen(suchschluessel), suchschluessel)
+            setze daten: ptr[BehaelterTabellenplatz[K, V]] auf selbst.block.daten
+            wenn platz >= selbst.block.kapazitaet oder daten[platz].zustand != 1:
+                gib_zurück falsch
+            ziel[0] = daten[platz].wert
+            gib_zurück wahr
+
+    funktion loeschen(selbst, schluessel: K) -> bool:
+        unsicher:
+            wenn selbst.anzahl == 0:
+                gib_zurück falsch
+            setze berechnen: ptr[fn(ptr[K]) -> u64] auf selbst.hash_funktion
+            setze suchschluessel: ptr[K] auf zeiger(adresse_von(schluessel))
+            setze platz: u64 auf selbst.platz_finden(berechnen(suchschluessel), suchschluessel)
+            setze daten: ptr[BehaelterTabellenplatz[K, V]] auf selbst.block.daten
+            wenn platz >= selbst.block.kapazitaet oder daten[platz].zustand != 1:
+                gib_zurück falsch
+            daten[platz].zustand = 2
+            selbst.anzahl = selbst.anzahl - 1
+            gib_zurück wahr
+
+    funktion freigeben(selbst) -> void:
+        unsicher:
+            setze block: ptr[BehaelterBlock[BehaelterTabellenplatz[K, V]]] auf zeiger(adresse_von(selbst.block))
+            block.freigeben()
+            selbst.anzahl = 0
