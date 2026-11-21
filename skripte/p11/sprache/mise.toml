@@ -1,3 +1,7 @@
+[tasks.buffer-feld]
+description = "Geliehene native puffer[T]-Felder, Deskriptorkopie und Lebensdauer"
+run = "bash buffer-feld.sh"
+
 [tasks.schnittstellen]
 description = "P11-T2: native Schnittstellen, Vtable-IR und negative Typverträge"
 run = "bash schnittstellen.sh"

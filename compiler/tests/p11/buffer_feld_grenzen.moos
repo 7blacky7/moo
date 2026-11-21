@@ -1,0 +1,29 @@
+importiere "buffer_feld"
+
+@nativ
+funktion buffer_feld_grenze(modus: u64) -> u64:
+    setze speicher: BufferFeldSpeicher auf 0
+    setze start: u64 auf 0
+    setze anzahl: u64 auf 3
+    wenn modus == 0:
+        setze start auf 3
+        setze anzahl auf 0
+    sonst wenn modus == 2:
+        setze start auf 1
+        setze anzahl auf 2
+    sonst wenn modus == 3:
+        setze start auf 18446744073709551615
+        setze anzahl auf 1
+    setze view: puffer[BufferFeldPunkt] auf pufferansicht(speicher.punkte, start, anzahl)
+    gib_zurück länge(view)
+
+setze gefangen auf 0
+für modus in [0, 1, 2, 3]:
+    versuche:
+        setze ungueltig auf buffer_feld_grenze(modus)
+    fange fehler:
+        setze gefangen auf gefangen + 1
+wenn gefangen == 4:
+    zeige 0
+sonst:
+    zeige gefangen + 100

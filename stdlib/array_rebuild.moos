@@ -1,0 +1,189 @@
+# Rebuild-API für ein P-Array. Eine Instanz hat einen serialisierenden
+# Besitzer. Er hält Quellen, Ersatztransporte und getrennte Seitenpuffer gültig.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BLOCK_SCHREIBEN, BLOCK_BELEGT, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, BLOCK_EA
+aus array_format importiere ArrayLayout, ArrayGrenzen, array_layout_pruefen, array_identitaet_gleich, array_seite_leeren
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayMedien, ArrayArbeitsraum, array_io, array_barriere, array_wiederherstellen
+aus array_rebuild_format importiere ArrayRebuildStand, ARRAY_REBUILD_KEIN, array_rebuild_bankseite, array_rebuild_zielseiten
+aus array_rebuild_metadaten importiere ArrayRebuild, ArrayRebuildZaehler, array_rebuild_medium_pruefen, array_rebuild_kopien_laden, array_rebuild_laden, array_rebuild_speichern, array_rebuild_bilder_laden, array_rebuild_basis_schreiben
+aus array_rebuild_io importiere array_rebuild_journal_anwenden, array_rebuild_rekonstruieren, array_rebuild_roh_schreiben, array_rebuild_verloren
+
+@nativ
+konstante ARRAY_MITGLIED_AKTIV: u32 auf 1
+@nativ
+konstante ARRAY_MITGLIED_FEHLT: u32 auf 2
+@nativ
+konstante ARRAY_MITGLIED_AUFBAU: u32 auf 3
+
+struktur ArrayRebuildFortschritt:
+    fertig: u64
+    gesamt: u64
+    abgeschlossen: bool
+
+struktur ArrayRebuildStatus:
+    zustand: u32
+    fortschritt: ArrayRebuildFortschritt
+    fehler: ArrayRebuildZaehler
+
+# Exklusive Übernahme mit vollständigem v1-Array. Vor der Versionsmarkierung
+# muss P sauber und der neue Zustand auf allen Meta-Partitionen dauerhaft sein.
+@nativ
+funktion array_rebuild_markierung_fertigstellen(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        wenn r.stand.fehlt != ARRAY_REBUILD_KEIN oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 140))
+        setze p.offen auf wahr
+        setze geprueft: ergebnis[u64, BlockFehler] auf array_wiederherstellen(p, w)
+        setze p.offen auf falsch
+        setze repariert: u64 auf weitergeben(geprueft)
+        setze stand: ArrayRebuildStand auf r.stand
+        setze s: ptr[ArrayRebuildStand] auf zeiger(adresse_von(stand))
+        weitergeben(array_rebuild_speichern(r, s, w, 0, 0))
+        weitergeben(array_rebuild_speichern(r, s, w, 0, 0))
+        setze r.bereit auf falsch
+        setze i: u64 auf 0
+        solange i < p.layout.anzahl:
+            weitergeben(array_rebuild_basis_schreiben(r, i, w))
+            setze i auf i + 1
+        setze r.markiert auf wahr
+        setze r.bereit auf wahr
+        setze p.offen auf wahr
+        gib_zurück erfolg(repariert)
+
+@nativ
+funktion array_rebuild_starten(r: ptr[ArrayRebuild], p: ptr[ArrayP], w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(p) == 0 oder u64(w) == 0 oder nicht p.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 141))
+        wenn r.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 140))
+        setze r.basis auf p
+        setze r.anwesend auf (1 << p.layout.anzahl) - 1
+        setze r.markiert auf falsch
+        setze r.stand.folge auf 0
+        setze i: u64 auf 0
+        solange i < p.layout.anzahl:
+            setze quelle: ArrayAnschluss auf ArrayAnschluss(p.layout.mitglieder[i].identitaet, p.medien[i])
+            weitergeben(array_rebuild_medium_pruefen(p, i, zeiger(adresse_von(quelle))))
+            weitergeben(array_rebuild_kopien_laden(r, i, w))
+            setze i auf i + 1
+        wenn r.stand.folge != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 141))
+        setze leer: ArrayRebuildStand auf 0
+        setze leer.layout auf p.layout
+        setze leer.fehlt auf ARRAY_REBUILD_KEIN
+        setze leer.journal_ziel auf ARRAY_REBUILD_KEIN
+        setze r.stand auf leer
+        gib_zurück array_rebuild_markierung_fertigstellen(r, w)
+
+@nativ
+funktion array_rebuild_oeffnen(r: ptr[ArrayRebuild], p: ptr[ArrayP], quellen: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder r.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 142))
+        setze markieren: bool auf weitergeben(array_rebuild_laden(r, p, quellen, anzahl, w))
+        wenn markieren:
+            gib_zurück array_rebuild_markierung_fertigstellen(r, w)
+        wenn r.stand.journal_beine != 0:
+            weitergeben(array_rebuild_bilder_laden(r, w))
+            weitergeben(array_rebuild_journal_anwenden(r, w, adresse_von(w.alt[0]), adresse_von(w.paritaet[0])))
+        sonst:
+            setze stand: ArrayRebuildStand auf r.stand
+            weitergeben(array_rebuild_speichern(r, zeiger(adresse_von(stand)), w, 0, 0))
+        setze p.offen auf wahr
+        gib_zurück erfolg(0)
+
+@nativ
+funktion array_rebuild_flush(r: ptr[ArrayRebuild]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        # Jeder bestätigte Seitenauftrag enthält die Barrieren beider
+        # beteiligten Medien und des Journalabschlusses.
+        wenn nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 142))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_ersatz_metadaten_raeumen(p: ptr[ArrayP], mitglied: u64, m: ptr[dyn FatTransport], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        array_seite_leeren(byteansicht(w.bitmap_a))
+        setze g: ptr[ArrayGrenzen] auf zeiger(adresse_von(p.grenzen))
+        setze adr: u64 auf adresse_von(w.bitmap_a[0])
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, array_rebuild_bankseite(g, mitglied, 0), 1, adr))
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, array_rebuild_bankseite(g, mitglied, 1), 1, adr))
+        gib_zurück array_barriere(m)
+
+@nativ
+funktion array_rebuild_ersatz_beginnen(r: ptr[ArrayRebuild], q: ptr[ArrayAnschluss], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(q) == 0 oder u64(w) == 0 oder nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 143))
+        setze mitglied: u64 auf r.stand.fehlt
+        wenn mitglied == ARRAY_REBUILD_KEIN oder r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 143))
+        setze p: ptr[ArrayP] auf r.basis
+        weitergeben(array_rebuild_medium_pruefen(p, mitglied, q))
+        setze stand: ArrayRebuildStand auf r.stand
+        wenn array_identitaet_gleich(zeiger(adresse_von(stand.layout.mitglieder[mitglied].identitaet)), zeiger(adresse_von(q.identitaet))):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 140))
+        setze stand.layout.mitglieder[mitglied].identitaet auf q.identitaet
+        weitergeben(array_layout_pruefen(zeiger(adresse_von(stand.layout))))
+        weitergeben(array_rebuild_ersatz_metadaten_raeumen(p, mitglied, q.medien.metadaten, w))
+        setze alt: ArrayMedien auf p.medien[mitglied]
+        setze p.medien[mitglied] auf q.medien
+        setze kopf: ergebnis[void, BlockFehler] auf array_rebuild_basis_schreiben(r, mitglied, w)
+        wenn nicht ist_erfolg(kopf):
+            setze p.medien[mitglied] auf alt
+            gib_zurück kopf
+        setze r.bank[mitglied] auf 0
+        setze r.folgen[mitglied] auf 0
+        setze r.anwesend auf r.anwesend | (1 << mitglied)
+        setze stand.ersatz auf wahr
+        setze stand.fertig auf 0
+        weitergeben(array_rebuild_speichern(r, zeiger(adresse_von(stand)), w, 0, 0))
+        wenn nicht r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 140))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_schritt(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(w) == 0 oder nicht r.bereit oder nicht r.stand.ersatz oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 144))
+        setze ziel: u64 auf r.stand.fehlt
+        setze p: ptr[ArrayP] auf r.basis
+        setze gesamt: u64 auf array_rebuild_zielseiten(zeiger(adresse_von(r.stand.layout)), zeiger(adresse_von(p.grenzen)), ziel)
+        setze naechste: u64 auf r.stand.fertig
+        wenn naechste < gesamt:
+            setze adr: u64 auf adresse_von(w.alt[0])
+            weitergeben(array_rebuild_rekonstruieren(r, ziel, naechste, adr, adresse_von(w.bitmap_b[0])))
+            setze geschrieben: ergebnis[void, BlockFehler] auf array_rebuild_roh_schreiben(r, ziel, naechste, adr)
+            wenn nicht ist_erfolg(geschrieben):
+                weitergeben(array_rebuild_verloren(r, ziel, w))
+                gib_zurück fehlschlag(ergebnis_fehler(geschrieben))
+            setze naechste auf naechste + 1
+        setze stand: ArrayRebuildStand auf r.stand
+        setze abgeschlossen: bool auf naechste == gesamt
+        wenn abgeschlossen:
+            setze stand.fehlt auf ARRAY_REBUILD_KEIN
+            setze stand.ersatz auf falsch
+            setze stand.fertig auf 0
+        sonst:
+            setze stand.fertig auf naechste
+        weitergeben(array_rebuild_speichern(r, zeiger(adresse_von(stand)), w, 0, 0))
+        wenn r.stand.fehlt == ziel und nicht r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 141))
+        gib_zurück erfolg(ArrayRebuildFortschritt(naechste, gesamt, abgeschlossen))
+
+@nativ
+funktion array_rebuild_status(r: ptr[ArrayRebuild], index: u64) -> ergebnis[ArrayRebuildStatus, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(r.basis) == 0 oder index >= r.stand.layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 141))
+        setze p: ptr[ArrayP] auf r.basis
+        setze gesamt: u64 auf array_rebuild_zielseiten(zeiger(adresse_von(r.stand.layout)), zeiger(adresse_von(p.grenzen)), index)
+        wenn r.stand.fehlt != index:
+            gib_zurück erfolg(ArrayRebuildStatus(ARRAY_MITGLIED_AKTIV, ArrayRebuildFortschritt(gesamt, gesamt, wahr), r.zaehler[index]))
+        wenn r.stand.ersatz:
+            gib_zurück erfolg(ArrayRebuildStatus(ARRAY_MITGLIED_AUFBAU, ArrayRebuildFortschritt(r.stand.fertig, gesamt, falsch), r.zaehler[index]))
+        gib_zurück erfolg(ArrayRebuildStatus(ARRAY_MITGLIED_FEHLT, ArrayRebuildFortschritt(0, gesamt, falsch), r.zaehler[index]))

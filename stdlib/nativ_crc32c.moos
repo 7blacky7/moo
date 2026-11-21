@@ -1,0 +1,26 @@
+# CRC32C (Castagnoli), reflektiertes Polynom 0x82F63B78.
+# zustand ist der unkomplementierte Zwischenstand; Standardstart 0xFFFFFFFF.
+@nativ
+funktion crc32c_byte(zustand: u32, wert: u8) -> u32:
+    setze crc: u32 auf zustand ^ als(u32, wert)
+    setze bit: u32 auf 0
+    solange bit < 8:
+        wenn (crc & 1) != 0:
+            setze crc auf (crc >> 1) ^ 0x82F63B78
+        sonst:
+            setze crc auf crc >> 1
+        setze bit auf bit + 1
+    gib_zurück crc
+
+@nativ
+funktion crc32c_fortsetzen(zustand: u32, daten: puffer[u8]) -> u32:
+    setze crc: u32 auf zustand
+    setze i: u64 auf 0
+    solange i < länge(daten):
+        setze crc auf crc32c_byte(crc, daten[i])
+        setze i auf i + 1
+    gib_zurück crc
+
+@nativ
+funktion crc32c(daten: puffer[u8]) -> u32:
+    gib_zurück crc32c_fortsetzen(0xFFFFFFFF, daten) ^ 0xFFFFFFFF

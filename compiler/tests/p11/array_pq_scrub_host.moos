@@ -1,0 +1,7 @@
+aus "array_pq_scrub_probe" importiere array_pq_scrub_probe, array_pq_scrub_abbruchzahl
+unsicher:
+    zeige array_pq_scrub_probe()
+    zeige array_pq_scrub_abbruchzahl(0)
+    zeige array_pq_scrub_abbruchzahl(1)
+    zeige array_pq_scrub_abbruchzahl(2)
+    zeige array_pq_scrub_abbruchzahl(3)

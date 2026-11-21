@@ -1,0 +1,69 @@
+struktur BufferFeldPunkt:
+    x: u64
+
+struktur BufferFeldSicht:
+    bytes: puffer[u8]
+    marke: u64
+
+struktur BufferFeldPaar:
+    werte: [BufferFeldSicht; 2]
+
+struktur BufferFeldStrukturen:
+    werte: puffer[BufferFeldPunkt]
+
+struktur BufferFeldSpeicher:
+    bytes: [u8; 9]
+    kurz: [u8; 2]
+    punkte: [BufferFeldPunkt; 2]
+
+@nativ
+funktion buffer_feld_kopie(sicht: BufferFeldSicht) -> BufferFeldSicht:
+    gib_zurück sicht
+
+@nativ
+funktion buffer_feld_identitaet(p: ptr[u8]) -> ptr[u8]:
+    gib_zurück p
+
+@nativ
+funktion buffer_feld_auswahl(a: ptr[u8], b: ptr[u8], links: bool) -> ptr[u8]:
+    wenn links:
+        gib_zurück buffer_feld_identitaet(a)
+    gib_zurück b
+
+@nativ
+funktion buffer_feld_probe(punkte: puffer[BufferFeldPunkt]) -> u64:
+    unsicher:
+        setze speicher: BufferFeldSpeicher auf 0
+        setze original: BufferFeldSicht auf BufferFeldSicht(byteansicht(speicher.bytes), 7)
+        setze kopie: BufferFeldSicht auf buffer_feld_kopie(original)
+        kopie.bytes[1] = 42
+        setze kopie.marke auf 99
+        setze ausgewaehlt: ptr[u8] auf buffer_feld_auswahl(puffer_zeiger(original.bytes), puffer_zeiger(kopie.bytes), wahr)
+        wenn ausgewaehlt[1] != 42:
+            gib_zurück 6
+        wenn speicher.bytes[1] != 42 oder original.bytes[1] != 42 oder original.marke != 7:
+            gib_zurück 1
+        setze kopie.bytes auf byteansicht(speicher.kurz)
+        wenn länge(kopie.bytes) != 2 oder länge(original.bytes) != 9:
+            gib_zurück 2
+        setze paar: BufferFeldPaar auf 0
+        setze i: u64 auf 1
+        paar.werte[i] = original
+        paar.werte[i].bytes[2] = 73
+        wenn speicher.bytes[2] != 73 oder länge(paar.werte[i].bytes) != 9:
+            gib_zurück 3
+        setze punktsicht: BufferFeldStrukturen auf BufferFeldStrukturen(punkte)
+        punktsicht.werte[i].x = 123
+        wenn punkte[1].x != 123:
+            gib_zurück 4
+        setze lokal: puffer[BufferFeldPunkt] auf pufferansicht(speicher.punkte)
+        setze teil: puffer[BufferFeldPunkt] auf array_view(speicher.punkte, 1, 1)
+        teil[0].x = 511
+        wenn lokal[1].x != 511 oder länge(lokal) != 2 oder länge(teil) != 1:
+            gib_zurück 7
+        setze leer: puffer[BufferFeldPunkt] auf pufferansicht(speicher.punkte, 2, 0)
+        wenn länge(leer) != 0:
+            gib_zurück 8
+        wenn groesse_von(BufferFeldSicht) != 24 oder versatz_von(BufferFeldSicht, marke) != 16:
+            gib_zurück 5
+        gib_zurück 0

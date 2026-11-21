@@ -1,0 +1,196 @@
+# Spiegel-Probe für reguläre Testabbilder. Schreibfilter für den Bitmap-Resync.
+aus ds_spiegel importiere Spiegel, spiegel_anlegen, spiegel_oeffnen, spiegel_lesen, spiegel_schreiben, spiegel_verloren, spiegel_resync_beginnen, spiegel_resync_schritt
+aus ds_spiegel_bitmap importiere spiegel_bitmap_ist_schmutzig
+aus array_rebuild importiere ArrayRebuildFortschritt
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_paritaet importiere ArrayP, ArrayMedien, ArrayAnschluss, ArrayArbeitsraum
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_SCHREIBEN, BLOCK_EA, BLOCK_NICHT_BEREIT
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion atoi(name: ptr[u8]) -> i32
+
+struktur SpiegelProbeMedium implementiert FatTransport:
+    unter: ptr[dyn FatTransport]
+    sektoren: u64
+    filter: bool
+    ab: u64
+    bis: u64
+    geschrieben: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.unter.geometrie()
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn art == BLOCK_SCHREIBEN:
+                setze seite: u64 auf lba / selbst.sektoren
+                setze seiten: u64 auf anzahl / selbst.sektoren
+                wenn selbst.filter und (seite < selbst.ab oder seite + seiten > selbst.bis):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 220))
+                setze selbst.geschrieben auf selbst.geschrieben + seiten
+            gib_zurück selbst.unter.uebertragen(art, lba, anzahl, puffer, bytes)
+
+@nativ
+statisch SPIEGEL_PROBE: Spiegel auf 0
+@nativ
+statisch SPIEGEL_PROBE_ARBEIT: ArrayArbeitsraum auf 0
+@nativ
+statisch SPIEGEL_PROBE_DATEN: [FatPosix; 2] auf 0
+@nativ
+statisch SPIEGEL_PROBE_META: [FatPosix; 2] auf 0
+@nativ
+statisch SPIEGEL_PROBE_MEDIEN: [SpiegelProbeMedium; 2] auf 0
+@nativ
+statisch SPIEGEL_PROBE_QUELLEN: [ArrayAnschluss; 2] auf 0
+@nativ
+statisch SPIEGEL_PROBE_BLOCK: [u8; 4096] auf 0
+
+@nativ
+funktion spiegel_probe_fd(nr: u64) -> i32:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 70, 68, 95, 48, 0]
+        name[13] = als(u8, 48 + nr)
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück -1
+        gib_zurück atoi(text)
+
+@nativ
+funktion spiegel_probe_binden(l: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze l.anzahl auf 2
+        setze l.generation auf 11
+        setze l.guid_lo auf 0x330064
+        setze l.guid_hi auf 0x243056
+        setze i: u64 auf 0
+        solange i < 2:
+            setze sektor: u64 auf 512
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 1:
+                setze sektor auf 4096
+                setze rolle auf ARRAY_PARITAET_P
+            setze d: ptr[FatPosix] auf zeiger(adresse_von(SPIEGEL_PROBE_DATEN[i]))
+            setze m: ptr[FatPosix] auf zeiger(adresse_von(SPIEGEL_PROBE_META[i]))
+            weitergeben(fat_posix_einrichten(d, spiegel_probe_fd(i), sektor, falsch))
+            weitergeben(fat_posix_einrichten(m, spiegel_probe_fd(2 + i), sektor, falsch))
+            setze basis: ptr[dyn FatTransport] auf d
+            setze probe: ptr[SpiegelProbeMedium] auf zeiger(adresse_von(SPIEGEL_PROBE_MEDIEN[i]))
+            setze probe.unter auf basis
+            setze probe.sektoren auf 4096 / sektor
+            setze td: ptr[dyn FatTransport] auf probe
+            setze tm: ptr[dyn FatTransport] auf m
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x100 + i
+            setze ident.guid_hi auf 0x200 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 83
+            ident.serie[1] = als(u8, 48 + i)
+            setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, 520, ident)
+            setze SPIEGEL_PROBE_QUELLEN[i] auf ArrayAnschluss(ident, ArrayMedien(td, tm))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_probe_schreiben(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum], seite: u64, wert: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            SPIEGEL_PROBE_BLOCK[i] = wert
+            setze i auf i + 1
+        setze adr: u64 auf adresse_von(SPIEGEL_PROBE_BLOCK[0])
+        weitergeben(spiegel_schreiben(s, seite, adr, w))
+        SPIEGEL_PROBE_BLOCK[0] = 0
+        weitergeben(spiegel_lesen(s, seite, adr, w))
+        setze i auf 0
+        solange i < 4096:
+            wenn SPIEGEL_PROBE_BLOCK[i] != wert:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 221))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_probe_bitmap(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum], schmutzig: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze i: u64 auf 0
+        solange i < 3:
+            setze bit: bool auf weitergeben(spiegel_bitmap_ist_schmutzig(p, 0, i, w))
+            wenn bit != (schmutzig und i == 1):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 222))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_probe_lauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 77, 79, 68, 69, 0]
+        setze mode: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(mode) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 223))
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        weitergeben(spiegel_probe_binden(l))
+        setze s: ptr[Spiegel] auf zeiger(adresse_von(SPIEGEL_PROBE))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(SPIEGEL_PROBE_ARBEIT))
+        setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(SPIEGEL_PROBE_QUELLEN[0]))
+        setze rechts: ptr[ArrayAnschluss] auf zeiger(adresse_von(SPIEGEL_PROBE_QUELLEN[1]))
+        wenn mode[0] == 97:
+            gib_zurück spiegel_anlegen(s, l, q, w)
+        wenn mode[0] == 120:
+            setze alt: ergebnis[u64, BlockFehler] auf spiegel_oeffnen(s, rechts, 1, w)
+            wenn nicht ist_erfolg(alt):
+                setze e: BlockFehler auf ergebnis_fehler(alt)
+                wenn e.code == BLOCK_NICHT_BEREIT und e.geraete_status == 210:
+                    gib_zurück erfolg(1)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 224))
+        wenn mode[0] == 119:
+            weitergeben(spiegel_oeffnen(s, q, 2, w))
+            weitergeben(spiegel_probe_schreiben(s, w, 4, 0x44))
+            weitergeben(spiegel_verloren(s, 1, w))
+            weitergeben(spiegel_probe_schreiben(s, w, 300, 0xA5))
+            weitergeben(spiegel_probe_bitmap(s, w, wahr))
+            gib_zurück erfolg(1)
+        wenn mode[0] == 98:
+            weitergeben(spiegel_oeffnen(s, q, 1, w))
+            weitergeben(spiegel_probe_bitmap(s, w, wahr))
+            weitergeben(spiegel_resync_beginnen(s, rechts, w))
+            setze sprung: ArrayRebuildFortschritt auf weitergeben(spiegel_resync_schritt(s, w))
+            wenn sprung.fertig != 256 oder SPIEGEL_PROBE_MEDIEN[1].geschrieben != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 225))
+            setze erster: ArrayRebuildFortschritt auf weitergeben(spiegel_resync_schritt(s, w))
+            wenn erster.fertig != 257 oder SPIEGEL_PROBE_MEDIEN[1].geschrieben != 1:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 226))
+            weitergeben(spiegel_probe_schreiben(s, w, 0, 0xF0))
+            weitergeben(spiegel_probe_schreiben(s, w, 303, 0xF3))
+            gib_zurück erfolg(erster.fertig)
+        wenn mode[0] == 114:
+            weitergeben(spiegel_oeffnen(s, q, 2, w))
+            wenn s.rebuild.stand.fertig != 257:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 227))
+            setze SPIEGEL_PROBE_MEDIEN[1].filter auf wahr
+            setze SPIEGEL_PROBE_MEDIEN[1].ab auf 257
+            setze SPIEGEL_PROBE_MEDIEN[1].bis auf 512
+            setze stand: u64 auf 257
+            solange stand < 520:
+                setze f: ArrayRebuildFortschritt auf weitergeben(spiegel_resync_schritt(s, w))
+                wenn f.fertig <= stand oder f.gesamt != 520 oder f.abgeschlossen != (f.fertig == 520):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 228))
+                setze stand auf f.fertig
+            weitergeben(spiegel_probe_bitmap(s, w, falsch))
+            gib_zurück erfolg(SPIEGEL_PROBE_MEDIEN[1].geschrieben)
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 229))
+
+@nativ
+funktion spiegel_probe_ergebnis() -> u64:
+    unsicher:
+        setze sp: ergebnis[u64, BlockFehler] auf spiegel_probe_lauf()
+        wenn ist_erfolg(sp):
+            gib_zurück ergebnis_wert(sp)
+        setze fehler: BlockFehler auf ergebnis_fehler(sp)
+        gib_zurück (als(u64, fehler.code) << 32) | als(u64, fehler.geraete_status)
+
+unsicher:
+    zeige spiegel_probe_ergebnis()

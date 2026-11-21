@@ -1,0 +1,4 @@
+importiere "array_q_format"
+# Der Selbsttest soll bei einem unerwarteten Fehler abbrechen.
+unsicher:
+    zeige array_q_format_probe()

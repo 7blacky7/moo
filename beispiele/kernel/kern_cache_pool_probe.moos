@@ -1,0 +1,240 @@
+# Gemeinsame Cache-Pool-Probe auf isolierten RAM-Geräten.
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "kern_block" importiere BlockGeraet, BlockFehler, BLOCK_EA, BLOCK_VOLL, block_registrieren
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_nullseiten
+aus "kern_array" importiere ArrayKernAnschluss
+aus "kern_array_moofs" importiere ArrayMooFsPuffer, array_moofs_transport
+aus "kern_spiegel" importiere KernSpiegel, KernSpiegelMooFs, kern_spiegel_einrichten, kern_spiegel_kennung, kern_spiegel_verloren, kern_spiegel_moofs_binden, kern_spiegel_resync_beginnen, kern_spiegel_resync_schritt
+aus "speicher_fat" importiere FatKernTransport
+aus "kern_vfs" importiere KernVfsDateien, kern_vfs_einhaengen, kern_vfs_oeffnen, kern_vfs_lesen, kern_vfs_schreiben, kern_vfs_schliessen, kern_vfs_verzeichnis
+aus "kern_smp" importiere smp_planer
+aus "kern_faden" importiere faden_abgeben
+aus "../uefi/hardware_pci" importiere takt
+aus "../moos/mover" importiere KernMover, mover_starten, mover_ist_fertig, mover_ergebnis
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_rebuild importiere ArrayRebuildFortschritt
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs importiere MooFsEintrag
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_format importiere MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_void
+aus ds_vereinigung importiere Vereinigung, VereinigungArbeit, VereinigungQuelle, VereinigungRegel, vereinigung_einrichten, vereinigung_attribut
+aus ds_vereinigung_mover importiere MOVER_OFFEN, MOVER_VERSCHOBEN
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VfsEintrag, VFS_EIO, VFS_ENOENT, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_VERZEICHNIS
+
+struktur CachePoolProbePuffer:
+    eintraege: [MooFsEintrag; 64]
+    kinder: [MooFsBaumKind; 16]
+    karte: [u8; 64]
+
+@nativ
+statisch CACHE_POOL_PROBE_RAM: [RamPlatte; 5] auf 0
+@nativ
+statisch CACHE_POOL_PROBE_PHYSISCH: [u64; 5] auf 0
+@nativ
+statisch CACHE_POOL_PROBE_QUELLEN: [ArrayKernAnschluss; 2] auf 0
+@nativ
+statisch CACHE_POOL_PROBE_SPIEGEL: KernSpiegel auf 0
+@nativ
+statisch CACHE_POOL_PROBE_CACHE_FS: KernSpiegelMooFs auf 0
+@nativ
+statisch CACHE_POOL_PROBE_DATEN_FS: MooFsDateisystem auf 0
+@nativ
+statisch CACHE_POOL_PROBE_SCHREIBER: MooFsSchreiber auf 0
+@nativ
+statisch CACHE_POOL_PROBE_DATEN_TRANSPORT: FatKernTransport auf 0
+@nativ
+statisch CACHE_POOL_PROBE_FORMAT: MooFsFormatSpeicher auf 0
+@nativ
+statisch CACHE_POOL_PROBE_PUFFER: [CachePoolProbePuffer; 2] auf 0
+@nativ
+statisch CACHE_POOL_PROBE_FREIGABE: Vereinigung auf 0
+@nativ
+statisch CACHE_POOL_PROBE_V_ARBEIT: VereinigungArbeit auf 0
+@nativ
+statisch CACHE_POOL_PROBE_DATEN: [VereinigungQuelle; 1] auf 0
+@nativ
+statisch CACHE_POOL_PROBE_DATEIEN: KernVfsDateien auf 0
+@nativ
+statisch CACHE_POOL_PROBE_MOVER: KernMover auf 0
+@nativ
+statisch CACHE_POOL_PROBE_BYTES: [u8; 5003] auf 0
+@nativ
+konstante T_CACHE_POOL_PROBE_OFFEN: [u8; _] auf "MOO-ARRAY CACHE OFFEN "
+@nativ
+konstante T_CACHE_POOL_PROBE_DATEI: [u8; _] auf "MOO-ARRAY CACHE MOVER-BYTES "
+@nativ
+konstante T_CACHE_POOL_PROBE_RESYNC: [u8; _] auf "MOO-ARRAY CACHE RESYNC "
+
+@nativ
+funktion cache_pool_probe_ram(slot: u64, seiten: u64, sektor: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(seiten)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 330))
+        ar_nullseiten(basis, seiten)
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(CACHE_POOL_PROBE_RAM[slot]))
+        weitergeben(block_ram_einrichten(ram, basis, seiten * 4096, sektor, falsch))
+        setze CACHE_POOL_PROBE_PHYSISCH[slot] auf basis
+        setze block: ptr[dyn BlockGeraet] auf ram
+        gib_zurück block_registrieren(block)
+
+@nativ
+funktion cache_pool_probe_einrichten(s: ptr[KernSpiegel]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        setze l.guid_lo auf 0xC400
+        setze l.guid_hi auf 0xC401
+        setze l.generation auf 1
+        setze l.anzahl auf 2
+        setze i: u64 auf 0
+        solange i < 2:
+            setze sektor: u64 auf 512
+            setze meta: u64 auf 10
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 1:
+                setze sektor auf 4096
+                setze meta auf 138
+                setze rolle auf ARRAY_PARITAET_P
+            setze d: u64 auf weitergeben(cache_pool_probe_ram(i, 128, sektor))
+            setze m: u64 auf weitergeben(cache_pool_probe_ram(2 + i, meta, sektor))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0xC510 + i
+            setze ident.guid_hi auf 0xC540 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 67
+            ident.serie[1] = als(u8, 48 + i)
+            setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, 128, ident)
+            setze CACHE_POOL_PROBE_QUELLEN[i] auf ArrayKernAnschluss(ident, d, m)
+            setze i auf i + 1
+        setze regionen: u64 auf weitergeben(kern_spiegel_einrichten(s, l, zeiger(adresse_von(CACHE_POOL_PROBE_QUELLEN[0])), 2))
+        wenn regionen != 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 330))
+        gib_zurück cache_pool_probe_ram(4, 128, 4096)
+
+@nativ
+funktion cache_pool_probe_formatieren(t: ptr[FatKernTransport], kennung: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        weitergeben(array_moofs_transport(t, kennung))
+        setze transport: ptr[dyn FatTransport] auf t
+        gib_zurück moofs_vfs_void(moofs_formatieren(transport, nichts, 0, 0xCA01 + kennung, 0xDA01, zeiger(adresse_von(CACHE_POOL_PROBE_FORMAT))))
+
+@nativ
+funktion cache_pool_probe_daten(kennung: u64) -> ergebnis[ptr[dyn Dateisystem], VfsFehler]:
+    unsicher:
+        setze t: ptr[FatKernTransport] auf zeiger(adresse_von(CACHE_POOL_PROBE_DATEN_TRANSPORT))
+        weitergeben(cache_pool_probe_formatieren(t, kennung))
+        setze transport: ptr[dyn FatTransport] auf t
+        setze schreiber: ptr[MooFsSchreiber] auf zeiger(adresse_von(CACHE_POOL_PROBE_SCHREIBER))
+        setze a: ptr[CachePoolProbePuffer] auf zeiger(adresse_von(CACHE_POOL_PROBE_PUFFER[1]))
+        weitergeben(moofs_vfs_void(moofs_schreiber_oeffnen(schreiber, transport, zeiger(adresse_von(a.eintraege[0])), 64, zeiger(adresse_von(a.kinder[0])), 16, zeiger(adresse_von(a.karte[0])), 64)))
+        setze s: ptr[MooFsDateisystem] auf zeiger(adresse_von(CACHE_POOL_PROBE_DATEN_FS))
+        weitergeben(moofs_vfs_einrichten(s, schreiber))
+        setze fs: ptr[dyn Dateisystem] auf s
+        gib_zurück erfolg(fs)
+
+@nativ
+funktion cache_pool_probe_mover(v: ptr[Vereinigung], datei: puffer[u8], tsc: u64) -> ergebnis[u32, VfsFehler]:
+    unsicher:
+        setze m: ptr[KernMover] auf zeiger(adresse_von(CACHE_POOL_PROBE_MOVER))
+        weitergeben(mover_starten(m, v, datei, 2))
+        setze start: u64 auf takt()
+        solange nicht mover_ist_fertig(m) und takt() - start < tsc * 20000000:
+            faden_abgeben(smp_planer())
+        wenn nicht mover_ist_fertig(m):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 330, 0))
+        gib_zurück mover_ergebnis(m)
+
+@nativ
+funktion cache_pool_probe_vfs(s: ptr[KernSpiegel], daten_id: u64, tsc: u64, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze b: ptr[KernSpiegelMooFs] auf zeiger(adresse_von(CACHE_POOL_PROBE_CACHE_FS))
+        weitergeben(cache_pool_probe_formatieren(zeiger(adresse_von(b.transport)), kern_spiegel_kennung(s)))
+        setze puffer: ptr[CachePoolProbePuffer] auf zeiger(adresse_von(CACHE_POOL_PROBE_PUFFER[0]))
+        setze arbeit: ArrayMooFsPuffer auf ArrayMooFsPuffer(zeiger(adresse_von(puffer.eintraege[0])), 64, zeiger(adresse_von(puffer.kinder[0])), 16, zeiger(adresse_von(puffer.karte[0])), 64)
+        setze cache: ptr[dyn Dateisystem] auf weitergeben(kern_spiegel_moofs_binden(s, b, zeiger(adresse_von(arbeit))))
+        setze daten: ptr[dyn Dateisystem] auf weitergeben(cache_pool_probe_daten(daten_id))
+        setze CACHE_POOL_PROBE_DATEN[0].system auf daten
+        setze basis: [u8; 1] auf [47]
+        setze v: ptr[Vereinigung] auf zeiger(adresse_von(CACHE_POOL_PROBE_FREIGABE))
+        weitergeben(vereinigung_einrichten(v, pufferansicht(CACHE_POOL_PROBE_DATEN), cache, pufferansicht(basis), VereinigungRegel(wahr, falsch, 0), zeiger(adresse_von(CACHE_POOL_PROBE_V_ARBEIT))))
+        setze system: ptr[dyn Dateisystem] auf v
+        setze name: [u8; 14] auf [47, 102, 114, 101, 105, 103, 97, 98, 101, 47, 112, 111, 111, 108]
+        weitergeben(kern_vfs_einhaengen(pufferansicht(name), system))
+        setze datei: [u8; 22] auf [47, 102, 114, 101, 105, 103, 97, 98, 101, 47, 112, 111, 111, 108, 47, 98, 101, 114, 105, 99, 104, 116]
+        setze relativ: [u8; 8] auf [47, 98, 101, 114, 105, 99, 104, 116]
+        setze t: ptr[KernVfsDateien] auf zeiger(adresse_von(CACHE_POOL_PROBE_DATEIEN))
+        setze h: u64 auf weitergeben(kern_vfs_oeffnen(t, pufferansicht(datei), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN))
+        setze i: u64 auf 0
+        solange i < 5003:
+            CACHE_POOL_PROBE_BYTES[i] = als(u8, (i * 13 + 47) & 255)
+            setze i auf i + 1
+        setze erster: u64 auf weitergeben(kern_vfs_schreiben(t, h, pufferansicht(CACHE_POOL_PROBE_BYTES, 0, 4096)))
+        setze ausfall: ergebnis[void, BlockFehler] auf kern_spiegel_verloren(s, 1)
+        wenn nicht ist_erfolg(ausfall):
+            setze bf: BlockFehler auf ergebnis_fehler(ausfall)
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, bf.code, bf.geraete_status))
+        setze zweiter: u64 auf weitergeben(kern_vfs_schreiben(t, h, pufferansicht(CACHE_POOL_PROBE_BYTES, 4096, 907)))
+        setze besetzt: u32 auf weitergeben(cache_pool_probe_mover(v, pufferansicht(relativ), tsc))
+        weitergeben(kern_vfs_schliessen(t, h))
+        wenn erster != 4096 oder zweiter != 907 oder besetzt != MOVER_OFFEN:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 331, besetzt))
+        log(adresse_von(T_CACHE_POOL_PROBE_OFFEN), 1)
+        setze verschoben: u32 auf weitergeben(cache_pool_probe_mover(v, pufferansicht(relativ), tsc))
+        wenn verschoben != MOVER_VERSCHOBEN:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 332, verschoben))
+        setze r: u64 auf weitergeben(kern_vfs_oeffnen(t, pufferansicht(datei), VFS_LESEN))
+        CACHE_POOL_PROBE_BYTES[0] = 0
+        setze gelesen: u64 auf weitergeben(kern_vfs_lesen(t, r, pufferansicht(CACHE_POOL_PROBE_BYTES)))
+        weitergeben(kern_vfs_schliessen(t, r))
+        wenn gelesen != 5003:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 333, 0))
+        setze i auf 0
+        solange i < gelesen:
+            wenn CACHE_POOL_PROBE_BYTES[i] != als(u8, (i * 13 + 47) & 255):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 334, 0))
+            setze i auf i + 1
+        setze dir: u64 auf weitergeben(kern_vfs_oeffnen(t, pufferansicht(name), VFS_LESEN | VFS_VERZEICHNIS))
+        setze eintrag: VfsEintrag auf weitergeben(kern_vfs_verzeichnis(t, dir, 0))
+        setze kein_zweiter: ergebnis[VfsEintrag, VfsFehler] auf kern_vfs_verzeichnis(t, dir, 1)
+        weitergeben(kern_vfs_schliessen(t, dir))
+        wenn ist_erfolg(kein_zweiter):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 335, 0))
+        setze ende: VfsFehler auf ergebnis_fehler(kein_zweiter)
+        wenn ende.code != VFS_ENOENT oder eintrag.name_bytes != 7 oder eintrag.bytes != gelesen:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 336, 0))
+        setze am_ziel: VfsStat auf weitergeben(vereinigung_attribut(daten, pufferansicht(relativ)))
+        setze noch_cache: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(cache, pufferansicht(relativ))
+        wenn ist_erfolg(noch_cache):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 337, 0))
+        setze alt_fehler: VfsFehler auf ergebnis_fehler(noch_cache)
+        wenn am_ziel.bytes != gelesen oder alt_fehler.code != VFS_ENOENT:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 338, 0))
+        log(adresse_von(T_CACHE_POOL_PROBE_DATEI), gelesen)
+        gib_zurück erfolg()
+
+@nativ
+funktion cache_pool_probe_lauf(tsc: u64, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze s: ptr[KernSpiegel] auf zeiger(adresse_von(CACHE_POOL_PROBE_SPIEGEL))
+        setze daten: u64 auf weitergeben(cache_pool_probe_einrichten(s))
+        setze e: ergebnis[void, VfsFehler] auf cache_pool_probe_vfs(s, daten, tsc, log)
+        wenn nicht ist_erfolg(e):
+            setze f: VfsFehler auf ergebnis_fehler(e)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, (f.code << 16) | (f.grund & 0xFFFF)))
+        weitergeben(kern_spiegel_resync_beginnen(s, zeiger(adresse_von(CACHE_POOL_PROBE_QUELLEN[1]))))
+        setze fertig: u64 auf 0
+        solange fertig < 128:
+            setze r: ArrayRebuildFortschritt auf weitergeben(kern_spiegel_resync_schritt(s))
+            wenn r.fertig <= fertig oder r.gesamt != 128 oder r.abgeschlossen != (r.fertig == 128):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 331))
+            setze fertig auf r.fertig
+        setze ab: u64 auf 0
+        solange ab < 128 * 4096:
+            wenn speicher_lesen(CACHE_POOL_PROBE_PHYSISCH[0] + ab, 8) != speicher_lesen(CACHE_POOL_PROBE_PHYSISCH[1] + ab, 8):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 332))
+            setze ab auf ab + 8
+        log(adresse_von(T_CACHE_POOL_PROBE_RESYNC), fertig)
+        gib_zurück erfolg()

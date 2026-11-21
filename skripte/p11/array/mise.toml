@@ -1,0 +1,47 @@
+[tasks.host]
+description = "P-Array mit gemischten Kapazitäten und Sektoren, Host-XOR und SIGKILL-Recovery"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/array
+lauf="$(mktemp -d "$PWD/build/p11/array/host.XXXXXX")"
+uv run --no-project --offline python -B skripte/p11/array/gate.py "$lauf" "${MOO_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+'''
+
+[tasks.kern]
+description = "P-Array-Blockgeräte im QEMU-Kern mit vier CPUs und RAM-Platten"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/array
+lauf="$(mktemp -d "$PWD/build/p11/array/kern.XXXXXX")"
+MOO_UEFI_PRUEFUNG=kern MOO_UEFI_SMP=4 MOO_UEFI_CPU=max MOO_UEFI_ARRAY_PROBE=1 \
+  MOO_UEFI_OUT="$lauf" MOO_UEFI_WAIT=150 bash scripts/uefi-smoke.sh
+'''
+
+[tasks.rebuild-host]
+description = "Degradierter P-Betrieb, replizierter Journal-Replay und fortgesetzter Rebuild"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/array
+lauf="$(mktemp -d "$PWD/build/p11/array/rebuild.XXXXXX")"
+uv run --no-project --offline python -B skripte/p11/array/rebuild.py "$lauf" "${MOO_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+'''
+
+[tasks.pq-rebuild-host]
+description = "Physische P/Q-Paarausfälle, Online-Rebuild und SIGKILL-Journal"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/array
+lauf="$(mktemp -d "$PWD/build/p11/array/pq-rebuild.XXXXXX")"
+uv run --no-project --offline python -B skripte/p11/array/pq_rebuild.py "$lauf" "${MOO_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+'''
+
+
+
+
+[tasks.scrub]
+description = "MooFS-gestützter P/Q-Scrub, Nullaufnahme und geschützter Paritätswechsel"
+run = "bash scrub.sh"

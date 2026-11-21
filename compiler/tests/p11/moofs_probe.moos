@@ -1,0 +1,280 @@
+aus ds_moofs importiere MooFsVolume, MooFsInode, MooFsEintrag, MooFsBlock, MooFsFehler, MOOFS_ARGUMENT, MOOFS_CRC, MOOFS_FORMAT, MOOFS_FEHLT, moofs_oeffnen, moofs_suchen, moofs_inode, moofs_verzeichnis, moofs_extent, moofs_lesen, moofs_crc
+aus ds_moofs_format importiere MooFsQuelle, MooFsFormatSpeicher, moofs_formatieren
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus "moofs_basis" importiere moofs_basis_probe
+struktur MooFsTestSpeicher:
+    platte: [u8; 2097152]
+    daten: [u8; 12289]
+    gelesen: [u8; 4096]
+    quellen: [MooFsQuelle; 128]
+    arbeit: MooFsFormatSpeicher
+@nativ
+statisch MOOFS_TEST: MooFsTestSpeicher auf 0
+
+@nativ
+funktion moofs_test_pruefe(gut: bool, nummer: u32) -> ergebnis[void, MooFsFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, nummer, 0))
+    gib_zurück erfolg()
+
+@nativ
+funktion moofs_test_quellen(p: ptr[MooFsTestSpeicher]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 12289:
+            setze p.daten[i] auf als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        setze i auf 0
+        solange i < 20:
+            setze leer: MooFsQuelle auf 0
+            setze leer.nummer auf i + 2
+            setze leer.eltern auf 1
+            setze leer.art auf 1
+            setze leer.name_bytes auf 3
+            setze leer.name[0] auf 120
+            setze leer.name[1] auf als(u8, 48 + i / 10)
+            setze leer.name[2] auf als(u8, 48 + i % 10)
+            setze p.quellen[i] auf leer
+            setze i auf i + 1
+        setze p.quellen[0].art auf 2
+        setze p.quellen[0].name_bytes auf 4
+        setze p.quellen[0].name[0] auf 98
+        setze p.quellen[0].name[1] auf 111
+        setze p.quellen[0].name[2] auf 111
+        setze p.quellen[0].name[3] auf 116
+        setze p.quellen[1].eltern auf 2
+        setze p.quellen[1].name_bytes auf 9
+        setze name: [u8; 9] auf [100, 97, 116, 101, 110, 46, 98, 105, 110]
+        setze i auf 0
+        solange i < 9:
+            setze p.quellen[1].name[i] auf name[i]
+            setze i auf i + 1
+        setze p.quellen[1].daten auf adresse_von(p.daten[0])
+        setze p.quellen[1].bytes auf 12289
+
+@nativ
+funktion moofs_test_ablauf(sektor: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        weitergeben(moofs_test_pruefe(moofs_basis_probe() == 0, 1))
+        setze p: ptr[MooFsTestSpeicher] auf zeiger(adresse_von(MOOFS_TEST))
+        moofs_test_quellen(p)
+        setze ram: FatRam auf 0
+        setze rp: ptr[FatRam] auf zeiger(adresse_von(ram))
+        setze einrichten_ok: bool auf ist_erfolg(fat_ram_einrichten(rp, adresse_von(p.platte[0]), 2097152, sektor, falsch))
+        weitergeben(moofs_test_pruefe(einrichten_ok, 2))
+        setze t: ptr[dyn FatTransport] auf rp
+        setze q: ptr[MooFsQuelle] auf zeiger(adresse_von(p.quellen[0]))
+        setze w: ptr[MooFsFormatSpeicher] auf zeiger(adresse_von(p.arbeit))
+        weitergeben(moofs_formatieren(t, q, 20, 0x12345678, 0x11223344, w))
+        setze volume: MooFsVolume auf 0
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(volume))
+        weitergeben(moofs_oeffnen(v, t))
+        weitergeben(moofs_test_pruefe(v.hoehe == 1 und nicht v.degradiert, 3))
+        setze pfad: [u8; 15] auf [98, 111, 111, 116, 47, 47, 100, 97, 116, 101, 110, 46, 98, 105, 110]
+        setze inode: MooFsInode auf weitergeben(moofs_suchen(v, byteansicht(pfad)))
+        weitergeben(moofs_test_pruefe(inode.nummer == 3 und inode.art == 1 und inode.bytes == 12289, 4))
+        setze offset: u64 auf 0
+        solange offset < inode.bytes:
+            setze menge: u64 auf weitergeben(moofs_lesen(v, 3, offset, byteansicht(p.gelesen)))
+            weitergeben(moofs_test_pruefe(menge != 0 und menge <= 4096 und menge <= inode.bytes - offset, 5))
+            setze i: u64 auf 0
+            solange i < menge:
+                weitergeben(moofs_test_pruefe(p.gelesen[i] == als_wrap(u8, (offset + i) * 37 + 11), 6))
+                setze i auf i + 1
+            setze offset auf offset + menge
+        setze eof: u64 auf weitergeben(moofs_lesen(v, 3, inode.bytes, byteansicht(p.gelesen)))
+        weitergeben(moofs_test_pruefe(eof == 0, 7))
+        setze leer: u64 auf weitergeben(moofs_lesen(v, 4, 0, byteansicht(p.gelesen)))
+        weitergeben(moofs_test_pruefe(leer == 0, 8))
+        setze index: u64 auf 0
+        setze gesehen: u64 auf 0
+        solange wahr:
+            setze r: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_verzeichnis(v, 1, index)
+            wenn nicht ist_erfolg(r):
+                weitergeben(moofs_test_pruefe(ergebnis_fehler(r).code == MOOFS_FEHLT, 9))
+                stopp
+            setze e: MooFsEintrag auf ergebnis_wert(r)
+            setze index auf e.schluessel.index + 1
+            setze gesehen auf gesehen + 1
+        weitergeben(moofs_test_pruefe(gesehen == 19, 10))
+        setze extent: MooFsEintrag auf weitergeben(moofs_extent(v, 3, 0))
+        # Ein Bit im ersten Datenblock: keine Ausgabe aus dem beschädigten Block.
+        setze stelle: u64 auf extent.a * 4096 + 64
+        setze alt: u8 auf p.platte[stelle]
+        setze p.platte[stelle] auf alt ^ 1
+        setze p.gelesen[0] auf 0xA5
+        setze fehler: ergebnis[u64, MooFsFehler] auf moofs_lesen(v, 3, 0, byteansicht(p.gelesen))
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(fehler), 11))
+        setze f: MooFsFehler auf ergebnis_fehler(fehler)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == extent.a und p.gelesen[0] == 0xA5, 12))
+        setze p.platte[stelle] auf alt
+        # Fehler im Folgedatenblock: nur der bereits geprüfte Präfix ist verändert.
+        setze stelle auf (extent.a + 1) * 4096 + 64
+        setze alt auf p.platte[stelle]
+        setze p.platte[stelle] auf alt ^ 4
+        setze fill: u64 auf 0
+        solange fill < 4096:
+            setze p.gelesen[fill] auf 0xA5
+            setze fill auf fill + 1
+        setze fehler auf moofs_lesen(v, 3, 0, byteansicht(p.gelesen))
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(fehler), 24))
+        setze f auf ergebnis_fehler(fehler)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == extent.a + 1 und p.gelesen[4032] == 0xA5, 25))
+        setze fill auf 0
+        solange fill < 4032:
+            weitergeben(moofs_test_pruefe(p.gelesen[fill] == p.daten[fill], 26))
+            setze fill auf fill + 1
+        setze p.platte[stelle] auf alt
+        # Metadatenblatt: der Elternknoten bindet dessen erwartete CRC.
+        setze stelle auf inode.metablock * 4096 + 100
+        setze alt auf p.platte[stelle]
+        setze p.platte[stelle] auf alt ^ 8
+        setze kaputt_inode: ergebnis[MooFsInode, MooFsFehler] auf moofs_inode(v, 3)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(kaputt_inode), 13))
+        setze f auf ergebnis_fehler(kaputt_inode)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == inode.metablock, 14))
+        setze p.platte[stelle] auf alt
+        # Wurzelkorruption darf keinen Rückfall auf alte Dateien auslösen.
+        setze stelle auf v.wurzel * 4096 + 4000
+        setze alt auf p.platte[stelle]
+        setze p.platte[stelle] auf alt ^ 2
+        setze root_nr: u64 auf v.wurzel
+        setze kaputt_mount: ergebnis[void, MooFsFehler] auf moofs_oeffnen(v, t)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(kaputt_mount), 15))
+        setze f auf ergebnis_fehler(kaputt_mount)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == root_nr, 16))
+        setze p.platte[stelle] auf alt
+        # Eine Superkopie darf ausfallen, beide defekte Kopien nicht.
+        setze p.platte[200] auf p.platte[200] ^ 1
+        weitergeben(moofs_oeffnen(v, t))
+        weitergeben(moofs_test_pruefe(v.degradiert, 17))
+        setze p.platte[4296] auf p.platte[4296] ^ 1
+        setze beide: ergebnis[void, MooFsFehler] auf moofs_oeffnen(v, t)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(beide), 18))
+        setze f auf ergebnis_fehler(beide)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == 0, 19))
+        setze p.platte[200] auf p.platte[200] ^ 1
+        setze p.platte[4296] auf p.platte[4296] ^ 1
+        weitergeben(moofs_oeffnen(v, t))
+        # Selbst korrekt neu berechnete CRC erlaubt keine ungültige Knotenanzahl.
+        setze root_ptr: ptr[u8] auf zeiger(adresse_von(p.platte[v.wurzel * 4096]))
+        setze root_bytes: puffer[u8] auf byteansicht(root_ptr, 4096)
+        setze count_alt: u32 auf byte_lesen_le32(root_bytes, 32)
+        setze crc_alt: u32 auf v.wurzel_crc
+        byte_schreiben_le32(root_bytes, 32, 101)
+        setze crc: u32 auf weitergeben(moofs_crc(root_bytes))
+        byte_schreiben_le32(root_bytes, 40, crc)
+        setze v.wurzel_crc auf crc
+        setze formfehler: ergebnis[MooFsInode, MooFsFehler] auf moofs_inode(v, 1)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(formfehler), 20))
+        setze f auf ergebnis_fehler(formfehler)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_FORMAT und f.block == v.wurzel, 21))
+        byte_schreiben_le32(root_bytes, 32, count_alt)
+        byte_schreiben_le32(root_bytes, 40, crc_alt)
+        setze v.wurzel_crc auf crc_alt
+        # Eine gültige CRC ersetzt weder Eigentümer- noch Generationsprüfung.
+        setze data_ptr: ptr[u8] auf zeiger(adresse_von(p.platte[extent.a * 4096]))
+        setze data_bytes: puffer[u8] auf byteansicht(data_ptr, 4096)
+        setze data_crc: u32 auf byte_lesen_le32(data_bytes, 40)
+        byte_schreiben_le64(data_bytes, 48, 99)
+        setze crc auf weitergeben(moofs_crc(data_bytes))
+        byte_schreiben_le32(data_bytes, 40, crc)
+        setze fehler auf moofs_lesen(v, 3, 0, byteansicht(p.gelesen))
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(fehler), 27))
+        setze f auf ergebnis_fehler(fehler)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_FORMAT und f.block == extent.a, 28))
+        byte_schreiben_le64(data_bytes, 48, 3)
+        byte_schreiben_le64(data_bytes, 24, 2)
+        setze crc auf weitergeben(moofs_crc(data_bytes))
+        byte_schreiben_le32(data_bytes, 40, crc)
+        setze fehler auf moofs_lesen(v, 3, 0, byteansicht(p.gelesen))
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(fehler), 29))
+        setze f auf ergebnis_fehler(fehler)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_FORMAT und f.block == extent.a, 30))
+        byte_schreiben_le64(data_bytes, 24, 1)
+        byte_schreiben_le32(data_bytes, 40, data_crc)
+        # Neueste gültige Supergeneration gewinnt; gleich alte Widersprüche nicht.
+        setze sb_ptr: ptr[u8] auf zeiger(adresse_von(p.platte[4096]))
+        setze sb_bytes: puffer[u8] auf byteansicht(sb_ptr, 4096)
+        setze sb_crc: u32 auf byte_lesen_le32(sb_bytes, 40)
+        byte_schreiben_le64(sb_bytes, 24, 2)
+        setze crc auf weitergeben(moofs_crc(sb_bytes))
+        byte_schreiben_le32(sb_bytes, 40, crc)
+        weitergeben(moofs_oeffnen(v, t))
+        weitergeben(moofs_test_pruefe(v.generation == 2 und nicht v.degradiert, 31))
+        byte_schreiben_le64(sb_bytes, 24, 1)
+        byte_schreiben_le64(sb_bytes, 80, root_nr + 1)
+        setze crc auf weitergeben(moofs_crc(sb_bytes))
+        byte_schreiben_le32(sb_bytes, 40, crc)
+        setze widerspruch: ergebnis[void, MooFsFehler] auf moofs_oeffnen(v, t)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(widerspruch), 32))
+        setze f auf ergebnis_fehler(widerspruch)
+        weitergeben(moofs_test_pruefe(f.code == MOOFS_FORMAT und f.block == 1, 33))
+        byte_schreiben_le64(sb_bytes, 80, root_nr)
+        byte_schreiben_le32(sb_bytes, 40, sb_crc)
+        # Doppelname und Elternzyklus werden vor jedem Schreibzugriff abgelehnt.
+        setze name_alt: u8 auf q[3].name[2]
+        setze q[3].name[2] auf q[2].name[2]
+        setze doppelt: ergebnis[void, MooFsFehler] auf moofs_formatieren(t, q, 20, 1, 2, w)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(doppelt), 22))
+        setze q[3].name[2] auf name_alt
+        setze q[0].eltern auf 2
+        setze zyklus: ergebnis[void, MooFsFehler] auf moofs_formatieren(t, q, 20, 1, 2, w)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(zyklus), 23))
+        setze q[0].eltern auf 1
+        weitergeben(moofs_oeffnen(v, t))
+        # Leeres Volume hat eine Blattwurzel und keine Verzeichniseinträge.
+        weitergeben(moofs_formatieren(t, q, 0, 1, 2, w))
+        weitergeben(moofs_oeffnen(v, t))
+        weitergeben(moofs_test_pruefe(v.hoehe == 0, 34))
+        setze leeres_dir: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_verzeichnis(v, 1, 0)
+        weitergeben(moofs_test_pruefe(nicht ist_erfolg(leeres_dir), 35))
+        weitergeben(moofs_test_pruefe(ergebnis_fehler(leeres_dir).code == MOOFS_FEHLT, 36))
+        # Ein gültiger Baum mit zwei Extents: derselbe Leser muss über die
+        # Extentgrenze und die 4032-Byte-Datenblockgrenze hinweg arbeiten.
+        setze einzel: MooFsQuelle auf q[1]
+        setze einzel.nummer auf 2
+        setze einzel.eltern auf 1
+        setze ep: ptr[MooFsQuelle] auf zeiger(adresse_von(einzel))
+        weitergeben(moofs_formatieren(t, ep, 1, 1, 2, w))
+        setze leaf_ptr: ptr[u8] auf zeiger(adresse_von(p.platte[8192]))
+        setze leaf: puffer[u8] auf byteansicht(leaf_ptr, 4096)
+        byte_schreiben_le32(leaf, 32, 5)
+        byte_schreiben_le64(leaf, 64 + 3 * 320 + 32, 2)
+        byte_schreiben_le64(leaf, 64 + 4 * 320, 2)
+        byte_schreiben_le64(leaf, 64 + 4 * 320 + 8, 2)
+        byte_schreiben_le64(leaf, 64 + 4 * 320 + 16, 2)
+        byte_schreiben_le64(leaf, 64 + 4 * 320 + 24, 5)
+        byte_schreiben_le64(leaf, 64 + 4 * 320 + 32, 2)
+        setze crc auf weitergeben(moofs_crc(leaf))
+        byte_schreiben_le32(leaf, 40, crc)
+        setze kopie: u64 auf 0
+        solange kopie < 2:
+            setze sp: ptr[u8] auf zeiger(adresse_von(p.platte[kopie * 4096]))
+            setze sb: puffer[u8] auf byteansicht(sp, 4096)
+            byte_schreiben_le32(sb, 88, crc)
+            setze sb_neu: u32 auf weitergeben(moofs_crc(sb))
+            byte_schreiben_le32(sb, 40, sb_neu)
+            setze kopie auf kopie + 1
+        weitergeben(moofs_oeffnen(v, t))
+        setze gelesen: u64 auf weitergeben(moofs_lesen(v, 2, 8063, byteansicht(p.gelesen)))
+        weitergeben(moofs_test_pruefe(gelesen == 4096, 37))
+        setze fill auf 0
+        solange fill < gelesen:
+            weitergeben(moofs_test_pruefe(p.gelesen[fill] == p.daten[8063 + fill], 38))
+            setze fill auf fill + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_test() -> u32:
+    unsicher:
+        setze r: ergebnis[void, MooFsFehler] auf moofs_test_ablauf(512)
+        wenn nicht ist_erfolg(r):
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            gib_zurück f.code + f.grund * 1000000
+        setze r auf moofs_test_ablauf(4096)
+        wenn nicht ist_erfolg(r):
+            setze f2: MooFsFehler auf ergebnis_fehler(r)
+            gib_zurück f2.code + f2.grund * 1000000
+        gib_zurück 0

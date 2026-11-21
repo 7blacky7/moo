@@ -1,0 +1,107 @@
+# MooFS über beiden virtuellen Array-Datenplatten. Danach direkter Rohstart je Mitglied.
+aus "kern_array" importiere ArrayKern, array_kern_kennung
+aus "kern_array_moofs" importiere ArrayMooFs, ArrayMooFsPuffer, array_moofs_transport, array_moofs_einhaengen, array_moofs_aushängen
+aus "speicher_fat" importiere FatKernTransport
+aus "kern_vfs" importiere KernVfsDateien, kern_vfs_oeffnen, kern_vfs_schreiben, kern_vfs_schliessen
+aus vfs importiere VfsFehler, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_EBUSY, VFS_EIO
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs importiere MooFsVolume, MooFsInode, MooFsEintrag, MooFsFehler, moofs_oeffnen, moofs_suchen, moofs_lesen
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_format importiere MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_vfs importiere moofs_vfs_void, moofs_vfs_fehler, moofs_vfs_u64
+
+struktur ArrayMooFsProbe:
+    zustand: ArrayMooFs
+    eintraege: [MooFsEintrag; 64]
+    kinder: [MooFsBaumKind; 16]
+    karte: [u8; 64]
+    daten: [u8; 73]
+    gelesen: [u8; 73]
+
+@nativ
+statisch ARRAY_MOOFS_PROBE: [ArrayMooFsProbe; 2] auf 0
+@nativ
+statisch ARRAY_MOOFS_DOPPELT: ArrayMooFs auf 0
+@nativ
+statisch ARRAY_MOOFS_FORMAT: MooFsFormatSpeicher auf 0
+@nativ
+statisch ARRAY_MOOFS_DATEIEN: KernVfsDateien auf 0
+
+@nativ
+funktion array_probe_moofs_einhaengen(a: ptr[ArrayKern], mitglied: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze zust: ptr[ArrayMooFsProbe] auf zeiger(adresse_von(ARRAY_MOOFS_PROBE[mitglied]))
+        setze hilfe: FatKernTransport auf 0
+        setze t: ptr[FatKernTransport] auf zeiger(adresse_von(hilfe))
+        weitergeben(array_moofs_transport(t, array_kern_kennung(a, mitglied)))
+        setze transport: ptr[dyn FatTransport] auf t
+        weitergeben(moofs_vfs_void(moofs_formatieren(transport, nichts, 0, 0x100 + mitglied, 0x200 + mitglied, zeiger(adresse_von(ARRAY_MOOFS_FORMAT)))))
+        setze puffer: ArrayMooFsPuffer auf ArrayMooFsPuffer(zeiger(adresse_von(zust.eintraege[0])), 64, zeiger(adresse_von(zust.kinder[0])), 16, zeiger(adresse_von(zust.karte[0])), 64)
+        setze p: ptr[ArrayMooFsPuffer] auf zeiger(adresse_von(puffer))
+        setze name: [u8; 2] auf [47, als(u8, 97 + mitglied)]
+        weitergeben(array_moofs_einhaengen(a, mitglied, zeiger(adresse_von(zust.zustand)), p, byteansicht(name)))
+        wenn mitglied == 0:
+            setze anderer_pfad: [u8; 2] auf [47, 99]
+            setze doppelt: ergebnis[void, VfsFehler] auf array_moofs_einhaengen(a, 0, zeiger(adresse_von(ARRAY_MOOFS_DOPPELT)), p, byteansicht(anderer_pfad))
+            wenn ist_erfolg(doppelt) oder ergebnis_fehler(doppelt).code != VFS_EBUSY:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 71, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_moofs_schreiben(mitglied: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze zust: ptr[ArrayMooFsProbe] auf zeiger(adresse_von(ARRAY_MOOFS_PROBE[mitglied]))
+        setze dateien: ptr[KernVfsDateien] auf zeiger(adresse_von(ARRAY_MOOFS_DATEIEN))
+        setze dateiname: [u8; 8] auf [47, als(u8, 97 + mitglied), 47, 112, 114, 111, 98, 101]
+        setze bytes: puffer[u8] auf byteansicht(zust.daten)
+        setze i: u64 auf 0
+        solange i < länge(bytes):
+            bytes[i] = als(u8, (i * 29 + mitglied * 11) & 255)
+            setze i auf i + 1
+        setze fd: u64 auf weitergeben(kern_vfs_oeffnen(dateien, byteansicht(dateiname), VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN))
+        setze r: ergebnis[u64, VfsFehler] auf kern_vfs_schreiben(dateien, fd, bytes)
+        setze geschlossen: ergebnis[void, VfsFehler] auf kern_vfs_schliessen(dateien, fd)
+        setze menge: u64 auf weitergeben(r)
+        weitergeben(geschlossen)
+        wenn menge != länge(bytes):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 72, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_moofs_roh(mitglied: u64, physisch: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze zust: ptr[ArrayMooFsProbe] auf zeiger(adresse_von(ARRAY_MOOFS_PROBE[mitglied]))
+        setze t: FatKernTransport auf 0
+        setze rt: ptr[FatKernTransport] auf zeiger(adresse_von(t))
+        weitergeben(array_moofs_transport(rt, physisch))
+        setze transport: ptr[dyn FatTransport] auf rt
+        setze volume: MooFsVolume auf 0
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(volume))
+        weitergeben(moofs_vfs_void(moofs_oeffnen(v, transport)))
+        setze name: [u8; 6] auf [47, 112, 114, 111, 98, 101]
+        setze gesucht: ergebnis[MooFsInode, MooFsFehler] auf moofs_suchen(v, byteansicht(name))
+        wenn nicht ist_erfolg(gesucht):
+            gib_zurück fehlschlag(moofs_vfs_fehler(ergebnis_fehler(gesucht)))
+        setze objekt: MooFsInode auf ergebnis_wert(gesucht)
+        setze bytes: puffer[u8] auf byteansicht(zust.gelesen)
+        setze menge: u64 auf weitergeben(moofs_vfs_u64(moofs_lesen(v, objekt.nummer, 0, bytes)))
+        wenn menge != länge(bytes) oder objekt.bytes != menge oder v.generation <= 1:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 73, 0))
+        setze i: u64 auf 0
+        solange i < menge:
+            wenn bytes[i] != zust.daten[i]:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 74, 0))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_moofs_lauf(a: ptr[ArrayKern], phys_a: u64, phys_b: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        weitergeben(array_probe_moofs_einhaengen(a, 0))
+        weitergeben(array_probe_moofs_einhaengen(a, 1))
+        weitergeben(array_probe_moofs_schreiben(0))
+        weitergeben(array_probe_moofs_schreiben(1))
+        weitergeben(array_moofs_aushängen(zeiger(adresse_von(ARRAY_MOOFS_PROBE[0].zustand))))
+        weitergeben(array_moofs_aushängen(zeiger(adresse_von(ARRAY_MOOFS_PROBE[1].zustand))))
+        weitergeben(array_probe_moofs_roh(0, phys_a))
+        gib_zurück array_probe_moofs_roh(1, phys_b)

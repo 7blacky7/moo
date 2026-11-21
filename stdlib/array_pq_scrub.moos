@@ -1,0 +1,214 @@
+# P/Q-Scrub für MooFS-Seiten. Besitzer serialisiert die ganze Zeile mit I/O,
+# Rebuild und Topologieänderungen. Keine Allokation, keine geliehenen Ergebnisse.
+aus nativ_block importiere BlockFehler, BLOCK_NICHT_BEREIT, BLOCK_EA, BLOCK_BEREICH
+aus nativ_crc32c importiere crc32c
+aus array_format importiere ARRAY_DATEN
+aus array_q importiere ArrayQQuelle, array_q_erzeugen, array_q_kopieren, array_q_retten
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildArbeit, ArrayPQSeite, ArrayPQRebuildStand, ARRAY_PQ_KEIN, ARRAY_PQ_JOURNAL_DATEN, ARRAY_PQ_JOURNAL_P, ARRAY_PQ_JOURNAL_Q, array_pq_rebuild_roh_lesen
+aus array_pq_rebuild_metadaten importiere array_pq_rebuild_speichern
+aus array_pq_rebuild_io importiere array_pq_rebuild_journal_anwenden
+aus ds_moofs importiere moofs_block_pruefen
+
+struktur ArrayPQScrubArbeit:
+    original: [ArrayPQSeite; 16]
+
+struktur ArrayPQScrub:
+    naechste: u64
+    gesamt: u64
+    geprueft: u64
+    fehlerseiten: u64
+    repariert: u64
+    letzte_seite: u64
+    letzte_maske: u64
+    traeger: [u64; 16]
+    folge: u64
+    reparieren: bool
+    fertig: bool
+
+@nativ
+funktion array_pq_scrub_gleich(a: puffer[u8], b: puffer[u8]) -> bool:
+    wenn länge(a) != länge(b):
+        gib_zurück falsch
+    setze i: u64 auf 0
+    solange i < länge(a):
+        wenn a[i] != b[i]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+# Freie genullte Seiten haben keinen MooFS-Kopf; belegte/alte CoW-Seiten
+# müssen ihre eigene Prüfsumme und physische Blocknummer erfüllen.
+@nativ
+funktion array_pq_scrub_daten(bytes: puffer[u8], seite: u64) -> bool:
+    setze i: u64 auf 0
+    solange i < länge(bytes) und bytes[i] == 0:
+        setze i auf i + 1
+    wenn i == länge(bytes):
+        gib_zurück wahr
+    gib_zurück ist_erfolg(moofs_block_pruefen(bytes, seite, 0x100000000))
+
+@nativ
+funktion array_pq_scrub_wiederholen(r: ptr[ArrayPQRebuild], seite: u64, auslassen: u64, w: ptr[ArrayPQRebuildArbeit], a: ptr[ArrayPQScrubArbeit]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        # Kein erneutes Lesen zwischen Kandidaten: immer derselbe Snapshot.
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            array_q_kopieren(pufferansicht(w.seiten[i].bytes), pufferansicht(a.original[i].bytes))
+            setze i auf i + 1
+        # Quellenliste zeigt auf die Arbeitsseiten; retten liest nur Views.
+        setze datenmaske: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze i auf 0
+        solange i < r.basis.anzahl:
+            wenn r.basis.mitglieder[i].rolle == ARRAY_DATEN und seite < r.basis.mitglieder[i].seiten:
+                wenn (auslassen & (1 << i)) != 0:
+                    setze datenmaske auf datenmaske | (1 << i)
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        setze p: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_p].bytes)
+        setze q: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_q].bytes)
+        setze quellen: puffer[ArrayQQuelle] auf pufferansicht(w.quellen, 0, anzahl)
+        weitergeben(array_q_retten(p, q, quellen, datenmaske, (auslassen & (1 << r.paritaet_p)) != 0, (auslassen & (1 << r.paritaet_q)) != 0, r.modus, r.gf, zeiger(adresse_von(w.loesung))))
+        setze geaendert: u64 auf 0
+        setze i auf 0
+        solange i < r.basis.anzahl:
+            wenn r.basis.mitglieder[i].rolle == ARRAY_DATEN und seite < r.basis.mitglieder[i].seiten:
+                wenn nicht array_pq_scrub_daten(pufferansicht(w.seiten[i].bytes), seite):
+                    gib_zurück erfolg(falsch)
+            wenn nicht array_pq_scrub_gleich(pufferansicht(w.seiten[i].bytes), pufferansicht(a.original[i].bytes)):
+                setze geaendert auf geaendert | (1 << i)
+            setze i auf i + 1
+        wenn geaendert != auslassen:
+            gib_zurück erfolg(falsch)
+        setze neu_p: puffer[u8] auf pufferansicht(w.loesung.p)
+        setze neu_q: puffer[u8] auf pufferansicht(w.loesung.q)
+        weitergeben(array_q_erzeugen(neu_p, neu_q, quellen, r.modus, r.gf))
+        gib_zurück erfolg(array_pq_scrub_gleich(p, neu_p) und array_pq_scrub_gleich(q, neu_q))
+
+@nativ
+funktion array_pq_scrub_intent(r: ptr[ArrayPQRebuild], seite: u64, ziel: u64, beine: u32, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze stand.journal_ziel auf ziel
+        setze stand.journal_seite auf seite
+        setze stand.journal_beine auf beine
+        wenn (beine & ARRAY_PQ_JOURNAL_DATEN) != 0:
+            setze stand.daten_crc auf crc32c(pufferansicht(w.seiten[ziel].bytes))
+        wenn (beine & ARRAY_PQ_JOURNAL_P) != 0:
+            setze stand.p_crc auf crc32c(pufferansicht(w.seiten[r.paritaet_p].bytes))
+        wenn (beine & ARRAY_PQ_JOURNAL_Q) != 0:
+            setze stand.q_crc auf crc32c(pufferansicht(w.seiten[r.paritaet_q].bytes))
+        weitergeben(array_pq_rebuild_speichern(r, zeiger(adresse_von(stand)), w))
+        gib_zurück array_pq_rebuild_journal_anwenden(r, w)
+
+# Ergebnis ist die physische Slotmaske, auch im Nur-Prüfen-Modus.
+# Detail 310: kein eindeutiges durch MooFS und P/Q belegtes Fehlerbild.
+@nativ
+funktion array_pq_scrub_seite(r: ptr[ArrayPQRebuild], seite: u64, reparieren: bool, w: ptr[ArrayPQRebuildArbeit], a: ptr[ArrayPQScrubArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(w) == 0 oder u64(a) == 0 oder nicht r.bereit oder r.stand.fehlende != 0 oder r.stand.ersatz != ARRAY_PQ_KEIN oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 310))
+        wenn seite >= r.daten_max:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 310))
+        setze vorhanden: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze ziel: u64 auf ARRAY_PQ_KEIN
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            wenn r.basis.mitglieder[i].rolle != ARRAY_DATEN oder seite < r.basis.mitglieder[i].seiten:
+                weitergeben(array_pq_rebuild_roh_lesen(r, i, seite, adresse_von(a.original[i].bytes[0])))
+                setze vorhanden auf vorhanden | (1 << i)
+                wenn r.basis.mitglieder[i].rolle == ARRAY_DATEN:
+                    setze ziel auf i
+                    setze w.quellen[anzahl] auf ArrayQQuelle(i, pufferansicht(w.seiten[i].bytes))
+                    setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        wenn weitergeben(array_pq_scrub_wiederholen(r, seite, 0, w, a)):
+            gib_zurück erfolg(0)
+        setze gefunden: u64 auf 0
+        setze treffer: u64 auf 0
+        setze i auf 0
+        solange i < r.basis.anzahl:
+            setze bit: u64 auf 1 << i
+            wenn (vorhanden & bit) != 0:
+                wenn weitergeben(array_pq_scrub_wiederholen(r, seite, bit, w, a)):
+                    setze gefunden auf bit
+                    setze treffer auf treffer + 1
+            setze i auf i + 1
+        # Ein kleineres Fehlerbild ist bei gültigen/stalen CRCs kein Beweis.
+        # Auch konkurrierende Zweierbilder müssen ausgeschlossen sein.
+        setze i auf 0
+        solange i < r.basis.anzahl:
+            setze j: u64 auf i + 1
+            solange j < r.basis.anzahl:
+                setze maske: u64 auf (1 << i) | (1 << j)
+                wenn (vorhanden & maske) == maske:
+                    wenn weitergeben(array_pq_scrub_wiederholen(r, seite, maske, w, a)):
+                        setze gefunden auf maske
+                        setze treffer auf treffer + 1
+                setze j auf j + 1
+            setze i auf i + 1
+        wenn treffer != 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 310))
+        wenn nicht weitergeben(array_pq_scrub_wiederholen(r, seite, gefunden, w, a)):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 312))
+        wenn reparieren:
+            # Ein Intent je Datenseite, Paritäten zuletzt. Alle Bilder stammen
+            # aus der geprüften Lösung, nie aus RMW mit korrupten Altbytes.
+            setze i auf 0
+            solange i < r.basis.anzahl:
+                wenn r.basis.mitglieder[i].rolle == ARRAY_DATEN und (gefunden & (1 << i)) != 0:
+                    weitergeben(array_pq_scrub_intent(r, seite, i, ARRAY_PQ_JOURNAL_DATEN, w))
+                    setze r.zaehler[i].heilungen auf r.zaehler[i].heilungen + 1
+                setze i auf i + 1
+            setze beine: u32 auf 0
+            wenn (gefunden & (1 << r.paritaet_p)) != 0:
+                setze beine auf beine | ARRAY_PQ_JOURNAL_P
+            wenn (gefunden & (1 << r.paritaet_q)) != 0:
+                setze beine auf beine | ARRAY_PQ_JOURNAL_Q
+            wenn beine != 0:
+                weitergeben(array_pq_scrub_intent(r, seite, ziel, beine, w))
+                wenn (beine & ARRAY_PQ_JOURNAL_P) != 0:
+                    setze r.zaehler[r.paritaet_p].heilungen auf r.zaehler[r.paritaet_p].heilungen + 1
+                wenn (beine & ARRAY_PQ_JOURNAL_Q) != 0:
+                    setze r.zaehler[r.paritaet_q].heilungen auf r.zaehler[r.paritaet_q].heilungen + 1
+            wenn r.stand.fehlende != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 313))
+        gib_zurück erfolg(gefunden)
+
+@nativ
+funktion array_pq_scrub_starten(s: ptr[ArrayPQScrub], r: ptr[ArrayPQRebuild], reparieren: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(r) == 0 oder nicht r.bereit oder r.stand.fehlende != 0 oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 314))
+        setze leer: ArrayPQScrub auf 0
+        setze s[0] auf leer
+        setze s.gesamt auf r.daten_max
+        setze s.folge auf r.stand.folge
+        setze s.reparieren auf reparieren
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_scrub_schritt(s: ptr[ArrayPQScrub], r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], a: ptr[ArrayPQScrubArbeit]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(r) == 0 oder s.folge != r.stand.folge:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 315))
+        wenn s.fertig:
+            gib_zurück erfolg(wahr)
+        setze maske: u64 auf weitergeben(array_pq_scrub_seite(r, s.naechste, s.reparieren, w, a))
+        setze s.letzte_seite auf s.naechste
+        setze s.letzte_maske auf maske
+        setze s.geprueft auf s.geprueft + 1
+        wenn maske != 0:
+            setze s.fehlerseiten auf s.fehlerseiten + 1
+            setze i: u64 auf 0
+            solange i < r.basis.anzahl:
+                wenn (maske & (1 << i)) != 0:
+                    setze s.traeger[i] auf s.traeger[i] + 1
+                    wenn s.reparieren:
+                        setze s.repariert auf s.repariert + 1
+                setze i auf i + 1
+        setze s.naechste auf s.naechste + 1
+        setze s.folge auf r.stand.folge
+        setze s.fertig auf s.naechste == s.gesamt
+        gib_zurück erfolg(s.fertig)

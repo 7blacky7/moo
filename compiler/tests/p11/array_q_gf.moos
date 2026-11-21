@@ -1,0 +1,65 @@
+# Binäres unabhängiges Orakelprotokoll: drei vollständige 256x256-Tabellen.
+aus array_gf256 importiere ArrayGf256, array_gf256_starten, array_gf256_mal, array_gf256_tabelle
+struktur ArrayQGfBytes:
+    bytes: [u8; 4096]
+
+extern "C" funktion write(fd: i32, daten: ptr[u8], laenge: u64) -> i64
+extern "C" funktion _exit(status: i32) -> void
+
+@nativ
+@simd
+funktion array_q_gf_vektoren(ziel: ptr[u8], start: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            setze a: u8x32 auf u8x32()
+            setze b: u8x32 auf u8x32()
+            setze lane: u64 auf 0
+            solange lane < 32:
+                setze pos: u64 auf start + i + lane
+                a[lane] = als(u8, pos / 256)
+                b[lane] = als(u8, pos % 256)
+                setze lane auf lane + 1
+            setze produkt: u8x32 auf simd_gf256_mal(a, b)
+            setze lane auf 0
+            solange lane < 32:
+                ziel[i + lane] = produkt[lane]
+                setze lane auf lane + 1
+            setze i auf i + 32
+
+@nativ
+funktion array_q_gf_ausgabe() -> void:
+    unsicher:
+        setze t: ArrayGf256 auf 0
+        setze tp: ptr[ArrayGf256] auf zeiger(adresse_von(t))
+        array_gf256_starten(tp)
+        setze block: ArrayQGfBytes auf 0
+        setze daten: ptr[u8] auf zeiger(adresse_von(block.bytes[0]))
+        setze modus: u32 auf 0
+        solange modus < 3:
+            setze start: u64 auf 0
+            solange start < 65536:
+                wenn modus == 2:
+                    array_q_gf_vektoren(daten, start)
+                sonst:
+                    setze i: u64 auf 0
+                    solange i < 4096:
+                        setze a: u8 auf als(u8, (start + i) / 256)
+                        setze b: u8 auf als(u8, (start + i) % 256)
+                        wenn modus == 0:
+                            block.bytes[i] = array_gf256_mal(a, b)
+                        sonst:
+                            block.bytes[i] = array_gf256_tabelle(tp, a, b)
+                        setze i auf i + 1
+                setze pos: u64 auf 0
+                solange pos < 4096:
+                    setze anzahl: i64 auf write(1, daten + pos, 4096 - pos)
+                    wenn anzahl <= 0:
+                        _exit(1)
+                        gib_zurück
+                    setze pos auf pos + als(u64, anzahl)
+                setze start auf start + 4096
+            setze modus auf modus + 1
+
+unsicher:
+    array_q_gf_ausgabe()

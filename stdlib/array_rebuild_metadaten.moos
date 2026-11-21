@@ -1,0 +1,248 @@
+# Persistenter Rebuild-Zustand. Der Aufrufer serialisiert die Operationen und
+# hält die ArrayP-Instanz sowie alle gebundenen Transporte gültig.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_GEOMETRIE, BLOCK_NUR_LESEN, BLOCK_NICHT_BEREIT, BLOCK_EA
+aus nativ_crc32c importiere crc32c
+aus array_format importiere ArrayLayout, ArrayGrenzen, ARRAY_MAX_MITGLIEDER, array_layout_pruefen, array_layout_gleich, array_identitaet_gleich
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayArbeitsraum, array_io, array_barriere, array_sektoren_pro_seite
+aus array_rebuild_format importiere ArrayRebuildStand, ArrayRebuildBasisVerweis, ARRAY_REBUILD_KEIN, ARRAY_REBUILD_META_SEITEN, ARRAY_JOURNAL_DATEN, ARRAY_JOURNAL_P, array_rebuild_bankseite, array_rebuild_stand_bauen, array_rebuild_stand_lesen, array_rebuild_stand_gleich, array_rebuild_basis_bauen, array_rebuild_basis_lesen
+
+struktur ArrayRebuildZaehler:
+    lese_fehler: u64
+    heilungen: u64
+    schreib_fehler: u64
+
+struktur ArrayRebuild:
+    basis: ptr[ArrayP]
+    bereit: bool
+    markiert: bool
+    anwesend: u64
+    stand: ArrayRebuildStand
+    bank: [u64; 16]
+    folgen: [u64; 16]
+    zaehler: [ArrayRebuildZaehler; 16]
+
+@nativ
+funktion array_rebuild_gebunden(r: ptr[ArrayRebuild], mitglied: u64) -> bool:
+    unsicher:
+        gib_zurück (r.anwesend & (1 << mitglied)) != 0
+
+@nativ
+funktion array_rebuild_medium_pruefen(p: ptr[ArrayP], mitglied: u64, q: ptr[ArrayAnschluss]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze d: BlockGeometrie auf q.medien.daten.geometrie()
+        setze m: BlockGeometrie auf q.medien.metadaten.geometrie()
+        setze df: u64 auf array_sektoren_pro_seite(d)
+        setze mf: u64 auf array_sektoren_pro_seite(m)
+        setze start: u64 auf array_rebuild_bankseite(zeiger(adresse_von(p.grenzen)), mitglied, 0)
+        wenn df == 0 oder mf == 0 oder d.bloecke / df < p.layout.mitglieder[mitglied].seiten oder m.bloecke / mf < start + ARRAY_REBUILD_META_SEITEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 120))
+        wenn d.nur_lesend oder m.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 120))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_basiskopie(medium: ptr[dyn FatTransport], seite: u64, bytes: puffer[u8], layout: ptr[ArrayLayout]) -> ergebnis[ArrayRebuildBasisVerweis, BlockFehler]:
+    unsicher:
+        weitergeben(array_io(medium, BLOCK_LESEN, seite, 1, u64(puffer_zeiger(bytes))))
+        gib_zurück array_rebuild_basis_lesen(bytes, layout)
+
+@nativ
+funktion array_rebuild_basis_laden(medium: ptr[dyn FatTransport], layout: ptr[ArrayLayout], w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayRebuildBasisVerweis, BlockFehler]:
+    unsicher:
+        setze zweites: ArrayLayout auf 0
+        setze b: ptr[ArrayLayout] auf zeiger(adresse_von(zweites))
+        setze links: ergebnis[ArrayRebuildBasisVerweis, BlockFehler] auf array_rebuild_basiskopie(medium, 0, byteansicht(w.bitmap_a), layout)
+        setze rechts: ergebnis[ArrayRebuildBasisVerweis, BlockFehler] auf array_rebuild_basiskopie(medium, 1, byteansicht(w.bitmap_b), b)
+        wenn nicht ist_erfolg(rechts):
+            gib_zurück links
+        wenn nicht ist_erfolg(links) oder zweites.generation > layout.generation:
+            setze layout[0] auf zweites
+            gib_zurück rechts
+        wenn layout.generation > zweites.generation:
+            gib_zurück links
+        setze l: ArrayRebuildBasisVerweis auf ergebnis_wert(links)
+        setze re: ArrayRebuildBasisVerweis auf ergebnis_wert(rechts)
+        wenn l.mitglied != re.mitglied oder nicht array_layout_gleich(layout, b):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 122))
+        gib_zurück erfolg(ArrayRebuildBasisVerweis(l.mitglied, l.markiert und re.markiert))
+
+@nativ
+funktion array_rebuild_kopien_laden(r: ptr[ArrayRebuild], mitglied: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze medium: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        setze g: ptr[ArrayGrenzen] auf zeiger(adresse_von(p.grenzen))
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(p.layout))
+        setze treffer: ArrayRebuildStand auf 0
+        setze t: ptr[ArrayRebuildStand] auf zeiger(adresse_von(treffer))
+        setze r.bank[mitglied] auf 0
+        setze r.folgen[mitglied] auf 0
+        setze bank: u64 auf 0
+        solange bank < 2:
+            setze seite: u64 auf array_rebuild_bankseite(g, mitglied, bank)
+            wenn ist_erfolg(array_io(medium, BLOCK_LESEN, seite, 1, adresse_von(w.bitmap_a[0]))):
+                wenn ist_erfolg(array_rebuild_stand_lesen(byteansicht(w.bitmap_a), l, g, t)):
+                    wenn treffer.folge > r.folgen[mitglied]:
+                        setze r.folgen[mitglied] auf treffer.folge
+                        setze r.bank[mitglied] auf bank
+                    wenn treffer.folge == r.stand.folge und nicht array_rebuild_stand_gleich(t, zeiger(adresse_von(r.stand))):
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 123))
+                    wenn treffer.folge > r.stand.folge:
+                        setze r.stand auf treffer
+            setze bank auf bank + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_ausfall(r: ptr[ArrayRebuild], s: ptr[ArrayRebuildStand], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn s.fehlt != ARRAY_REBUILD_KEIN und s.fehlt != mitglied:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 121))
+        setze s.fehlt auf mitglied
+        setze s.ersatz auf falsch
+        setze s.fertig auf 0
+        setze r.anwesend auf r.anwesend & (0xFFFFFFFFFFFFFFFF ^ (1 << mitglied))
+        gib_zurück erfolg()
+
+# Liest alle erreichbaren Zustandsköpfe. Ergebnis meldet ausstehende v2-Markierung.
+# Der Wiederanlauf nutzt anschließend den gewählten Zustand für das Journal.
+@nativ
+funktion array_rebuild_laden(r: ptr[ArrayRebuild], p: ptr[ArrayP], q: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(p) == 0 oder u64(q) == 0 oder u64(w) == 0 oder anzahl == 0 oder anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 121))
+        setze r.basis auf p
+        setze r.bereit auf falsch
+        setze r.anwesend auf 0
+        setze r.stand.folge auf 0
+        setze p.offen auf falsch
+        setze slots: [u64; 16] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze layout: ptr[ArrayLayout] auf zeiger(adresse_von(p.layout))
+        setze anderes: ArrayLayout auf 0
+        setze al: ptr[ArrayLayout] auf zeiger(adresse_von(anderes))
+        setze markieren: bool auf falsch
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze quelle: ptr[ArrayAnschluss] auf zeiger(adresse_von(q[i]))
+            setze info: ArrayRebuildBasisVerweis auf weitergeben(array_rebuild_basis_laden(quelle.medien.metadaten, al, w))
+            wenn i == 0:
+                setze p.layout auf anderes
+                setze p.grenzen auf weitergeben(array_layout_pruefen(layout))
+                wenn anzahl > p.layout.anzahl:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 122))
+            sonst wenn nicht array_layout_gleich(al, layout):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 124))
+            setze slot: u64 auf info.mitglied
+            wenn slots[slot] != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 123))
+            weitergeben(array_rebuild_medium_pruefen(p, slot, quelle))
+            slots[slot] = i + 1
+            setze p.medien[slot] auf quelle.medien
+            weitergeben(array_rebuild_kopien_laden(r, slot, w))
+            setze markieren auf markieren oder nicht info.markiert
+            setze i auf i + 1
+        wenn r.stand.folge == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 125))
+        setze zustand: ptr[ArrayRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze i auf 0
+        solange i < p.layout.anzahl:
+            setze a: u64 auf slots[i]
+            setze da: bool auf falsch
+            wenn a != 0:
+                setze ist: ptr[ArrayAnschluss] auf zeiger(adresse_von(q[a - 1]))
+                setze gleich: bool auf array_identitaet_gleich(zeiger(adresse_von(ist.identitaet)), zeiger(adresse_von(r.stand.layout.mitglieder[i].identitaet)))
+                wenn i == r.stand.fehlt:
+                    setze da auf gleich und r.stand.ersatz
+                sonst:
+                    wenn nicht gleich:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 124))
+                    setze da auf wahr
+            wenn da:
+                setze r.anwesend auf r.anwesend | (1 << i)
+            sonst:
+                weitergeben(array_rebuild_ausfall(r, zustand, i))
+            setze i auf i + 1
+        setze r.markiert auf nicht markieren
+        gib_zurück erfolg(markieren)
+
+@nativ
+funktion array_rebuild_bank_schreiben(r: ptr[ArrayRebuild], s: ptr[ArrayRebuildStand], mitglied: u64, kopf: u64, daten: u64, p_bild: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze bank: u64 auf 1 - r.bank[mitglied]
+        setze seite: u64 auf array_rebuild_bankseite(zeiger(adresse_von(p.grenzen)), mitglied, bank)
+        setze m: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        wenn (s.journal_beine & ARRAY_JOURNAL_DATEN) != 0:
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, seite + 1, 1, daten))
+        wenn (s.journal_beine & ARRAY_JOURNAL_P) != 0:
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, seite + 2, 1, p_bild))
+        wenn s.journal_beine != 0:
+            weitergeben(array_barriere(m))
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, seite, 1, kopf))
+        weitergeben(array_barriere(m))
+        setze r.bank[mitglied] auf bank
+        setze r.folgen[mitglied] auf s.folge
+        gib_zurück erfolg()
+
+# Eine neu begonnene Kopie kann beim Absturz zusammen mit ihren Bildern
+# übernommen werden. Vor der Rückkehr ist der Kopf auf allen Teilnehmern
+# dauerhaft. Die Zielbank wird pro Teilnehmer aus der letzten Kopie ermittelt.
+@nativ
+funktion array_rebuild_speichern(r: ptr[ArrayRebuild], s: ptr[ArrayRebuildStand], w: ptr[ArrayArbeitsraum], daten: u64, p_bild: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze folge: u64 auf r.stand.folge
+        setze r.bereit auf falsch
+        setze erneut: bool auf wahr
+        solange erneut:
+            wenn folge == 0xFFFFFFFFFFFFFFFF oder r.anwesend == 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 126))
+            setze folge auf folge + 1
+            setze s.folge auf folge
+            weitergeben(array_rebuild_stand_bauen(byteansicht(w.bitmap_a), s, zeiger(adresse_von(p.layout)), zeiger(adresse_von(p.grenzen))))
+            setze erneut auf falsch
+            setze i: u64 auf 0
+            solange i < p.layout.anzahl und nicht erneut:
+                wenn array_rebuild_gebunden(r, i):
+                    setze geschrieben: ergebnis[void, BlockFehler] auf array_rebuild_bank_schreiben(r, s, i, adresse_von(w.bitmap_a[0]), daten, p_bild)
+                    wenn nicht ist_erfolg(geschrieben):
+                        setze r.zaehler[i].schreib_fehler auf r.zaehler[i].schreib_fehler + 1
+                        wenn nicht r.markiert:
+                            gib_zurück geschrieben
+                        weitergeben(array_rebuild_ausfall(r, s, i))
+                        setze erneut auf wahr
+                setze i auf i + 1
+        setze r.stand auf s[0]
+        setze r.bereit auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_bilder_laden(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze i: u64 auf 0
+        solange i < p.layout.anzahl:
+            wenn array_rebuild_gebunden(r, i) und r.folgen[i] == r.stand.folge:
+                setze m: ptr[dyn FatTransport] auf p.medien[i].metadaten
+                setze seite: u64 auf array_rebuild_bankseite(zeiger(adresse_von(p.grenzen)), i, r.bank[i])
+                setze gueltig: bool auf wahr
+                wenn (r.stand.journal_beine & ARRAY_JOURNAL_DATEN) != 0:
+                    setze gueltig auf ist_erfolg(array_io(m, BLOCK_LESEN, seite + 1, 1, adresse_von(w.alt[0]))) und crc32c(byteansicht(w.alt)) == r.stand.daten_crc
+                wenn gueltig und (r.stand.journal_beine & ARRAY_JOURNAL_P) != 0:
+                    setze gueltig auf ist_erfolg(array_io(m, BLOCK_LESEN, seite + 2, 1, adresse_von(w.paritaet[0]))) und crc32c(byteansicht(w.paritaet)) == r.stand.p_crc
+                wenn gueltig:
+                    gib_zurück erfolg()
+            setze i auf i + 1
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 127))
+
+@nativ
+funktion array_rebuild_basis_schreiben(r: ptr[ArrayRebuild], mitglied: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze m: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        weitergeben(array_rebuild_basis_bauen(byteansicht(w.bitmap_a), zeiger(adresse_von(p.layout)), mitglied))
+        setze kopf: u64 auf adresse_von(w.bitmap_a[0])
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, 0, 1, kopf))
+        weitergeben(array_barriere(m))
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, 1, 1, kopf))
+        gib_zurück array_barriere(m)

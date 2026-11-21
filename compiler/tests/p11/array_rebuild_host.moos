@@ -1,0 +1,296 @@
+# Gehostete Rebuild-Abnahme über vom Gate geöffnete Testabbilder.
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayMedien, ArrayArbeitsraum, array_anlegen, array_oeffnen
+aus array_rebuild importiere ArrayRebuildFortschritt, ArrayRebuildStatus, ARRAY_MITGLIED_AKTIV, ARRAY_MITGLIED_FEHLT, ARRAY_MITGLIED_AUFBAU, array_rebuild_starten, array_rebuild_oeffnen, array_rebuild_ersatz_beginnen, array_rebuild_schritt, array_rebuild_status
+aus array_rebuild_metadaten importiere ArrayRebuild
+aus array_rebuild_io importiere array_rebuild_lesen, array_rebuild_schreiben
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_EA, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, BLOCK_KEIN_GERAET
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion raise(signal_nr: i32) -> i32
+
+struktur RebuildProbeMedium implementiert FatTransport:
+    unter: ptr[dyn FatTransport]
+    sektoren: u64
+    lese_stoerung: bool
+    ausgefallen: bool
+    abbruch: bool
+    erste_schreibseite: u64
+    geschrieben: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.unter.geometrie()
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn selbst.ausgefallen:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_KEIN_GERAET, 150))
+            wenn art == BLOCK_LESEN und selbst.lese_stoerung und lba == selbst.sektoren:
+                setze selbst.lese_stoerung auf falsch
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 150))
+            wenn art == BLOCK_SCHREIBEN:
+                wenn selbst.abbruch:
+                    setze signal: i32 auf raise(19)
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 151))
+                wenn lba / selbst.sektoren < selbst.erste_schreibseite:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 152))
+                setze selbst.geschrieben auf selbst.geschrieben + anzahl / selbst.sektoren
+            gib_zurück selbst.unter.uebertragen(art, lba, anzahl, puffer, bytes)
+
+@nativ
+statisch PROBE_DATEN: [FatPosix; 5] auf 0
+@nativ
+statisch PROBE_META: [FatPosix; 5] auf 0
+@nativ
+statisch PROBE_MEDIEN: [RebuildProbeMedium; 5] auf 0
+@nativ
+statisch PROBE_QUELLEN: [ArrayAnschluss; 5] auf 0
+@nativ
+statisch PROBE_AUSWAHL: [ArrayAnschluss; 3] auf 0
+@nativ
+statisch PROBE_ARBEIT: ArrayArbeitsraum auf 0
+@nativ
+statisch PROBE_ARRAY: ArrayP auf 0
+@nativ
+statisch PROBE_REBUILD: ArrayRebuild auf 0
+@nativ
+statisch PROBE_BLOCK: [u8; 4096] auf 0
+
+@nativ
+funktion rebuild_probe_fd(nr: u64) -> i32:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 70, 68, 95, 48, 0]
+        name[13] = als(u8, 48 + nr)
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück -1
+        setze zahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 9 und text[i] != 0:
+            wenn text[i] < 48 oder text[i] > 57:
+                gib_zurück -1
+            setze zahl auf zahl * 10 + als(u64, text[i] - 48)
+            setze i auf i + 1
+        wenn i == 0 oder text[i] != 0:
+            gib_zurück -1
+        gib_zurück als(i32, zahl)
+
+@nativ
+funktion rebuild_probe_medien(layout: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze layout.guid_lo auf 0xAB1234
+        setze layout.guid_hi auf 0xCD5678
+        setze layout.generation auf 7
+        setze layout.anzahl auf 3
+        setze i: u64 auf 0
+        solange i < 5:
+            setze sektor: u64 auf 4096
+            wenn i == 0 oder i == 2:
+                setze sektor auf 512
+            setze d: ptr[FatPosix] auf zeiger(adresse_von(PROBE_DATEN[i]))
+            setze m: ptr[FatPosix] auf zeiger(adresse_von(PROBE_META[i]))
+            weitergeben(fat_posix_einrichten(d, rebuild_probe_fd(i), sektor, falsch))
+            weitergeben(fat_posix_einrichten(m, rebuild_probe_fd(5 + i), sektor, falsch))
+            setze darunter: ptr[dyn FatTransport] auf d
+            setze test: ptr[RebuildProbeMedium] auf zeiger(adresse_von(PROBE_MEDIEN[i]))
+            setze test.unter auf darunter
+            setze test.sektoren auf 4096 / sektor
+            setze td: ptr[dyn FatTransport] auf test
+            setze tm: ptr[dyn FatTransport] auf m
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x1000 + i
+            setze ident.guid_hi auf 0x2000 + i
+            setze ident.serien_bytes auf 3
+            ident.serie[0] = 82
+            ident.serie[1] = 66
+            ident.serie[2] = als(u8, 48 + i)
+            setze PROBE_QUELLEN[i] auf ArrayAnschluss(ident, ArrayMedien(td, tm))
+            wenn i < 3:
+                setze groesse: u64 auf 7
+                setze rolle: u32 auf ARRAY_DATEN
+                wenn i == 0:
+                    setze groesse auf 4
+                wenn i == 2:
+                    setze rolle auf ARRAY_PARITAET_P
+                setze layout.mitglieder[i] auf ArrayMitgliedsdaten(rolle, groesse, ident)
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion rebuild_probe_auswahl(a: u64, b: u64, c: u64) -> ptr[ArrayAnschluss]:
+    unsicher:
+        setze PROBE_AUSWAHL[0] auf PROBE_QUELLEN[a]
+        setze PROBE_AUSWAHL[1] auf PROBE_QUELLEN[b]
+        setze PROBE_AUSWAHL[2] auf PROBE_QUELLEN[c]
+        gib_zurück zeiger(adresse_von(PROBE_AUSWAHL[0]))
+
+@nativ
+funktion rebuild_probe_muster(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum], seite: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_rebuild_lesen(r, 0, seite, adresse_von(PROBE_BLOCK[0]), w))
+        setze i: u64 auf 0
+        solange i < 4096:
+            wenn PROBE_BLOCK[i] != als(u8, (11 + 7 * seite + 13 * i) & 255):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 153))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion rebuild_probe_lese_wert(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum], mitglied: u64, seite: u64, byte: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_rebuild_lesen(r, mitglied, seite, adresse_von(PROBE_BLOCK[0]), w))
+        setze i: u64 auf 0
+        solange i < 4096:
+            wenn PROBE_BLOCK[i] != byte:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 154))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion rebuild_probe_schreiben(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum], mitglied: u64, seite: u64, byte: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            PROBE_BLOCK[i] = byte
+            setze i auf i + 1
+        weitergeben(array_rebuild_schreiben(r, mitglied, seite, adresse_von(PROBE_BLOCK[0]), w))
+        gib_zurück rebuild_probe_lese_wert(r, w, mitglied, seite, byte)
+
+@nativ
+funktion rebuild_probe_status(r: ptr[ArrayRebuild], slot: u64, zustand: u32, fertig: u64, gesamt: u64) -> ergebnis[ArrayRebuildStatus, BlockFehler]:
+    setze s: ArrayRebuildStatus auf weitergeben(array_rebuild_status(r, slot))
+    wenn s.zustand != zustand oder s.fortschritt.fertig != fertig oder s.fortschritt.gesamt != gesamt:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 155))
+    gib_zurück erfolg(s)
+
+@nativ
+funktion rebuild_probe_schritte(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum], start: u64, ende: u64, gesamt: u64) -> ergebnis[void, BlockFehler]:
+    setze seite: u64 auf start
+    solange seite < ende:
+        setze f: ArrayRebuildFortschritt auf weitergeben(array_rebuild_schritt(r, w))
+        setze seite auf seite + 1
+        wenn f.fertig != seite oder f.gesamt != gesamt oder f.abgeschlossen != (seite == gesamt):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 156))
+    gib_zurück erfolg()
+
+@nativ
+funktion rebuild_probe_lauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 77, 79, 68, 69, 0]
+        setze mode: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(mode) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 157))
+        setze art: u8 auf mode[0]
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        weitergeben(rebuild_probe_medien(l))
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(PROBE_ARRAY))
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(PROBE_REBUILD))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(PROBE_ARBEIT))
+        setze q: ptr[ArrayAnschluss] auf rebuild_probe_auswahl(2, 0, 1)
+        wenn art == 97:
+            weitergeben(array_anlegen(p, l, q, 3, w))
+            gib_zurück array_rebuild_starten(r, p, w)
+        wenn art == 118:
+            wenn ist_erfolg(array_oeffnen(p, q, 3, w)):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 158))
+            gib_zurück erfolg(1)
+        wenn art == 104:
+            weitergeben(array_rebuild_oeffnen(r, p, q, 3, w))
+            setze PROBE_MEDIEN[0].lese_stoerung auf wahr
+            weitergeben(rebuild_probe_muster(r, w, 1))
+            setze heil_status: ArrayRebuildStatus auf weitergeben(rebuild_probe_status(r, 0, ARRAY_MITGLIED_AKTIV, 4, 4))
+            wenn heil_status.fehler.lese_fehler != 1 oder heil_status.fehler.heilungen != 1:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 159))
+            gib_zurück erfolg(1)
+        wenn art == 100:
+            weitergeben(array_rebuild_oeffnen(r, p, q, 3, w))
+            setze PROBE_MEDIEN[0].ausgefallen auf wahr
+            weitergeben(rebuild_probe_muster(r, w, 2))
+            setze ausfall_status: ArrayRebuildStatus auf weitergeben(rebuild_probe_status(r, 0, ARRAY_MITGLIED_FEHLT, 0, 4))
+            wenn ausfall_status.fehler.lese_fehler != 1 oder ausfall_status.fehler.schreib_fehler != 1:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 160))
+            weitergeben(rebuild_probe_schreiben(r, w, 0, 2, 0x51))
+            weitergeben(rebuild_probe_schreiben(r, w, 1, 3, 0x62))
+            gib_zurück erfolg(1)
+        wenn art == 98:
+            setze q auf rebuild_probe_auswahl(2, 1, 0)
+            weitergeben(array_rebuild_oeffnen(r, p, q, 2, w))
+            weitergeben(array_rebuild_ersatz_beginnen(r, zeiger(adresse_von(PROBE_QUELLEN[3])), w))
+            weitergeben(rebuild_probe_schritte(r, w, 0, 2, 4))
+            weitergeben(rebuild_probe_schreiben(r, w, 0, 0, 0xA0))
+            weitergeben(rebuild_probe_schreiben(r, w, 0, 3, 0xA3))
+            gib_zurück erfolg(2)
+        wenn art == 99 oder art == 114 oder art == 119:
+            setze q auf rebuild_probe_auswahl(2, 3, 1)
+            weitergeben(array_rebuild_oeffnen(r, p, q, 3, w))
+            wenn art == 99:
+                setze PROBE_MEDIEN[2].abbruch auf wahr
+                weitergeben(rebuild_probe_schreiben(r, w, 1, 2, 0xC2))
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 161))
+            wenn art == 114:
+                weitergeben(rebuild_probe_status(r, 0, ARRAY_MITGLIED_AUFBAU, 2, 4))
+                setze PROBE_MEDIEN[3].erste_schreibseite auf 2
+                weitergeben(rebuild_probe_schritte(r, w, 2, 4, 4))
+                weitergeben(rebuild_probe_status(r, 0, ARRAY_MITGLIED_AKTIV, 4, 4))
+                gib_zurück erfolg(PROBE_MEDIEN[3].geschrieben)
+            setze PROBE_MEDIEN[2].ausgefallen auf wahr
+            weitergeben(rebuild_probe_schreiben(r, w, 0, 3, 0xB3))
+            weitergeben(rebuild_probe_status(r, 2, ARRAY_MITGLIED_FEHLT, 0, 7))
+            weitergeben(rebuild_probe_schreiben(r, w, 1, 6, 0xB6))
+            weitergeben(array_rebuild_ersatz_beginnen(r, zeiger(adresse_von(PROBE_QUELLEN[4])), w))
+            weitergeben(rebuild_probe_schritte(r, w, 0, 1, 7))
+            weitergeben(rebuild_probe_schreiben(r, w, 1, 0, 0xE0))
+            weitergeben(rebuild_probe_schreiben(r, w, 1, 5, 0xE5))
+            gib_zurück erfolg(1)
+        wenn art == 115:
+            setze q auf rebuild_probe_auswahl(4, 1, 3)
+            weitergeben(array_rebuild_oeffnen(r, p, q, 3, w))
+            weitergeben(rebuild_probe_status(r, 2, ARRAY_MITGLIED_AUFBAU, 1, 7))
+            setze PROBE_MEDIEN[4].erste_schreibseite auf 1
+            weitergeben(rebuild_probe_schritte(r, w, 1, 7, 7))
+            weitergeben(rebuild_probe_status(r, 2, ARRAY_MITGLIED_AKTIV, 7, 7))
+            gib_zurück erfolg(PROBE_MEDIEN[4].geschrieben)
+        wenn art == 106:
+            setze q auf rebuild_probe_auswahl(4, 3, 1)
+            weitergeben(array_rebuild_oeffnen(r, p, q, 3, w))
+            setze PROBE_MEDIEN[4].abbruch auf wahr
+            weitergeben(rebuild_probe_schreiben(r, w, 0, 2, 0xDA))
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 163))
+        wenn art == 111:
+            setze q auf rebuild_probe_auswahl(4, 1, 0)
+            weitergeben(array_rebuild_oeffnen(r, p, q, 2, w))
+            weitergeben(rebuild_probe_status(r, 0, ARRAY_MITGLIED_FEHLT, 0, 4))
+            weitergeben(rebuild_probe_lese_wert(r, w, 0, 2, 0xDA))
+            gib_zurück erfolg(1)
+        wenn art == 120 oder art == 116:
+            wenn art == 120:
+                setze q auf rebuild_probe_auswahl(4, 1, 0)
+                setze falsch_gebunden: ergebnis[u64, BlockFehler] auf array_rebuild_oeffnen(r, p, q, 3, w)
+                wenn nicht ist_erfolg(falsch_gebunden):
+                    setze fehler: BlockFehler auf ergebnis_fehler(falsch_gebunden)
+                    wenn fehler.code == BLOCK_GEOMETRIE:
+                        gib_zurück erfolg(1)
+            sonst:
+                setze q auf rebuild_probe_auswahl(1, 0, 0)
+                setze unvollstaendig: ergebnis[u64, BlockFehler] auf array_rebuild_oeffnen(r, p, q, 1, w)
+                wenn nicht ist_erfolg(unvollstaendig):
+                    setze fehlt_fehler: BlockFehler auf ergebnis_fehler(unvollstaendig)
+                    wenn fehlt_fehler.code == BLOCK_NICHT_BEREIT:
+                        gib_zurück erfolg(1)
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 162))
+
+@nativ
+funktion rebuild_probe_ergebnis() -> u64:
+    unsicher:
+        setze e: ergebnis[u64, BlockFehler] auf rebuild_probe_lauf()
+        wenn ist_erfolg(e):
+            gib_zurück ergebnis_wert(e)
+        setze f: BlockFehler auf ergebnis_fehler(e)
+        gib_zurück (als(u64, f.code) << 32) | als(u64, f.geraete_status)
+
+unsicher:
+    zeige rebuild_probe_ergebnis()

@@ -1,0 +1,95 @@
+# Schreibbare MooFS-Volumes je Array-Datenplatte. Ein Mount pro Mitglied.
+# Zustand und geliehene Arbeitsbereiche bleiben bis zum Aushängen gültig.
+aus "kern_array" importiere ArrayKern, array_kern_kennung
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus "kern_vfs" importiere kern_vfs_einhaengen, kern_vfs_aushängen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus nativ_block importiere BlockFehler
+aus vfs importiere VfsPfad, VfsFehler, Dateisystem, VFS_EINVAL, VFS_EBUSY, VFS_EIO, vfs_pfad
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs importiere MooFsEintrag
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_void
+
+struktur ArrayMooFsPuffer:
+    eintraege: ptr[MooFsEintrag]
+    kapazitaet: u64
+    kinder: ptr[MooFsBaumKind]
+    kinder_kapazitaet: u64
+    karte: ptr[u8]
+    karte_bytes: u64
+
+struktur ArrayMooFs:
+    verbund: u64
+    mitglied: u64
+    pfad: VfsPfad
+    transport: FatKernTransport
+    schreiber: MooFsSchreiber
+    system: MooFsDateisystem
+
+@nativ
+funktion array_moofs_transport(t: ptr[FatKernTransport], kennung: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze r: ergebnis[void, BlockFehler] auf fat_kern_transport_einrichten(t, kennung)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, f.code, f.geraete_status))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_moofs_mounts_gib(sperre: ptr[KernMutex]) -> void:
+    unsicher:
+        setze besass: bool auf mutex_gib(smp_planer(), sperre)
+
+# Mountsperre vor der globalen VFS-Sperre. Dateioperationen nehmen nur die
+# VFS- und anschließend bei Schreibzugriffen die Array-Streifensperre.
+@nativ
+funktion array_moofs_einhaengen(a: ptr[ArrayKern], mitglied: u64, s: ptr[ArrayMooFs], arbeit: ptr[ArrayMooFsPuffer], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze kennung: u64 auf array_kern_kennung(a, mitglied)
+        wenn kennung == 0 oder u64(s) == 0 oder u64(arbeit) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 20, 0))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.mounts_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_moofs_mounts_gib(sperre)
+        setze maske: u64 auf 1 << mitglied
+        wenn s.verbund != 0 oder (a.eingehaengt & maske) != 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 20, 0))
+        weitergeben(vfs_pfad(pfad, zeiger(adresse_von(s.pfad))))
+        setze t: ptr[FatKernTransport] auf zeiger(adresse_von(s.transport))
+        weitergeben(array_moofs_transport(t, kennung))
+        setze transport: ptr[dyn FatTransport] auf t
+        setze schreiber: ptr[MooFsSchreiber] auf zeiger(adresse_von(s.schreiber))
+        weitergeben(moofs_vfs_void(moofs_schreiber_oeffnen(schreiber, transport, arbeit.eintraege, arbeit.kapazitaet, arbeit.kinder, arbeit.kinder_kapazitaet, arbeit.karte, arbeit.karte_bytes)))
+        setze fs: ptr[MooFsDateisystem] auf zeiger(adresse_von(s.system))
+        weitergeben(moofs_vfs_einrichten(fs, schreiber))
+        setze dateisystem: ptr[dyn Dateisystem] auf fs
+        setze r: ergebnis[void, VfsFehler] auf kern_vfs_einhaengen(pfad, dateisystem)
+        wenn nicht ist_erfolg(r):
+            setze fs.bereit auf falsch
+            gib_zurück r
+        setze s.verbund auf u64(a)
+        setze s.mitglied auf mitglied
+        setze a.eingehaengt auf a.eingehaengt | maske
+        gib_zurück erfolg()
+
+@nativ
+funktion array_moofs_aushängen(s: ptr[ArrayMooFs]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder s.verbund == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 21, 0))
+        setze a: ptr[ArrayKern] auf zeiger(s.verbund)
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.mounts_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_moofs_mounts_gib(sperre)
+        wenn s.verbund != u64(a):
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 22, 0))
+        setze pfad: ptr[u8] auf zeiger(adresse_von(s.pfad.bytes[0]))
+        weitergeben(kern_vfs_aushängen(byteansicht(pfad, s.pfad.anzahl)))
+        setze maske: u64 auf 1 << s.mitglied
+        setze a.eingehaengt auf a.eingehaengt & (0xFFFFFFFFFFFFFFFF ^ maske)
+        setze s.system.bereit auf falsch
+        setze s.verbund auf 0
+        gib_zurück erfolg()

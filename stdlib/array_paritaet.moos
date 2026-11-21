@@ -1,0 +1,356 @@
+# Synchrone P-Parität für Host und Kern. Der Besitzer hält die geliehenen
+# Transporte dauerhaft gültig. Anlegen, Öffnen und Wiederherstellung sind exklusiv.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_GEOMETRIE, BLOCK_BEREICH, BLOCK_PUFFER, BLOCK_NUR_LESEN, BLOCK_BELEGT, BLOCK_NICHT_BEREIT, BLOCK_EA, block_pruefen
+aus array_format importiere ArrayIdentitaet, ArrayLayout, ArrayGrenzen, ArrayBitmapOrt, ARRAY_SEITEN_BYTES, ARRAY_MAX_MITGLIEDER, ARRAY_DATEN, ARRAY_REGION_SEITEN, ARRAY_STREIFENSPERREN, ARRAY_BITMAP_BITS, array_identitaet_gleich, array_layout_pruefen, array_layout_gleich, array_seite_leeren, array_superblock_bauen, array_superblock_lesen, array_bitmap_ort, array_bitmap_siegeln, array_bitmap_folge
+
+struktur ArrayMedien:
+    daten: ptr[dyn FatTransport]
+    metadaten: ptr[dyn FatTransport]
+
+struktur ArrayAnschluss:
+    identitaet: ArrayIdentitaet
+    medien: ArrayMedien
+
+struktur ArrayP:
+    layout: ArrayLayout
+    grenzen: ArrayGrenzen
+    medien: [ArrayMedien; 16]
+    offen: bool
+
+# Vier 4-KiB-Puffer. Im Kern liegen diese im PFA, außerhalb des Fadenstapels.
+struktur ArrayArbeitsraum:
+    bitmap_a: [u8; 4096]
+    bitmap_b: [u8; 4096]
+    alt: [u8; 4096]
+    paritaet: [u8; 4096]
+
+@nativ
+funktion array_sektoren_pro_seite(geo: BlockGeometrie) -> u64:
+    wenn geo.block_bytes < 512 oder geo.block_bytes > ARRAY_SEITEN_BYTES oder (geo.block_bytes & (geo.block_bytes - 1)) != 0:
+        gib_zurück 0
+    gib_zurück ARRAY_SEITEN_BYTES / geo.block_bytes
+
+@nativ
+funktion array_io(medium: ptr[dyn FatTransport], art: u32, seite: u64, anzahl: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf medium.geometrie()
+        setze faktor: u64 auf array_sektoren_pro_seite(geo)
+        wenn faktor == 0 oder anzahl > 0xFFFFFFFFFFFFFFFF / ARRAY_SEITEN_BYTES:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 10))
+        setze seiten: u64 auf geo.bloecke / faktor
+        weitergeben(block_pruefen(BlockGeometrie(seiten, ARRAY_SEITEN_BYTES, geo.nur_lesend), art, seite, anzahl, adresse, anzahl * ARRAY_SEITEN_BYTES))
+        gib_zurück medium.uebertragen(art, seite * faktor, anzahl * faktor, adresse, anzahl * ARRAY_SEITEN_BYTES)
+
+@nativ
+funktion array_barriere(medium: ptr[dyn FatTransport]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        gib_zurück medium.uebertragen(BLOCK_FLUSH, 0, 0, 0, 0)
+
+@nativ
+funktion array_anschliessen(a: ptr[ArrayP], quellen: ptr[ArrayAnschluss], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn anzahl != a.layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 11))
+        setze layout: ptr[ArrayLayout] auf zeiger(adresse_von(a.layout))
+        setze a.grenzen auf weitergeben(array_layout_pruefen(layout))
+        setze belegt: u64 auf 0
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze quelle: ptr[ArrayAnschluss] auf zeiger(adresse_von(quellen[i]))
+            setze slot: u64 auf 0
+            solange slot < anzahl und nicht array_identitaet_gleich(zeiger(adresse_von(quelle.identitaet)), zeiger(adresse_von(layout.mitglieder[slot].identitaet))):
+                setze slot auf slot + 1
+            wenn slot == anzahl:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 12))
+            setze marke: u64 auf 1 << slot
+            wenn (belegt & marke) != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 13))
+            setze datengeo: BlockGeometrie auf quelle.medien.daten.geometrie()
+            setze metageo: BlockGeometrie auf quelle.medien.metadaten.geometrie()
+            setze df: u64 auf array_sektoren_pro_seite(datengeo)
+            setze mf: u64 auf array_sektoren_pro_seite(metageo)
+            wenn df == 0 oder mf == 0 oder datengeo.bloecke / df != layout.mitglieder[slot].seiten:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 14))
+            wenn datengeo.nur_lesend oder metageo.nur_lesend:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 1))
+            setze meta_noetig: u64 auf 2
+            wenn slot == a.grenzen.paritaet:
+                setze meta_noetig auf meta_noetig + a.grenzen.bitmap_seiten * 2
+            wenn metageo.bloecke / mf < meta_noetig:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 15))
+            setze a.medien[slot] auf quelle.medien
+            setze belegt auf belegt | marke
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_superblock_laden(medium: ptr[dyn FatTransport], layout: ptr[ArrayLayout], w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(array_io(medium, BLOCK_LESEN, 0, 1, adresse_von(w.bitmap_a[0])))
+        weitergeben(array_io(medium, BLOCK_LESEN, 1, 1, adresse_von(w.bitmap_b[0])))
+        setze ersatz: ArrayLayout auf 0
+        setze ersatz_adr: ptr[ArrayLayout] auf zeiger(adresse_von(ersatz))
+        setze links: ergebnis[u64, BlockFehler] auf array_superblock_lesen(byteansicht(w.bitmap_a), layout)
+        setze rechts: ergebnis[u64, BlockFehler] auf array_superblock_lesen(byteansicht(w.bitmap_b), ersatz_adr)
+        wenn nicht ist_erfolg(rechts):
+            gib_zurück links
+        wenn nicht ist_erfolg(links) oder ersatz.generation > layout.generation:
+            setze layout[0] auf ersatz
+            gib_zurück rechts
+        wenn ersatz.generation == layout.generation und (ergebnis_wert(links) != ergebnis_wert(rechts) oder nicht array_layout_gleich(layout, ersatz_adr)):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 11))
+        gib_zurück links
+
+@nativ
+funktion array_oeffnen(a: ptr[ArrayP], quellen: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder u64(quellen) == 0 oder u64(w) == 0 oder anzahl < 2 oder anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 10))
+        wenn a.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 1))
+        setze layout: ptr[ArrayLayout] auf zeiger(adresse_von(a.layout))
+        weitergeben(array_superblock_laden(quellen[0].medien.metadaten, layout, w))
+        weitergeben(array_anschliessen(a, quellen, anzahl))
+        setze i: u64 auf 0
+        setze anderes: ArrayLayout auf 0
+        setze anderes_adr: ptr[ArrayLayout] auf zeiger(adresse_von(anderes))
+        solange i < anzahl:
+            setze platz: u64 auf weitergeben(array_superblock_laden(a.medien[i].metadaten, anderes_adr, w))
+            wenn platz != i oder nicht array_layout_gleich(layout, anderes_adr):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 12))
+            setze i auf i + 1
+        setze a.offen auf wahr
+        gib_zurück erfolg()
+
+# Inverse des Ortsvertrags aus array_format.moos.
+@nativ
+funktion array_bitmap_erste_region(seite: u64) -> u64:
+    gib_zurück (seite / ARRAY_STREIFENSPERREN) * (ARRAY_BITMAP_BITS * ARRAY_STREIFENSPERREN) + seite % ARRAY_STREIFENSPERREN
+
+# Unmittelbar nach der Anlage sind sämtliche Regionen schmutzig. Vor dem ersten
+# RMW berechnet array_wiederherstellen deshalb P aus den vorhandenen Daten.
+@nativ
+funktion array_anlegen(a: ptr[ArrayP], layout: ptr[ArrayLayout], quellen: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder u64(layout) == 0 oder u64(quellen) == 0 oder u64(w) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 11))
+        wenn a.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 2))
+        setze a.layout auf layout[0]
+        weitergeben(array_anschliessen(a, quellen, anzahl))
+        setze bytes: puffer[u8] auf byteansicht(w.bitmap_a)
+        setze adresse: u64 auf adresse_von(w.bitmap_a[0])
+        setze meta: ptr[dyn FatTransport] auf a.medien[a.grenzen.paritaet].metadaten
+        setze seite: u64 auf 0
+        solange seite < a.grenzen.bitmap_seiten:
+            array_seite_leeren(bytes)
+            setze region: u64 auf array_bitmap_erste_region(seite)
+            setze bit: u64 auf 0
+            solange bit < ARRAY_BITMAP_BITS und region < a.grenzen.regionen:
+                setze ort: ArrayBitmapOrt auf array_bitmap_ort(region)
+                bytes[ort.byteindex] = bytes[ort.byteindex] | ort.maske
+                setze bit auf bit + 1
+                setze region auf region + ARRAY_STREIFENSPERREN
+            array_bitmap_siegeln(bytes, layout.generation, seite, 1)
+            weitergeben(array_io(meta, BLOCK_SCHREIBEN, 2 + seite * 2, 1, adresse))
+            weitergeben(array_io(meta, BLOCK_SCHREIBEN, 3 + seite * 2, 1, adresse))
+            setze seite auf seite + 1
+        weitergeben(array_barriere(meta))
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze teil: ptr[dyn FatTransport] auf a.medien[i].metadaten
+            weitergeben(array_superblock_bauen(bytes, layout, i))
+            weitergeben(array_io(teil, BLOCK_SCHREIBEN, 0, 1, adresse))
+            weitergeben(array_io(teil, BLOCK_SCHREIBEN, 1, 1, adresse))
+            weitergeben(array_barriere(teil))
+            setze i auf i + 1
+        setze a.offen auf wahr
+        gib_zurück erfolg()
+
+# Interner Seiten-XOR: Aufrufer leihen zwei volle Array-Seiten.
+@nativ
+funktion array_p_xor(p: puffer[u8], daten: puffer[u8]) -> void:
+    setze i: u64 auf 0
+    solange i < ARRAY_SEITEN_BYTES:
+        p[i] = p[i] ^ daten[i]
+        setze i auf i + 1
+
+struktur ArrayBitmapStand:
+    seite: u64
+    kopie: u64
+    folge: u64
+    adresse: u64
+
+@nativ
+funktion array_bitmap_laden(a: ptr[ArrayP], seite: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayBitmapStand, BlockFehler]:
+    unsicher:
+        setze medium: ptr[dyn FatTransport] auf a.medien[a.grenzen.paritaet].metadaten
+        setze links: u64 auf adresse_von(w.bitmap_a[0])
+        setze rechts: u64 auf adresse_von(w.bitmap_b[0])
+        weitergeben(array_io(medium, BLOCK_LESEN, 2 + seite * 2, 1, links))
+        weitergeben(array_io(medium, BLOCK_LESEN, 3 + seite * 2, 1, rechts))
+        setze seq_a: u64 auf array_bitmap_folge(byteansicht(w.bitmap_a), a.layout.generation, seite)
+        setze seq_b: u64 auf array_bitmap_folge(byteansicht(w.bitmap_b), a.layout.generation, seite)
+        wenn seq_a == 0 und seq_b == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 13))
+        wenn seq_a == seq_b:
+            setze i: u64 auf 0
+            solange i < ARRAY_SEITEN_BYTES:
+                wenn w.bitmap_a[i] != w.bitmap_b[i]:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 14))
+                setze i auf i + 1
+        wenn seq_b > seq_a:
+            gib_zurück erfolg(ArrayBitmapStand(seite, 1, seq_b, rechts))
+        gib_zurück erfolg(ArrayBitmapStand(seite, 0, seq_a, links))
+
+@nativ
+funktion array_bitmap_speichern(a: ptr[ArrayP], stand: ptr[ArrayBitmapStand]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn stand.folge == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 15))
+        setze zeig: ptr[u8] auf zeiger(stand.adresse)
+        setze bytes: puffer[u8] auf byteansicht(zeig, ARRAY_SEITEN_BYTES)
+        setze kopie: u64 auf 1 - stand.kopie
+        setze folge: u64 auf stand.folge + 1
+        array_bitmap_siegeln(bytes, a.layout.generation, stand.seite, folge)
+        setze medium: ptr[dyn FatTransport] auf a.medien[a.grenzen.paritaet].metadaten
+        weitergeben(array_io(medium, BLOCK_SCHREIBEN, 2 + stand.seite * 2 + kopie, 1, stand.adresse))
+        weitergeben(array_barriere(medium))
+        setze stand.kopie auf kopie
+        setze stand.folge auf folge
+        gib_zurück erfolg()
+
+@nativ
+funktion array_daten_geometrie(a: ptr[ArrayP], mitglied: u64) -> ergebnis[BlockGeometrie, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder nicht a.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 2))
+        wenn mitglied >= a.layout.anzahl oder a.layout.mitglieder[mitglied].rolle != ARRAY_DATEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 16))
+        gib_zurück erfolg(BlockGeometrie(a.layout.mitglieder[mitglied].seiten, ARRAY_SEITEN_BYTES, falsch))
+
+@nativ
+funktion array_daten_lesen(a: ptr[ArrayP], mitglied: u64, seite: u64, anzahl: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf weitergeben(array_daten_geometrie(a, mitglied))
+        wenn seite >= geo.bloecke oder anzahl > geo.bloecke - seite:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 1))
+        gib_zurück array_io(a.medien[mitglied].daten, BLOCK_LESEN, seite, anzahl, adresse)
+
+@nativ
+funktion array_daten_barriere(a: ptr[ArrayP], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_daten_geometrie(a, mitglied))
+        weitergeben(array_barriere(a.medien[mitglied].daten))
+        weitergeben(array_barriere(a.medien[a.grenzen.paritaet].daten))
+        gib_zurück array_barriere(a.medien[a.grenzen.paritaet].metadaten)
+
+# Der Aufrufer hält die Sperre region % ARRAY_STREIFENSPERREN. Schreibanfragen
+# dürfen pro Aufruf genau eine Region berühren. RMW beginnt auf sauberem P.
+@nativ
+funktion array_schreiben_region(a: ptr[ArrayP], mitglied: u64, seite: u64, anzahl: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf weitergeben(array_daten_geometrie(a, mitglied))
+        wenn u64(w) == 0 oder anzahl > 0xFFFFFFFFFFFFFFFF / ARRAY_SEITEN_BYTES:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 12))
+        weitergeben(block_pruefen(geo, BLOCK_SCHREIBEN, seite, anzahl, adresse, anzahl * ARRAY_SEITEN_BYTES))
+        setze region: u64 auf seite / ARRAY_REGION_SEITEN
+        wenn (seite + anzahl - 1) / ARRAY_REGION_SEITEN != region:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 2))
+        setze ort: ArrayBitmapOrt auf array_bitmap_ort(region)
+        setze stand: ArrayBitmapStand auf weitergeben(array_bitmap_laden(a, ort.seite, w))
+        setze stand_adr: ptr[ArrayBitmapStand] auf zeiger(adresse_von(stand))
+        setze bitzeiger: ptr[u8] auf zeiger(stand.adresse)
+        setze bitmap: puffer[u8] auf byteansicht(bitzeiger, ARRAY_SEITEN_BYTES)
+        wenn (bitmap[ort.byteindex] & ort.maske) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 3))
+        wenn stand.folge > 0xFFFFFFFFFFFFFFFD:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 15))
+        bitmap[ort.byteindex] = bitmap[ort.byteindex] | ort.maske
+        weitergeben(array_bitmap_speichern(a, stand_adr))
+
+        setze daten: ptr[dyn FatTransport] auf a.medien[mitglied].daten
+        setze p: ptr[dyn FatTransport] auf a.medien[a.grenzen.paritaet].daten
+        setze altbytes: puffer[u8] auf byteansicht(w.alt)
+        setze pbytes: puffer[u8] auf byteansicht(w.paritaet)
+        setze altadr: u64 auf adresse_von(w.alt[0])
+        setze padr: u64 auf adresse_von(w.paritaet[0])
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze neuadr: u64 auf adresse + i * ARRAY_SEITEN_BYTES
+            setze neuzeiger: ptr[u8] auf zeiger(neuadr)
+            weitergeben(array_io(daten, BLOCK_LESEN, seite + i, 1, altadr))
+            weitergeben(array_io(p, BLOCK_LESEN, seite + i, 1, padr))
+            array_p_xor(pbytes, altbytes)
+            array_p_xor(pbytes, byteansicht(neuzeiger, ARRAY_SEITEN_BYTES))
+            weitergeben(array_io(daten, BLOCK_SCHREIBEN, seite + i, 1, neuadr))
+            weitergeben(array_io(p, BLOCK_SCHREIBEN, seite + i, 1, padr))
+            setze i auf i + 1
+        weitergeben(array_barriere(daten))
+        weitergeben(array_barriere(p))
+
+        bitmap[ort.byteindex] = bitmap[ort.byteindex] & (ort.maske ^ 0xFF)
+        gib_zurück array_bitmap_speichern(a, stand_adr)
+
+@nativ
+funktion array_p_region_neu(a: ptr[ArrayP], region: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[dyn FatTransport] auf a.medien[a.grenzen.paritaet].daten
+        setze pbytes: puffer[u8] auf byteansicht(w.paritaet)
+        setze altbytes: puffer[u8] auf byteansicht(w.alt)
+        setze padr: u64 auf adresse_von(w.paritaet[0])
+        setze altadr: u64 auf adresse_von(w.alt[0])
+        setze seite: u64 auf region * ARRAY_REGION_SEITEN
+        setze ende: u64 auf seite + ARRAY_REGION_SEITEN
+        wenn ende > a.grenzen.daten_max:
+            setze ende auf a.grenzen.daten_max
+        solange seite < ende:
+            array_seite_leeren(pbytes)
+            setze i: u64 auf 0
+            solange i < a.layout.anzahl:
+                # Außerhalb einer kleineren Datenplatte ist der Beitrag null.
+                wenn i != a.grenzen.paritaet und seite < a.layout.mitglieder[i].seiten:
+                    weitergeben(array_io(a.medien[i].daten, BLOCK_LESEN, seite, 1, altadr))
+                    array_p_xor(pbytes, altbytes)
+                setze i auf i + 1
+            weitergeben(array_io(p, BLOCK_SCHREIBEN, seite, 1, padr))
+            setze seite auf seite + 1
+        gib_zurück array_barriere(p)
+
+# Exklusiv vor der Veröffentlichung der virtuellen Geräte oder beim Offline-Repair.
+# Auch nach fehlgeschlagener Barriere kann der Aufrufer diesen Ablauf wiederholen.
+@nativ
+funktion array_wiederherstellen(a: ptr[ArrayP], w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder nicht a.offen oder u64(w) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 4))
+        setze repariert: u64 auf 0
+        setze seite: u64 auf 0
+        solange seite < a.grenzen.bitmap_seiten:
+            setze stand: ArrayBitmapStand auf weitergeben(array_bitmap_laden(a, seite, w))
+            setze zeig: ptr[u8] auf zeiger(stand.adresse)
+            setze bitmap: puffer[u8] auf byteansicht(zeig, ARRAY_SEITEN_BYTES)
+            setze region: u64 auf array_bitmap_erste_region(seite)
+            setze seit_start: u64 auf repariert
+            setze bit: u64 auf 0
+            solange bit < ARRAY_BITMAP_BITS und region < a.grenzen.regionen:
+                setze ort: ArrayBitmapOrt auf array_bitmap_ort(region)
+                wenn (bitmap[ort.byteindex] & ort.maske) != 0:
+                    wenn stand.folge == 0xFFFFFFFFFFFFFFFF:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 15))
+                    wenn repariert == 0:
+                        setze i: u64 auf 0
+                        solange i < a.layout.anzahl:
+                            wenn i != a.grenzen.paritaet:
+                                weitergeben(array_barriere(a.medien[i].daten))
+                            setze i auf i + 1
+                    weitergeben(array_p_region_neu(a, region, w))
+                    bitmap[ort.byteindex] = bitmap[ort.byteindex] & (ort.maske ^ 0xFF)
+                    setze repariert auf repariert + 1
+                setze bit auf bit + 1
+                setze region auf region + ARRAY_STREIFENSPERREN
+            wenn repariert != seit_start:
+                weitergeben(array_bitmap_speichern(a, zeiger(adresse_von(stand))))
+            setze seite auf seite + 1
+        gib_zurück erfolg(repariert)

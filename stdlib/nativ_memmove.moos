@@ -1,0 +1,22 @@
+# Freestanding memmove-Träger für 64-Bit-Kerne. Der @einstieg exportiert die
+# C-ABI, die LLVM auch nach Optimierung normaler Aggregatzuweisungen benötigt.
+# Volatile Bytezugriffe verhindern eine Rückfaltung in einen eigenen Libcall.
+@nativ
+@einstieg
+funktion memmove(ziel: ptr[u8], quelle: ptr[u8], bytes: u64) -> ptr[u8]:
+    unsicher:
+        setze z: u64 auf u64(ziel)
+        setze q: u64 auf u64(quelle)
+        wenn z == q oder bytes == 0:
+            gib_zurück ziel
+        setze i: u64 auf 0
+        wenn z > q und z - q < bytes:
+            setze i auf bytes
+            solange i > 0:
+                setze i auf i - 1
+                volatile_schreiben(ziel, i, volatile_lesen(quelle, i))
+        sonst:
+            solange i < bytes:
+                volatile_schreiben(ziel, i, volatile_lesen(quelle, i))
+                setze i auf i + 1
+        gib_zurück ziel

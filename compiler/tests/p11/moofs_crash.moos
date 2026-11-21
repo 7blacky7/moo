@@ -1,0 +1,219 @@
+# Host-Störtransport: nur POSIX/Handshake, alle Dateisystemoperationen bleiben Moo.
+aus ds_moofs importiere MooFsVolume, MooFsEintrag, MooFsInode, MooFsFehler, MOOFS_ARGUMENT, MOOFS_EA, moofs_inode, moofs_lesen
+aus ds_moofs_format importiere MooFsQuelle, MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_schreiben importiere moofs_anlegen, moofs_schreiben, moofs_abgleichen
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten, pwrite
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_FLUSH, BLOCK_EA
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion open(name: ptr[u8], flags: i32, modus: u32) -> i32
+extern "C" funktion close(fd: i32) -> i32
+extern "C" funktion ftruncate(fd: i32, bytes: i64) -> i32
+extern "C" funktion read(fd: i32, ziel: ptr[u8], bytes: u64) -> i64
+extern "C" funktion write(fd: i32, quelle: ptr[u8], bytes: u64) -> i64
+
+@nativ
+konstante MOOFS_CRASH_BILD: [u8; _] auf "MOO_MOOFS_CRASH_BILD"
+@nativ
+konstante MOOFS_CRASH_AKTION: [u8; _] auf "MOO_MOOFS_CRASH_AKTION"
+@nativ
+konstante MOOFS_CRASH_SCHRITT: [u8; _] auf "MOO_MOOFS_CRASH_SCHRITT"
+@nativ
+konstante MOOFS_CRASH_FEHLER: [u8; _] auf "MOO_MOOFS_CRASH_FEHLER"
+
+@nativ
+funktion moofs_crash_signal(zeichen: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze b: [u8; 1] auf [zeichen]
+        setze p: ptr[u8] auf zeiger(adresse_von(b))
+        wenn write(1, p, 1) != 1 oder read(0, p, 1) != 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 900))
+        gib_zurück erfolg()
+
+struktur MooFsCrashTransport implementiert FatTransport:
+    basis: ptr[FatPosix]
+    handshake: bool
+    schritt: u64
+    fehler_schritt: u64
+    fehler_art: u64
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.basis.geometrie()
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn art == BLOCK_LESEN:
+                gib_zurück selbst.basis.uebertragen(art, lba, anzahl, puffer, bytes)
+            setze selbst.schritt auf selbst.schritt + 1
+            wenn selbst.handshake:
+                weitergeben(moofs_crash_signal(66))
+            wenn selbst.fehler_schritt == selbst.schritt und selbst.fehler_art == 1:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 901))
+            wenn selbst.fehler_schritt == selbst.schritt und selbst.fehler_art == 3 und art == BLOCK_SCHREIBEN:
+                # Tatsächlicher Teilschreibzugriff vor der CRC, auch für Superblöcke.
+                setze p: ptr[u8] auf zeiger(puffer)
+                setze n: i64 auf pwrite(selbst.basis.fd, p, 32, i64(lba * 512))
+                wenn n != 32:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 904))
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 903))
+            weitergeben(selbst.basis.uebertragen(art, lba, anzahl, puffer, bytes))
+            wenn selbst.handshake:
+                weitergeben(moofs_crash_signal(65))
+            wenn selbst.fehler_schritt == selbst.schritt und selbst.fehler_art != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 902))
+            gib_zurück erfolg()
+
+struktur MooFsCrashSpeicher:
+    format: MooFsFormatSpeicher
+    eintraege: [MooFsEintrag; 512]
+    kinder: [MooFsBaumKind; 43]
+    karte: [u8; 32]
+    schreiber: MooFsSchreiber
+    quelle: [u8; 12289]
+    ziel: [u8; 12289]
+@nativ
+statisch MOOFS_CRASH_SPEICHER: MooFsCrashSpeicher auf 0
+
+@nativ
+funktion moofs_crash_zahl(name: ptr[u8]) -> u64:
+    unsicher:
+        setze p: ptr[u8] auf getenv(name)
+        wenn u64(p) == 0:
+            gib_zurück 0
+        setze n: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 9 und p[i] >= 48 und p[i] <= 57:
+            setze n auf n * 10 + u64(p[i] - 48)
+            setze i auf i + 1
+        gib_zurück n
+
+@nativ
+funktion moofs_crash_close(fd: i32) -> void:
+    unsicher:
+        setze r: i32 auf close(fd)
+
+@nativ
+funktion moofs_crash_ablauf() -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze bild: ptr[u8] auf getenv(zeiger(adresse_von(MOOFS_CRASH_BILD)))
+        setze aktion: ptr[u8] auf getenv(zeiger(adresse_von(MOOFS_CRASH_AKTION)))
+        wenn u64(bild) == 0 oder u64(aktion) == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 900, 0))
+        setze flags: i32 auf 2
+        wenn aktion[0] == 105:
+            setze flags auf 66
+        setze fd: i32 auf open(bild, flags, 384)
+        wenn fd < 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 900, 0))
+        aufräumen: moofs_crash_close(fd)
+        wenn aktion[0] == 105:
+            wenn ftruncate(fd, 1048576) != 0:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 901, 0))
+        setze adapter: FatPosix auf 0
+        setze fp: ptr[FatPosix] auf zeiger(adresse_von(adapter))
+        wenn nicht ist_erfolg(fat_posix_einrichten(fp, fd, 512, falsch)):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 902, 0))
+        setze transport: MooFsCrashTransport auf 0
+        setze cp: ptr[MooFsCrashTransport] auf zeiger(adresse_von(transport))
+        setze cp.basis auf fp
+        setze t: ptr[dyn FatTransport] auf cp
+        setze p: ptr[MooFsCrashSpeicher] auf zeiger(adresse_von(MOOFS_CRASH_SPEICHER))
+        wenn aktion[0] == 105:
+            setze leer: ptr[MooFsQuelle] auf nichts
+            weitergeben(moofs_formatieren(t, leer, 0, 33, 44, zeiger(adresse_von(p.format))))
+        setze w: ptr[MooFsSchreiber] auf zeiger(adresse_von(p.schreiber))
+        weitergeben(moofs_schreiber_oeffnen(w, t, zeiger(adresse_von(p.eintraege[0])), 512, zeiger(adresse_von(p.kinder[0])), 43, zeiger(adresse_von(p.karte[0])), 32))
+        setze a: [u8; 1] auf [97]
+        setze b: [u8; 1] auf [98]
+        setze i: u64 auf 0
+        wenn aktion[0] == 105:
+            setze nr: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(a), falsch))
+            setze nr auf weitergeben(moofs_anlegen(w, 1, byteansicht(b), falsch))
+            solange i < 12289:
+                setze p.quelle[i] auf als(u8, (i * 37 + 11) & 255)
+                setze i auf i + 1
+            setze n: u64 auf weitergeben(moofs_schreiben(w, 2, 0, byteansicht(p.quelle)))
+            setze i auf 0
+            solange i < 12289:
+                setze p.quelle[i] auf als(u8, (i * 19 + 7) & 255)
+                setze i auf i + 1
+            setze n auf weitergeben(moofs_schreiben(w, 3, 0, byteansicht(p.quelle)))
+            # Absichtlich kein Checkpoint: Worker durchläuft auch dessen Fehlergrenzen.
+            gib_zurück erfolg(0)
+        wenn aktion[0] == 119:
+            solange i < 12289:
+                setze p.quelle[i] auf als(u8, (i * 53 + 23) & 255)
+                setze i auf i + 1
+            setze cp.schritt auf 0
+            setze cp.fehler_art auf moofs_crash_zahl(zeiger(adresse_von(MOOFS_CRASH_FEHLER)))
+            setze cp.fehler_schritt auf moofs_crash_zahl(zeiger(adresse_von(MOOFS_CRASH_SCHRITT)))
+            setze cp.handshake auf cp.fehler_art == 0
+            setze r: ergebnis[u64, MooFsFehler] auf moofs_schreiben(w, 3, 0, byteansicht(p.quelle))
+            wenn cp.fehler_art == 0:
+                wenn nicht ist_erfolg(r):
+                    gib_zurück fehlschlag(ergebnis_fehler(r))
+                setze n_geschrieben: u64 auf ergebnis_wert(r)
+                wenn n_geschrieben != 12289:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 901, 0))
+                # Bestätigte Daten sind bereits durch moofs_schreiben dauerhaft.
+                wenn nicht ist_erfolg(moofs_crash_signal(83)):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 903, 0))
+                gib_zurück erfolg(0)
+            wenn ist_erfolg(r):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 902, cp.schritt))
+            setze fehler: MooFsFehler auf ergebnis_fehler(r)
+            wenn fehler.code != MOOFS_EA:
+                gib_zurück fehlschlag(fehler)
+            # Vor Publikation darf Recovery erfolgen, nach unklarer Barriere bleibt
+            # der Schreiber bis zu explizitem Remount gesperrt.
+            wenn nicht w.bereit:
+                setze gesperrt: ergebnis[u64, MooFsFehler] auf moofs_schreiben(w, 3, 0, byteansicht(p.quelle))
+                wenn ist_erfolg(gesperrt):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 903, 0))
+                wenn ergebnis_fehler(gesperrt).code != MOOFS_ARGUMENT:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 904, 0))
+            gib_zurück erfolg(0)
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(w.volume))
+        setze stabil: MooFsInode auf weitergeben(moofs_inode(v, 2))
+        setze wechsel: MooFsInode auf weitergeben(moofs_inode(v, 3))
+        wenn stabil.bytes != 12289 oder wechsel.bytes != 12289:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 910, 0))
+        setze gelesen: u64 auf weitergeben(moofs_lesen(v, 2, 0, byteansicht(p.ziel)))
+        wenn gelesen != 12289:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 911, 0))
+        setze i auf 0
+        solange i < 12289:
+            wenn p.ziel[i] != als(u8, (i * 37 + 11) & 255):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 912, 0))
+            setze i auf i + 1
+        setze gelesen auf weitergeben(moofs_lesen(v, 3, 0, byteansicht(p.ziel)))
+        wenn gelesen != 12289:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 913, 0))
+        setze variante: u64 auf 0
+        wenn p.ziel[0] == 23:
+            setze variante auf 1
+        setze i auf 0
+        solange i < 12289:
+            setze erwartet: u8 auf als(u8, (i * 19 + 7) & 255)
+            wenn variante == 1:
+                setze erwartet auf als(u8, (i * 53 + 23) & 255)
+            wenn p.ziel[i] != erwartet:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 914, i))
+            setze i auf i + 1
+        gib_zurück erfolg(variante)
+
+@nativ
+funktion moofs_crash_code() -> u64:
+    unsicher:
+        setze r: ergebnis[u64, MooFsFehler] auf moofs_crash_ablauf()
+        wenn nicht ist_erfolg(r):
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            gib_zurück u64(f.code) * 1000000 + u64(f.grund)
+        gib_zurück ergebnis_wert(r)
+# FEHLERPFAD(M-F001): Host-Abnahme bricht bei unerwartetem Sprachfehler ab.
+unsicher:
+    setze status auf moofs_crash_code()
+    zeige status
+    wenn status > 1:
+        beende(1)

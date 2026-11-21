@@ -5,10 +5,15 @@ aus vfs importiere VfsTabelle, VfsDatei, VfsFehler, VfsStat, VfsEintrag, Dateisy
 aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
 aus "kern_smp" importiere smp_planer
 
+@nativ
+konstante KERN_DATEI_TRANSFER_MAX_SEITEN: u64 auf 32
+
 struktur KernVfsDateien:
     sperre: KernMutex
     dateien: [VfsDatei; 64]
     letzter_fehler: VfsFehler
+    # Der Kern setzt das Limit gegebenenfalls vor dem Start der Prozessgruppe.
+    transfer_seiten: u64
 
 struktur KernVfs:
     sperre: KernMutex

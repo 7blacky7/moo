@@ -1,0 +1,252 @@
+# Ein Datenmitglied und sein P-Bild bilden einen Zweier-Spiegel.
+# Der Aufrufer serialisiert Seitenaufträge und Resync-Schritte.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_BELEGT, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, BLOCK_EA
+aus array_format importiere ArrayLayout, ArrayGrenzen, ARRAY_DATEN, ARRAY_PARITAET_P, ARRAY_REGION_SEITEN, array_layout_gleich, array_identitaet_gleich
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayMedien, ArrayArbeitsraum, ArrayBitmapStand, array_anschliessen, array_anlegen, array_sektoren_pro_seite
+aus array_rebuild importiere ArrayRebuildFortschritt, array_rebuild_starten, array_rebuild_oeffnen, array_rebuild_flush, array_rebuild_ersatz_beginnen, array_rebuild_ersatz_metadaten_raeumen, array_rebuild_schritt
+aus array_rebuild_format importiere ArrayRebuildStand, ArrayRebuildBasisVerweis, ARRAY_REBUILD_KEIN
+aus array_rebuild_metadaten importiere ArrayRebuild, array_rebuild_laden, array_rebuild_gebunden, array_rebuild_kopien_laden, array_rebuild_medium_pruefen, array_rebuild_basis_laden, array_rebuild_speichern
+aus array_rebuild_io importiere array_rebuild_seite_gueltig, array_rebuild_anfrage_pruefen, array_rebuild_roh_lesen, array_rebuild_seite_lesen, array_rebuild_schreiben, array_rebuild_verloren
+aus ds_spiegel_bitmap importiere spiegel_bitmap_seiten, spiegel_bitmap_start, spiegel_bitmap_laden, spiegel_bitmap_ist_schmutzig, spiegel_bitmap_setzen, spiegel_bitmap_initialisieren, spiegel_bitmap_alle_setzen
+
+struktur Spiegel:
+    p: ArrayP
+    rebuild: ArrayRebuild
+
+@nativ
+funktion spiegel_layout_pruefen(layout: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(layout) == 0 oder layout.anzahl != 2 oder layout.mitglieder[0].rolle != ARRAY_DATEN oder layout.mitglieder[1].rolle != ARRAY_PARITAET_P:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 210))
+        wenn layout.mitglieder[0].seiten != layout.mitglieder[1].seiten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 211))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_metadaten_pruefen(p: ptr[ArrayP], mitglied: u64, m: ptr[dyn FatTransport]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze geo: BlockGeometrie auf m.geometrie()
+        setze faktor: u64 auf array_sektoren_pro_seite(geo)
+        setze g: ptr[ArrayGrenzen] auf zeiger(adresse_von(p.grenzen))
+        wenn faktor == 0 oder geo.nur_lesend oder geo.bloecke / faktor < spiegel_bitmap_start(g, mitglied) + 2 * spiegel_bitmap_seiten(g):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 212))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_anlegen(s: ptr[Spiegel], layout: ptr[ArrayLayout], q: ptr[ArrayAnschluss], w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(q) == 0 oder u64(w) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 213))
+        wenn s.p.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 210))
+        weitergeben(spiegel_layout_pruefen(layout))
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze p.layout auf layout[0]
+        weitergeben(array_anschliessen(p, q, 2))
+        weitergeben(spiegel_metadaten_pruefen(p, 0, p.medien[0].metadaten))
+        weitergeben(spiegel_metadaten_pruefen(p, 1, p.medien[1].metadaten))
+        weitergeben(spiegel_bitmap_initialisieren(p, 0, w))
+        weitergeben(spiegel_bitmap_initialisieren(p, 1, w))
+        weitergeben(array_anlegen(p, layout, q, 2, w))
+        gib_zurück array_rebuild_starten(zeiger(adresse_von(s.rebuild)), p, w)
+
+@nativ
+funktion spiegel_bitmap_abgleichen(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn s.rebuild.stand.fehlt == ARRAY_REBUILD_KEIN:
+            setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+            weitergeben(spiegel_bitmap_alle_setzen(p, 0, falsch, w))
+            weitergeben(spiegel_bitmap_alle_setzen(p, 1, falsch, w))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_oeffnen(s: ptr[Spiegel], q: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder anzahl == 0 oder anzahl > 2:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 214))
+        wenn s.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 211))
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        weitergeben(array_rebuild_laden(r, p, q, anzahl, w))
+        weitergeben(spiegel_layout_pruefen(zeiger(adresse_von(p.layout))))
+        setze i: u64 auf 0
+        solange i < 2:
+            wenn array_rebuild_gebunden(r, i):
+                weitergeben(spiegel_metadaten_pruefen(p, i, p.medien[i].metadaten))
+                setze seite: u64 auf 0
+                solange seite < spiegel_bitmap_seiten(zeiger(adresse_von(p.grenzen))):
+                    weitergeben(spiegel_bitmap_laden(p, i, seite, w))
+                    setze seite auf seite + 1
+            setze i auf i + 1
+        wenn r.anwesend != 3:
+            # Der einzelne Träger muss den früheren Ausfall des Peers
+            # belegen. Ein alter Kopf aus Normalbetrieb kennt dessen Writes nicht.
+            setze quelle: u64 auf r.stand.fehlt ^ 1
+            setze r.stand.folge auf 0
+            weitergeben(array_rebuild_kopien_laden(r, quelle, w))
+            wenn r.stand.fehlt != (quelle ^ 1):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 210))
+        setze repariert: u64 auf weitergeben(array_rebuild_oeffnen(r, p, q, anzahl, w))
+        setze sauberes_bitmap: ergebnis[void, BlockFehler] auf spiegel_bitmap_abgleichen(s, w)
+        wenn nicht ist_erfolg(sauberes_bitmap):
+            setze r.bereit auf falsch
+            setze p.offen auf falsch
+            gib_zurück fehlschlag(ergebnis_fehler(sauberes_bitmap))
+        gib_zurück erfolg(repariert)
+
+# Normalbetrieb schreibt die Markierung auf beide Medien. Im degradierten
+# Betrieb hält das Mitglied mit vollständigem Inhalt die Bitmap.
+@nativ
+funktion spiegel_markieren(s: ptr[Spiegel], region: u64, schmutzig: bool, w: ptr[ArrayArbeitsraum]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        wenn r.stand.fehlt != ARRAY_REBUILD_KEIN:
+            gib_zurück spiegel_bitmap_setzen(p, r.stand.fehlt ^ 1, region, schmutzig, w)
+        setze vorher: bool auf falsch
+        setze ausfall: u64 auf ARRAY_REBUILD_KEIN
+        setze i: u64 auf 0
+        solange i < 2:
+            setze gesetzt: ergebnis[bool, BlockFehler] auf spiegel_bitmap_setzen(p, i, region, schmutzig, w)
+            wenn ist_erfolg(gesetzt):
+                setze vorher auf vorher oder ergebnis_wert(gesetzt)
+            sonst:
+                wenn ausfall != ARRAY_REBUILD_KEIN:
+                    gib_zurück gesetzt
+                setze ausfall auf i
+            setze i auf i + 1
+        wenn ausfall != ARRAY_REBUILD_KEIN:
+            weitergeben(array_rebuild_verloren(r, ausfall, w))
+        gib_zurück erfolg(vorher)
+
+@nativ
+funktion spiegel_lesen(s: ptr[Spiegel], seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        weitergeben(array_rebuild_anfrage_pruefen(r, 0, BLOCK_LESEN, seite, adresse, w))
+        setze stand: ptr[ArrayRebuildStand] auf zeiger(adresse_von(r.stand))
+        wenn nicht array_rebuild_seite_gueltig(r, stand, 0, seite):
+            gib_zurück array_rebuild_seite_lesen(r, 0, seite, adresse, w)
+        wenn ist_erfolg(array_rebuild_roh_lesen(r, 0, seite, adresse)):
+            gib_zurück erfolg()
+        setze region: u64 auf seite / ARRAY_REGION_SEITEN
+        setze vorher: bool auf weitergeben(spiegel_markieren(s, region, wahr, w))
+        weitergeben(array_rebuild_seite_lesen(r, 0, seite, adresse, w))
+        wenn nicht vorher und r.stand.fehlt == ARRAY_REBUILD_KEIN:
+            weitergeben(spiegel_markieren(s, region, falsch, w))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_schreiben(s: ptr[Spiegel], seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        weitergeben(array_rebuild_anfrage_pruefen(r, 0, BLOCK_SCHREIBEN, seite, adresse, w))
+        setze region: u64 auf seite / ARRAY_REGION_SEITEN
+        setze vorher: bool auf weitergeben(spiegel_markieren(s, region, wahr, w))
+        weitergeben(array_rebuild_schreiben(r, 0, seite, adresse, w))
+        wenn nicht vorher und r.stand.fehlt == ARRAY_REBUILD_KEIN:
+            weitergeben(spiegel_markieren(s, region, falsch, w))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_flush(s: ptr[Spiegel]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        gib_zurück array_rebuild_flush(zeiger(adresse_von(s.rebuild)))
+
+@nativ
+funktion spiegel_verloren(s: ptr[Spiegel], mitglied: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        gib_zurück array_rebuild_verloren(zeiger(adresse_von(s.rebuild)), mitglied, w)
+
+@nativ
+funktion spiegel_kandidaten_bitmap(p: ptr[ArrayP], mitglied: u64, q: ptr[ArrayAnschluss], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze alt: ArrayMedien auf p.medien[mitglied]
+        setze p.medien[mitglied] auf q.medien
+        setze r: ergebnis[void, BlockFehler] auf spiegel_bitmap_initialisieren(p, mitglied, w)
+        setze p.medien[mitglied] auf alt
+        gib_zurück r
+
+@nativ
+funktion spiegel_wieder_einbinden(s: ptr[Spiegel], mitglied: u64, q: ptr[ArrayAnschluss], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        setze label: ArrayRebuildBasisVerweis auf weitergeben(array_rebuild_basis_laden(q.medien.metadaten, l, w))
+        wenn nicht label.markiert oder label.mitglied != mitglied oder nicht array_layout_gleich(l, zeiger(adresse_von(p.layout))):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 215))
+        weitergeben(spiegel_kandidaten_bitmap(p, mitglied, q, w))
+        weitergeben(array_rebuild_ersatz_metadaten_raeumen(p, mitglied, q.medien.metadaten, w))
+        setze p.medien[mitglied] auf q.medien
+        setze r.bank[mitglied] auf 0
+        setze r.folgen[mitglied] auf 0
+        setze r.anwesend auf r.anwesend | (1 << mitglied)
+        setze stand: ArrayRebuildStand auf r.stand
+        setze stand.ersatz auf wahr
+        setze stand.fertig auf 0
+        weitergeben(array_rebuild_speichern(r, zeiger(adresse_von(stand)), w, 0, 0))
+        wenn nicht r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 210))
+        gib_zurück erfolg()
+
+@nativ
+funktion spiegel_resync_beginnen(s: ptr[Spiegel], q: ptr[ArrayAnschluss], w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(q) == 0 oder u64(w) == 0 oder nicht s.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 211))
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        setze mitglied: u64 auf r.stand.fehlt
+        wenn mitglied == ARRAY_REBUILD_KEIN oder r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 212))
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        weitergeben(array_rebuild_medium_pruefen(p, mitglied, q))
+        weitergeben(spiegel_metadaten_pruefen(p, mitglied, q.medien.metadaten))
+        wenn array_identitaet_gleich(zeiger(adresse_von(r.stand.layout.mitglieder[mitglied].identitaet)), zeiger(adresse_von(q.identitaet))):
+            gib_zurück spiegel_wieder_einbinden(s, mitglied, q, w)
+        weitergeben(spiegel_bitmap_alle_setzen(p, mitglied ^ 1, wahr, w))
+        weitergeben(spiegel_kandidaten_bitmap(p, mitglied, q, w))
+        gib_zurück array_rebuild_ersatz_beginnen(r, q, w)
+
+@nativ
+funktion spiegel_saubere_region(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        setze stand: ArrayRebuildStand auf r.stand
+        setze mitglied: u64 auf stand.fehlt
+        setze gesamt: u64 auf s.p.grenzen.daten_max
+        setze ende: u64 auf (stand.fertig / ARRAY_REGION_SEITEN + 1) * ARRAY_REGION_SEITEN
+        wenn ende >= gesamt:
+            setze ende auf gesamt
+            setze stand.fehlt auf ARRAY_REBUILD_KEIN
+            setze stand.ersatz auf falsch
+            setze stand.fertig auf 0
+        sonst:
+            setze stand.fertig auf ende
+        weitergeben(array_rebuild_speichern(r, zeiger(adresse_von(stand)), w, 0, 0))
+        wenn r.stand.fehlt == mitglied und nicht r.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 211))
+        gib_zurück erfolg(ArrayRebuildFortschritt(ende, gesamt, ende == gesamt))
+
+@nativ
+funktion spiegel_resync_region(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(s.rebuild))
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(s.p))
+        setze region: u64 auf r.stand.fertig / ARRAY_REGION_SEITEN
+        wenn weitergeben(spiegel_bitmap_ist_schmutzig(p, r.stand.fehlt ^ 1, region, w)):
+            gib_zurück array_rebuild_schritt(r, w)
+        gib_zurück spiegel_saubere_region(s, w)
+
+@nativ
+funktion spiegel_resync_schritt(s: ptr[Spiegel], w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(w) == 0 oder nicht s.rebuild.bereit oder nicht s.rebuild.stand.ersatz:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 212))
+        setze stand: ArrayRebuildFortschritt auf weitergeben(spiegel_resync_region(s, w))
+        wenn stand.abgeschlossen:
+            weitergeben(spiegel_bitmap_abgleichen(s, w))
+        gib_zurück erfolg(stand)

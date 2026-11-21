@@ -1,0 +1,458 @@
+# MooFS-CoW: eine Operation veröffentlicht genau eine neue Supergeneration.
+aus ds_moofs importiere MooFsVolume, MooFsEintrag, MooFsSchluessel, MooFsInode, MooFsFehler, MOOFS_ARGUMENT, MOOFS_FORMAT, MOOFS_VOLL, MOOFS_FEHLT, MOOFS_NAME, moofs_schluessel_vergleichen, moofs_name_pruefen, moofs_lesen
+aus ds_moofs_allokator importiere MooFsSchreiber, MOOFS_SPEICHER, moofs_schreiber_neuladen, moofs_freien_block
+aus ds_moofs_baum_schreiben importiere MooFsBaum, MooFsBlockgeber, moofs_baum_schreiben, moofs_baum_bloecke
+aus ds_moofs_io importiere moofs_block_vorbereiten, moofs_block_schreiben, moofs_barriere
+aus ds_moofs_formate importiere MooFsSuper
+
+@nativ
+konstante MOOFS_VORHANDEN: u32 auf 0x40009
+@nativ
+konstante MOOFS_NICHT_ORDNER: u32 auf 0x4000A
+@nativ
+konstante MOOFS_IST_ORDNER: u32 auf 0x4000B
+@nativ
+konstante MOOFS_NICHT_LEER: u32 auf 0x4000C
+
+@nativ
+funktion moofs_record_finden(w: ptr[MooFsSchreiber], key: MooFsSchluessel) -> u64:
+    unsicher:
+        setze unten: u64 auf 0
+        setze oben: u64 auf w.anzahl
+        solange unten < oben:
+            setze mitte: u64 auf unten + (oben - unten) / 2
+            wenn moofs_schluessel_vergleichen(w.eintraege[mitte].schluessel, key) < 0:
+                setze unten auf mitte + 1
+            sonst:
+                setze oben auf mitte
+        gib_zurück unten
+
+@nativ
+funktion moofs_schreib_inode(w: ptr[MooFsSchreiber], nummer: u64) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 600, 0))
+        setze key: MooFsSchluessel auf MooFsSchluessel(nummer, 1, 0)
+        setze i: u64 auf moofs_record_finden(w, key)
+        wenn i == w.anzahl oder moofs_schluessel_vergleichen(w.eintraege[i].schluessel, key) != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 600, 0))
+        gib_zurück erfolg(i)
+
+@nativ
+funktion moofs_record_einfuegen(w: ptr[MooFsSchreiber], e: MooFsEintrag) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn w.anzahl >= w.kapazitaet:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 600, 0))
+        setze i: u64 auf moofs_record_finden(w, e.schluessel)
+        wenn i < w.anzahl und moofs_schluessel_vergleichen(w.eintraege[i].schluessel, e.schluessel) == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VORHANDEN, 600, 0))
+        setze j: u64 auf w.anzahl
+        solange j > i:
+            setze w.eintraege[j] auf w.eintraege[j - 1]
+            setze j auf j - 1
+        setze w.eintraege[i] auf e
+        setze w.anzahl auf w.anzahl + 1
+        setze w.reserve auf moofs_baum_bloecke(w.anzahl + 3) + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_record_entfernen(w: ptr[MooFsSchreiber], index: u64) -> void:
+    unsicher:
+        setze i: u64 auf index
+        solange i + 1 < w.anzahl:
+            setze w.eintraege[i] auf w.eintraege[i + 1]
+            setze i auf i + 1
+        setze w.anzahl auf w.anzahl - 1
+
+@nativ
+funktion moofs_schreib_name(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        wenn nicht moofs_name_pruefen(name):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_NAME, 600, 0))
+        setze p: u64 auf weitergeben(moofs_schreib_inode(w, eltern))
+        wenn w.eintraege[p].b != 2:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_NICHT_ORDNER, 0, 0))
+        setze i: u64 auf moofs_record_finden(w, MooFsSchluessel(eltern, 3, 0))
+        solange i < w.anzahl und w.eintraege[i].schluessel.objekt == eltern und w.eintraege[i].schluessel.art == 3:
+            setze gleich: bool auf w.eintraege[i].b == länge(name)
+            setze j: u64 auf 0
+            solange gleich und j < länge(name):
+                setze gleich auf w.eintraege[i].name[j] == name[j]
+                setze j auf j + 1
+            wenn gleich:
+                gib_zurück erfolg(i)
+            setze i auf i + 1
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 601, 0))
+
+@nativ
+funktion moofs_dirent_einfuegen(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8], kind: u64, art: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze index: u64 auf 0
+        setze i: u64 auf moofs_record_finden(w, MooFsSchluessel(eltern, 3, 0))
+        solange i < w.anzahl und w.eintraege[i].schluessel.objekt == eltern und w.eintraege[i].schluessel.art == 3:
+            wenn w.eintraege[i].schluessel.index == 0xFFFFFFFFFFFFFFFF:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 601, 0))
+            setze index auf w.eintraege[i].schluessel.index + 1
+            setze i auf i + 1
+        setze e: MooFsEintrag auf 0
+        setze e.schluessel auf MooFsSchluessel(eltern, 3, index)
+        setze e.a auf kind
+        setze e.b auf länge(name)
+        setze e.c auf art
+        setze i auf 0
+        solange i < länge(name):
+            setze e.name[i] auf name[i]
+            setze i auf i + 1
+        gib_zurück moofs_record_einfuegen(w, e)
+
+@nativ
+funktion moofs_super_veroeffentlichen(w: ptr[MooFsSchreiber], kandidat: MooFsVolume, ziel: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        moofs_block_vorbereiten(zeiger(adresse_von(w.block)), ziel, 1, 0, 0, 0, 0, kandidat.generation)
+        setze bytes: puffer[u8] auf byteansicht(w.block.bytes)
+        setze s: puffer[MooFsSuper] auf sicht(bytes, MooFsSuper, 0)
+        setze s[0].version auf 1
+        setze s[0].bloecke auf kandidat.bloecke
+        setze s[0].wurzel auf kandidat.wurzel
+        setze s[0].wurzel_crc auf kandidat.wurzel_crc
+        setze s[0].hoehe auf kandidat.hoehe
+        setze s[0].naechster auf kandidat.naechster
+        setze s[0].kennung1 auf kandidat.kennung1
+        setze s[0].kennung2 auf kandidat.kennung2
+        setze crc: u32 auf weitergeben(moofs_block_schreiben(zeiger(adresse_von(kandidat)), ziel, bytes))
+        weitergeben(moofs_barriere(w.volume.transport))
+        gib_zurück erfolg()
+
+# Die ältere Wurzel darf erst nach bestätigter Veröffentlichung des aktuellen
+# Standes aus der zweiten Kopie entfernt werden. Das gibt ihre Blöcke frei.
+@nativ
+funktion moofs_checkpoint(w: ptr[MooFsSchreiber]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 604, 0))
+        wenn w.redundant:
+            gib_zurück erfolg()
+        setze kandidat: MooFsVolume auf w.volume
+        setze w.bereit auf falsch
+        weitergeben(moofs_super_veroeffentlichen(w, kandidat, w.ziel))
+        gib_zurück moofs_schreiber_neuladen(w)
+
+@nativ
+funktion moofs_commit(w: ptr[MooFsSchreiber]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit oder w.volume.generation == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 601, 0))
+        wenn moofs_baum_bloecke(w.anzahl) > w.frei:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 602, 0))
+        setze geber: ptr[dyn MooFsBlockgeber] auf w
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(w.volume))
+        setze baum: MooFsBaum auf weitergeben(moofs_baum_schreiben(v, w.volume.generation + 1, w.eintraege, w.anzahl, w.kinder, w.kinder_kapazitaet, geber, zeiger(adresse_von(w.block))))
+        # Ab der ersten Barriere bleibt jeder unklare Fehler bis Remount gesperrt.
+        setze w.bereit auf falsch
+        weitergeben(moofs_barriere(w.volume.transport))
+        setze kandidat: MooFsVolume auf w.volume
+        setze kandidat.wurzel auf baum.wurzel
+        setze kandidat.wurzel_crc auf baum.crc
+        setze kandidat.hoehe auf baum.hoehe
+        setze kandidat.generation auf kandidat.generation + 1
+        setze kandidat.naechster auf w.neues_ende
+        weitergeben(moofs_super_veroeffentlichen(w, kandidat, w.ziel))
+        setze w.volume auf kandidat
+        gib_zurück moofs_schreiber_neuladen(w)
+
+# Vor Veröffentlichung sind verworfene neue Blöcke unreferenziert. Ein erneutes
+# Inventar stellt den alten Zustand wieder her; unklare Publikation bleibt gesperrt.
+@nativ
+funktion moofs_mutation_ergebnis(w: ptr[MooFsSchreiber], r: ergebnis[u64, MooFsFehler]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        wenn ist_erfolg(r):
+            gib_zurück erfolg(ergebnis_wert(r))
+        setze f: MooFsFehler auf ergebnis_fehler(r)
+        wenn w.bereit:
+            weitergeben(moofs_schreiber_neuladen(w))
+        gib_zurück fehlschlag(f)
+
+@nativ
+funktion moofs_anlegen_intern(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8], ordner: bool) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze gesucht: ergebnis[u64, MooFsFehler] auf moofs_schreib_name(w, eltern, name)
+        wenn ist_erfolg(gesucht):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VORHANDEN, 601, 0))
+        setze fehler: MooFsFehler auf ergebnis_fehler(gesucht)
+        wenn fehler.code != MOOFS_FEHLT:
+            gib_zurück fehlschlag(fehler)
+        wenn w.kapazitaet - w.anzahl < 2:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 601, 0))
+        weitergeben(moofs_checkpoint(w))
+        setze nr: u64 auf 1
+        setze i: u64 auf 0
+        solange i < w.anzahl:
+            wenn w.eintraege[i].schluessel.objekt > nr:
+                setze nr auf w.eintraege[i].schluessel.objekt
+            setze i auf i + 1
+        wenn nr == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 603, 0))
+        setze nr auf nr + 1
+        setze inode: MooFsEintrag auf 0
+        setze inode.schluessel auf MooFsSchluessel(nr, 1, 0)
+        setze inode.b auf 1
+        wenn ordner:
+            setze inode.b auf 2
+        setze inode.c auf 1
+        weitergeben(moofs_record_einfuegen(w, inode))
+        weitergeben(moofs_dirent_einfuegen(w, eltern, name, nr, inode.b))
+        weitergeben(moofs_commit(w))
+        gib_zurück erfolg(nr)
+
+@nativ
+funktion moofs_anlegen(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8], ordner: bool) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        gib_zurück moofs_mutation_ergebnis(w, moofs_anlegen_intern(w, eltern, name, ordner))
+
+@nativ
+funktion moofs_inode_entfernen(w: ptr[MooFsSchreiber], nr: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nr == 1:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 602, 0))
+        setze inode: u64 auf weitergeben(moofs_schreib_inode(w, nr))
+        wenn w.eintraege[inode].b == 2:
+            setze k: u64 auf moofs_record_finden(w, MooFsSchluessel(nr, 3, 0))
+            wenn k < w.anzahl und w.eintraege[k].schluessel.objekt == nr und w.eintraege[k].schluessel.art == 3:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_NICHT_LEER, 0, 0))
+        setze i: u64 auf moofs_record_finden(w, MooFsSchluessel(nr, 1, 0))
+        solange i < w.anzahl und w.eintraege[i].schluessel.objekt == nr:
+            moofs_record_entfernen(w, i)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_loeschen_intern(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze dir: u64 auf weitergeben(moofs_schreib_name(w, eltern, name))
+        setze nr: u64 auf w.eintraege[dir].a
+        weitergeben(moofs_checkpoint(w))
+        weitergeben(moofs_inode_entfernen(w, nr))
+        setze dir auf weitergeben(moofs_schreib_name(w, eltern, name))
+        moofs_record_entfernen(w, dir)
+        weitergeben(moofs_commit(w))
+        gib_zurück erfolg(0)
+
+@nativ
+funktion moofs_loeschen(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze wert: u64 auf weitergeben(moofs_mutation_ergebnis(w, moofs_loeschen_intern(w, eltern, name)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_abgleichen(w: ptr[MooFsSchreiber]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 603, 0))
+        weitergeben(moofs_checkpoint(w))
+        setze w.bereit auf falsch
+        weitergeben(moofs_barriere(w.volume.transport))
+        setze w.bereit auf wahr
+        gib_zurück erfolg()
+
+# Jede Datenänderung benutzt einen neuen Block. Unveränderte Extents bleiben geliehen.
+@nativ
+funktion moofs_extent_bereich_entfernen(w: ptr[MooFsSchreiber], nr: u64, start: u64, ende: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze i: u64 auf moofs_record_finden(w, MooFsSchluessel(nr, 2, 0))
+        solange i < w.anzahl und w.eintraege[i].schluessel.objekt == nr und w.eintraege[i].schluessel.art == 2:
+            setze alt: MooFsEintrag auf w.eintraege[i]
+            setze ab: u64 auf alt.schluessel.index
+            setze bis: u64 auf ab + alt.b
+            wenn ab >= ende:
+                stopp
+            wenn bis <= start:
+                setze i auf i + 1
+            sonst:
+                moofs_record_entfernen(w, i)
+                wenn ab < start:
+                    setze links: MooFsEintrag auf alt
+                    setze links.b auf start - ab
+                    weitergeben(moofs_record_einfuegen(w, links))
+                    setze i auf i + 1
+                wenn bis > ende:
+                    setze rechts: MooFsEintrag auf alt
+                    setze rechts.schluessel.index auf ende
+                    setze rechts.a auf alt.a + ende - ab
+                    setze rechts.b auf bis - ende
+                    weitergeben(moofs_record_einfuegen(w, rechts))
+                    stopp
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_extents_verbinden(w: ptr[MooFsSchreiber], nr: u64) -> void:
+    unsicher:
+        setze i: u64 auf moofs_record_finden(w, MooFsSchluessel(nr, 2, 0))
+        solange i + 1 < w.anzahl und w.eintraege[i + 1].schluessel.objekt == nr und w.eintraege[i + 1].schluessel.art == 2:
+            wenn w.eintraege[i].schluessel.index + w.eintraege[i].b == w.eintraege[i + 1].schluessel.index und w.eintraege[i].a + w.eintraege[i].b == w.eintraege[i + 1].a:
+                setze w.eintraege[i].b auf w.eintraege[i].b + w.eintraege[i + 1].b
+                moofs_record_entfernen(w, i + 1)
+            sonst:
+                setze i auf i + 1
+
+# Abgeschnittene Endblöcke dürfen die zusätzliche Datenreserve benutzen.
+@nativ
+funktion moofs_datenblock(w: ptr[MooFsSchreiber], nr: u64, logisch: u64, alt_bytes: u64, neu_bytes: u64, offset: u64, quelle: puffer[u8], kuerzen: bool) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze start: u64 auf logisch * 4032
+        setze menge: u64 auf neu_bytes - start
+        wenn menge > 4032:
+            setze menge auf 4032
+        setze block: u64 auf weitergeben(moofs_freien_block(w, kuerzen))
+        moofs_block_vorbereiten(zeiger(adresse_von(w.daten)), block, 4, 0, als(u32, menge), nr, logisch, w.volume.generation + 1)
+        setze bytes: puffer[u8] auf byteansicht(w.daten.bytes)
+        wenn start < alt_bytes:
+            setze behalten: u64 auf alt_bytes - start
+            wenn behalten > menge:
+                setze behalten auf menge
+            setze payload: ptr[u8] auf zeiger(adresse_von(w.daten.bytes[64]))
+            setze gelesen: u64 auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), nr, start, byteansicht(payload, behalten)))
+            wenn gelesen != behalten:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 610, block))
+        setze beginn: u64 auf start
+        wenn beginn < offset:
+            setze beginn auf offset
+        setze bis: u64 auf start + menge
+        wenn bis > offset + länge(quelle):
+            setze bis auf offset + länge(quelle)
+        solange beginn < bis:
+            setze bytes[64 + beginn - start] auf quelle[beginn - offset]
+            setze beginn auf beginn + 1
+        setze crc: u32 auf weitergeben(moofs_block_schreiben(zeiger(adresse_von(w.volume)), block, bytes))
+        weitergeben(moofs_extent_bereich_entfernen(w, nr, logisch, logisch + 1))
+        setze extent: MooFsEintrag auf 0
+        setze extent.schluessel auf MooFsSchluessel(nr, 2, logisch)
+        setze extent.a auf block
+        setze extent.b auf 1
+        weitergeben(moofs_record_einfuegen(w, extent))
+        moofs_extents_verbinden(w, nr)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_datei_aendern(w: ptr[MooFsSchreiber], nr: u64, offset: u64, quelle: puffer[u8], neue_groesse: u64, kuerzen: bool) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze pos: u64 auf weitergeben(moofs_schreib_inode(w, nr))
+        wenn w.eintraege[pos].b != 1:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_IST_ORDNER, 0, 0))
+        setze alt: u64 auf w.eintraege[pos].a
+        wenn offset > 0xFFFFFFFFFFFFFFFF - länge(quelle) oder w.volume.generation == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 610, 0))
+        setze ziel_bytes: u64 auf neue_groesse
+        wenn nicht kuerzen:
+            setze ziel_bytes auf alt
+            wenn länge(quelle) == 0:
+                gib_zurück erfolg(0)
+            wenn offset + länge(quelle) > ziel_bytes:
+                setze ziel_bytes auf offset + länge(quelle)
+        sonst wenn ziel_bytes == alt:
+            gib_zurück erfolg(0)
+        # Zusätzliche Extentstücke prüft moofs_record_einfuegen konkret.
+        # Reines Entfernen bleibt auch bei vollständig belegtem Recordpuffer möglich.
+        weitergeben(moofs_checkpoint(w))
+        setze erster: u64 auf offset / 4032
+        setze letzter: u64 auf 0
+        wenn kuerzen:
+            setze erster auf ziel_bytes / 4032
+            wenn ziel_bytes > alt:
+                setze erster auf alt / 4032
+            setze letzter auf ziel_bytes / 4032
+            wenn ziel_bytes % 4032 != 0:
+                setze letzter auf letzter + 1
+        sonst:
+            wenn ziel_bytes > alt und erster > alt / 4032:
+                setze erster auf alt / 4032
+            setze letzter auf (offset + länge(quelle)) / 4032
+            wenn (offset + länge(quelle)) % 4032 != 0:
+                setze letzter auf letzter + 1
+        setze i: u64 auf erster
+        solange i < letzter:
+            weitergeben(moofs_datenblock(w, nr, i, alt, ziel_bytes, offset, quelle, kuerzen und ziel_bytes < alt))
+            setze i auf i + 1
+        wenn kuerzen und ziel_bytes < alt:
+            setze ab: u64 auf ziel_bytes / 4032
+            wenn ziel_bytes % 4032 != 0:
+                setze ab auf ab + 1
+            weitergeben(moofs_extent_bereich_entfernen(w, nr, ab, 0xFFFFFFFFFFFFFFFF))
+        setze pos auf weitergeben(moofs_schreib_inode(w, nr))
+        setze w.eintraege[pos].a auf ziel_bytes
+        weitergeben(moofs_commit(w))
+        gib_zurück erfolg(länge(quelle))
+
+@nativ
+funktion moofs_schreiben(w: ptr[MooFsSchreiber], nr: u64, offset: u64, quelle: puffer[u8]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        gib_zurück moofs_mutation_ergebnis(w, moofs_datei_aendern(w, nr, offset, quelle, 0, falsch))
+
+@nativ
+funktion moofs_kuerzen(w: ptr[MooFsSchreiber], nr: u64, bytes: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze leer: ptr[u8] auf nichts
+        setze wert: u64 auf weitergeben(moofs_mutation_ergebnis(w, moofs_datei_aendern(w, nr, 0, byteansicht(leer, 0), bytes, wahr)))
+        gib_zurück erfolg()
+
+# Verhindert Elternzyklen ohne Rekursion. Beschädigte Verzeichnisgraphen werden
+# spätestens nach Anzahl der Records abgewiesen.
+@nativ
+funktion moofs_verschieben_pruefen(w: ptr[MooFsSchreiber], nr: u64, eltern: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze aktuell: u64 auf eltern
+        setze schritte: u64 auf 0
+        solange aktuell != 1:
+            wenn aktuell == nr oder schritte >= w.anzahl:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 620, 0))
+            setze gefunden: bool auf falsch
+            setze kind_nr: u64 auf aktuell
+            setze i: u64 auf 0
+            solange i < w.anzahl:
+                wenn w.eintraege[i].schluessel.art == 3 und w.eintraege[i].a == kind_nr:
+                    wenn gefunden:
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 620, 0))
+                    setze gefunden auf wahr
+                    setze aktuell auf w.eintraege[i].schluessel.objekt
+                setze i auf i + 1
+            wenn nicht gefunden:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 621, 0))
+            setze schritte auf schritte + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_umbenennen_intern(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8], ziel_eltern: u64, ziel: puffer[u8]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze beginn: u64 auf weitergeben(moofs_schreib_name(w, eltern, name))
+        setze nr: u64 auf w.eintraege[beginn].a
+        setze art: u64 auf w.eintraege[beginn].c
+        setze nach: ergebnis[u64, MooFsFehler] auf moofs_schreib_name(w, ziel_eltern, ziel)
+        setze ersetzen: bool auf ist_erfolg(nach)
+        setze ziel_nr: u64 auf 0
+        wenn ersetzen:
+            setze ziel_pos: u64 auf ergebnis_wert(nach)
+            setze ziel_nr auf w.eintraege[ziel_pos].a
+            wenn ziel_nr == nr:
+                gib_zurück erfolg(0)
+            wenn w.eintraege[ziel_pos].c != art:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 622, 0))
+        sonst:
+            setze f: MooFsFehler auf ergebnis_fehler(nach)
+            wenn f.code != MOOFS_FEHLT:
+                gib_zurück fehlschlag(f)
+        wenn art == 2:
+            weitergeben(moofs_verschieben_pruefen(w, nr, ziel_eltern))
+        weitergeben(moofs_checkpoint(w))
+        wenn ersetzen:
+            weitergeben(moofs_inode_entfernen(w, ziel_nr))
+            setze weg: u64 auf weitergeben(moofs_schreib_name(w, ziel_eltern, ziel))
+            moofs_record_entfernen(w, weg)
+        setze beginn auf weitergeben(moofs_schreib_name(w, eltern, name))
+        moofs_record_entfernen(w, beginn)
+        weitergeben(moofs_dirent_einfuegen(w, ziel_eltern, ziel, nr, art))
+        weitergeben(moofs_commit(w))
+        gib_zurück erfolg(0)
+
+@nativ
+funktion moofs_umbenennen(w: ptr[MooFsSchreiber], eltern: u64, name: puffer[u8], ziel_eltern: u64, ziel: puffer[u8]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze wert: u64 auf weitergeben(moofs_mutation_ergebnis(w, moofs_umbenennen_intern(w, eltern, name, ziel_eltern, ziel)))
+        gib_zurück erfolg()

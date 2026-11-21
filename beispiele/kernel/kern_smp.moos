@@ -1,5 +1,6 @@
 # P10-T11: MADT-Aufzählung und Ressourcen je CPU. AP-Start folgt in T12.
 importiere nativ_x86_deskriptoren
+aus "kern_native_cleanup" importiere native_cleanup_bereit, native_cleanup_starten, native_cleanup_fuer
 aus "kern_faden" importiere FadenPlaner, FADEN_ANZAHL, FADEN_STACK_SEITEN, faden_planer_starten, faden_tss_binden
 aus "kern_syscall_abi" importiere SyscallLokal, syscall_gdt_schreiben
 
@@ -261,6 +262,7 @@ funktion smp_ressourcen(alloc_adr: u64, phys_adr: u64, bi: u64, pdpt: u64, bsp_s
         lade_tss()
         # Segmentneuladen kann die GS-Basis ändern: erst danach erneut setzen.
         wrmsr(0xC0000101, smp_kern(0).basis)
+        native_cleanup_starten()
         gib_zurück pro_kern_basis() == KERN_LOKAL.eigenbasis und smp_nummer() == 0
 
 @nativ
@@ -285,3 +287,12 @@ funktion smp_melden(ausgabe_adr: u64, ok: bool) -> void:
         wenn nicht ok:
             solange wahr:
                 assembler(ziel="x86_64", code="cli; hlt", clobber=["memory"])
+
+
+# Compilerinterner Slottraeger: kein Yield, kein aufraeumen.
+@nativ
+funktion kern_native_cleanup_ort() -> ptr[ptr[void]]:
+    unsicher:
+        wenn nicht native_cleanup_bereit():
+            gib_zurück native_cleanup_fuer(0, 0)
+        gib_zurück native_cleanup_fuer(KERN_LOKAL.nummer, KERN_LOKAL.planer.fp_aktiv)

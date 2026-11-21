@@ -2,7 +2,7 @@
 # Benutzerzeiger an VFS/Treiber. Alle elf Operationen liefern errno statt Trap.
 aus vfs importiere VfsFehler, VfsStat, VfsEintrag, VFS_ENOMEM, VFS_EBADF, VFS_EINVAL, VFS_ENOENT, VFS_ENAMETOOLONG
 aus moos_datei_abi importiere MoosDateiStat, MoosDateiVerzeichnis, MOOS_DATEI_EFAULT, MOOS_DATEI_ERANGE, MOOS_DATEI_OEFFNEN, MOOS_DATEI_LESEN, MOOS_DATEI_SCHREIBEN, MOOS_DATEI_SCHLIESSEN, MOOS_DATEI_STAT, MOOS_DATEI_VERZEICHNIS, MOOS_DATEI_POSITION, MOOS_DATEI_ABGLEICHEN, MOOS_DATEI_ANLEGEN, MOOS_DATEI_LOESCHEN, MOOS_DATEI_UMBENENNEN
-aus "kern_vfs" importiere KernVfsDateien, kern_vfs_oeffnen, kern_vfs_lesen, kern_vfs_schreiben, kern_vfs_schliessen, kern_vfs_stat, kern_vfs_verzeichnis, kern_vfs_position_begrenzt, kern_vfs_abgleichen, kern_vfs_anlegen, kern_vfs_loeschen, kern_vfs_umbenennen
+aus "kern_vfs" importiere KernVfsDateien, KERN_DATEI_TRANSFER_MAX_SEITEN, kern_vfs_oeffnen, kern_vfs_lesen, kern_vfs_schreiben, kern_vfs_schliessen, kern_vfs_stat, kern_vfs_verzeichnis, kern_vfs_position_begrenzt, kern_vfs_abgleichen, kern_vfs_anlegen, kern_vfs_loeschen, kern_vfs_umbenennen
 aus "kern_adressraum" importiere Adressraum, ar_benutzer_kopieren, ar_benutzer_zurueckkopieren, ar_benutzer_bereich, ar_rahmen_nehmen, ar_rahmen_freigeben
 
 @nativ
@@ -71,11 +71,15 @@ funktion datei_syscall_daten(raum: ptr[Adressraum], dateien: ptr[KernVfsDateien]
             wenn schreiben:
                 gib_zurück kern_vfs_schreiben(dateien, fd, byteansicht(leer, 0))
             gib_zurück kern_vfs_lesen(dateien, fd, byteansicht(leer, 0))
+        setze max_seiten: u64 auf dateien.transfer_seiten
+        wenn max_seiten == 0 oder max_seiten > KERN_DATEI_TRANSFER_MAX_SEITEN:
+            setze max_seiten auf 1
         setze menge: u64 auf bytes
-        wenn menge > 4096:
-            setze menge auf 4096
-        setze basis: u64 auf weitergeben(datei_syscall_speicher(1))
-        aufräumen: datei_syscall_freigeben(basis, 1)
+        wenn menge > max_seiten * 4096:
+            setze menge auf max_seiten * 4096
+        setze seiten: u64 auf (menge + 4095) / 4096
+        setze basis: u64 auf weitergeben(datei_syscall_speicher(seiten))
+        aufräumen: datei_syscall_freigeben(basis, seiten)
         setze p: ptr[u8] auf zeiger(basis)
         wenn schreiben:
             wenn nicht ar_benutzer_kopieren(raum, basis, adresse, menge):

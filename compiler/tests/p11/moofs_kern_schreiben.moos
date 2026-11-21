@@ -1,0 +1,84 @@
+aus ds_moofs importiere MooFsVolume, MooFsInode, MooFsFehler, MooFsBlock, MOOFS_ARGUMENT, MOOFS_EA, moofs_oeffnen, moofs_suchen, moofs_lesen
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus ds_fat_transport importiere FatTransport
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion open(name: ptr[u8], flags: i32) -> i32
+extern "C" funktion close(fd: i32) -> i32
+@nativ
+statisch MOOFS_HOST_BLOCK: [u64; 1] auf [0]
+@nativ
+funktion moofs_host_close(fd: i32) -> void:
+    unsicher:
+        setze status: i32 auf close(fd)
+@nativ
+funktion moofs_host_lesen() -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze env: [u8; 16] auf [77, 79, 79, 95, 77, 79, 79, 70, 83, 95, 80, 82, 85, 69, 70, 0]
+        setze bild: ptr[u8] auf getenv(zeiger(adresse_von(env)))
+        wenn u64(bild) == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 300, 0))
+        setze fd: i32 auf open(bild, 0)
+        wenn fd < 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 301, 0))
+        aufräumen: moofs_host_close(fd)
+        setze adapter: FatPosix auf 0
+        setze a: ptr[FatPosix] auf zeiger(adresse_von(adapter))
+        setze ok: bool auf ist_erfolg(fat_posix_einrichten(a, fd, 512, wahr))
+        wenn nicht ok:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 302, 0))
+        setze t: ptr[dyn FatTransport] auf a
+        setze volume: MooFsVolume auf 0
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(volume))
+        weitergeben(moofs_oeffnen(v, t))
+        setze pfad: [u8; 9] auf [100, 97, 116, 101, 110, 46, 98, 105, 110]
+        setze inode: MooFsInode auf weitergeben(moofs_suchen(v, byteansicht(pfad)))
+        wenn inode.bytes != 1048576:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 303, inode.metablock))
+        setze speicher: MooFsBlock auf 0
+        setze offset: u64 auf 0
+        solange offset < inode.bytes:
+            setze n: u64 auf weitergeben(moofs_lesen(v, inode.nummer, offset, byteansicht(speicher.bytes)))
+            wenn n == 0 oder n > 4096:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 304, 0))
+            setze i: u64 auf 0
+            solange i < n:
+                wenn speicher.bytes[i] != als_wrap(u8, (offset + i) * 37 + 11):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 305, 0))
+                setze i auf i + 1
+            setze offset auf offset + n
+        setze y: [u8; 1] auf [121]
+        setze geschrieben: MooFsInode auf weitergeben(moofs_suchen(v, byteansicht(y)))
+        wenn geschrieben.bytes != 12289:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 306, 0))
+        setze offset auf 0
+        solange offset < geschrieben.bytes:
+            setze n_neu: u64 auf weitergeben(moofs_lesen(v, geschrieben.nummer, offset, byteansicht(speicher.bytes)))
+            wenn n_neu == 0 oder n_neu > 4096:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 307, 0))
+            setze j: u64 auf 0
+            solange j < n_neu:
+                wenn speicher.bytes[j] != als(u8, ((offset + j) * 53 + 23) & 255):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 308, 0))
+                setze j auf j + 1
+            setze offset auf offset + n_neu
+        gib_zurück erfolg()
+@nativ
+funktion moofs_host_code() -> u32:
+    unsicher:
+        setze r: ergebnis[void, MooFsFehler] auf moofs_host_lesen()
+        wenn nicht ist_erfolg(r):
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            setze MOOFS_HOST_BLOCK[0] auf f.block
+            gib_zurück f.code
+        gib_zurück 0
+@nativ
+funktion moofs_host_block() -> u64:
+    unsicher:
+        gib_zurück MOOFS_HOST_BLOCK[0]
+# FEHLERPFAD(M-F001): Abnahme muss unerwartete Sprachfehler sichtbar abbrechen.
+unsicher:
+    setze status auf moofs_host_code()
+    zeige status
+    wenn status != 0:
+        zeige moofs_host_block()
+        beende(1)

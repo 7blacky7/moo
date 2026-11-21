@@ -1,0 +1,342 @@
+# MooFS-Adapter zum vorhandenen VFS. Der Besitzer serialisiert alle Zugriffe.
+# Offene Inodes dürfen nicht gelöscht/ersetzt werden; Rename erhält die Identität.
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VfsEintrag, VfsPfad, vfs_pfad, VFS_EIO, VFS_EINVAL, VFS_ENOENT, VFS_EROFS, VFS_ENOSPC, VFS_ENOMEM, VFS_EEXIST, VFS_ENOTEMPTY, VFS_EBADF, VFS_EBUSY, VFS_EMFILE, VFS_EISDIR, VFS_ENOTDIR, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_LEEREN, VFS_ANHAENGEN, VFS_EXKLUSIV, VFS_VERZEICHNIS, VFS_DATEI, VFS_ORDNER
+aus ds_moofs importiere MooFsVolume, MooFsInode, MooFsEintrag, MooFsFehler, MOOFS_FEHLT, MOOFS_NAME, MOOFS_ARGUMENT, MOOFS_VOLL, MOOFS_NUR_LESEN, moofs_inode, moofs_verzeichnis, moofs_lesen
+aus ds_moofs_allokator importiere MooFsSchreiber, MOOFS_SPEICHER
+aus ds_moofs_schreiben importiere MOOFS_VORHANDEN, MOOFS_NICHT_ORDNER, MOOFS_IST_ORDNER, MOOFS_NICHT_LEER, moofs_anlegen, moofs_schreiben, moofs_kuerzen, moofs_loeschen, moofs_umbenennen, moofs_abgleichen
+
+struktur MooFsVfsGriff:
+    inode: u64
+    generation: u64
+    modus: u32
+    aktiv: bool
+struktur MooFsVfsPfad:
+    inode: MooFsInode
+    eltern: u64
+    ab: u64
+    anzahl: u64
+    vorhanden: bool
+
+struktur MooFsDateisystem implementiert Dateisystem:
+    volume: ptr[MooFsVolume]
+    schreiber: ptr[MooFsSchreiber]
+    bereit: bool
+    griffe: [MooFsVfsGriff; 256]
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn (modus & 0xFFFFFF80) != 0 oder (modus & 3) == 0 oder ((modus & (VFS_LEEREN | VFS_ANHAENGEN)) != 0 und (modus & VFS_SCHREIBEN) == 0):
+                gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: MooFsVfsPfad auf weitergeben(moofs_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.vorhanden und (modus & (VFS_ANLEGEN | VFS_EXKLUSIV)) == (VFS_ANLEGEN | VFS_EXKLUSIV):
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            wenn ziel.vorhanden:
+                wenn (modus & VFS_VERZEICHNIS) != 0 und ziel.inode.art != 2:
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+                wenn ziel.inode.art == 2 und (modus & VFS_SCHREIBEN) != 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            sonst:
+                wenn (modus & VFS_ANLEGEN) == 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+                wenn (modus & VFS_VERZEICHNIS) != 0:
+                    gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+            wenn (modus & VFS_SCHREIBEN) != 0 oder nicht ziel.vorhanden:
+                weitergeben(moofs_vfs_schreibbar(selbst))
+            setze slot: u64 auf 0
+            solange slot < 256:
+                wenn nicht selbst.griffe[slot].aktiv und selbst.griffe[slot].generation < 0x00FFFFFFFFFFFFFF:
+                    stopp
+                setze slot auf slot + 1
+            wenn slot == 256:
+                gib_zurück fehlschlag(VfsFehler(VFS_EMFILE, 0, 0))
+            wenn nicht ziel.vorhanden:
+                setze p: ptr[u8] auf zeiger(adresse_von(normal.bytes[ziel.ab]))
+                setze nr: u64 auf weitergeben(moofs_vfs_u64(moofs_anlegen(selbst.schreiber, ziel.eltern, byteansicht(p, ziel.anzahl), falsch)))
+                setze ziel.inode.nummer auf nr
+            wenn (modus & VFS_LEEREN) != 0:
+                weitergeben(moofs_vfs_void(moofs_kuerzen(selbst.schreiber, ziel.inode.nummer, 0)))
+            setze selbst.griffe[slot].inode auf ziel.inode.nummer
+            setze selbst.griffe[slot].modus auf modus
+            setze selbst.griffe[slot].generation auf selbst.griffe[slot].generation + 1
+            setze selbst.griffe[slot].aktiv auf wahr
+            gib_zurück erfolg(selbst.griffe[slot].generation * 256 + slot)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            setze selbst.griffe[slot].aktiv auf falsch
+            wenn u64(selbst.schreiber) == 0:
+                gib_zurück erfolg()
+            gib_zurück moofs_vfs_void(moofs_abgleichen(selbst.schreiber))
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            weitergeben(moofs_vfs_bereit(selbst))
+            wenn (selbst.griffe[slot].modus & VFS_LESEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze inode: MooFsInode auf weitergeben(moofs_vfs_inode(selbst, selbst.griffe[slot].inode))
+            wenn inode.art != 1:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 0, 0))
+            gib_zurück moofs_vfs_u64(moofs_lesen(selbst.volume, inode.nummer, offset, daten))
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            wenn (selbst.griffe[slot].modus & VFS_SCHREIBEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            weitergeben(moofs_vfs_schreibbar(selbst))
+            gib_zurück moofs_vfs_u64(moofs_schreiben(selbst.schreiber, selbst.griffe[slot].inode, offset, daten))
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            setze inode: MooFsInode auf weitergeben(moofs_vfs_inode(selbst, selbst.griffe[slot].inode))
+            setze rechte: u32 auf 1
+            wenn u64(selbst.schreiber) != 0:
+                setze rechte auf 3
+            gib_zurück erfolg(VfsStat(als(u32, inode.art), rechte, inode.bytes))
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            setze inode: MooFsInode auf weitergeben(moofs_vfs_inode(selbst, selbst.griffe[slot].inode))
+            wenn inode.art != 2:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            wenn (selbst.griffe[slot].modus & VFS_LESEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            setze ab: u64 auf 0
+            setze gesehen: u64 auf 0
+            solange wahr:
+                setze r: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_verzeichnis(selbst.volume, inode.nummer, ab)
+                wenn nicht ist_erfolg(r):
+                    gib_zurück fehlschlag(moofs_vfs_fehler(ergebnis_fehler(r)))
+                setze e: MooFsEintrag auf ergebnis_wert(r)
+                wenn gesehen == index:
+                    setze kind: MooFsInode auf weitergeben(moofs_vfs_inode(selbst, e.a))
+                    setze wert: VfsEintrag auf 0
+                    setze wert.art auf als(u32, kind.art)
+                    setze wert.bytes auf kind.bytes
+                    setze wert.name_bytes auf e.b
+                    setze i: u64 auf 0
+                    solange i < e.b:
+                        setze wert.name[i] auf e.name[i]
+                        setze i auf i + 1
+                    gib_zurück erfolg(wert)
+                wenn e.schluessel.index == 0xFFFFFFFFFFFFFFFF:
+                    gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+                setze ab auf e.schluessel.index + 1
+                setze gesehen auf gesehen + 1
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze slot: u64 auf weitergeben(moofs_vfs_griff(selbst, griff))
+            wenn (selbst.griffe[slot].modus & VFS_SCHREIBEN) == 0:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+            weitergeben(moofs_vfs_schreibbar(selbst))
+            gib_zurück moofs_vfs_void(moofs_kuerzen(selbst.schreiber, selbst.griffe[slot].inode, bytes))
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(moofs_vfs_schreibbar(selbst))
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: MooFsVfsPfad auf weitergeben(moofs_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn ziel.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 0, 0))
+            setze p: ptr[u8] auf zeiger(adresse_von(normal.bytes[ziel.ab]))
+            setze nr: u64 auf weitergeben(moofs_vfs_u64(moofs_anlegen(selbst.schreiber, ziel.eltern, byteansicht(p, ziel.anzahl), verzeichnis)))
+            gib_zurück erfolg()
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(moofs_vfs_schreibbar(selbst))
+            setze normal: VfsPfad auf 0
+            weitergeben(vfs_pfad(pfad, zeiger(adresse_von(normal))))
+            setze ziel: MooFsVfsPfad auf weitergeben(moofs_vfs_pfad(selbst, zeiger(adresse_von(normal))))
+            wenn nicht ziel.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn ziel.inode.nummer == 1 oder moofs_vfs_offen(selbst, ziel.inode.nummer):
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            setze p: ptr[u8] auf zeiger(adresse_von(normal.bytes[ziel.ab]))
+            gib_zurück moofs_vfs_void(moofs_loeschen(selbst.schreiber, ziel.eltern, byteansicht(p, ziel.anzahl)))
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(moofs_vfs_schreibbar(selbst))
+            setze a: VfsPfad auf 0
+            setze b: VfsPfad auf 0
+            weitergeben(vfs_pfad(quelle, zeiger(adresse_von(a))))
+            weitergeben(vfs_pfad(ziel, zeiger(adresse_von(b))))
+            setze alt: MooFsVfsPfad auf weitergeben(moofs_vfs_pfad(selbst, zeiger(adresse_von(a))))
+            setze nach: MooFsVfsPfad auf weitergeben(moofs_vfs_pfad(selbst, zeiger(adresse_von(b))))
+            wenn nicht alt.vorhanden:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn alt.inode.nummer == 1 oder (nach.vorhanden und nach.inode.nummer == 1):
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            wenn nach.vorhanden und nach.inode.nummer != alt.inode.nummer und moofs_vfs_offen(selbst, nach.inode.nummer):
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 0, 0))
+            setze p: ptr[u8] auf zeiger(adresse_von(a.bytes[alt.ab]))
+            setze q: ptr[u8] auf zeiger(adresse_von(b.bytes[nach.ab]))
+            gib_zurück moofs_vfs_void(moofs_umbenennen(selbst.schreiber, alt.eltern, byteansicht(p, alt.anzahl), nach.eltern, byteansicht(q, nach.anzahl)))
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(moofs_vfs_bereit(selbst))
+            wenn u64(selbst.schreiber) == 0:
+                gib_zurück erfolg()
+            gib_zurück moofs_vfs_void(moofs_abgleichen(selbst.schreiber))
+
+@nativ
+funktion moofs_vfs_fehler(f: MooFsFehler) -> VfsFehler:
+    setze code: u32 auf VFS_EIO
+    wenn f.code == MOOFS_FEHLT:
+        setze code auf VFS_ENOENT
+    sonst wenn f.code == MOOFS_NAME oder f.code == MOOFS_ARGUMENT:
+        setze code auf VFS_EINVAL
+    sonst wenn f.code == MOOFS_VOLL:
+        setze code auf VFS_ENOSPC
+    sonst wenn f.code == MOOFS_SPEICHER:
+        setze code auf VFS_ENOMEM
+    sonst wenn f.code == MOOFS_NUR_LESEN:
+        setze code auf VFS_EROFS
+    sonst wenn f.code == MOOFS_VORHANDEN:
+        setze code auf VFS_EEXIST
+    sonst wenn f.code == MOOFS_NICHT_LEER:
+        setze code auf VFS_ENOTEMPTY
+    sonst wenn f.code == MOOFS_NICHT_ORDNER:
+        setze code auf VFS_ENOTDIR
+    sonst wenn f.code == MOOFS_IST_ORDNER:
+        setze code auf VFS_EISDIR
+    gib_zurück VfsFehler(code, f.code, f.grund)
+
+@nativ
+funktion moofs_vfs_void(r: ergebnis[void, MooFsFehler]) -> ergebnis[void, VfsFehler]:
+    wenn nicht ist_erfolg(r):
+        gib_zurück fehlschlag(moofs_vfs_fehler(ergebnis_fehler(r)))
+    gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_u64(r: ergebnis[u64, MooFsFehler]) -> ergebnis[u64, VfsFehler]:
+    wenn nicht ist_erfolg(r):
+        gib_zurück fehlschlag(moofs_vfs_fehler(ergebnis_fehler(r)))
+    gib_zurück erfolg(ergebnis_wert(r))
+
+@nativ
+funktion moofs_vfs_bereit(fs: ptr[MooFsDateisystem]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn nicht fs.bereit oder nicht fs.volume.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+        wenn u64(fs.schreiber) != 0 und nicht fs.schreiber.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 0, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_schreibbar(fs: ptr[MooFsDateisystem]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        weitergeben(moofs_vfs_bereit(fs))
+        wenn u64(fs.schreiber) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EROFS, 0, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_griff(fs: ptr[MooFsDateisystem], griff: u64) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze slot: u64 auf griff % 256
+        wenn nicht fs.bereit oder nicht fs.griffe[slot].aktiv oder fs.griffe[slot].generation != griff / 256:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 0, 0))
+        gib_zurück erfolg(slot)
+
+@nativ
+funktion moofs_vfs_offen(fs: ptr[MooFsDateisystem], nr: u64) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 256:
+            wenn fs.griffe[i].aktiv und fs.griffe[i].inode == nr:
+                gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
+
+@nativ
+funktion moofs_vfs_inode(fs: ptr[MooFsDateisystem], nr: u64) -> ergebnis[MooFsInode, VfsFehler]:
+    unsicher:
+        weitergeben(moofs_vfs_bereit(fs))
+        setze r: ergebnis[MooFsInode, MooFsFehler] auf moofs_inode(fs.volume, nr)
+        wenn nicht ist_erfolg(r):
+            gib_zurück fehlschlag(moofs_vfs_fehler(ergebnis_fehler(r)))
+        gib_zurück erfolg(ergebnis_wert(r))
+
+@nativ
+funktion moofs_vfs_lesend(fs: ptr[MooFsDateisystem], volume: ptr[MooFsVolume]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn u64(volume) == 0 oder nicht volume.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        setze fs.bereit auf falsch
+        setze fs.volume auf volume
+        setze fs.schreiber auf nichts
+        setze i: u64 auf 0
+        solange i < 256:
+            setze leer: MooFsVfsGriff auf 0
+            setze fs.griffe[i] auf leer
+            setze i auf i + 1
+        setze fs.bereit auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_einrichten(fs: ptr[MooFsDateisystem], w: ptr[MooFsSchreiber]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn u64(w) == 0 oder nicht w.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))
+        weitergeben(moofs_vfs_lesend(fs, zeiger(adresse_von(w.volume))))
+        setze fs.schreiber auf w
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_pfad(fs: ptr[MooFsDateisystem], pfad: ptr[VfsPfad]) -> ergebnis[MooFsVfsPfad, VfsFehler]:
+    unsicher:
+        weitergeben(moofs_vfs_bereit(fs))
+        setze dir: u64 auf 1
+        setze inode: MooFsInode auf weitergeben(moofs_vfs_inode(fs, 1))
+        wenn pfad.anzahl == 1:
+            gib_zurück erfolg(MooFsVfsPfad(inode, 1, 0, 1, wahr))
+        setze ab: u64 auf 1
+        solange ab < pfad.anzahl:
+            wenn inode.art != 2:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 0, 0))
+            setze ende: u64 auf ab
+            solange ende < pfad.anzahl und pfad.bytes[ende] != 47:
+                setze ende auf ende + 1
+            setze cursor: u64 auf 0
+            setze gefunden: bool auf falsch
+            solange wahr:
+                setze r: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_verzeichnis(fs.volume, dir, cursor)
+                wenn nicht ist_erfolg(r):
+                    setze f: MooFsFehler auf ergebnis_fehler(r)
+                    wenn f.code != MOOFS_FEHLT:
+                        gib_zurück fehlschlag(moofs_vfs_fehler(f))
+                    stopp
+                setze e: MooFsEintrag auf ergebnis_wert(r)
+                setze gleich: bool auf e.b == ende - ab
+                setze j: u64 auf 0
+                solange gleich und j < e.b:
+                    setze gleich auf pfad.bytes[ab + j] == e.name[j]
+                    setze j auf j + 1
+                wenn gleich:
+                    setze inode auf weitergeben(moofs_vfs_inode(fs, e.a))
+                    setze gefunden auf wahr
+                    stopp
+                wenn e.schluessel.index == 0xFFFFFFFFFFFFFFFF:
+                    stopp
+                setze cursor auf e.schluessel.index + 1
+            wenn nicht gefunden:
+                wenn ende == pfad.anzahl:
+                    setze leer: MooFsInode auf 0
+                    gib_zurück erfolg(MooFsVfsPfad(leer, dir, ab, ende - ab, falsch))
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+            wenn ende == pfad.anzahl:
+                gib_zurück erfolg(MooFsVfsPfad(inode, dir, ab, ende - ab, wahr))
+            setze dir auf inode.nummer
+            setze ab auf ende + 1
+        gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 0, 0))

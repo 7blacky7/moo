@@ -1,0 +1,227 @@
+# Cache-Spiegel als registriertes Blockgerät. Die Daten- und Metadatenpartitionen
+# kommen aus dem gebundenen Blockregister. Die MooFS-Bindung besitzt das Volume.
+aus "kern_array" importiere ArrayKernAnschluss
+aus "kern_array_moofs" importiere ArrayMooFsPuffer, array_moofs_transport
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, block_registrieren, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus nativ_block importiere BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_OK, BLOCK_BELEGT, BLOCK_NICHT_BEREIT, BLOCK_GEOMETRIE, BLOCK_UNBEKANNT, block_pruefen
+aus ds_fat_transport importiere FatTransport
+aus ds_spiegel importiere Spiegel, spiegel_anlegen, spiegel_oeffnen, spiegel_lesen, spiegel_schreiben, spiegel_flush, spiegel_verloren, spiegel_resync_beginnen, spiegel_resync_schritt
+aus array_format importiere ArrayLayout, ARRAY_SEITEN_BYTES, array_identitaet_gleich
+aus array_paritaet importiere ArrayAnschluss, ArrayMedien, ArrayArbeitsraum
+aus array_rebuild importiere ArrayRebuildFortschritt
+aus array_rebuild_format importiere ARRAY_REBUILD_KEIN
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_void
+aus vfs importiere Dateisystem, VfsFehler, VFS_EBUSY, VFS_EINVAL
+
+struktur KernSpiegel implementiert BlockGeraet:
+    spiegel: Spiegel
+    arbeit: ArrayArbeitsraum
+    sperre: KernMutex
+    moofs_sperre: KernMutex
+    moofs_gebunden: bool
+    daten: [FatKernTransport; 2]
+    meta: [FatKernTransport; 2]
+    ersatz_daten: [FatKernTransport; 2]
+    ersatz_meta: [FatKernTransport; 2]
+    anschluesse: [ArrayAnschluss; 2]
+    ids_daten: [u64; 2]
+    ids_meta: [u64; 2]
+    geo: BlockGeometrie
+    aktiv: atom[u32]
+    kennung: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze r: ergebnis[void, BlockFehler] auf kern_spiegel_auftrag(selbst, anfrage)
+            wenn ist_erfolg(r):
+                block_abschliessen(anfrage, BlockFehler(BLOCK_OK, 0))
+            sonst:
+                block_abschliessen(anfrage, ergebnis_fehler(r))
+            gib_zurück erfolg()
+
+struktur KernSpiegelMooFs:
+    transport: FatKernTransport
+    schreiber: MooFsSchreiber
+    system: MooFsDateisystem
+
+@nativ
+funktion kern_spiegel_sperre_gib(s: ptr[KernMutex]) -> void:
+    unsicher:
+        setze gehalten: bool auf mutex_gib(smp_planer(), s)
+
+@nativ
+funktion kern_spiegel_kennung(s: ptr[KernSpiegel]) -> u64:
+    unsicher:
+        wenn u64(s) == 0 oder atom_laden(s.aktiv, ordnung=erwerben) == 0:
+            gib_zurück 0
+        gib_zurück s.kennung
+
+@nativ
+funktion kern_spiegel_seite(s: ptr[KernSpiegel], art: u32, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(s.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: kern_spiegel_sperre_gib(lock)
+        setze p: ptr[Spiegel] auf zeiger(adresse_von(s.spiegel))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(s.arbeit))
+        wenn art == BLOCK_FLUSH:
+            gib_zurück spiegel_flush(p)
+        wenn art == BLOCK_LESEN:
+            gib_zurück spiegel_lesen(p, seite, adresse, w)
+        gib_zurück spiegel_schreiben(p, seite, adresse, w)
+
+@nativ
+funktion kern_spiegel_auftrag(s: ptr[KernSpiegel], a: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn kern_spiegel_kennung(s) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 230))
+        weitergeben(block_pruefen(s.geo, a.art, a.lba, a.anzahl, a.puffer, a.laenge))
+        wenn a.art == BLOCK_FLUSH:
+            gib_zurück kern_spiegel_seite(s, a.art, 0, 0)
+        wenn a.art != BLOCK_LESEN und a.art != BLOCK_SCHREIBEN und a.art != BLOCK_SCHREIBEN_FUA:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 230))
+        setze i: u64 auf 0
+        solange i < a.anzahl:
+            weitergeben(kern_spiegel_seite(s, a.art, a.lba + i, a.puffer + i * ARRAY_SEITEN_BYTES))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_spiegel_anschluss(d: ptr[FatKernTransport], m: ptr[FatKernTransport], eingabe: ptr[ArrayKernAnschluss]) -> ergebnis[ArrayAnschluss, BlockFehler]:
+    unsicher:
+        wenn eingabe.daten == 0 oder eingabe.metadaten == 0 oder eingabe.daten == eingabe.metadaten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 230))
+        weitergeben(fat_kern_transport_einrichten(d, eingabe.daten))
+        weitergeben(fat_kern_transport_einrichten(m, eingabe.metadaten))
+        setze td: ptr[dyn FatTransport] auf d
+        setze tm: ptr[dyn FatTransport] auf m
+        gib_zurück erfolg(ArrayAnschluss(eingabe.identitaet, ArrayMedien(td, tm)))
+
+@nativ
+funktion kern_spiegel_medien_oeffnen(s: ptr[KernSpiegel], layout: ptr[ArrayLayout], anzahl: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze p: ptr[Spiegel] auf zeiger(adresse_von(s.spiegel))
+        setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(s.anschluesse[0]))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(s.arbeit))
+        wenn u64(layout) == 0:
+            gib_zurück spiegel_oeffnen(p, q, anzahl, w)
+        gib_zurück spiegel_anlegen(p, layout, q, w)
+
+# Exklusive Einrichtung mit nullinitialisierter, dauerhaft gültiger Instanz.
+@nativ
+funktion kern_spiegel_einrichten(s: ptr[KernSpiegel], layout: ptr[ArrayLayout], q: ptr[ArrayKernAnschluss], anzahl: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(s) == 0 oder u64(q) == 0 oder anzahl == 0 oder anzahl > 2 oder (u64(layout) != 0 und anzahl != 2):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 231))
+        wenn kern_spiegel_kennung(s) != 0 oder s.spiegel.p.offen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 230))
+        wenn anzahl == 2 und (q[0].daten == q[1].daten oder q[0].daten == q[1].metadaten oder q[0].metadaten == q[1].daten oder q[0].metadaten == q[1].metadaten):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 232))
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze d: ptr[FatKernTransport] auf zeiger(adresse_von(s.daten[i]))
+            setze m: ptr[FatKernTransport] auf zeiger(adresse_von(s.meta[i]))
+            setze s.anschluesse[i] auf weitergeben(kern_spiegel_anschluss(d, m, zeiger(adresse_von(q[i]))))
+            setze i auf i + 1
+        setze offen: ergebnis[u64, BlockFehler] auf kern_spiegel_medien_oeffnen(s, layout, anzahl)
+        wenn nicht ist_erfolg(offen):
+            setze s.spiegel.p.offen auf falsch
+            setze s.spiegel.rebuild.bereit auf falsch
+        setze wiederhergestellt: u64 auf weitergeben(offen)
+        setze i auf 0
+        solange i < anzahl:
+            setze slot: u64 auf 0
+            solange slot < 2:
+                wenn (s.spiegel.rebuild.anwesend & (1 << slot)) != 0 und array_identitaet_gleich(zeiger(adresse_von(s.spiegel.rebuild.stand.layout.mitglieder[slot].identitaet)), zeiger(adresse_von(q[i].identitaet))):
+                    setze s.ids_daten[slot] auf q[i].daten
+                    setze s.ids_meta[slot] auf q[i].metadaten
+                setze slot auf slot + 1
+            setze i auf i + 1
+        setze s.geo auf BlockGeometrie(s.spiegel.p.layout.mitglieder[0].seiten, ARRAY_SEITEN_BYTES, falsch)
+        setze block: ptr[dyn BlockGeraet] auf s
+        setze registriert: ergebnis[u64, BlockFehler] auf block_registrieren(block)
+        wenn nicht ist_erfolg(registriert):
+            setze s.spiegel.p.offen auf falsch
+            setze s.spiegel.rebuild.bereit auf falsch
+        setze s.kennung auf weitergeben(registriert)
+        atom_speichern(s.aktiv, 1, ordnung=freigeben)
+        gib_zurück erfolg(wiederhergestellt)
+
+@nativ
+funktion kern_spiegel_verloren(s: ptr[KernSpiegel], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn kern_spiegel_kennung(s) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 231))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(s.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: kern_spiegel_sperre_gib(lock)
+        gib_zurück spiegel_verloren(zeiger(adresse_von(s.spiegel)), mitglied, zeiger(adresse_von(s.arbeit)))
+
+@nativ
+funktion kern_spiegel_resync_beginnen(s: ptr[KernSpiegel], q: ptr[ArrayKernAnschluss]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze kennung: u64 auf kern_spiegel_kennung(s)
+        wenn kennung == 0 oder u64(q) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 232))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(s.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: kern_spiegel_sperre_gib(lock)
+        setze slot: u64 auf s.spiegel.rebuild.stand.fehlt
+        wenn slot == ARRAY_REBUILD_KEIN oder s.spiegel.rebuild.stand.ersatz oder nicht s.spiegel.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 231))
+        setze anderer: u64 auf slot ^ 1
+        setze auswahl: [u64; 3] auf [kennung, s.ids_daten[anderer], s.ids_meta[anderer]]
+        setze i: u64 auf 0
+        solange i < 3:
+            wenn q.daten == auswahl[i] oder q.metadaten == auswahl[i]:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 233))
+            setze i auf i + 1
+        setze d: ptr[FatKernTransport] auf zeiger(adresse_von(s.ersatz_daten[slot]))
+        setze m: ptr[FatKernTransport] auf zeiger(adresse_von(s.ersatz_meta[slot]))
+        setze quelle: ArrayAnschluss auf weitergeben(kern_spiegel_anschluss(d, m, q))
+        weitergeben(spiegel_resync_beginnen(zeiger(adresse_von(s.spiegel)), zeiger(adresse_von(quelle)), zeiger(adresse_von(s.arbeit))))
+        setze s.ids_daten[slot] auf q.daten
+        setze s.ids_meta[slot] auf q.metadaten
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_spiegel_resync_schritt(s: ptr[KernSpiegel]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        wenn kern_spiegel_kennung(s) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 233))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(s.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: kern_spiegel_sperre_gib(lock)
+        gib_zurück spiegel_resync_schritt(zeiger(adresse_von(s.spiegel)), zeiger(adresse_von(s.arbeit)))
+
+# Das zurückgegebene Dateisystem gehört zu Bindung und Puffer bis zum Neustart.
+# VFS und Mover besitzen die Serialisierung der Dateisystemoperationen.
+@nativ
+funktion kern_spiegel_moofs_binden(s: ptr[KernSpiegel], b: ptr[KernSpiegelMooFs], arbeit: ptr[ArrayMooFsPuffer]) -> ergebnis[ptr[dyn Dateisystem], VfsFehler]:
+    unsicher:
+        setze kennung: u64 auf kern_spiegel_kennung(s)
+        wenn kennung == 0 oder u64(b) == 0 oder u64(arbeit) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 230, 0))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(s.moofs_sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: kern_spiegel_sperre_gib(lock)
+        wenn s.moofs_gebunden oder b.system.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 230, 0))
+        setze t: ptr[FatKernTransport] auf zeiger(adresse_von(b.transport))
+        weitergeben(array_moofs_transport(t, kennung))
+        setze transport: ptr[dyn FatTransport] auf t
+        setze schreiber: ptr[MooFsSchreiber] auf zeiger(adresse_von(b.schreiber))
+        weitergeben(moofs_vfs_void(moofs_schreiber_oeffnen(schreiber, transport, arbeit.eintraege, arbeit.kapazitaet, arbeit.kinder, arbeit.kinder_kapazitaet, arbeit.karte, arbeit.karte_bytes)))
+        setze fs: ptr[MooFsDateisystem] auf zeiger(adresse_von(b.system))
+        weitergeben(moofs_vfs_einrichten(fs, schreiber))
+        setze s.moofs_gebunden auf wahr
+        setze ergebnis_system: ptr[dyn Dateisystem] auf fs
+        gib_zurück erfolg(ergebnis_system)

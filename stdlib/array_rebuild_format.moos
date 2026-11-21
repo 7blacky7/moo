@@ -1,0 +1,154 @@
+# Rebuild-Erweiterung des P-Arrays. Zwei Banken je Metadatenpartition.
+# Jede Bank besteht aus Zustandskopf, Datenbild und P-Bild. Der Kopf folgt
+# nach der Barriere der Bilder. Vor den Banken stehen Superblöcke und P-Bitmap.
+aus nativ_block importiere BlockFehler, BLOCK_EA
+aus array_format importiere ArrayLayout, ArrayGrenzen, ARRAY_DATEN, ARRAY_MAX_MITGLIEDER, array_layout_pruefen, array_layout_gleich, array_superblock_bauen, array_superblock_lesen, array_siegeln, array_crc_gueltig, ArraySuperblockDisk
+
+@nativ
+konstante ARRAY_REBUILD_MAGIE: u64 auf 0x31444C42524F4F4D
+@nativ
+konstante ARRAY_REBUILD_VERSATZ: u64 auf 1088
+@nativ
+konstante ARRAY_REBUILD_BANK_SEITEN: u64 auf 3
+@nativ
+konstante ARRAY_REBUILD_META_SEITEN: u64 auf 6
+@nativ
+konstante ARRAY_REBUILD_KEIN: u64 auf 16
+@nativ
+konstante ARRAY_JOURNAL_DATEN: u32 auf 1
+@nativ
+konstante ARRAY_JOURNAL_P: u32 auf 2
+
+struktur ArrayRebuildStand:
+    layout: ArrayLayout
+    folge: u64
+    fehlt: u64
+    ersatz: bool
+    fertig: u64
+    journal_ziel: u64
+    journal_seite: u64
+    journal_beine: u32
+    daten_crc: u32
+    p_crc: u32
+
+@gepackt
+struktur ArrayRebuildDisk:
+    magie: u64le
+    folge: u64le
+    fehlt: u32le
+    ersatz: u32le
+    fertig: u64le
+    journal_ziel: u32le
+    journal_beine: u32le
+    journal_seite: u64le
+    daten_crc: u32le
+    p_crc: u32le
+
+@nativ
+funktion array_rebuild_bankseite(g: ptr[ArrayGrenzen], mitglied: u64, bank: u64) -> u64:
+    unsicher:
+        setze erste: u64 auf 2
+        wenn mitglied == g.paritaet:
+            setze erste auf erste + 2 * g.bitmap_seiten
+        gib_zurück erste + bank * ARRAY_REBUILD_BANK_SEITEN
+
+@nativ
+funktion array_rebuild_zielseiten(l: ptr[ArrayLayout], g: ptr[ArrayGrenzen], mitglied: u64) -> u64:
+    unsicher:
+        wenn mitglied == g.paritaet:
+            gib_zurück g.daten_max
+        gib_zurück l.mitglieder[mitglied].seiten
+
+@nativ
+funktion array_rebuild_stand_pruefen(s: ptr[ArrayRebuildStand], basis: ptr[ArrayLayout], g: ptr[ArrayGrenzen]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn s.folge == 0 oder s.layout.guid_lo != basis.guid_lo oder s.layout.guid_hi != basis.guid_hi oder s.layout.generation != basis.generation oder s.layout.anzahl != basis.anzahl oder basis.anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 110))
+        setze i: u64 auf 0
+        solange i < basis.anzahl:
+            wenn s.layout.mitglieder[i].rolle != basis.mitglieder[i].rolle oder s.layout.mitglieder[i].seiten != basis.mitglieder[i].seiten:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 111))
+            setze i auf i + 1
+        wenn s.fehlt != ARRAY_REBUILD_KEIN und s.fehlt >= s.layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 112))
+        wenn s.ersatz:
+            wenn s.fehlt == ARRAY_REBUILD_KEIN oder s.fertig > array_rebuild_zielseiten(zeiger(adresse_von(s.layout)), g, s.fehlt):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 113))
+        sonst wenn s.fertig != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 114))
+        wenn s.journal_beine == 0:
+            wenn s.journal_ziel != ARRAY_REBUILD_KEIN oder s.journal_seite != 0 oder s.daten_crc != 0 oder s.p_crc != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 115))
+            gib_zurück erfolg()
+        wenn s.journal_ziel >= s.layout.anzahl oder s.journal_beine > (ARRAY_JOURNAL_DATEN | ARRAY_JOURNAL_P):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 116))
+        wenn s.layout.mitglieder[s.journal_ziel].rolle != ARRAY_DATEN oder s.journal_seite >= s.layout.mitglieder[s.journal_ziel].seiten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 117))
+        wenn ((s.journal_beine & ARRAY_JOURNAL_DATEN) == 0 und s.daten_crc != 0) oder ((s.journal_beine & ARRAY_JOURNAL_P) == 0 und s.p_crc != 0):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 118))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_stand_bauen(bytes: puffer[u8], s: ptr[ArrayRebuildStand], basis: ptr[ArrayLayout], g: ptr[ArrayGrenzen]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_rebuild_stand_pruefen(s, basis, g))
+        weitergeben(array_superblock_bauen(bytes, zeiger(adresse_von(s.layout)), 0))
+        setze vorhanden: u32 auf 0
+        wenn s.ersatz:
+            setze vorhanden auf 1
+        setze feld: puffer[ArrayRebuildDisk] auf sicht(bytes, ArrayRebuildDisk, ARRAY_REBUILD_VERSATZ)
+        feld[0] = ArrayRebuildDisk(ARRAY_REBUILD_MAGIE, s.folge, als(u32, s.fehlt), vorhanden, s.fertig, als(u32, s.journal_ziel), s.journal_beine, s.journal_seite, s.daten_crc, s.p_crc)
+        array_siegeln(bytes)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_stand_lesen(bytes: puffer[u8], basis: ptr[ArrayLayout], g: ptr[ArrayGrenzen], s: ptr[ArrayRebuildStand]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze besitzer: u64 auf weitergeben(array_superblock_lesen(bytes, zeiger(adresse_von(s.layout))))
+        setze kopf: puffer[ArrayRebuildDisk] auf sicht(bytes, ArrayRebuildDisk, ARRAY_REBUILD_VERSATZ)
+        wenn besitzer != 0 oder kopf[0].magie != ARRAY_REBUILD_MAGIE oder kopf[0].ersatz > 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 119))
+        setze s.folge auf kopf[0].folge
+        setze s.fehlt auf als(u64, kopf[0].fehlt)
+        setze s.ersatz auf kopf[0].ersatz == 1
+        setze s.fertig auf kopf[0].fertig
+        setze s.journal_ziel auf als(u64, kopf[0].journal_ziel)
+        setze s.journal_beine auf kopf[0].journal_beine
+        setze s.journal_seite auf kopf[0].journal_seite
+        setze s.daten_crc auf kopf[0].daten_crc
+        setze s.p_crc auf kopf[0].p_crc
+        gib_zurück array_rebuild_stand_pruefen(s, basis, g)
+
+@nativ
+funktion array_rebuild_stand_gleich(a: ptr[ArrayRebuildStand], b: ptr[ArrayRebuildStand]) -> bool:
+    unsicher:
+        wenn a.folge != b.folge oder a.fehlt != b.fehlt oder a.ersatz != b.ersatz oder a.fertig != b.fertig:
+            gib_zurück falsch
+        wenn a.journal_ziel != b.journal_ziel oder a.journal_seite != b.journal_seite oder a.journal_beine != b.journal_beine oder a.daten_crc != b.daten_crc oder a.p_crc != b.p_crc:
+            gib_zurück falsch
+        gib_zurück array_layout_gleich(zeiger(adresse_von(a.layout)), zeiger(adresse_von(b.layout)))
+
+struktur ArrayRebuildBasisVerweis:
+    mitglied: u64
+    markiert: bool
+
+# Version 2 kennzeichnet ein Array mit Rebuild-Zustand im Metadatenbereich.
+@nativ
+funktion array_rebuild_basis_bauen(bytes: puffer[u8], layout: ptr[ArrayLayout], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_superblock_bauen(bytes, layout, mitglied))
+    setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+    kopf[0].version = 2
+    array_siegeln(bytes)
+    gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_basis_lesen(bytes: puffer[u8], layout: ptr[ArrayLayout]) -> ergebnis[ArrayRebuildBasisVerweis, BlockFehler]:
+    wenn nicht array_crc_gueltig(bytes):
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 120))
+    setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+    setze markiert: bool auf kopf[0].version == 2
+    wenn markiert:
+        kopf[0].version = 1
+        array_siegeln(bytes)
+    setze mitglied: u64 auf weitergeben(array_superblock_lesen(bytes, layout))
+    gib_zurück erfolg(ArrayRebuildBasisVerweis(mitglied, markiert))

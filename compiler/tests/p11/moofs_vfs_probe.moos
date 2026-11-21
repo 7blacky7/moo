@@ -1,0 +1,83 @@
+aus vfs importiere Dateisystem, VfsTabelle, VfsDatei, VfsFehler, VfsStat, VfsEintrag, VFS_LESEN, VFS_SCHREIBEN, VFS_VERZEICHNIS, VFS_EBUSY, VFS_EBADF, VFS_EROFS, VFS_EIO, vfs_einhaengen, vfs_aushängen, vfs_oeffnen, vfs_loeschen, vfs_umbenennen, vfs_anlegen
+aus ds_moofs importiere MooFsFehler, MOOFS_ARGUMENT
+aus ds_moofs_allokator importiere MooFsSchreiber
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_lesend
+@nativ
+funktion moofs_vfs_test_pruefe(gut: bool, nummer: u32) -> ergebnis[void, VfsFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(VfsFehler(VFS_EIO, nummer, 0))
+    gib_zurück erfolg()
+
+@nativ
+funktion moofs_vfs_test_ablauf(w: ptr[MooFsSchreiber], fs: ptr[MooFsDateisystem], mounts: ptr[VfsTabelle], quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        weitergeben(moofs_vfs_einrichten(fs, w))
+        setze system: ptr[dyn Dateisystem] auf fs
+        setze root: [u8; 1] auf [47]
+        setze a: [u8; 2] auf [47, 97]
+        setze b: [u8; 2] auf [47, 98]
+        weitergeben(vfs_einhaengen(mounts, byteansicht(root), system))
+        setze datei_a: VfsDatei auf 0
+        setze datei_b: VfsDatei auf 0
+        setze pa: ptr[VfsDatei] auf zeiger(adresse_von(datei_a))
+        setze pb: ptr[VfsDatei] auf zeiger(adresse_von(datei_b))
+        weitergeben(vfs_oeffnen(mounts, byteansicht(a), VFS_LESEN | VFS_SCHREIBEN, pa))
+        weitergeben(vfs_oeffnen(mounts, byteansicht(a), VFS_LESEN | VFS_SCHREIBEN, pb))
+        setze qp: ptr[u8] auf puffer_zeiger(quelle)
+        setze zp: ptr[u8] auf puffer_zeiger(ziel)
+        setze pos: u64 auf weitergeben(pa.position(4090, 0))
+        setze n: u64 auf weitergeben(pa.schreiben(byteansicht(qp, 8192)))
+        setze info: VfsStat auf weitergeben(pb.stat())
+        weitergeben(moofs_vfs_test_pruefe(n == 8192 und info.bytes == 12282, 2000))
+        setze pos auf weitergeben(pb.position(4090, 0))
+        setze n auf weitergeben(pb.lesen(byteansicht(zp, 8192)))
+        weitergeben(moofs_vfs_test_pruefe(n == 8192, 2001))
+        setze i: u64 auf 0
+        solange i < n:
+            weitergeben(moofs_vfs_test_pruefe(ziel[i] == quelle[i], 2002))
+            setze i auf i + 1
+        weitergeben(vfs_umbenennen(mounts, byteansicht(a), byteansicht(b)))
+        setze r: ergebnis[void, VfsFehler] auf vfs_loeschen(mounts, byteansicht(b))
+        weitergeben(moofs_vfs_test_pruefe(nicht ist_erfolg(r), 2003))
+        weitergeben(moofs_vfs_test_pruefe(ergebnis_fehler(r).code == VFS_EBUSY, 2004))
+        weitergeben(system.groesse(pa.griff, 77))
+        setze info auf weitergeben(pb.stat())
+        weitergeben(moofs_vfs_test_pruefe(info.bytes == 77, 2005))
+        setze altgriff: u64 auf pa.griff
+        weitergeben(pa.schliessen())
+        weitergeben(pb.schliessen())
+        setze alt: ergebnis[VfsStat, VfsFehler] auf system.stat(altgriff)
+        weitergeben(moofs_vfs_test_pruefe(nicht ist_erfolg(alt), 2006))
+        weitergeben(moofs_vfs_test_pruefe(ergebnis_fehler(alt).code == VFS_EBADF, 2007))
+        weitergeben(vfs_oeffnen(mounts, byteansicht(b), VFS_LESEN, pa))
+        setze schreibfehler: ergebnis[u64, VfsFehler] auf system.schreiben(pa.griff, 0, byteansicht(qp, 1))
+        weitergeben(moofs_vfs_test_pruefe(nicht ist_erfolg(schreibfehler), 2008))
+        weitergeben(moofs_vfs_test_pruefe(ergebnis_fehler(schreibfehler).code == VFS_EBADF, 2009))
+        weitergeben(pa.schliessen())
+        weitergeben(vfs_loeschen(mounts, byteansicht(b)))
+        weitergeben(vfs_anlegen(mounts, byteansicht(a), falsch))
+        weitergeben(vfs_oeffnen(mounts, byteansicht(root), VFS_LESEN | VFS_VERZEICHNIS, pa))
+        setze eintrag: VfsEintrag auf weitergeben(pa.verzeichnis(0))
+        weitergeben(moofs_vfs_test_pruefe(eintrag.name_bytes == 1 und eintrag.name[0] == 97 und eintrag.bytes == 0, 2010))
+        weitergeben(pa.schliessen())
+        weitergeben(vfs_aushängen(mounts, byteansicht(root)))
+        weitergeben(moofs_vfs_lesend(fs, zeiger(adresse_von(w.volume))))
+        weitergeben(vfs_einhaengen(mounts, byteansicht(root), system))
+        setze readonly: ergebnis[void, VfsFehler] auf vfs_oeffnen(mounts, byteansicht(a), VFS_SCHREIBEN, pa)
+        weitergeben(moofs_vfs_test_pruefe(nicht ist_erfolg(readonly), 2011))
+        weitergeben(moofs_vfs_test_pruefe(ergebnis_fehler(readonly).code == VFS_EROFS, 2012))
+        weitergeben(vfs_oeffnen(mounts, byteansicht(a), VFS_LESEN, pa))
+        setze info auf weitergeben(pa.stat())
+        weitergeben(moofs_vfs_test_pruefe(info.rechte == 1 und info.bytes == 0, 2013))
+        weitergeben(pa.schliessen())
+        weitergeben(vfs_aushängen(mounts, byteansicht(root)))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreib_vfs_test(w: ptr[MooFsSchreiber], fs: ptr[MooFsDateisystem], mounts: ptr[VfsTabelle], quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze r: ergebnis[void, VfsFehler] auf moofs_vfs_test_ablauf(w, fs, mounts, quelle, ziel)
+        wenn nicht ist_erfolg(r):
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, f.grund, u64(f.code)))
+        gib_zurück erfolg()

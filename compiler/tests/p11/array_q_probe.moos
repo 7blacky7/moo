@@ -1,0 +1,235 @@
+aus array_q importiere ArrayQQuelle, ArrayQArbeitsraum, array_q_erzeugen, array_q_aktualisieren, array_q_retten, array_q_kopieren, array_q_xor, array_q_beitrag
+aus array_gf256 importiere ArrayGf256, array_gf256_starten
+aus nativ_block importiere BlockFehler
+
+struktur ArrayQProbeBlock:
+    bytes: [u8; 4096]
+struktur ArrayQProbe:
+    daten: [ArrayQProbeBlock; 14]
+    quellen: [ArrayQQuelle; 14]
+    p: ArrayQProbeBlock
+    q: ArrayQProbeBlock
+    p_kopie: ArrayQProbeBlock
+    q_kopie: ArrayQProbeBlock
+    alt: ArrayQProbeBlock
+    arbeit: ArrayQArbeitsraum
+    tabelle: ArrayGf256
+
+@nativ
+statisch ARRAY_Q_PROBE: ArrayQProbe auf 0
+extern "C" funktion write(fd: i32, daten: ptr[u8], laenge: u64) -> i64
+extern "C" funktion _exit(status: i32) -> void
+
+@nativ
+funktion array_q_probe_wert(slot: u64, index: u64) -> u8:
+    gib_zurück als(u8, (slot * 37 + index * 13 + (index / 7) * 19 + 17) % 256)
+
+@nativ
+funktion array_q_probe_senden(bytes: puffer[u8]) -> void:
+    unsicher:
+        setze pos: u64 auf 0
+        solange pos < länge(bytes):
+            setze anzahl: i64 auf write(1, puffer_zeiger(bytes) + pos, länge(bytes) - pos)
+            wenn anzahl <= 0:
+                _exit(20)
+                gib_zurück
+            setze pos auf pos + als(u64, anzahl)
+
+@nativ
+funktion array_q_probe_fall(modus: u32, n: u64, anzahl: u64) -> u64:
+    unsicher:
+        setze s: ptr[ArrayQProbe] auf zeiger(adresse_von(ARRAY_Q_PROBE))
+        setze t: ptr[ArrayGf256] auf zeiger(adresse_von(s.tabelle))
+        array_gf256_starten(t)
+        setze w: ptr[ArrayQArbeitsraum] auf zeiger(adresse_von(s.arbeit))
+        setze p: puffer[u8] auf pufferansicht(s.p.bytes, 0, n)
+        setze q: puffer[u8] auf pufferansicht(s.q.bytes, 0, n)
+        setze pk: puffer[u8] auf pufferansicht(s.p_kopie.bytes, 0, n)
+        setze qk: puffer[u8] auf pufferansicht(s.q_kopie.bytes, 0, n)
+        setze alt: puffer[u8] auf pufferansicht(s.alt.bytes, 0, n)
+        setze i: u64 auf 0
+        solange i < anzahl:
+            # Permutierte stabile Slots, einschließlich hoher Koeffizienten.
+            setze slot: u64 auf (i * 5 + 3) % 16
+            setze daten: puffer[u8] auf pufferansicht(s.daten[i].bytes, 0, n)
+            setze j: u64 auf 0
+            solange j < n:
+                daten[j] = array_q_probe_wert(slot, j)
+                setze j auf j + 1
+            setze s.quellen[i] auf ArrayQQuelle(slot, daten)
+            setze i auf i + 1
+        setze quellen: puffer[ArrayQQuelle] auf pufferansicht(s.quellen, 0, anzahl)
+        setze erzeugt: ergebnis[void, BlockFehler] auf array_q_erzeugen(p, q, quellen, modus, t)
+        wenn nicht ist_erfolg(erzeugt):
+            gib_zurück 1
+        array_q_probe_senden(p)
+        array_q_probe_senden(q)
+        setze aenderung: u64 auf anzahl / 2
+        setze neu_bytes: puffer[u8] auf s.quellen[aenderung].bytes
+        array_q_kopieren(alt, neu_bytes)
+        setze j_neu: u64 auf 0
+        solange j_neu < n:
+            neu_bytes[j_neu] = neu_bytes[j_neu] ^ 0xA5
+            setze j_neu auf j_neu + 1
+        setze erneuert: ergebnis[void, BlockFehler] auf array_q_aktualisieren(q, alt, neu_bytes, s.quellen[aenderung].slot, modus, t)
+        wenn nicht ist_erfolg(erneuert):
+            gib_zurück 2
+        array_q_xor(p, alt, 1, modus, t)
+        array_q_xor(p, neu_bytes, 1, modus, t)
+        setze frisch: ergebnis[void, BlockFehler] auf array_q_erzeugen(pk, qk, quellen, modus, t)
+        wenn nicht ist_erfolg(frisch):
+            gib_zurück 3
+        setze j_frisch: u64 auf 0
+        solange j_frisch < n:
+            wenn p[j_frisch] != pk[j_frisch] oder q[j_frisch] != qk[j_frisch]:
+                gib_zurück 4
+            setze j_frisch auf j_frisch + 1
+        array_q_probe_senden(p)
+        array_q_probe_senden(q)
+        setze links: u64 auf 0
+        solange links < anzahl + 2:
+            setze rechts: u64 auf links
+            solange rechts < anzahl + 2:
+                setze fehlt_p: bool auf links == anzahl oder rechts == anzahl
+                setze fehlt_q: bool auf links == anzahl + 1 oder rechts == anzahl + 1
+                setze fehlt: u64 auf 0
+                wenn links < anzahl:
+                    setze fehlt auf fehlt | (1 << s.quellen[links].slot)
+                wenn rechts < anzahl:
+                    setze fehlt auf fehlt | (1 << s.quellen[rechts].slot)
+                array_q_kopieren(p, pk)
+                array_q_kopieren(q, qk)
+                setze kill: u64 auf 0
+                solange kill < anzahl + 2:
+                    wenn kill == links oder kill == rechts:
+                        setze kaputt: puffer[u8] auf p
+                        wenn kill < anzahl:
+                            setze kaputt auf s.quellen[kill].bytes
+                        sonst wenn kill == anzahl + 1:
+                            setze kaputt auf q
+                        setze k: u64 auf 0
+                        solange k < n:
+                            kaputt[k] = 0xD3
+                            setze k auf k + 1
+                    setze kill auf kill + 1
+                setze gerettet: ergebnis[void, BlockFehler] auf array_q_retten(p, q, quellen, fehlt, fehlt_p, fehlt_q, modus, t, w)
+                wenn nicht ist_erfolg(gerettet):
+                    gib_zurück 5
+                setze d: u64 auf 0
+                solange d < anzahl:
+                    setze pruef: ArrayQQuelle auf s.quellen[d]
+                    setze k_daten: u64 auf 0
+                    solange k_daten < n:
+                        setze erwartet: u8 auf array_q_probe_wert(pruef.slot, k_daten)
+                        wenn d == aenderung:
+                            setze erwartet auf erwartet ^ 0xA5
+                        wenn pruef.bytes[k_daten] != erwartet:
+                            gib_zurück 6
+                        setze k_daten auf k_daten + 1
+                    setze d auf d + 1
+                setze k_paritaet: u64 auf 0
+                solange k_paritaet < n:
+                    wenn p[k_paritaet] != pk[k_paritaet] oder q[k_paritaet] != qk[k_paritaet]:
+                        gib_zurück 7
+                    setze k_paritaet auf k_paritaet + 1
+                setze rechts auf rechts + 1
+            setze links auf links + 1
+        gib_zurück 0
+@nativ
+funktion array_q_probe_fehler(r: ergebnis[void, BlockFehler], code: u32, grund: u32) -> bool:
+    wenn ist_erfolg(r):
+        gib_zurück falsch
+    setze f: BlockFehler auf ergebnis_fehler(r)
+    gib_zurück f.code == code und f.geraete_status == grund
+
+@nativ
+funktion array_q_probe_argumente() -> u64:
+    unsicher:
+        setze s: ptr[ArrayQProbe] auf zeiger(adresse_von(ARRAY_Q_PROBE))
+        setze t: ptr[ArrayGf256] auf zeiger(adresse_von(s.tabelle))
+        setze w: ptr[ArrayQArbeitsraum] auf zeiger(adresse_von(s.arbeit))
+        setze p: puffer[u8] auf pufferansicht(s.p.bytes)
+        setze q: puffer[u8] auf pufferansicht(s.q.bytes)
+        setze daten: puffer[u8] auf pufferansicht(s.daten[0].bytes)
+        setze kurz: puffer[u8] auf pufferansicht(s.daten[0].bytes, 0, 4095)
+        setze quellen: puffer[ArrayQQuelle] auf pufferansicht(s.quellen)
+        wenn nicht array_q_probe_fehler(array_q_beitrag(q, daten, 0, 9, t), 2, 40):
+            gib_zurück 101
+        wenn nicht array_q_probe_fehler(array_q_beitrag(q, daten, 16, 0, t), 4, 40):
+            gib_zurück 102
+        wenn nicht array_q_probe_fehler(array_q_beitrag(q, kurz, 0, 0, t), 4, 40):
+            gib_zurück 103
+        wenn nicht array_q_probe_fehler(array_q_aktualisieren(q, daten, kurz, 0, 0, t), 4, 41):
+            gib_zurück 104
+        wenn nicht array_q_probe_fehler(array_q_erzeugen(p, q, pufferansicht(s.quellen, 0, 0), 0, t), 4, 42):
+            gib_zurück 105
+        wenn nicht array_q_probe_fehler(array_q_retten(p, q, quellen, 65536, falsch, falsch, 0, t, w), 4, 44):
+            gib_zurück 106
+        wenn nicht array_q_probe_fehler(array_q_retten(p, q, quellen, 0, falsch, falsch, 0, t, zeiger(0)), 4, 44):
+            gib_zurück 107
+        setze drei: u64 auf (1 << s.quellen[0].slot) | (1 << s.quellen[1].slot) | (1 << s.quellen[2].slot)
+        wenn nicht array_q_probe_fehler(array_q_retten(p, q, quellen, drei, falsch, falsch, 0, t, w), 2, 43):
+            gib_zurück 108
+        wenn nicht array_q_probe_fehler(array_q_retten(p, q, quellen, 1 << s.quellen[0].slot, wahr, wahr, 0, t, w), 2, 43):
+            gib_zurück 109
+        setze gesichert: u64 auf s.quellen[13].slot
+        setze s.quellen[13].slot auf s.quellen[0].slot
+        setze doppelt: ergebnis[void, BlockFehler] auf array_q_erzeugen(p, q, quellen, 0, t)
+        setze s.quellen[13].slot auf gesichert
+        wenn nicht array_q_probe_fehler(doppelt, 2, 42):
+            gib_zurück 110
+        setze t.bereit auf falsch
+        setze unbereit: ergebnis[void, BlockFehler] auf array_q_beitrag(q, daten, 0, 1, t)
+        setze t.bereit auf wahr
+        wenn nicht array_q_probe_fehler(unbereit, 2, 41):
+            gib_zurück 111
+        setze i: u64 auf 0
+        solange i < 4096:
+            wenn p[i] != s.p_kopie.bytes[i] oder q[i] != s.q_kopie.bytes[i]:
+                gib_zurück 112
+            setze i auf i + 1
+        gib_zurück 0
+
+
+
+@nativ
+@einstieg
+funktion array_q_probe_alle() -> u64:
+    unsicher:
+        setze modus: u32 auf 0
+        solange modus < 3:
+            setze variante: u64 auf 0
+            solange variante < 2:
+                setze anzahl: u64 auf 4
+                wenn variante == 1:
+                    setze anzahl auf 14
+                setze index: u64 auf 0
+                solange index < 9:
+                    setze n: u64 auf 0
+                    wenn index == 1:
+                        setze n auf 1
+                    sonst wenn index == 2:
+                        setze n auf 15
+                    sonst wenn index == 3:
+                        setze n auf 16
+                    sonst wenn index == 4:
+                        setze n auf 31
+                    sonst wenn index == 5:
+                        setze n auf 32
+                    sonst wenn index == 6:
+                        setze n auf 33
+                    sonst wenn index == 7:
+                        setze n auf 97
+                    sonst wenn index == 8:
+                        setze n auf 4096
+                    setze status: u64 auf array_q_probe_fall(modus, n, anzahl)
+                    wenn status != 0:
+                        _exit(als(i32, status))
+                        gib_zurück status
+                    setze index auf index + 1
+                setze variante auf variante + 1
+            setze modus auf modus + 1
+        setze argumente: u64 auf array_q_probe_argumente()
+        wenn argumente != 0:
+            _exit(als(i32, argumente))
+        gib_zurück 0

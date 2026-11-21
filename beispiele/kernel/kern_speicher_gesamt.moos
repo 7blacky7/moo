@@ -1,0 +1,344 @@
+# Kette des P11-Gesamtprofils. Die installierte ESP und die sechs Medien
+# bleiben über die Boots erhalten. Die Quelle wird nur zum Installer gesteckt.
+aus "kern_speicher_gesamt_medien" importiere GesamtMedien, GESAMT_SEITEN, gesamt_medien_einrichten, gesamt_medien_leer
+aus "kern_array" importiere ArrayKernAnschluss
+aus "kern_array_pq" importiere KernArrayPQ, kern_array_pq_einrichten, kern_array_pq_kennung, kern_array_pq_ersatz, kern_array_pq_schritt, kern_array_pq_scrub_starten, kern_array_pq_scrub_schritt, kern_array_pq_status
+aus "kern_array_moofs" importiere ArrayMooFsPuffer, array_moofs_transport
+aus "kern_spiegel" importiere KernSpiegel, KernSpiegelMooFs, kern_spiegel_einrichten, kern_spiegel_kennung, kern_spiegel_moofs_binden
+aus "kern_block" importiere BlockFehler
+aus "kern_vfs" importiere kern_vfs_einhaengen, KERN_DATEI_TRANSFER_MAX_SEITEN
+aus "kern_elf" importiere ElfProzess, elf_laden, prozess_starten, prozess_freigeben
+aus "kern_smp" importiere smp_planer, smp_nummer
+aus "kern_faden" importiere faden_abgeben
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "speicher_fat" importiere FatKernTransport
+aus "../uefi/hardware_pci" importiere takt
+aus "../uefi/netz_geraet" importiere nt_kopiere
+aus "../moos/mover" importiere KernMover, mover_starten, mover_ist_fertig, mover_ergebnis
+aus nativ_block importiere BLOCK_EA, BLOCK_NICHT_BEREIT
+aus array_format importiere ArrayLayout, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_pq_format importiere ARRAY_PARITAET_Q
+aus array_q importiere ARRAY_Q_TABELLE
+aus array_rebuild importiere ArrayRebuildFortschritt, ArrayRebuildStatus, ARRAY_MITGLIED_FEHLT
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, array_pq_rebuild_roh_lesen, array_pq_rebuild_roh_schreiben
+aus array_pq_scrub importiere array_pq_scrub_gleich
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs importiere MooFsEintrag, MooFsVolume, moofs_oeffnen
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_format importiere MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_lesend, moofs_vfs_void
+aus ds_vereinigung importiere Vereinigung, VereinigungArbeit, VereinigungQuelle, VereinigungRegel, vereinigung_einrichten, vereinigung_attribut
+aus ds_vereinigung_mover importiere MOVER_VERSCHOBEN
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VFS_EIO, VFS_ENOENT, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_EXKLUSIV
+
+struktur GesamtFsPuffer:
+    eintraege: [MooFsEintrag; 64]
+    kinder: [MooFsBaumKind; 16]
+    karte: [u8; 64]
+
+struktur GesamtDatenFs:
+    transport: FatKernTransport
+    schreiber: MooFsSchreiber
+    system: MooFsDateisystem
+
+struktur GesamtLauf:
+    medien: GesamtMedien
+    pq: KernArrayPQ
+    cache: KernSpiegel
+    cache_fs: KernSpiegelMooFs
+    daten: [GesamtDatenFs; 2]
+    puffer: [GesamtFsPuffer; 3]
+    formatierung: MooFsFormatSpeicher
+    quellen: [VereinigungQuelle; 2]
+    freigabe: Vereinigung
+    freigabe_arbeit: VereinigungArbeit
+    mover: KernMover
+    prozess: ElfProzess
+    scrub_original: [u8; 4096]
+    scrub_abgleich: [u8; 4096]
+
+@nativ
+statisch GESAMT_LAUF: GesamtLauf auf 0
+
+@nativ
+statisch GESAMT_WURZEL: [u8; 1] auf "/"
+@nativ
+statisch GESAMT_PFAD: [u8; 9] auf "/freigabe"
+@nativ
+statisch GESAMT_MOVER_DATEI: [u8; 15] auf "/verschoben.bin"
+@nativ
+statisch GESAMT_MOVER_DATEN: [u8; 29] auf "MoOS Cache-Pool und P/Q-Mover"
+@nativ
+konstante GESAMT_T_START: [u8; _] auf "MOO-GESAMT START "
+@nativ
+konstante GESAMT_T_ARRAY: [u8; _] auf "MOO-GESAMT P/Q "
+@nativ
+konstante GESAMT_T_CACHE: [u8; _] auf "MOO-GESAMT CACHE "
+@nativ
+konstante GESAMT_T_MOVER: [u8; _] auf "MOO-GESAMT MOVER-BYTES "
+@nativ
+konstante GESAMT_T_FEHLEND: [u8; _] auf "MOO-GESAMT DATENPLATTE FEHLT "
+@nativ
+konstante GESAMT_T_REBUILD: [u8; _] auf "MOO-GESAMT REBUILD-SEITEN "
+@nativ
+konstante GESAMT_T_SCRUB: [u8; _] auf "MOO-GESAMT SCRUB-SEITEN "
+@nativ
+konstante GESAMT_T_SCRUB_REPARATUR: [u8; _] auf "MOO-GESAMT SCRUB-REPARATUREN "
+@nativ
+konstante GESAMT_T_EXIT: [u8; _] auf "MOO-GESAMT RING3 EXIT "
+@nativ
+konstante GESAMT_T_ENDE: [u8; _] auf "MOO-GESAMT ENDE "
+@nativ
+konstante GESAMT_T_FEHLER: [u8; _] auf "MOO-GESAMT FEHLER CODE STATUS "
+
+@nativ
+funktion gesamt_layout(layout: ptr[ArrayLayout], q: ptr[ArrayKernAnschluss], paar: bool) -> void:
+    unsicher:
+        layout.guid_lo = 0x503131474553414D
+        layout.guid_hi = 0x51504D31 + u64(paar)
+        layout.generation = 1
+        layout.anzahl = 4
+        wenn paar:
+            layout.anzahl = 2
+        setze i: u64 auf 0
+        solange i < layout.anzahl:
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == layout.anzahl - 2 und nicht paar:
+                setze rolle auf ARRAY_PARITAET_P
+            wenn i == layout.anzahl - 1:
+                setze rolle auf ARRAY_PARITAET_Q
+                wenn paar:
+                    setze rolle auf ARRAY_PARITAET_P
+            layout.mitglieder[i] = ArrayMitgliedsdaten(rolle, GESAMT_SEITEN, q[i].identitaet)
+            setze i auf i + 1
+
+@nativ
+funktion gesamt_array(g: ptr[GesamtLauf]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze m: ptr[GesamtMedien] auf zeiger(adresse_von(g.medien))
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(g.pq))
+        setze s: ptr[KernSpiegel] auf zeiger(adresse_von(g.cache))
+        setze q: ptr[ArrayKernAnschluss] auf zeiger(adresse_von(m.anschluss[0]))
+        setze cache_q: ptr[ArrayKernAnschluss] auf zeiger(adresse_von(m.anschluss[4]))
+        wenn nicht m.ersatz_anwesend:
+            setze i: u64 auf 0
+            solange i < 6:
+                wenn nicht weitergeben(gesamt_medien_leer(m, i)):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 365))
+                setze i auf i + 1
+            setze layout: ArrayLayout auf 0
+            setze p: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+            gesamt_layout(p, q, falsch)
+            setze seiten: u64 auf weitergeben(kern_array_pq_einrichten(a, p, q, 4, ARRAY_Q_TABELLE))
+            wenn seiten != GESAMT_SEITEN:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 365))
+            gesamt_layout(p, cache_q, wahr)
+            weitergeben(kern_spiegel_einrichten(s, p, cache_q, 2))
+            gib_zurück erfolg(u64(1))
+        setze frei: bool auf weitergeben(gesamt_medien_leer(m, 6))
+        setze gefunden: [ArrayKernAnschluss; 4] auf [m.anschluss[1], m.anschluss[2], m.anschluss[3], m.anschluss[6]]
+        setze n: u64 auf 4 - u64(frei)
+        weitergeben(kern_array_pq_einrichten(a, nichts, zeiger(adresse_von(gefunden[0])), n, ARRAY_Q_TABELLE))
+        weitergeben(kern_spiegel_einrichten(s, nichts, cache_q, 2))
+        wenn a.rebuild.stand.fehlende != u64(frei):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 366))
+        gib_zurück erfolg(3 - u64(frei))
+
+@nativ
+funktion gesamt_fs_puffer(p: ptr[GesamtFsPuffer]) -> ArrayMooFsPuffer:
+    unsicher:
+        gib_zurück ArrayMooFsPuffer(zeiger(adresse_von(p.eintraege[0])), 64, zeiger(adresse_von(p.kinder[0])), 16, zeiger(adresse_von(p.karte[0])), 64)
+
+@nativ
+funktion gesamt_formatieren(g: ptr[GesamtLauf], t: ptr[FatKernTransport], id: u64) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        weitergeben(array_moofs_transport(t, id))
+        setze transport: ptr[dyn FatTransport] auf t
+        gib_zurück moofs_vfs_void(moofs_formatieren(transport, nichts, 0, 0x50475100 + id, 0x47455341, zeiger(adresse_von(g.formatierung))))
+
+@nativ
+funktion gesamt_freigabe(g: ptr[GesamtLauf], neu_anlegen: bool) -> ergebnis[ptr[dyn Dateisystem], VfsFehler]:
+    unsicher:
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(g.pq))
+        setze s: ptr[KernSpiegel] auf zeiger(adresse_von(g.cache))
+        setze b: ptr[KernSpiegelMooFs] auf zeiger(adresse_von(g.cache_fs))
+        wenn neu_anlegen:
+            weitergeben(gesamt_formatieren(g, zeiger(adresse_von(b.transport)), kern_spiegel_kennung(s)))
+        setze cp: ArrayMooFsPuffer auf gesamt_fs_puffer(zeiger(adresse_von(g.puffer[2])))
+        setze cache: ptr[dyn Dateisystem] auf weitergeben(kern_spiegel_moofs_binden(s, b, zeiger(adresse_von(cp))))
+        wenn nicht neu_anlegen:
+            weitergeben(moofs_vfs_lesend(zeiger(adresse_von(b.system)), zeiger(adresse_von(b.schreiber.volume))))
+        setze i: u64 auf 0
+        solange i < 2:
+            setze d: ptr[GesamtDatenFs] auf zeiger(adresse_von(g.daten[i]))
+            setze id: u64 auf kern_array_pq_kennung(a, i)
+            setze t: ptr[FatKernTransport] auf zeiger(adresse_von(d.transport))
+            wenn neu_anlegen:
+                weitergeben(gesamt_formatieren(g, t, id))
+            sonst:
+                weitergeben(array_moofs_transport(t, id))
+            setze transport: ptr[dyn FatTransport] auf t
+            setze fp: ArrayMooFsPuffer auf gesamt_fs_puffer(zeiger(adresse_von(g.puffer[i])))
+            setze w: ptr[MooFsSchreiber] auf zeiger(adresse_von(d.schreiber))
+            setze fs: ptr[MooFsDateisystem] auf zeiger(adresse_von(d.system))
+            wenn neu_anlegen:
+                weitergeben(moofs_vfs_void(moofs_schreiber_oeffnen(w, transport, fp.eintraege, fp.kapazitaet, fp.kinder, fp.kinder_kapazitaet, fp.karte, fp.karte_bytes)))
+                weitergeben(moofs_vfs_einrichten(fs, w))
+            sonst:
+                setze volume: ptr[MooFsVolume] auf zeiger(adresse_von(w.volume))
+                weitergeben(moofs_vfs_void(moofs_oeffnen(volume, transport)))
+                weitergeben(moofs_vfs_lesend(fs, volume))
+            g.quellen[i].system = fs
+            setze i auf i + 1
+        setze v: ptr[Vereinigung] auf zeiger(adresse_von(g.freigabe))
+        weitergeben(vereinigung_einrichten(v, pufferansicht(g.quellen), cache, pufferansicht(GESAMT_WURZEL), VereinigungRegel(falsch, falsch, 0), zeiger(adresse_von(g.freigabe_arbeit))))
+        setze freigabesystem: ptr[dyn Dateisystem] auf v
+        weitergeben(kern_vfs_einhaengen(pufferansicht(GESAMT_PFAD), freigabesystem))
+        gib_zurück erfolg(cache)
+
+@nativ
+funktion gesamt_mover(g: ptr[GesamtLauf], cache: ptr[dyn Dateisystem], tsc: u64, neu_anlegen: bool) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze v: ptr[Vereinigung] auf zeiger(adresse_von(g.freigabe))
+        setze pfad: puffer[u8] auf pufferansicht(GESAMT_MOVER_DATEI)
+        setze muster: puffer[u8] auf pufferansicht(GESAMT_MOVER_DATEN)
+        wenn neu_anlegen:
+            setze cachegriff: u64 auf weitergeben(cache.oeffnen(pfad, VFS_SCHREIBEN | VFS_ANLEGEN | VFS_EXKLUSIV))
+            setze geschrieben: u64 auf weitergeben(cache.schreiben(cachegriff, 0, muster))
+            weitergeben(cache.schliessen(cachegriff))
+            wenn geschrieben != länge(muster):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 360, 0))
+            setze m: ptr[KernMover] auf zeiger(adresse_von(g.mover))
+            weitergeben(mover_starten(m, v, pfad, 2))
+            setze start: u64 auf takt()
+            solange nicht mover_ist_fertig(m) und takt() - start < tsc * 30000000:
+                faden_abgeben(smp_planer())
+            wenn nicht mover_ist_fertig(m):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 361, 0))
+            setze ausgang: u32 auf weitergeben(mover_ergebnis(m))
+            wenn ausgang != MOVER_VERSCHOBEN:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 362, ausgang))
+        setze rest: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(cache, pfad)
+        wenn ist_erfolg(rest) oder ergebnis_fehler(rest).code != VFS_ENOENT:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 363, 0))
+        setze f: ptr[dyn Dateisystem] auf g.quellen[0].system
+        setze h: u64 auf weitergeben(f.oeffnen(pfad, VFS_LESEN))
+        setze p: [u8; 32] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze n: u64 auf weitergeben(f.lesen(h, 0, pufferansicht(p)))
+        weitergeben(f.schliessen(h))
+        wenn n != länge(muster) oder nicht array_pq_scrub_gleich(pufferansicht(p, 0, n), muster):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 364, 0))
+        gib_zurück erfolg(n)
+
+@nativ
+funktion gesamt_ring3(g: ptr[GesamtLauf], elf: u64, laenge: u64, tsc: u64, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ElfProzess] auf zeiger(adresse_von(g.prozess))
+        wenn nicht elf_laden(p, elf, laenge):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 367))
+        p.ep_gruppe.bg_dateien.transfer_seiten = KERN_DATEI_TRANSFER_MAX_SEITEN
+        wenn nicht prozess_starten(p, smp_nummer()):
+            prozess_freigeben(p)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 367))
+        setze start: u64 auf takt()
+        solange atom_laden(p.ep_benutzer.bp_status, ordnung=erwerben) != 2:
+            wenn takt() - start >= tsc * 14400000000:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 368))
+            faden_abgeben(smp_planer())
+        log(adresse_von(GESAMT_T_EXIT), p.ep_benutzer.bp_kode)
+        wenn p.ep_benutzer.bp_grund != 0 oder p.ep_benutzer.bp_kode != 0 oder nicht prozess_freigeben(p):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 367))
+        gib_zurück erfolg()
+
+@nativ
+funktion gesamt_rebuild(g: ptr[GesamtLauf], log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(g.pq))
+        setze stat: ArrayRebuildStatus auf weitergeben(kern_array_pq_status(a, 0))
+        wenn stat.zustand != ARRAY_MITGLIED_FEHLT:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 369))
+        weitergeben(kern_array_pq_ersatz(a, 0, zeiger(adresse_von(g.medien.anschluss[6]))))
+        setze seiten: u64 auf 0
+        solange seiten < GESAMT_SEITEN:
+            setze schritt: ArrayRebuildFortschritt auf weitergeben(kern_array_pq_schritt(a))
+            wenn schritt.fertig <= seiten oder schritt.gesamt != GESAMT_SEITEN oder schritt.abgeschlossen != (schritt.fertig == GESAMT_SEITEN):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 370))
+            setze seiten auf schritt.fertig
+        log(adresse_von(GESAMT_T_REBUILD), seiten)
+        gib_zurück erfolg()
+
+# Eingebrachter CRC-Fehler ausschließlich auf dem privaten SATA-Testmedium.
+# Ring 3 und Mover sind beendet, die Rohseite wird vor jeder weiteren Nutzung
+# via Scrub überprüft und mit dem unveränderten Original verglichen.
+@nativ
+funktion gesamt_scrub(g: ptr[GesamtLauf], fehlerprobe: bool, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(g.pq))
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(a.rebuild))
+        setze original: u64 auf adresse_von(g.scrub_original[0])
+        setze abgleich: u64 auf adresse_von(g.scrub_abgleich[0])
+        wenn fehlerprobe:
+            weitergeben(array_pq_rebuild_roh_lesen(r, 1, 0, original))
+            nt_kopiere(abgleich, original, 4096)
+            g.scrub_abgleich[64] = g.scrub_abgleich[64] ^ 0x71
+            weitergeben(array_pq_rebuild_roh_schreiben(r, 1, 0, abgleich))
+        weitergeben(kern_array_pq_scrub_starten(a, fehlerprobe))
+        solange nicht a.scrub.fertig:
+            weitergeben(kern_array_pq_scrub_schritt(a))
+        setze erwartet: u64 auf u64(fehlerprobe)
+        wenn a.scrub.geprueft != GESAMT_SEITEN oder a.scrub.repariert != erwartet oder a.scrub.traeger[1] != erwartet:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 371))
+        wenn fehlerprobe:
+            weitergeben(array_pq_rebuild_roh_lesen(r, 1, 0, abgleich))
+            wenn nicht array_pq_scrub_gleich(pufferansicht(g.scrub_original), pufferansicht(g.scrub_abgleich)):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 372))
+        sonst wenn a.scrub.fehlerseiten != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 373))
+        log(adresse_von(GESAMT_T_SCRUB), a.scrub.geprueft)
+        log(adresse_von(GESAMT_T_SCRUB_REPARATUR), a.scrub.repariert)
+        gib_zurück erfolg()
+
+@nativ
+funktion gesamt_vfs_fehler(f: VfsFehler) -> BlockFehler:
+    gib_zurück BlockFehler(BLOCK_EA, (f.code << 16) | (f.grund & 0xFFFF))
+
+@nativ
+funktion gesamt_lauf(elf: u64, laenge: u64, tsc: u64, bi: u64, map: u64, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze g: ptr[GesamtLauf] auf zeiger(adresse_von(GESAMT_LAUF))
+        log(adresse_von(GESAMT_T_START), 1)
+        weitergeben(gesamt_medien_einrichten(zeiger(adresse_von(g.medien)), tsc, bi, map))
+        setze phase: u64 auf weitergeben(gesamt_array(g))
+        log(adresse_von(GESAMT_T_ARRAY), phase)
+        wenn phase == 2:
+            log(adresse_von(GESAMT_T_FEHLEND), 1)
+        setze vfs: ergebnis[ptr[dyn Dateisystem], VfsFehler] auf gesamt_freigabe(g, phase == 1)
+        wenn nicht ist_erfolg(vfs):
+            gib_zurück fehlschlag(gesamt_vfs_fehler(ergebnis_fehler(vfs)))
+        log(adresse_von(GESAMT_T_CACHE), 2)
+        setze mover: ergebnis[u64, VfsFehler] auf gesamt_mover(g, ergebnis_wert(vfs), tsc, phase == 1)
+        wenn nicht ist_erfolg(mover):
+            gib_zurück fehlschlag(gesamt_vfs_fehler(ergebnis_fehler(mover)))
+        log(adresse_von(GESAMT_T_MOVER), ergebnis_wert(mover))
+        weitergeben(gesamt_ring3(g, elf, laenge, tsc, log))
+        wenn phase == 2:
+            weitergeben(gesamt_rebuild(g, log))
+        wenn phase != 1:
+            weitergeben(gesamt_scrub(g, phase == 2, log))
+        log(adresse_von(GESAMT_T_ENDE), phase)
+        gib_zurück erfolg()
+
+@nativ
+funktion gesamt_probe_starten(elf: u64, laenge: u64, tsc: u64, bi: u64, map: u64, meldung: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(meldung)
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf gesamt_lauf(elf, laenge, tsc, bi, map, log)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            log(adresse_von(GESAMT_T_FEHLER), (u64(f.code) << 32) | u64(f.geraete_status))
+            gib_zurück falsch
+        gib_zurück wahr

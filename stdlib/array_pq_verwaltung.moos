@@ -1,0 +1,123 @@
+# Exklusive Topologieverwaltung. Der Besitzer hält alle Transporte geliehen und
+# sperrt normale I/O über den gesamten Aufruf. Vor der Journalveröffentlichung
+# bleiben Daten und bisherige Parität vollständig benutzbar.
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, BLOCK_NUR_LESEN, BLOCK_SCHREIBEN, BLOCK_LESEN
+aus ds_fat_transport importiere FatTransport
+aus array_format importiere ArrayLayout, ArrayMitgliedsdaten, ARRAY_DATEN, array_identitaet_gleich, array_seite_leeren
+aus array_pq_format importiere ArrayPQGrenzen, array_pq_layout_pruefen, array_pq_superblock_bauen
+aus array_paritaet importiere ArrayAnschluss, array_io, array_barriere, array_sektoren_pro_seite
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildStand, ArrayPQRebuildArbeit, ARRAY_PQ_KEIN
+aus array_pq_rebuild_format importiere ARRAY_PQ_META_SEITEN, array_pq_rebuild_bankseite
+aus array_pq_rebuild_metadaten importiere array_pq_rebuild_layout_setzen, array_pq_rebuild_speichern
+
+@nativ
+funktion array_pq_verwaltung_pruefen(r: ptr[ArrayPQRebuild], q: ptr[ArrayAnschluss], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(q) == 0 oder u64(w) == 0 oder nicht r.bereit oder r.stand.fehlende != 0 oder r.stand.ersatz != ARRAY_PQ_KEIN oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 320))
+        wenn r.basis.generation == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 320))
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            wenn array_identitaet_gleich(zeiger(adresse_von(q.identitaet)), zeiger(adresse_von(r.stand.layout.mitglieder[i].identitaet))):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 321))
+            setze i auf i + 1
+        setze d: BlockGeometrie auf q.medien.daten.geometrie()
+        setze m: BlockGeometrie auf q.medien.metadaten.geometrie()
+        setze df: u64 auf array_sektoren_pro_seite(d)
+        setze mf: u64 auf array_sektoren_pro_seite(m)
+        wenn df == 0 oder mf == 0 oder m.bloecke / mf < ARRAY_PQ_META_SEITEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 322))
+        wenn d.nur_lesend oder m.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 320))
+        gib_zurück erfolg(d.bloecke / df)
+
+# Erst beide leeren Journalbanken, dann beide vorbereiteten Basiskopien.
+# Ein Absturz hier lässt die alte Topologie maßgeblich.
+@nativ
+funktion array_pq_verwaltung_vorbereiten(q: ptr[ArrayAnschluss], layout: ptr[ArrayLayout], slot: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        array_seite_leeren(pufferansicht(w.kopf))
+        setze adr: u64 auf adresse_von(w.kopf[0])
+        weitergeben(array_io(q.medien.metadaten, BLOCK_SCHREIBEN, array_pq_rebuild_bankseite(0), 1, adr))
+        weitergeben(array_io(q.medien.metadaten, BLOCK_SCHREIBEN, array_pq_rebuild_bankseite(1), 1, adr))
+        weitergeben(array_barriere(q.medien.metadaten))
+        weitergeben(array_pq_superblock_bauen(pufferansicht(w.kopf), layout, slot))
+        weitergeben(array_io(q.medien.metadaten, BLOCK_SCHREIBEN, 0, 1, adr))
+        weitergeben(array_barriere(q.medien.metadaten))
+        weitergeben(array_io(q.medien.metadaten, BLOCK_SCHREIBEN, 1, 1, adr))
+        gib_zurück array_barriere(q.medien.metadaten)
+
+@nativ
+funktion array_pq_verwaltung_veroeffentlichen(r: ptr[ArrayPQRebuild], q: ptr[ArrayAnschluss], layout: ptr[ArrayLayout], slot: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_verwaltung_vorbereiten(q, layout, slot, w))
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze stand.layout auf layout[0]
+        setze r.bereit auf falsch
+        weitergeben(array_pq_rebuild_layout_setzen(r, layout))
+        setze r.medien[slot] auf q.medien
+        setze r.anwesend auf r.anwesend | (1 << slot)
+        setze r.bank[slot] auf 0
+        setze r.folgen[slot] auf 0
+        gib_zurück array_pq_rebuild_speichern(r, zeiger(adresse_von(stand)), w)
+
+@nativ
+funktion array_pq_daten_hinzufuegen(r: ptr[ArrayPQRebuild], q: ptr[ArrayAnschluss], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze seiten: u64 auf weitergeben(array_pq_verwaltung_pruefen(r, q, w))
+        wenn r.basis.anzahl == 16:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 323))
+        setze layout: ArrayLayout auf r.stand.layout
+        setze slot: u64 auf layout.anzahl
+        layout.mitglieder[slot] = ArrayMitgliedsdaten(ARRAY_DATEN, seiten, q.identitaet)
+        setze layout.anzahl auf slot + 1
+        setze layout.generation auf layout.generation + 1
+        # Vor jedem Schreibzugriff müssen beide Paritäten groß genug sein.
+        setze grenzen: ArrayPQGrenzen auf weitergeben(array_pq_layout_pruefen(zeiger(adresse_von(layout))))
+        array_seite_leeren(pufferansicht(w.kopf))
+        setze adr: u64 auf adresse_von(w.kopf[0])
+        setze seite: u64 auf 0
+        solange seite < seiten:
+            weitergeben(array_io(q.medien.daten, BLOCK_SCHREIBEN, seite, 1, adr))
+            setze seite auf seite + 1
+        weitergeben(array_barriere(q.medien.daten))
+        # Bisher unbenutzte Paritätsseiten werden vorbereitet; der geschützte
+        # alte Bereich wird dabei niemals überschrieben.
+        setze seite auf r.daten_max
+        solange seite < grenzen.daten_max:
+            weitergeben(array_io(r.medien[r.paritaet_p].daten, BLOCK_SCHREIBEN, seite, 1, adr))
+            weitergeben(array_io(r.medien[r.paritaet_q].daten, BLOCK_SCHREIBEN, seite, 1, adr))
+            setze seite auf seite + 1
+        weitergeben(array_barriere(r.medien[r.paritaet_p].daten))
+        weitergeben(array_barriere(r.medien[r.paritaet_q].daten))
+        weitergeben(array_pq_verwaltung_veroeffentlichen(r, q, zeiger(adresse_von(layout)), slot, w))
+        gib_zurück erfolg(slot)
+
+@nativ
+funktion array_pq_paritaet_tauschen(r: ptr[ArrayPQRebuild], slot: u64, q: ptr[ArrayAnschluss], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze seiten: u64 auf weitergeben(array_pq_verwaltung_pruefen(r, q, w))
+        wenn slot != r.paritaet_p und slot != r.paritaet_q:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 324))
+        wenn seiten < r.basis.mitglieder[slot].seiten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 325))
+        setze layout: ArrayLayout auf r.stand.layout
+        setze layout.mitglieder[slot].seiten auf seiten
+        setze layout.mitglieder[slot].identitaet auf q.identitaet
+        setze layout.generation auf layout.generation + 1
+        setze grenzen: ArrayPQGrenzen auf weitergeben(array_pq_layout_pruefen(zeiger(adresse_von(layout))))
+        setze seite: u64 auf 0
+        setze adr: u64 auf adresse_von(w.kopf[0])
+        solange seite < seiten:
+            wenn seite < grenzen.daten_max:
+                weitergeben(array_io(r.medien[slot].daten, BLOCK_LESEN, seite, 1, adr))
+            sonst:
+                array_seite_leeren(pufferansicht(w.kopf))
+            weitergeben(array_io(q.medien.daten, BLOCK_SCHREIBEN, seite, 1, adr))
+            setze seite auf seite + 1
+        weitergeben(array_barriere(q.medien.daten))
+        # Der alte Träger bleibt bis zum vollständig dauerhaften neuen Bild
+        # aktiv; kein künstlicher Ausfall zum Starten eines Rebuilds.
+        weitergeben(array_pq_verwaltung_veroeffentlichen(r, q, zeiger(adresse_von(layout)), slot, w))
+        gib_zurück erfolg(slot)

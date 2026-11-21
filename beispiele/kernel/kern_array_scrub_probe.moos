@@ -1,0 +1,151 @@
+# T23 auf echten Kern-Blockgeräten: MooFS, Scrub und Topologie unter KernMutex.
+aus "kern_array" importiere ArrayKernAnschluss
+aus "kern_array_pq" importiere KernArrayPQ, kern_array_pq_anschluss, kern_array_pq_einrichten, kern_array_pq_kennung, kern_array_pq_scrub_starten, kern_array_pq_scrub_schritt, kern_array_pq_hinzufuegen, kern_array_pq_paritaet_tauschen
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BLOCK_EA, BLOCK_VOLL, BLOCK_LESEN, BLOCK_SCHREIBEN_FUA, block_registrieren, block_anfordern
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_nullseiten
+aus "speicher_fat" importiere FatKernTransport
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_pq_format importiere ARRAY_PARITAET_Q
+aus array_paritaet importiere ArrayAnschluss
+aus array_pq_scrub importiere array_pq_scrub_gleich
+aus ds_moofs_format importiere MooFsQuelle, MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs importiere MooFsFehler
+
+struktur KernScrubProbe:
+    a: KernArrayPQ
+    ram: [RamPlatte; 14]
+    basis: [u64; 14]
+    quellen: [ArrayKernAnschluss; 7]
+    daten: [FatKernTransport; 7]
+    meta: [FatKernTransport; 7]
+    format: MooFsFormatSpeicher
+    quelle: MooFsQuelle
+    inhalt: [u8; 5000]
+    p_alt: [u8; 4096]
+    q_alt: [u8; 4096]
+    block: [u8; 4096]
+
+@nativ
+statisch KERN_SCRUB_PROBE: KernScrubProbe auf 0
+@nativ
+konstante T_ARRAY_SCRUB_OK: [u8; _] auf "MOO-ARRAY SCRUB PRUEFUNG "
+
+@nativ
+funktion array_scrub_probe_pruefen(gut: bool, nummer: u32) -> ergebnis[void, BlockFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, nummer))
+    gib_zurück erfolg()
+
+@nativ
+funktion array_scrub_probe_ram(p: ptr[KernScrubProbe], index: u64, seiten: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(seiten)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 330))
+        ar_nullseiten(basis, seiten)
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(p.ram[index]))
+        weitergeben(block_ram_einrichten(ram, basis, seiten * 4096, 512, falsch))
+        setze p.basis[index] auf basis
+        setze geraet: ptr[dyn BlockGeraet] auf ram
+        gib_zurück block_registrieren(geraet)
+
+@nativ
+funktion array_probe_scrub_lauf(log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[KernScrubProbe] auf zeiger(adresse_von(KERN_SCRUB_PROBE))
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(p.a))
+        setze layout: ArrayLayout auf 0
+        setze layout.guid_lo auf 0x54433233
+        setze layout.guid_hi auf 0x51435243
+        setze layout.generation auf 1
+        setze layout.anzahl auf 4
+        setze i: u64 auf 0
+        solange i < 7:
+            setze seiten: u64 auf 8
+            wenn i == 1 oder i == 2:
+                setze seiten auf 10
+            wenn i == 4:
+                setze seiten auf 9
+            wenn i == 5 oder i == 6:
+                setze seiten auf 12
+            setze d: u64 auf weitergeben(array_scrub_probe_ram(p, i, seiten))
+            setze m: u64 auf weitergeben(array_scrub_probe_ram(p, i + 7, 10))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0xA230 + i
+            setze ident.guid_hi auf 0xA240 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 83
+            ident.serie[1] = als(u8, 48 + i)
+            p.quellen[i] = ArrayKernAnschluss(ident, d, m)
+            wenn i < 4:
+                setze rolle: u32 auf ARRAY_DATEN
+                wenn i == 1:
+                    setze rolle auf ARRAY_PARITAET_P
+                wenn i == 2:
+                    setze rolle auf ARRAY_PARITAET_Q
+                layout.mitglieder[i] = ArrayMitgliedsdaten(rolle, seiten, ident)
+            setze i auf i + 1
+        setze qu: MooFsQuelle auf 0
+        setze qu.nummer auf 2
+        setze qu.eltern auf 1
+        setze qu.art auf 1
+        setze qu.name_bytes auf 1
+        qu.name[0] = 120
+        setze qu.daten auf adresse_von(p.inhalt[0])
+        setze qu.bytes auf 5000
+        setze p.quelle auf qu
+        setze i auf 0
+        solange i < 5000:
+            p.inhalt[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        setze links: ArrayAnschluss auf weitergeben(kern_array_pq_anschluss(zeiger(adresse_von(p.daten[0])), zeiger(adresse_von(p.meta[0])), zeiger(adresse_von(p.quellen[0]))))
+        setze rechts: ArrayAnschluss auf weitergeben(kern_array_pq_anschluss(zeiger(adresse_von(p.daten[3])), zeiger(adresse_von(p.meta[3])), zeiger(adresse_von(p.quellen[3]))))
+        setze fmt: ergebnis[void, MooFsFehler] auf moofs_formatieren(links.medien.daten, zeiger(adresse_von(p.quelle)), 1, 330, 331, zeiger(adresse_von(p.format)))
+        weitergeben(array_scrub_probe_pruefen(ist_erfolg(fmt), 331))
+        setze fmt_rechts: ergebnis[void, MooFsFehler] auf moofs_formatieren(rechts.medien.daten, zeiger(adresse_von(p.quelle)), 1, 332, 333, zeiger(adresse_von(p.format)))
+        weitergeben(array_scrub_probe_pruefen(ist_erfolg(fmt_rechts), 332))
+        setze initial: u64 auf weitergeben(kern_array_pq_einrichten(a, zeiger(adresse_von(layout)), zeiger(adresse_von(p.quellen[0])), 4, 1))
+        weitergeben(array_scrub_probe_pruefen(initial == 8, 333))
+        # Gespeicherte Originalseite über das normale virtuelle Gerät lesen.
+        setze req: BlockAnfrage auf 0
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(adresse_von(req))
+        setze original: u64 auf kern_array_pq_kennung(a, 0)
+        weitergeben(block_anfordern(original, anfrage, BLOCK_LESEN, 3, 1, adresse_von(p.block[0]), 4096))
+        setze wert: u8 auf speicher_lesen(p.basis[0] + 12388, 1)
+        speicher_schreiben(p.basis[0] + 12388, wert ^ 0x71, 1)
+        setze p_wert: u8 auf speicher_lesen(p.basis[1] + 12389, 1)
+        speicher_schreiben(p.basis[1] + 12389, p_wert ^ 0x71, 1)
+        weitergeben(kern_array_pq_scrub_starten(a, wahr))
+        solange nicht a.scrub.fertig:
+            setze fertig: bool auf weitergeben(kern_array_pq_scrub_schritt(a))
+            weitergeben(array_scrub_probe_pruefen(fertig == a.scrub.fertig, 334))
+        weitergeben(array_scrub_probe_pruefen(a.scrub.traeger[0] == 1 und a.scrub.traeger[1] == 1 und a.scrub.repariert == 2, 335))
+        setze phys: ptr[u8] auf zeiger(p.basis[0] + 3 * 4096)
+        weitergeben(array_scrub_probe_pruefen(array_pq_scrub_gleich(byteansicht(phys, 4096), pufferansicht(p.block)), 336))
+        setze neuer_block: u64 auf weitergeben(kern_array_pq_hinzufuegen(a, zeiger(adresse_von(p.quellen[4]))))
+        weitergeben(array_scrub_probe_pruefen(neuer_block != 0 und kern_array_pq_kennung(a, 0) == original und a.rebuild.stand.fehlende == 0, 337))
+        # Der neue Daten-Slot ist sofort ein normales registriertes Blockgerät.
+        weitergeben(block_anfordern(neuer_block, anfrage, BLOCK_SCHREIBEN_FUA, 3, 1, adresse_von(p.block[0]), 4096))
+        setze j: u64 auf 0
+        solange j < 4096:
+            p.p_alt[j] = speicher_lesen(p.basis[1] + 3 * 4096 + j, 1)
+            p.q_alt[j] = speicher_lesen(p.basis[2] + 3 * 4096 + j, 1)
+            setze j auf j + 1
+        weitergeben(kern_array_pq_paritaet_tauschen(a, 1, zeiger(adresse_von(p.quellen[5]))))
+        weitergeben(kern_array_pq_paritaet_tauschen(a, 2, zeiger(adresse_von(p.quellen[6]))))
+        weitergeben(array_scrub_probe_pruefen(a.rebuild.stand.fehlende == 0 und a.rebuild.basis.mitglieder[1].seiten == 12 und a.rebuild.basis.mitglieder[2].seiten == 12, 338))
+        setze p_neu: ptr[u8] auf zeiger(p.basis[5] + 3 * 4096)
+        setze q_neu: ptr[u8] auf zeiger(p.basis[6] + 3 * 4096)
+        weitergeben(array_scrub_probe_pruefen(array_pq_scrub_gleich(byteansicht(p_neu, 4096), pufferansicht(p.p_alt)) und array_pq_scrub_gleich(byteansicht(q_neu, 4096), pufferansicht(p.q_alt)), 339))
+        # Alte Parität unverändert, virtuelle IDs über beide Wechsel stabil.
+        setze p_alt: ptr[u8] auf zeiger(p.basis[1] + 3 * 4096)
+        setze q_alt: ptr[u8] auf zeiger(p.basis[2] + 3 * 4096)
+        weitergeben(array_scrub_probe_pruefen(array_pq_scrub_gleich(byteansicht(p_alt, 4096), pufferansicht(p.p_alt)) und array_pq_scrub_gleich(byteansicht(q_alt, 4096), pufferansicht(p.q_alt)) und kern_array_pq_kennung(a, 0) == original, 340))
+        weitergeben(kern_array_pq_scrub_starten(a, falsch))
+        solange nicht a.scrub.fertig:
+            setze fertig_nachher: bool auf weitergeben(kern_array_pq_scrub_schritt(a))
+            weitergeben(array_scrub_probe_pruefen(fertig_nachher == a.scrub.fertig, 341))
+        weitergeben(array_scrub_probe_pruefen(a.scrub.fehlerseiten == 0 und a.scrub.geprueft == 9, 342))
+        log(adresse_von(T_ARRAY_SCRUB_OK), 1)
+        gib_zurück erfolg()

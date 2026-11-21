@@ -1,0 +1,359 @@
+# Virtuelles Blockgerät je P/Q-Datenslot. Verwaltung und normaler I/O
+# serialisieren jeweils eine Seite über dieselbe KernMutex.
+aus "kern_array" importiere ArrayKernAnschluss, array_kern_rebuild_freigeben
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BlockEintrag, block_registrieren_gruppe, block_registrieren, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm
+aus "kern_smp" importiere smp_planer
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus nativ_block importiere BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_OK, BLOCK_BELEGT, BLOCK_NICHT_BEREIT, BLOCK_GEOMETRIE, BLOCK_UNBEKANNT, BLOCK_VOLL, block_pruefen
+aus ds_fat_transport importiere FatTransport
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ARRAY_DATEN, ARRAY_MAX_MITGLIEDER, ARRAY_SEITEN_BYTES, array_identitaet_gleich
+aus array_paritaet importiere ArrayAnschluss, ArrayMedien
+aus array_q importiere ARRAY_Q_TABELLE
+aus array_gf256 importiere ArrayGf256, array_gf256_starten
+aus array_rebuild importiere ArrayRebuildStatus, ArrayRebuildFortschritt
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildArbeit, ARRAY_PQ_KEIN
+aus array_pq_rebuild importiere array_pq_rebuild_anlegen, array_pq_rebuild_oeffnen, array_pq_rebuild_flush, array_pq_rebuild_ersatz_beginnen, array_pq_rebuild_schritt, array_pq_rebuild_status
+aus array_pq_rebuild_io importiere array_pq_rebuild_lesen, array_pq_rebuild_schreiben, array_pq_rebuild_verloren
+
+aus array_pq_scrub importiere ArrayPQScrub, ArrayPQScrubArbeit, array_pq_scrub_starten, array_pq_scrub_schritt
+aus array_pq_verwaltung importiere array_pq_daten_hinzufuegen, array_pq_paritaet_tauschen
+
+struktur KernArrayPQGeraet implementiert BlockGeraet:
+    besitzer: u64
+    mitglied: u64
+    geo: BlockGeometrie
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, a: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze r: ergebnis[void, BlockFehler] auf kern_array_pq_auftrag(selbst, a)
+            wenn ist_erfolg(r):
+                block_abschliessen(a, BlockFehler(BLOCK_OK, 0))
+            sonst:
+                block_abschliessen(a, ergebnis_fehler(r))
+            gib_zurück erfolg()
+
+struktur KernArrayPQ:
+    rebuild: ArrayPQRebuild
+    arbeit: ArrayPQRebuildArbeit
+    gf: ArrayGf256
+    scrub: ArrayPQScrub
+    scrub_arbeit: ArrayPQScrubArbeit
+    neue_daten: [FatKernTransport; 16]
+    neue_meta: [FatKernTransport; 16]
+    sperre: KernMutex
+    aktiv: atom[u32]
+    daten: [FatKernTransport; 16]
+    meta: [FatKernTransport; 16]
+    ersatz_daten: [FatKernTransport; 16]
+    ersatz_meta: [FatKernTransport; 16]
+    anschluesse: [ArrayAnschluss; 16]
+    ids_daten: [u64; 16]
+    ids_meta: [u64; 16]
+    geraete: [KernArrayPQGeraet; 16]
+    kennungen: [u64; 16]
+
+@nativ
+funktion kern_array_pq_aktiv(a: ptr[KernArrayPQ]) -> bool:
+    unsicher:
+        gib_zurück u64(a) != 0 und atom_laden(a.aktiv, ordnung=erwerben) != 0
+
+@nativ
+funktion kern_array_pq_seite(a: ptr[KernArrayPQ], mitglied: u64, art: u32, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(a.rebuild))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(a.arbeit))
+        wenn art == BLOCK_LESEN:
+            gib_zurück array_pq_rebuild_lesen(r, mitglied, seite, adresse, w)
+        wenn art == BLOCK_FLUSH:
+            gib_zurück array_pq_rebuild_flush(r)
+        gib_zurück array_pq_rebuild_schreiben(r, mitglied, seite, adresse, w)
+
+@nativ
+funktion kern_array_pq_auftrag(g: ptr[KernArrayPQGeraet], anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze a: ptr[KernArrayPQ] auf zeiger(g.besitzer)
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 310))
+        weitergeben(block_pruefen(g.geo, anfrage.art, anfrage.lba, anfrage.anzahl, anfrage.puffer, anfrage.laenge))
+        wenn anfrage.art == BLOCK_FLUSH:
+            gib_zurück kern_array_pq_seite(a, g.mitglied, BLOCK_FLUSH, 0, 0)
+        wenn anfrage.art != BLOCK_LESEN und anfrage.art != BLOCK_SCHREIBEN und anfrage.art != BLOCK_SCHREIBEN_FUA:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 310))
+        setze i: u64 auf 0
+        solange i < anfrage.anzahl:
+            weitergeben(kern_array_pq_seite(a, g.mitglied, anfrage.art, anfrage.lba + i, anfrage.puffer + i * ARRAY_SEITEN_BYTES))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_array_pq_anschluss(d: ptr[FatKernTransport], m: ptr[FatKernTransport], q: ptr[ArrayKernAnschluss]) -> ergebnis[ArrayAnschluss, BlockFehler]:
+    unsicher:
+        wenn q.daten == 0 oder q.metadaten == 0 oder q.daten == q.metadaten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 310))
+        weitergeben(fat_kern_transport_einrichten(d, q.daten))
+        weitergeben(fat_kern_transport_einrichten(m, q.metadaten))
+        setze td: ptr[dyn FatTransport] auf d
+        setze tm: ptr[dyn FatTransport] auf m
+        gib_zurück erfolg(ArrayAnschluss(q.identitaet, ArrayMedien(td, tm)))
+
+@nativ
+funktion kern_array_pq_transporte(a: ptr[KernArrayPQ], q: ptr[ArrayKernAnschluss], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze j: u64 auf 0
+            solange j < i:
+                wenn q[i].daten == q[j].daten oder q[i].daten == q[j].metadaten oder q[i].metadaten == q[j].daten oder q[i].metadaten == q[j].metadaten:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 311))
+                setze j auf j + 1
+            setze d: ptr[FatKernTransport] auf zeiger(adresse_von(a.daten[i]))
+            setze m: ptr[FatKernTransport] auf zeiger(adresse_von(a.meta[i]))
+            setze a.anschluesse[i] auf weitergeben(kern_array_pq_anschluss(d, m, zeiger(adresse_von(q[i]))))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_array_pq_physische_ids(a: ptr[KernArrayPQ], q: ptr[ArrayKernAnschluss], anzahl: u64) -> void:
+    unsicher:
+        setze slot: u64 auf 0
+        solange slot < a.rebuild.basis.anzahl:
+            setze a.ids_daten[slot] auf 0
+            setze a.ids_meta[slot] auf 0
+            wenn (a.rebuild.anwesend & (1 << slot)) != 0:
+                setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(a.rebuild.stand.layout.mitglieder[slot].identitaet))
+                setze i: u64 auf 0
+                solange i < anzahl:
+                    wenn array_identitaet_gleich(ident, zeiger(adresse_von(q[i].identitaet))):
+                        setze a.ids_daten[slot] auf q[i].daten
+                        setze a.ids_meta[slot] auf q[i].metadaten
+                    setze i auf i + 1
+            setze slot auf slot + 1
+
+@nativ
+funktion kern_array_pq_registrieren(a: ptr[KernArrayPQ]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(1)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 310))
+        aufräumen: ar_rahmen_freigeben(basis)
+        setze liste: ptr[BlockEintrag] auf zeiger(basis)
+        setze n: u64 auf 0
+        setze slot: u64 auf 0
+        solange slot < a.rebuild.basis.anzahl:
+            wenn a.rebuild.basis.mitglieder[slot].rolle == ARRAY_DATEN:
+                setze geo: BlockGeometrie auf BlockGeometrie(a.rebuild.basis.mitglieder[slot].seiten, ARRAY_SEITEN_BYTES, falsch)
+                setze g: ptr[KernArrayPQGeraet] auf zeiger(adresse_von(a.geraete[slot]))
+                setze g[0] auf KernArrayPQGeraet(u64(a), slot, geo)
+                setze block: ptr[dyn BlockGeraet] auf g
+                setze liste[n].geraet auf block
+                setze n auf n + 1
+            setze slot auf slot + 1
+        setze kennung: u64 auf weitergeben(block_registrieren_gruppe(liste, n))
+        setze slot auf 0
+        solange slot < a.rebuild.basis.anzahl:
+            wenn a.rebuild.basis.mitglieder[slot].rolle == ARRAY_DATEN:
+                setze a.kennungen[slot] auf kennung
+                setze kennung auf kennung + 1
+            setze slot auf slot + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_array_pq_medien_oeffnen(a: ptr[KernArrayPQ], layout: ptr[ArrayLayout], anzahl: u64, modus: u32) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(a.rebuild))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(a.arbeit))
+        setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(a.anschluesse[0]))
+        setze gf: ptr[ArrayGf256] auf zeiger(adresse_von(a.gf))
+        wenn modus == ARRAY_Q_TABELLE:
+            array_gf256_starten(gf)
+        wenn u64(layout) == 0:
+            gib_zurück array_pq_rebuild_oeffnen(r, q, anzahl, modus, gf, w)
+        gib_zurück array_pq_rebuild_anlegen(r, layout, q, anzahl, modus, gf, w)
+
+# Die Einrichtung ist exklusiv. Der registrierte Speicher bleibt bis zum Neustart gültig.
+@nativ
+funktion kern_array_pq_einrichten(a: ptr[KernArrayPQ], layout: ptr[ArrayLayout], q: ptr[ArrayKernAnschluss], anzahl: u64, modus: u32) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder u64(q) == 0 oder anzahl == 0 oder anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 312))
+        wenn kern_array_pq_aktiv(a) oder a.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 310))
+        weitergeben(kern_array_pq_transporte(a, q, anzahl))
+        setze repariert: u64 auf weitergeben(kern_array_pq_medien_oeffnen(a, layout, anzahl, modus))
+        kern_array_pq_physische_ids(a, q, anzahl)
+        setze e: ergebnis[void, BlockFehler] auf kern_array_pq_registrieren(a)
+        wenn nicht ist_erfolg(e):
+            setze a.rebuild.bereit auf falsch
+        weitergeben(e)
+        atom_speichern(a.aktiv, 1, ordnung=freigeben)
+        gib_zurück erfolg(repariert)
+
+@nativ
+funktion kern_array_pq_kennung(a: ptr[KernArrayPQ], slot: u64) -> u64:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a) oder slot >= a.rebuild.basis.anzahl oder a.rebuild.basis.mitglieder[slot].rolle != ARRAY_DATEN:
+            gib_zurück 0
+        gib_zurück a.kennungen[slot]
+
+@nativ
+funktion kern_array_pq_verloren(a: ptr[KernArrayPQ], slot: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 311))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        gib_zurück array_pq_rebuild_verloren(zeiger(adresse_von(a.rebuild)), slot, zeiger(adresse_von(a.arbeit)))
+
+@nativ
+funktion kern_array_pq_ersatz(a: ptr[KernArrayPQ], slot: u64, q: ptr[ArrayKernAnschluss]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a) oder u64(q) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 312))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        wenn slot >= a.rebuild.basis.anzahl oder (a.rebuild.stand.fehlende & (1 << slot)) == 0 oder a.rebuild.stand.ersatz != ARRAY_PQ_KEIN oder nicht a.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 311))
+        setze i: u64 auf 0
+        solange i < a.rebuild.basis.anzahl:
+            wenn q.daten == a.kennungen[i] oder q.metadaten == a.kennungen[i]:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 313))
+            wenn i != slot und (q.daten == a.ids_daten[i] oder q.daten == a.ids_meta[i] oder q.metadaten == a.ids_daten[i] oder q.metadaten == a.ids_meta[i]):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 314))
+            setze i auf i + 1
+        setze d: ptr[FatKernTransport] auf zeiger(adresse_von(a.ersatz_daten[slot]))
+        setze m: ptr[FatKernTransport] auf zeiger(adresse_von(a.ersatz_meta[slot]))
+        setze quelle: ArrayAnschluss auf weitergeben(kern_array_pq_anschluss(d, m, q))
+        weitergeben(array_pq_rebuild_ersatz_beginnen(zeiger(adresse_von(a.rebuild)), slot, zeiger(adresse_von(quelle)), zeiger(adresse_von(a.arbeit))))
+        setze a.ids_daten[slot] auf q.daten
+        setze a.ids_meta[slot] auf q.metadaten
+        gib_zurück erfolg()
+
+@nativ
+funktion kern_array_pq_schritt(a: ptr[KernArrayPQ]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 313))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        gib_zurück array_pq_rebuild_schritt(zeiger(adresse_von(a.rebuild)), zeiger(adresse_von(a.arbeit)))
+
+@nativ
+funktion kern_array_pq_status(a: ptr[KernArrayPQ], slot: u64) -> ergebnis[ArrayRebuildStatus, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 314))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        gib_zurück array_pq_rebuild_status(zeiger(adresse_von(a.rebuild)), slot)
+
+
+# Verwaltung und Scrub teilen die Sperre mit jedem normalen Blockauftrag.
+@nativ
+funktion kern_array_pq_scrub_starten(a: ptr[KernArrayPQ], reparieren: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 320))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        gib_zurück array_pq_scrub_starten(zeiger(adresse_von(a.scrub)), zeiger(adresse_von(a.rebuild)), reparieren)
+
+@nativ
+funktion kern_array_pq_scrub_schritt(a: ptr[KernArrayPQ]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 321))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        gib_zurück array_pq_scrub_schritt(zeiger(adresse_von(a.scrub)), zeiger(adresse_von(a.rebuild)), zeiger(adresse_von(a.arbeit)), zeiger(adresse_von(a.scrub_arbeit)))
+
+# Nach einem vollen Blockregister bleibt ein bereits dauerhaft aufgenommenes
+# Mitglied geschützt. Seine Registrierung kann separat wiederholt werden.
+@nativ
+funktion kern_array_pq_nachregistrieren(a: ptr[KernArrayPQ], slot: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 322))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        wenn slot >= a.rebuild.basis.anzahl oder a.rebuild.basis.mitglieder[slot].rolle != ARRAY_DATEN oder nicht a.rebuild.bereit:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 320))
+        wenn a.kennungen[slot] != 0:
+            gib_zurück erfolg(a.kennungen[slot])
+        setze g: ptr[KernArrayPQGeraet] auf zeiger(adresse_von(a.geraete[slot]))
+        setze g[0] auf KernArrayPQGeraet(u64(a), slot, BlockGeometrie(a.rebuild.basis.mitglieder[slot].seiten, ARRAY_SEITEN_BYTES, falsch))
+        setze geraet: ptr[dyn BlockGeraet] auf g
+        setze kennung: u64 auf weitergeben(block_registrieren(geraet))
+        setze a.kennungen[slot] auf kennung
+        gib_zurück erfolg(kennung)
+
+# Bis zum Ende exklusiv: auch während des Kopierens darf kein RMW das neue
+# Paritätsbild überholen. Staging-Transporte werden nie über aktive gelegt.
+@nativ
+funktion kern_array_pq_topologie(a: ptr[KernArrayPQ], slot: u64, q: ptr[ArrayKernAnschluss], hinzufuegen: bool) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn nicht kern_array_pq_aktiv(a) oder u64(q) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 323))
+        setze lock: ptr[KernMutex] auf zeiger(adresse_von(a.sperre))
+        mutex_nimm(smp_planer(), lock)
+        aufräumen: array_kern_rebuild_freigeben(lock)
+        wenn hinzufuegen:
+            setze slot auf a.rebuild.basis.anzahl
+        wenn slot >= 16 oder nicht a.rebuild.bereit oder a.rebuild.stand.fehlende != 0 oder a.rebuild.stand.ersatz != ARRAY_PQ_KEIN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 320))
+        setze i: u64 auf 0
+        solange i < a.rebuild.basis.anzahl:
+            wenn q.daten == a.kennungen[i] oder q.metadaten == a.kennungen[i] oder q.daten == a.ids_daten[i] oder q.daten == a.ids_meta[i] oder q.metadaten == a.ids_daten[i] oder q.metadaten == a.ids_meta[i]:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 321))
+            setze i auf i + 1
+        setze d: ptr[FatKernTransport] auf zeiger(adresse_von(a.neue_daten[slot]))
+        setze m: ptr[FatKernTransport] auf zeiger(adresse_von(a.neue_meta[slot]))
+        setze quelle: ArrayAnschluss auf weitergeben(kern_array_pq_anschluss(d, m, q))
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(a.rebuild))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(a.arbeit))
+        wenn hinzufuegen:
+            setze aufgenommen: u64 auf weitergeben(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(quelle)), w))
+            wenn aufgenommen != slot:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 322))
+        sonst:
+            setze getauscht: u64 auf weitergeben(array_pq_paritaet_tauschen(r, slot, zeiger(adresse_von(quelle)), w))
+            wenn getauscht != slot:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 323))
+        setze a.daten[slot] auf d[0]
+        setze a.meta[slot] auf m[0]
+        setze aktiv_d: ptr[FatKernTransport] auf zeiger(adresse_von(a.daten[slot]))
+        setze aktiv_m: ptr[FatKernTransport] auf zeiger(adresse_von(a.meta[slot]))
+        setze td: ptr[dyn FatTransport] auf aktiv_d
+        setze tm: ptr[dyn FatTransport] auf aktiv_m
+        setze r.medien[slot] auf ArrayMedien(td, tm)
+        setze a.ids_daten[slot] auf q.daten
+        setze a.ids_meta[slot] auf q.metadaten
+        # Registrierung geschieht nach Freigabe über nachregistrieren.
+        gib_zurück erfolg(slot)
+
+@nativ
+funktion kern_array_pq_hinzufuegen(a: ptr[KernArrayPQ], q: ptr[ArrayKernAnschluss]) -> ergebnis[u64, BlockFehler]:
+    setze slot: u64 auf weitergeben(kern_array_pq_topologie(a, 0, q, wahr))
+    gib_zurück kern_array_pq_nachregistrieren(a, slot)
+
+@nativ
+funktion kern_array_pq_paritaet_tauschen(a: ptr[KernArrayPQ], slot: u64, q: ptr[ArrayKernAnschluss]) -> ergebnis[void, BlockFehler]:
+    setze erledigt: u64 auf weitergeben(kern_array_pq_topologie(a, slot, q, falsch))
+    wenn erledigt != slot:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 324))
+    gib_zurück erfolg()

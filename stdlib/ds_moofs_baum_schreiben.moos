@@ -1,0 +1,108 @@
+# Gemeinsamer Bottom-up-CoW-Baumschreiber für mkfs und laufende Transaktionen.
+aus ds_moofs importiere MooFsVolume, MooFsBlock, MooFsEintrag, MooFsSchluessel, MooFsFehler, MOOFS_ARGUMENT, MOOFS_VOLL
+aus ds_moofs_formate importiere MooFsBlatt, MooFsAst
+aus ds_moofs_io importiere moofs_block_vorbereiten, moofs_block_schreiben
+
+struktur MooFsBaumKind:
+    schluessel: MooFsSchluessel
+    block: u64
+    crc: u32
+struktur MooFsBaum:
+    wurzel: u64
+    crc: u32
+    hoehe: u32
+schnittstelle MooFsBlockgeber:
+    funktion nehmen(selbst) -> ergebnis[u64, MooFsFehler]
+
+struktur MooFsGerade implementiert MooFsBlockgeber:
+    naechster: u64
+    ende: u64
+    funktion nehmen(selbst) -> ergebnis[u64, MooFsFehler]:
+        unsicher:
+            wenn selbst.naechster < 2 oder selbst.naechster >= selbst.ende:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 110, selbst.naechster))
+            setze nr: u64 auf selbst.naechster
+            setze selbst.naechster auf nr + 1
+            gib_zurück erfolg(nr)
+
+@nativ
+funktion moofs_baum_bloecke(anzahl: u64) -> u64:
+    setze n: u64 auf anzahl / 12
+    wenn anzahl % 12 != 0:
+        setze n auf n + 1
+    setze gesamt: u64 auf n
+    solange n > 1:
+        setze rest: u64 auf n % 100
+        setze n auf n / 100
+        wenn rest != 0:
+            setze n auf n + 1
+        setze gesamt auf gesamt + n
+    gib_zurück gesamt
+
+@nativ
+funktion moofs_baum_schreiben(v: ptr[MooFsVolume], generation: u64, eintraege: ptr[MooFsEintrag], anzahl: u64, kinder: ptr[MooFsBaumKind], kapazitaet: u64, geber: ptr[dyn MooFsBlockgeber], puffer: ptr[MooFsBlock]) -> ergebnis[MooFsBaum, MooFsFehler]:
+    unsicher:
+        setze blaetter: u64 auf anzahl / 12
+        wenn anzahl % 12 != 0:
+            setze blaetter auf blaetter + 1
+        wenn anzahl == 0 oder blaetter > kapazitaet oder generation == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 111, 0))
+        setze bytes: puffer[u8] auf byteansicht(puffer.bytes)
+        setze blatt: u64 auf 0
+        solange blatt < blaetter:
+            setze n: u64 auf anzahl - blatt * 12
+            wenn n > 12:
+                setze n auf 12
+            setze nr: u64 auf weitergeben(geber.nehmen())
+            moofs_block_vorbereiten(puffer, nr, 2, 0, als(u32, n), 0, 0, generation)
+            setze j: u64 auf 0
+            solange j < n:
+                setze e: ptr[MooFsEintrag] auf zeiger(adresse_von(eintraege[blatt * 12 + j]))
+                setze r: puffer[MooFsBlatt] auf sicht(bytes, MooFsBlatt, 64 + j * 320)
+                setze r[0].objekt auf e.schluessel.objekt
+                setze r[0].art auf e.schluessel.art
+                setze r[0].index auf e.schluessel.index
+                setze r[0].a auf e.a
+                setze r[0].b auf e.b
+                setze r[0].c auf e.c
+                setze r[0].d auf e.d
+                setze k: u64 auf 0
+                solange k < 256:
+                    setze r[0].name[k] auf e.name[k]
+                    setze k auf k + 1
+                setze j auf j + 1
+            setze crc: u32 auf weitergeben(moofs_block_schreiben(v, nr, bytes))
+            setze kinder[blatt] auf MooFsBaumKind(eintraege[blatt * 12 + n - 1].schluessel, nr, crc)
+            setze blatt auf blatt + 1
+        setze hoehe: u32 auf 0
+        setze kinderzahl: u64 auf blaetter
+        solange kinderzahl > 1:
+            setze hoehe auf hoehe + 1
+            wenn hoehe > 8:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 112, 0))
+            setze elternzahl: u64 auf kinderzahl / 100
+            wenn kinderzahl % 100 != 0:
+                setze elternzahl auf elternzahl + 1
+            setze eltern: u64 auf 0
+            solange eltern < elternzahl:
+                setze n_ast: u64 auf kinderzahl - eltern * 100
+                wenn n_ast > 100:
+                    setze n_ast auf 100
+                setze nr_ast: u64 auf weitergeben(geber.nehmen())
+                moofs_block_vorbereiten(puffer, nr_ast, 3, hoehe, als(u32, n_ast), 0, 0, generation)
+                setze j_ast: u64 auf 0
+                solange j_ast < n_ast:
+                    setze kind: MooFsBaumKind auf kinder[eltern * 100 + j_ast]
+                    setze ast: puffer[MooFsAst] auf sicht(bytes, MooFsAst, 64 + j_ast * 40)
+                    setze ast[0].objekt auf kind.schluessel.objekt
+                    setze ast[0].art auf kind.schluessel.art
+                    setze ast[0].index auf kind.schluessel.index
+                    setze ast[0].kind auf kind.block
+                    setze ast[0].crc32c auf kind.crc
+                    setze j_ast auf j_ast + 1
+                setze maximum: MooFsSchluessel auf kinder[eltern * 100 + n_ast - 1].schluessel
+                setze crc_ast: u32 auf weitergeben(moofs_block_schreiben(v, nr_ast, bytes))
+                setze kinder[eltern] auf MooFsBaumKind(maximum, nr_ast, crc_ast)
+                setze eltern auf eltern + 1
+            setze kinderzahl auf elternzahl
+        gib_zurück erfolg(MooFsBaum(kinder[0].block, kinder[0].crc, hoehe))

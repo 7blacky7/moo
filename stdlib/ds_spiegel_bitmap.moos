@@ -1,0 +1,126 @@
+# Dirty-Regionen eines Cache-Spiegels. Jede Metadatenpartition hat zwei
+# CRC-geschützte Kopien pro Bitmapseite hinter den Rebuild-Banken.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_EA, BLOCK_BEREICH
+aus array_format importiere ArrayBitmapOrt, ArrayGrenzen, ARRAY_BITMAP_BITS, ARRAY_BITMAP_START, ARRAY_SEITEN_BYTES, array_bitmap_folge, array_bitmap_siegeln, array_seite_leeren
+aus array_paritaet importiere ArrayP, ArrayArbeitsraum, ArrayBitmapStand, array_io, array_barriere
+aus array_rebuild_format importiere ARRAY_REBUILD_META_SEITEN, array_rebuild_bankseite
+
+@nativ
+funktion spiegel_bitmap_seiten(g: ptr[ArrayGrenzen]) -> u64:
+    unsicher:
+        gib_zurück (g.regionen - 1) / ARRAY_BITMAP_BITS + 1
+
+@nativ
+funktion spiegel_bitmap_start(g: ptr[ArrayGrenzen], mitglied: u64) -> u64:
+    gib_zurück array_rebuild_bankseite(g, mitglied, 0) + ARRAY_REBUILD_META_SEITEN
+
+@nativ
+funktion spiegel_bitmap_ort(region: u64) -> ArrayBitmapOrt:
+    setze bit: u64 auf region % ARRAY_BITMAP_BITS
+    gib_zurück ArrayBitmapOrt(region / ARRAY_BITMAP_BITS, ARRAY_BITMAP_START + bit / 8, als(u8, 1 << (bit % 8)))
+
+@nativ
+funktion spiegel_bitmap_kopie(medium: ptr[dyn FatTransport], generation: u64, seite: u64, position: u64, bytes: puffer[u8]) -> u64:
+    unsicher:
+        wenn nicht ist_erfolg(array_io(medium, BLOCK_LESEN, position, 1, u64(puffer_zeiger(bytes)))):
+            gib_zurück 0
+        gib_zurück array_bitmap_folge(bytes, generation, seite)
+
+@nativ
+funktion spiegel_bitmap_laden(p: ptr[ArrayP], mitglied: u64, seite: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[ArrayBitmapStand, BlockFehler]:
+    unsicher:
+        setze m: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        setze position: u64 auf spiegel_bitmap_start(zeiger(adresse_von(p.grenzen)), mitglied) + seite * 2
+        setze links: u64 auf spiegel_bitmap_kopie(m, p.layout.generation, seite, position, byteansicht(w.bitmap_a))
+        setze rechts: u64 auf spiegel_bitmap_kopie(m, p.layout.generation, seite, position + 1, byteansicht(w.bitmap_b))
+        wenn links == 0 und rechts == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 200))
+        wenn links == rechts:
+            setze i: u64 auf 0
+            solange i < ARRAY_SEITEN_BYTES:
+                wenn w.bitmap_a[i] != w.bitmap_b[i]:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 201))
+                setze i auf i + 1
+        wenn rechts > links:
+            gib_zurück erfolg(ArrayBitmapStand(seite, 1, rechts, adresse_von(w.bitmap_b[0])))
+        gib_zurück erfolg(ArrayBitmapStand(seite, 0, links, adresse_von(w.bitmap_a[0])))
+
+@nativ
+funktion spiegel_bitmap_speichern(p: ptr[ArrayP], mitglied: u64, stand: ArrayBitmapStand) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn stand.folge == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 202))
+        setze zeig: ptr[u8] auf zeiger(stand.adresse)
+        array_bitmap_siegeln(byteansicht(zeig, ARRAY_SEITEN_BYTES), p.layout.generation, stand.seite, stand.folge + 1)
+        setze position: u64 auf spiegel_bitmap_start(zeiger(adresse_von(p.grenzen)), mitglied) + 2 * stand.seite + 1 - stand.kopie
+        setze m: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, position, 1, stand.adresse))
+        gib_zurück array_barriere(m)
+
+@nativ
+funktion spiegel_bitmap_ist_schmutzig(p: ptr[ArrayP], mitglied: u64, region: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn region >= p.grenzen.regionen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 200))
+        setze ort: ArrayBitmapOrt auf spiegel_bitmap_ort(region)
+        setze stand: ArrayBitmapStand auf weitergeben(spiegel_bitmap_laden(p, mitglied, ort.seite, w))
+        setze bits: ptr[u8] auf zeiger(stand.adresse)
+        gib_zurück erfolg((bits[ort.byteindex] & ort.maske) != 0)
+
+@nativ
+funktion spiegel_bitmap_setzen(p: ptr[ArrayP], mitglied: u64, region: u64, schmutzig: bool, w: ptr[ArrayArbeitsraum]) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        wenn region >= p.grenzen.regionen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 201))
+        setze ort: ArrayBitmapOrt auf spiegel_bitmap_ort(region)
+        setze stand: ArrayBitmapStand auf weitergeben(spiegel_bitmap_laden(p, mitglied, ort.seite, w))
+        setze bits: ptr[u8] auf zeiger(stand.adresse)
+        setze vorher: bool auf (bits[ort.byteindex] & ort.maske) != 0
+        wenn vorher != schmutzig:
+            wenn schmutzig:
+                setze bits[ort.byteindex] auf bits[ort.byteindex] | ort.maske
+            sonst:
+                setze bits[ort.byteindex] auf bits[ort.byteindex] & (ort.maske ^ 0xFF)
+            weitergeben(spiegel_bitmap_speichern(p, mitglied, stand))
+        gib_zurück erfolg(vorher)
+
+@nativ
+funktion spiegel_bitmap_bitmapseite(bytes: puffer[u8], regionen: u64, seite: u64, schmutzig: bool) -> void:
+    array_seite_leeren(bytes)
+    wenn schmutzig:
+        setze bit: u64 auf 0
+        solange bit < ARRAY_BITMAP_BITS und seite * ARRAY_BITMAP_BITS + bit < regionen:
+            setze pos: u64 auf ARRAY_BITMAP_START + bit / 8
+            bytes[pos] = bytes[pos] | als(u8, 1 << (bit % 8))
+            setze bit auf bit + 1
+
+# Initialisiert das zuvor der Spiegelrolle zugewiesene Metadatenmedium.
+@nativ
+funktion spiegel_bitmap_initialisieren(p: ptr[ArrayP], mitglied: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze g: ptr[ArrayGrenzen] auf zeiger(adresse_von(p.grenzen))
+        setze m: ptr[dyn FatTransport] auf p.medien[mitglied].metadaten
+        setze position: u64 auf spiegel_bitmap_start(g, mitglied)
+        setze seite: u64 auf 0
+        solange seite < spiegel_bitmap_seiten(g):
+            spiegel_bitmap_bitmapseite(byteansicht(w.bitmap_a), g.regionen, seite, falsch)
+            array_bitmap_siegeln(byteansicht(w.bitmap_a), p.layout.generation, seite, 1)
+            setze adresse: u64 auf adresse_von(w.bitmap_a[0])
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, position + seite * 2, 1, adresse))
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, position + seite * 2 + 1, 1, adresse))
+            setze seite auf seite + 1
+        gib_zurück array_barriere(m)
+
+@nativ
+funktion spiegel_bitmap_alle_setzen(p: ptr[ArrayP], mitglied: u64, schmutzig: bool, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze seiten: u64 auf spiegel_bitmap_seiten(zeiger(adresse_von(p.grenzen)))
+        setze seite: u64 auf 0
+        solange seite < seiten:
+            setze stand: ArrayBitmapStand auf weitergeben(spiegel_bitmap_laden(p, mitglied, seite, w))
+            setze zeig: ptr[u8] auf zeiger(stand.adresse)
+            spiegel_bitmap_bitmapseite(byteansicht(zeig, ARRAY_SEITEN_BYTES), p.grenzen.regionen, seite, schmutzig)
+            weitergeben(spiegel_bitmap_speichern(p, mitglied, stand))
+            setze seite auf seite + 1
+        gib_zurück erfolg()

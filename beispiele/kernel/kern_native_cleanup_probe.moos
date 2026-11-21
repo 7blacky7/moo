@@ -1,0 +1,91 @@
+# Echte Fadenwechsel mit gleichzeitig aktiven nativen Cleanup-Frames.
+aus "kern_smp" importiere smp_anzahl, smp_planer, smp_planer_auf
+aus "kern_faden" importiere faden_erzeugen, faden_abgeben
+aus "kern_sperre" importiere unterbrechungen_an
+
+struktur NativeCleanupProbe:
+    bereit: atom[u32]
+    fertig: atom[u32]
+    spur: u64
+@nativ
+statisch NATIVE_CLEANUP_PROBE: [NativeCleanupProbe; 4] auf 0
+@nativ
+statisch NATIVE_CLEANUP_LOS: atom[u32] auf 0
+
+@nativ
+funktion native_cleanup_probe_ort(i: u32) -> ptr[NativeCleanupProbe]:
+    unsicher:
+        gib_zurück zeiger(adresse_von(NATIVE_CLEANUP_PROBE) + u64(i) * groesse_von(NativeCleanupProbe))
+
+@nativ
+funktion native_cleanup_probe_markieren(spur: ptr[u64], ziffer: u64) -> void:
+    unsicher:
+        spur[0] = spur[0] * 10 + ziffer
+
+@nativ
+funktion native_cleanup_probe_fertig(p: ptr[NativeCleanupProbe], spur: ptr[u64]) -> void:
+    unsicher:
+        p.spur = spur[0]
+        atom_speichern(p.fertig, u32(1), ordnung=freigeben)
+
+@nativ
+funktion native_cleanup_probe_faden(daten: u64) -> void:
+    unsicher:
+        unterbrechungen_an()
+        setze p: ptr[NativeCleanupProbe] auf zeiger(daten)
+        setze spur: u64 auf 0
+        aufräumen: native_cleanup_probe_fertig(p, zeiger(adresse_von(spur)))
+        aufräumen: native_cleanup_probe_markieren(zeiger(adresse_von(spur)), 1)
+        wenn wahr:
+            aufräumen: native_cleanup_probe_markieren(zeiger(adresse_von(spur)), 2)
+            wenn wahr:
+                aufräumen: native_cleanup_probe_markieren(zeiger(adresse_von(spur)), 3)
+                atom_speichern(p.bereit, u32(1), ordnung=freigeben)
+                solange atom_laden(NATIVE_CLEANUP_LOS, ordnung=erwerben) == 0:
+                    faden_abgeben(smp_planer())
+                setze runde: u32 auf 0
+                solange runde < 16:
+                    faden_abgeben(smp_planer())
+                    setze runde auf runde + 1
+                gib_zurück
+
+@nativ
+funktion native_cleanup_probe_warten(n: u32, haupt: ptr[u64]) -> bool:
+    unsicher:
+        aufräumen: native_cleanup_probe_markieren(haupt, 9)
+        setze i: u32 auf 0
+        solange i < n:
+            setze p: ptr[NativeCleanupProbe] auf native_cleanup_probe_ort(i)
+            solange atom_laden(p.bereit, ordnung=erwerben) == 0:
+                faden_abgeben(smp_planer())
+            wenn atom_laden(p.fertig, ordnung=erwerben) != 0:
+                gib_zurück falsch
+            setze i auf i + 1
+        atom_speichern(NATIVE_CLEANUP_LOS, u32(1), ordnung=freigeben)
+        setze i auf 0
+        solange i < n:
+            setze p_fertig: ptr[NativeCleanupProbe] auf native_cleanup_probe_ort(i)
+            solange atom_laden(p_fertig.fertig, ordnung=erwerben) == 0:
+                faden_abgeben(smp_planer())
+            wenn p_fertig.spur != 321 oder haupt[0] != 0:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion native_cleanup_probe() -> bool:
+    unsicher:
+        setze n: u32 auf smp_anzahl()
+        wenn n > 4:
+            setze n auf 4
+        setze i: u32 auf 0
+        solange i < n:
+            setze p: ptr[NativeCleanupProbe] auf native_cleanup_probe_ort(i)
+            wenn faden_erzeugen(smp_planer_auf(i), adresse_von(native_cleanup_probe_faden), u64(p)) == 0:
+                # Keine geborgten Stack-Daten: bereits gestartete Fäden freigeben.
+                atom_speichern(NATIVE_CLEANUP_LOS, u32(1), ordnung=freigeben)
+                gib_zurück falsch
+            setze i auf i + 1
+        setze haupt: u64 auf 0
+        setze ok: bool auf native_cleanup_probe_warten(n, zeiger(adresse_von(haupt)))
+        gib_zurück ok und haupt == 9

@@ -1,0 +1,5 @@
+@nativ
+funktion buffer_feld_falsch() -> u64:
+    konstante daten: [u8; 2] auf [1, 2]
+    setze view: puffer[u8] auf pufferansicht(daten)
+    gib_zurück länge(view)

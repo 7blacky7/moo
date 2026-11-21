@@ -1,0 +1,70 @@
+# GF(2^8), Polynom 0x11D; Koeffizienten bleiben an Mitgliedsslots gebunden.
+struktur ArrayGf256:
+    logarithmus: [u8; 256]
+    exponent: [u8; 512]
+    bereit: bool
+
+@nativ
+funktion array_gf256_mal(a: u8, b: u8) -> u8:
+    setze links: u16 auf als(u16, a)
+    setze rechts: u16 auf als(u16, b)
+    setze produkt: u16 auf 0
+    setze i: u64 auf 0
+    solange i < 8:
+        wenn (rechts & 1) != 0:
+            setze produkt auf produkt ^ links
+        setze links auf links << 1
+        wenn (links & 256) != 0:
+            setze links auf links ^ 0x11D
+        setze rechts auf rechts >> 1
+        setze i auf i + 1
+    gib_zurück als(u8, produkt)
+
+@nativ
+funktion array_gf256_koeffizient(slot: u64) -> u8:
+    wenn slot >= 16:
+        gib_zurück 0
+    setze wert: u8 auf 1
+    setze i: u64 auf 0
+    solange i < slot:
+        setze wert auf array_gf256_mal(wert, 2)
+        setze i auf i + 1
+    gib_zurück wert
+
+@nativ
+funktion array_gf256_invers(a: u8) -> u8:
+    # 0 liefert 0; Divisionsaufrufer prüfen den Nenner vor jeder Mutation.
+    setze basis: u8 auf a
+    setze produkt: u8 auf 1
+    setze exponent: u64 auf 254
+    solange exponent != 0:
+        wenn (exponent & 1) != 0:
+            setze produkt auf array_gf256_mal(produkt, basis)
+        setze basis auf array_gf256_mal(basis, basis)
+        setze exponent auf exponent >> 1
+    gib_zurück produkt
+
+@nativ
+funktion array_gf256_starten(t: ptr[ArrayGf256]) -> void:
+    unsicher:
+        setze t.bereit auf falsch
+        setze t.logarithmus[0] auf 0
+        setze wert: u8 auf 1
+        setze i: u64 auf 0
+        solange i < 255:
+            setze t.exponent[i] auf wert
+            setze t.logarithmus[als(u64, wert)] auf als(u8, i)
+            setze wert auf array_gf256_mal(wert, 2)
+            setze i auf i + 1
+        solange i < 512:
+            setze t.exponent[i] auf t.exponent[i - 255]
+            setze i auf i + 1
+        setze t.bereit auf wahr
+
+# Interner Tabellenpfad: t bleibt gültig und wurde exklusiv initialisiert.
+@nativ
+funktion array_gf256_tabelle(t: ptr[ArrayGf256], a: u8, b: u8) -> u8:
+    unsicher:
+        wenn a == 0 oder b == 0:
+            gib_zurück 0
+        gib_zurück t.exponent[als(u64, t.logarithmus[als(u64, a)]) + als(u64, t.logarithmus[als(u64, b)])]

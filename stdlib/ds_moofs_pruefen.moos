@@ -1,0 +1,435 @@
+# Vollständige MooFS-Prüfung ohne Schreibzugriff. Ein Schritt bleibt begrenzt:
+# ein Block, zwölf Blattrecords, ein Recordpaar oder ein Elternzeiger.
+aus ds_moofs importiere MooFsVolume, MooFsBlock, MooFsEintrag, MooFsSchluessel, MooFsFehler, MOOFS_ARGUMENT, MOOFS_FORMAT, moofs_super_lesen, moofs_super_auswaehlen, moofs_block_lesen, moofs_knoten_pruefen, moofs_blatt_eintrag, moofs_daten_pruefen, moofs_schluessel_vergleichen
+aus ds_moofs_allokator importiere MooFsLauf, MOOFS_SPEICHER
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie
+
+@nativ
+konstante MOOFS_PRUEF_NEUSTART: u32 auf 0x4000D
+
+struktur MooFsPruefRecord:
+    eintrag: MooFsEintrag
+    eltern: u64
+    eingang: u64
+    farbe: u8
+
+struktur MooFsPruefung:
+    basis: MooFsVolume
+    kopien: [MooFsVolume; 2]
+    erwartet: MooFsVolume
+    live: ptr[MooFsVolume]
+    records: ptr[MooFsPruefRecord]
+    kapazitaet: u64
+    anzahl: u64
+    karte: ptr[u8]
+    karte_bytes: u64
+    loeschen: u64
+    phase: u32
+    kopie: u64
+    tiefe: u32
+    lauf: [MooFsLauf; 9]
+    block: MooFsBlock
+    pos: u64
+    paar: u64
+    ordner_ab: u64
+    inode_pos: u64
+    logisch: u64
+    daten_index: u64
+    wurzel_gesehen: bool
+    pfad_start: u64
+    pfad_aktuell: u64
+    pfad_faerben: bool
+    superbloecke: u64
+    knoten: u64
+    daten: u64
+    eintraege: u64
+    schritte: u64
+    generation: u64
+    fund: MooFsSchluessel
+    problem_block: u64
+    fehler: MooFsFehler
+    laufend: bool
+    fertig: bool
+
+@nativ
+funktion moofs_pruef_fehler(s: ptr[MooFsPruefung], grund: u32, block: u64) -> ergebnis[void, MooFsFehler]:
+    gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, grund, block))
+
+@nativ
+funktion moofs_pruef_markieren(s: ptr[MooFsPruefung], nr: u64, herkunft: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(s.kopien[s.kopie]))
+        wenn nr < 2 oder nr >= v.naechster:
+            gib_zurück moofs_pruef_fehler(s, 700, herkunft)
+        setze bit: u8 auf als(u8, 1 << (nr % 8))
+        wenn (s.karte[nr / 8] & bit) != 0:
+            setze s.problem_block auf nr
+            gib_zurück moofs_pruef_fehler(s, 701, herkunft)
+        setze s.karte[nr / 8] auf s.karte[nr / 8] | bit
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_rahmen(s: ptr[MooFsPruefung], nr: u64, crc: u64, ebene: u32, unten: MooFsSchluessel, oben: MooFsSchluessel, hat_unten: bool, hat_oben: bool) -> void:
+    unsicher:
+        setze f: MooFsLauf auf 0
+        setze f.block auf nr
+        setze f.crc auf crc
+        setze f.ebene auf ebene
+        setze f.untere auf unten
+        setze f.obere auf oben
+        setze f.hat_unten auf hat_unten
+        setze f.hat_oben auf hat_oben
+        setze s.lauf[u64(s.tiefe)] auf f
+
+@nativ
+funktion moofs_pruef_inode(s: ptr[MooFsPruefung], nr: u64, herkunft: u64) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze ab: u64 auf 0
+        setze bis: u64 auf s.anzahl
+        setze key: MooFsSchluessel auf MooFsSchluessel(nr, 1, 0)
+        solange ab < bis:
+            setze mitte: u64 auf ab + (bis - ab) / 2
+            wenn moofs_schluessel_vergleichen(s.records[mitte].eintrag.schluessel, key) < 0:
+                setze ab auf mitte + 1
+            sonst:
+                setze bis auf mitte
+        wenn ab == s.anzahl oder moofs_schluessel_vergleichen(s.records[ab].eintrag.schluessel, key) != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 702, herkunft))
+        gib_zurück erfolg(ab)
+
+@nativ
+funktion moofs_pruefung_starten(s: ptr[MooFsPruefung], t: ptr[dyn FatTransport], records: ptr[MooFsPruefRecord], kapazitaet: u64, karte: ptr[u8], karte_bytes: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze s.laufend auf falsch
+        setze s.fertig auf falsch
+        setze geo: BlockGeometrie auf t.geometrie()
+        wenn geo.block_bytes < 512 oder geo.block_bytes > 4096 oder (geo.block_bytes & (geo.block_bytes - 1)) != 0 oder geo.bloecke < 4 * (4096 / geo.block_bytes):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 700, 0))
+        wenn u64(records) == 0 oder kapazitaet == 0 oder kapazitaet > 0xFFFFFFFFFFFFFFFF / groesse_von(MooFsPruefRecord) oder u64(karte) == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 701, 0))
+        setze gesamt: u64 auf geo.bloecke / (4096 / geo.block_bytes)
+        setze bitmap: u64 auf gesamt / 8
+        wenn gesamt % 8 != 0:
+            setze bitmap auf bitmap + 1
+        wenn karte_bytes < bitmap:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 700, 0))
+        setze s.basis auf MooFsVolume(t, geo.block_bytes, gesamt, 0, 0, 0, 0, 0, 0, 0, falsch, falsch)
+        setze s.live auf nichts
+        setze s.records auf records
+        setze s.kapazitaet auf kapazitaet
+        setze s.karte auf karte
+        setze s.karte_bytes auf bitmap
+        setze s.phase auf 0
+        setze s.kopie auf 0
+        setze s.superbloecke auf 0
+        setze s.knoten auf 0
+        setze s.daten auf 0
+        setze s.eintraege auf 0
+        setze s.schritte auf 0
+        setze s.generation auf 0
+        setze s.fund auf MooFsSchluessel(0, 0, 0)
+        setze s.problem_block auf 0
+        setze s.fehler auf MooFsFehler(0, 0, 0)
+        setze s.laufend auf wahr
+        gib_zurück erfolg()
+
+# Der Besitzer hält für Start und jeden Schritt dieselbe Sperre wie der Writer.
+# Zwischen Schritten darf er schreiben; der nächste Schritt meldet dann Neustart.
+@nativ
+funktion moofs_pruefung_online(s: ptr[MooFsPruefung], live: ptr[MooFsVolume], records: ptr[MooFsPruefRecord], kapazitaet: u64, karte: ptr[u8], karte_bytes: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn u64(live) == 0 oder nicht live.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 702, 0))
+        weitergeben(moofs_pruefung_starten(s, live.transport, records, kapazitaet, karte, karte_bytes))
+        setze s.erwartet auf live[0]
+        setze s.live auf live
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_gleicher_stand(a: MooFsVolume, b: MooFsVolume) -> bool:
+    unsicher:
+        gib_zurück a.bereit und b.bereit und a.generation == b.generation und a.wurzel == b.wurzel und a.wurzel_crc == b.wurzel_crc und a.hoehe == b.hoehe und a.bloecke == b.bloecke und a.naechster == b.naechster und a.kennung1 == b.kennung1 und a.kennung2 == b.kennung2
+
+@nativ
+funktion moofs_pruef_baum(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(s.kopien[s.kopie]))
+        setze f: ptr[MooFsLauf] auf zeiger(adresse_von(s.lauf[u64(s.tiefe)]))
+        setze bytes: puffer[u8] auf byteansicht(s.block.bytes)
+        weitergeben(moofs_block_lesen(v, f.block, bytes))
+        setze n: u64 auf weitergeben(moofs_knoten_pruefen(v, bytes, f.block, f.crc, f.ebene, f.untere, f.obere, f.hat_unten, f.hat_oben))
+        wenn nicht f.geladen:
+            weitergeben(moofs_pruef_markieren(s, f.block, f.block))
+            setze s.knoten auf s.knoten + 1
+            setze f.geladen auf wahr
+            setze f.anzahl auf n
+        wenn f.ebene == 0:
+            wenn n > s.kapazitaet - s.anzahl:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 701, f.block))
+            setze i: u64 auf 0
+            solange i < n:
+                setze r: MooFsPruefRecord auf 0
+                setze r.eintrag auf moofs_blatt_eintrag(bytes, 64 + i * 320, f.block)
+                setze s.records[s.anzahl] auf r
+                setze s.anzahl auf s.anzahl + 1
+                setze s.eintraege auf s.eintraege + 1
+                setze i auf i + 1
+            wenn s.tiefe == 0:
+                setze s.phase auf 4
+                setze s.pos auf 0
+                setze s.logisch auf 0
+                setze s.inode_pos auf s.anzahl
+                setze s.wurzel_gesehen auf falsch
+            sonst:
+                setze s.tiefe auf s.tiefe - 1
+        sonst wenn f.index == f.anzahl:
+            wenn s.tiefe == 0:
+                setze s.phase auf 4
+                setze s.pos auf 0
+                setze s.logisch auf 0
+                setze s.inode_pos auf s.anzahl
+                setze s.wurzel_gesehen auf falsch
+            sonst:
+                setze s.tiefe auf s.tiefe - 1
+        sonst:
+            wenn s.tiefe >= 8:
+                gib_zurück moofs_pruef_fehler(s, 703, f.block)
+            setze slot: u64 auf 64 + f.index * 40
+            setze oben: MooFsSchluessel auf MooFsSchluessel(byte_lesen_le64(bytes, slot), byte_lesen_le64(bytes, slot + 8), byte_lesen_le64(bytes, slot + 16))
+            setze unten: MooFsSchluessel auf f.untere
+            setze hat_unten: bool auf f.hat_unten
+            wenn f.index > 0:
+                setze vor: u64 auf slot - 40
+                setze unten auf MooFsSchluessel(byte_lesen_le64(bytes, vor), byte_lesen_le64(bytes, vor + 8), byte_lesen_le64(bytes, vor + 16))
+                setze hat_unten auf wahr
+            setze kind: u64 auf byte_lesen_le64(bytes, slot + 24)
+            setze crc: u64 auf u64(byte_lesen_le32(bytes, slot + 32))
+            setze ebene: u32 auf f.ebene - 1
+            setze f.index auf f.index + 1
+            setze s.tiefe auf s.tiefe + 1
+            moofs_pruef_rahmen(s, kind, crc, ebene, unten, oben, hat_unten, wahr)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_dateiende(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.inode_pos < s.anzahl:
+            setze e: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.inode_pos].eintrag))
+            setze erwartet: u64 auf e.a / 4032
+            wenn e.a % 4032 != 0:
+                setze erwartet auf erwartet + 1
+            wenn s.logisch != erwartet:
+                gib_zurück moofs_pruef_fehler(s, 704, e.block)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_record(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.pos == s.anzahl:
+            weitergeben(moofs_pruef_dateiende(s))
+            wenn nicht s.wurzel_gesehen:
+                gib_zurück moofs_pruef_fehler(s, 705, s.kopien[s.kopie].wurzel)
+            setze s.phase auf 5
+            setze s.pos auf 0
+            setze s.paar auf 0
+            setze s.ordner_ab auf 0
+            gib_zurück erfolg()
+        setze e: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.pos].eintrag))
+        setze s.fund auf e.schluessel
+        wenn e.schluessel.art == 1:
+            weitergeben(moofs_pruef_dateiende(s))
+            setze s.inode_pos auf s.pos
+            setze s.logisch auf 0
+            wenn e.schluessel.objekt == 1:
+                wenn e.b != 2:
+                    gib_zurück moofs_pruef_fehler(s, 705, e.block)
+                setze s.wurzel_gesehen auf wahr
+                setze s.records[s.pos].farbe auf 2
+        sonst:
+            wenn s.inode_pos == s.anzahl oder s.records[s.inode_pos].eintrag.schluessel.objekt != e.schluessel.objekt:
+                gib_zurück moofs_pruef_fehler(s, 702, e.block)
+            setze inode: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.inode_pos].eintrag))
+            wenn e.schluessel.art == 2:
+                wenn inode.b != 1 oder e.schluessel.index != s.logisch oder e.b > 0xFFFFFFFFFFFFFFFF - s.logisch:
+                    gib_zurück moofs_pruef_fehler(s, 706, e.block)
+                setze s.logisch auf s.logisch + e.b
+            sonst:
+                wenn inode.b != 2:
+                    gib_zurück moofs_pruef_fehler(s, 707, e.block)
+                setze ziel: u64 auf weitergeben(moofs_pruef_inode(s, e.a, e.block))
+                wenn e.a == 1 oder s.records[ziel].eintrag.b != e.c oder s.records[ziel].eingang != 0:
+                    gib_zurück moofs_pruef_fehler(s, 708, e.block)
+                setze s.records[ziel].eingang auf 1
+                setze s.records[ziel].eltern auf e.schluessel.objekt
+        setze s.pos auf s.pos + 1
+        gib_zurück erfolg()
+
+# Namensvergleich wird als eigener Recordpaar-Schritt budgetiert.
+@nativ
+funktion moofs_pruef_namen(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.pos == s.anzahl:
+            setze s.phase auf 6
+            setze s.pos auf 0
+            setze s.pfad_aktuell auf s.anzahl
+            gib_zurück erfolg()
+        setze e: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.pos].eintrag))
+        setze s.fund auf e.schluessel
+        wenn e.schluessel.art != 3:
+            setze s.pos auf s.pos + 1
+            setze s.paar auf s.pos
+            setze s.ordner_ab auf s.pos
+            gib_zurück erfolg()
+        wenn s.paar >= s.pos:
+            setze s.pos auf s.pos + 1
+            setze s.paar auf s.ordner_ab
+            gib_zurück erfolg()
+        setze vor: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.paar].eintrag))
+        setze gleich: bool auf vor.schluessel.objekt == e.schluessel.objekt und vor.schluessel.art == 3 und vor.b == e.b
+        setze i: u64 auf 0
+        solange gleich und i < e.b:
+            setze gleich auf vor.name[i] == e.name[i]
+            setze i auf i + 1
+        wenn gleich:
+            gib_zurück moofs_pruef_fehler(s, 709, e.block)
+        setze s.paar auf s.paar + 1
+        gib_zurück erfolg()
+
+# Drei Farben und ein expliziter Elterncursor statt Rekursion/ganzer Pfadloops.
+@nativ
+funktion moofs_pruef_pfade(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.pfad_aktuell < s.anzahl:
+            setze r: ptr[MooFsPruefRecord] auf zeiger(adresse_von(s.records[s.pfad_aktuell]))
+            setze s.fund auf r.eintrag.schluessel
+            wenn s.pfad_faerben:
+                wenn r.farbe == 2:
+                    setze s.pfad_aktuell auf s.anzahl
+                sonst:
+                    setze r.farbe auf 2
+                    setze s.pfad_aktuell auf weitergeben(moofs_pruef_inode(s, r.eltern, r.eintrag.block))
+            sonst wenn r.farbe == 2:
+                setze s.pfad_faerben auf wahr
+                setze s.pfad_aktuell auf s.pfad_start
+            sonst wenn r.farbe == 1:
+                gib_zurück moofs_pruef_fehler(s, 710, r.eintrag.block)
+            sonst:
+                setze r.farbe auf 1
+                setze s.pfad_aktuell auf weitergeben(moofs_pruef_inode(s, r.eltern, r.eintrag.block))
+            gib_zurück erfolg()
+        wenn s.pos == s.anzahl:
+            setze s.phase auf 7
+            setze s.pos auf 0
+            setze s.daten_index auf 0
+            gib_zurück erfolg()
+        setze index: u64 auf s.pos
+        setze s.pos auf s.pos + 1
+        setze e: ptr[MooFsPruefRecord] auf zeiger(adresse_von(s.records[index]))
+        wenn e.eintrag.schluessel.art == 1:
+            wenn e.eintrag.schluessel.objekt != 1 und e.eingang != 1:
+                gib_zurück moofs_pruef_fehler(s, 711, e.eintrag.block)
+            wenn e.farbe == 0:
+                setze s.pfad_start auf index
+                setze s.pfad_aktuell auf index
+                setze s.pfad_faerben auf falsch
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_daten(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.pos == s.anzahl:
+            wenn s.kopie == 0:
+                setze s.kopie auf 1
+                setze s.loeschen auf 0
+                setze s.phase auf 2
+            sonst:
+                setze s.fertig auf wahr
+                setze s.laufend auf falsch
+            gib_zurück erfolg()
+        setze e: ptr[MooFsEintrag] auf zeiger(adresse_von(s.records[s.pos].eintrag))
+        wenn e.schluessel.art != 2:
+            setze s.pos auf s.pos + 1
+            gib_zurück erfolg()
+        setze s.fund auf e.schluessel
+        setze s.fund.index auf e.schluessel.index + s.daten_index
+        setze inode: u64 auf weitergeben(moofs_pruef_inode(s, e.schluessel.objekt, e.block))
+        setze logisch: u64 auf e.schluessel.index + s.daten_index
+        setze nr: u64 auf e.a + s.daten_index
+        weitergeben(moofs_pruef_markieren(s, nr, e.block))
+        setze erwartet: u64 auf s.records[inode].eintrag.a - logisch * 4032
+        wenn erwartet > 4032:
+            setze erwartet auf 4032
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(s.kopien[s.kopie]))
+        setze bytes: puffer[u8] auf byteansicht(s.block.bytes)
+        weitergeben(moofs_block_lesen(v, nr, bytes))
+        weitergeben(moofs_daten_pruefen(v, bytes, nr, e.schluessel.objekt, logisch, erwartet))
+        setze s.daten auf s.daten + 1
+        setze s.daten_index auf s.daten_index + 1
+        wenn s.daten_index == e.b:
+            setze s.pos auf s.pos + 1
+            setze s.daten_index auf 0
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruef_ein_schritt(s: ptr[MooFsPruefung]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn s.phase < 2:
+            setze s.kopien[u64(s.phase)] auf weitergeben(moofs_super_lesen(zeiger(adresse_von(s.basis)), u64(s.phase)))
+            setze s.superbloecke auf s.superbloecke + 1
+            setze s.phase auf s.phase + 1
+            wenn s.phase == 2:
+                setze gewaehlt: MooFsVolume auf weitergeben(moofs_super_auswaehlen(s.kopien[0], s.kopien[1]))
+                wenn u64(s.live) != 0 und nicht moofs_pruef_gleicher_stand(gewaehlt, s.erwartet):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_PRUEF_NEUSTART, 0, gewaehlt.wurzel))
+                setze s.generation auf gewaehlt.generation
+                setze s.loeschen auf 0
+        sonst wenn s.phase == 2:
+            setze ende: u64 auf s.karte_bytes
+            wenn ende - s.loeschen > 4096:
+                setze ende auf s.loeschen + 4096
+            solange s.loeschen < ende:
+                setze s.karte[s.loeschen] auf 0
+                setze s.loeschen auf s.loeschen + 1
+            wenn s.loeschen == s.karte_bytes:
+                setze s.phase auf 3
+                setze s.anzahl auf 0
+                setze s.tiefe auf 0
+                setze v: ptr[MooFsVolume] auf zeiger(adresse_von(s.kopien[s.kopie]))
+                setze nullkey: MooFsSchluessel auf MooFsSchluessel(0, 0, 0)
+                moofs_pruef_rahmen(s, v.wurzel, u64(v.wurzel_crc), v.hoehe, nullkey, nullkey, falsch, falsch)
+        sonst wenn s.phase == 3:
+            weitergeben(moofs_pruef_baum(s))
+        sonst wenn s.phase == 4:
+            weitergeben(moofs_pruef_record(s))
+        sonst wenn s.phase == 5:
+            weitergeben(moofs_pruef_namen(s))
+        sonst wenn s.phase == 6:
+            weitergeben(moofs_pruef_pfade(s))
+        sonst:
+            weitergeben(moofs_pruef_daten(s))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruefung_schritt(s: ptr[MooFsPruefung], budget: u64) -> ergebnis[bool, MooFsFehler]:
+    unsicher:
+        wenn budget == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 703, 0))
+        wenn s.fertig:
+            gib_zurück erfolg(wahr)
+        wenn nicht s.laufend:
+            gib_zurück fehlschlag(s.fehler)
+        wenn u64(s.live) != 0 und nicht moofs_pruef_gleicher_stand(s.live[0], s.erwartet):
+            setze s.fehler auf MooFsFehler(MOOFS_PRUEF_NEUSTART, 0, s.live.wurzel)
+            setze s.laufend auf falsch
+            gib_zurück fehlschlag(s.fehler)
+        setze i: u64 auf 0
+        solange i < budget und s.laufend:
+            setze r: ergebnis[void, MooFsFehler] auf moofs_pruef_ein_schritt(s)
+            setze s.schritte auf s.schritte + 1
+            wenn nicht ist_erfolg(r):
+                setze s.fehler auf ergebnis_fehler(r)
+                setze s.laufend auf falsch
+                gib_zurück fehlschlag(s.fehler)
+            setze i auf i + 1
+        gib_zurück erfolg(s.fertig)

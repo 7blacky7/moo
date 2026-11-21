@@ -1,0 +1,24 @@
+# Native Cleanup-Ketten: ein stabiler Slot je CPU/Faden, auch vor GS-Start.
+struktur NativeCleanupCpu:
+    ketten: [ptr[void]; 24]
+
+@nativ
+statisch NATIVE_CLEANUP_CPU: [NativeCleanupCpu; 64] auf 0
+@nativ
+statisch NATIVE_CLEANUP_BEREIT: atom[u32] auf 0
+
+@nativ
+funktion native_cleanup_bereit() -> bool:
+    unsicher:
+        gib_zurück atom_laden(NATIVE_CLEANUP_BEREIT, ordnung=erwerben) != 0
+
+@nativ
+funktion native_cleanup_starten() -> void:
+    unsicher:
+        atom_speichern(NATIVE_CLEANUP_BEREIT, u32(1), ordnung=freigeben)
+
+@nativ
+funktion native_cleanup_fuer(cpu: u32, faden: u32) -> ptr[ptr[void]]:
+    unsicher:
+        # Boot vor GS und BSP-Hauptfaden benutzen exakt denselben Slot.
+        gib_zurück zeiger(adresse_von(NATIVE_CLEANUP_CPU) + u64(cpu) * groesse_von(NativeCleanupCpu) + u64(faden) * groesse_von(u64))

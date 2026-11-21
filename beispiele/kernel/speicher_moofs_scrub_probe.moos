@@ -1,0 +1,64 @@
+aus ds_moofs importiere MooFsFehler, MOOFS_ARGUMENT
+aus ds_moofs_allokator importiere MooFsSchreiber
+aus ds_moofs_pruefen importiere MooFsPruefRecord
+aus ds_moofs_schreiben importiere moofs_anlegen, moofs_loeschen, moofs_abgleichen
+aus "speicher_moofs_scrub" importiere MooFsScrubDienst, MOOFS_SCRUB_LAEUFT, MOOFS_SCRUB_FERTIG, moofs_scrub_starten
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_faden" importiere faden_abgeben
+aus "kern_native_cleanup_probe" importiere native_cleanup_probe
+
+struktur MooFsScrubProbe:
+    dienst: MooFsScrubDienst
+    mutex: KernMutex
+    records: [MooFsPruefRecord; 1024]
+    karte: [u8; 128]
+@nativ
+statisch MOOFS_SCRUB_PROBE: MooFsScrubProbe auf 0
+@nativ
+konstante MOOFS_T_SCRUB: [u8; _] auf "MOO-MOOFS SCRUB OK "
+@nativ
+konstante MOOFS_T_SCRUB_NEU: [u8; _] auf "MOO-MOOFS SCRUB NEUSTART "
+@nativ
+konstante MOOFS_T_SCRUB_DATEN: [u8; _] auf "MOO-MOOFS SCRUB DATEN "
+
+@nativ
+funktion moofs_scrub_probe_entsperren(m: ptr[KernMutex]) -> void:
+    unsicher:
+        setze frei: bool auf mutex_gib(smp_planer(), m)
+
+@nativ
+funktion moofs_scrub_probe_aendern(w: ptr[MooFsSchreiber], m: ptr[KernMutex]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        mutex_nimm(smp_planer(), m)
+        # Freigabe auch auf jedem propagierten E/A-Fehler.
+        aufräumen: moofs_scrub_probe_entsperren(m)
+        setze name: [u8; 1] auf [122]
+        setze nr: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(name), falsch))
+        weitergeben(moofs_loeschen(w, 1, byteansicht(name)))
+        gib_zurück moofs_abgleichen(w)
+
+@nativ
+funktion moofs_scrub_probe(w: ptr[MooFsSchreiber], log_adr: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nicht native_cleanup_probe():
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 723, 0))
+        setze p: ptr[MooFsScrubProbe] auf zeiger(adresse_von(MOOFS_SCRUB_PROBE))
+        setze d: ptr[MooFsScrubDienst] auf zeiger(adresse_von(p.dienst))
+        setze m: ptr[KernMutex] auf zeiger(adresse_von(p.mutex))
+        weitergeben(moofs_scrub_starten(d, w, m, zeiger(adresse_von(p.records[0])), 1024, zeiger(adresse_von(p.karte[0])), 128, 1))
+        solange atom_laden(d.fortschritt, ordnung=erwerben) < 6 und atom_laden(d.status, ordnung=erwerben) == MOOFS_SCRUB_LAEUFT:
+            faden_abgeben(smp_planer())
+        weitergeben(moofs_scrub_probe_aendern(w, m))
+        solange atom_laden(d.status, ordnung=erwerben) == MOOFS_SCRUB_LAEUFT:
+            faden_abgeben(smp_planer())
+        wenn atom_laden(d.status, ordnung=erwerben) != MOOFS_SCRUB_FERTIG:
+            gib_zurück fehlschlag(d.fehler)
+        setze neustarts: u64 auf atom_laden(d.neustarts, ordnung=erwerben)
+        wenn neustarts == 0 oder d.pruefung.generation != w.volume.generation oder d.pruefung.daten != 530:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 722, 0))
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(MOOFS_T_SCRUB_NEU), neustarts)
+        log(adresse_von(MOOFS_T_SCRUB_DATEN), d.pruefung.daten)
+        log(adresse_von(MOOFS_T_SCRUB), d.pruefung.generation)
+        gib_zurück erfolg()

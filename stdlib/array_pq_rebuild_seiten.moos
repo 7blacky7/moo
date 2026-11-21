@@ -1,0 +1,135 @@
+# Seitenlayout und Rekonstruktion für den P/Q-Rebuild. Der Aufrufer hält
+# Zustands-, Journal- und Seitenzugriffe während eines Auftrags serialisiert.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_BEREICH
+aus array_format importiere ArrayLayout, ARRAY_DATEN, ARRAY_SEITEN_BYTES
+aus array_paritaet importiere ArrayMedien, array_io, array_barriere
+aus array_rebuild_metadaten importiere ArrayRebuildZaehler
+aus array_gf256 importiere ArrayGf256
+aus array_q importiere ArrayQQuelle, ArrayQArbeitsraum, array_q_retten
+
+@nativ
+konstante ARRAY_PQ_KEIN: u64 auf 16
+@nativ
+konstante ARRAY_PQ_JOURNAL_DATEN: u32 auf 1
+@nativ
+konstante ARRAY_PQ_JOURNAL_P: u32 auf 2
+@nativ
+konstante ARRAY_PQ_JOURNAL_Q: u32 auf 4
+
+struktur ArrayPQRebuildStand:
+    layout: ArrayLayout
+    folge: u64
+    fehlende: u64
+    ersatz: u64
+    fertig: u64
+    journal_ziel: u64
+    journal_seite: u64
+    journal_beine: u32
+    daten_crc: u32
+    p_crc: u32
+    q_crc: u32
+
+struktur ArrayPQRebuild:
+    anker: ArrayLayout
+    basis: ArrayLayout
+    paritaet_p: u64
+    paritaet_q: u64
+    daten_max: u64
+    medien: [ArrayMedien; 16]
+    anwesend: u64
+    bereit: bool
+    stand: ArrayPQRebuildStand
+    bank: [u64; 16]
+    folgen: [u64; 16]
+    zaehler: [ArrayRebuildZaehler; 16]
+    modus: u32
+    gf: ptr[ArrayGf256]
+
+struktur ArrayPQSeite:
+    bytes: [u8; 4096]
+
+struktur ArrayPQRebuildArbeit:
+    seiten: [ArrayPQSeite; 16]
+    quellen: [ArrayQQuelle; 14]
+    loesung: ArrayQArbeitsraum
+    kopf: [u8; 4096]
+
+@nativ
+funktion array_pq_rebuild_bitanzahl(maske: u64) -> u64:
+    setze bits: u64 auf maske
+    setze anzahl: u64 auf 0
+    solange bits != 0:
+        setze anzahl auf anzahl + (bits & 1)
+        setze bits auf bits >> 1
+    gib_zurück anzahl
+
+@nativ
+funktion array_pq_rebuild_zielseiten(r: ptr[ArrayPQRebuild], mitglied: u64) -> u64:
+    unsicher:
+        wenn mitglied == r.paritaet_p oder mitglied == r.paritaet_q:
+            gib_zurück r.daten_max
+        gib_zurück r.basis.mitglieder[mitglied].seiten
+
+@nativ
+funktion array_pq_rebuild_seite_verfuegbar(r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand], mitglied: u64, seite: u64) -> bool:
+    unsicher:
+        setze bit: u64 auf 1 << mitglied
+        wenn (r.anwesend & bit) == 0:
+            gib_zurück falsch
+        gib_zurück (s.fehlende & bit) == 0 oder (s.ersatz == mitglied und seite < s.fertig)
+
+@nativ
+funktion array_pq_rebuild_roh_lesen(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze e: ergebnis[void, BlockFehler] auf array_io(r.medien[mitglied].daten, BLOCK_LESEN, seite, 1, adresse)
+        wenn nicht ist_erfolg(e):
+            setze r.zaehler[mitglied].lese_fehler auf r.zaehler[mitglied].lese_fehler + 1
+        gib_zurück e
+
+@nativ
+funktion array_pq_rebuild_schreiben_barriere(m: ptr[dyn FatTransport], seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_io(m, BLOCK_SCHREIBEN, seite, 1, adresse))
+    gib_zurück array_barriere(m)
+
+@nativ
+funktion array_pq_rebuild_roh_schreiben(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze e: ergebnis[void, BlockFehler] auf array_pq_rebuild_schreiben_barriere(r.medien[mitglied].daten, seite, adresse)
+        wenn nicht ist_erfolg(e):
+            setze r.zaehler[mitglied].schreib_fehler auf r.zaehler[mitglied].schreib_fehler + 1
+        gib_zurück e
+
+@nativ
+funktion array_pq_rebuild_seite_laden(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, auslassen: u64, w: ptr[ArrayPQRebuildArbeit]) -> bool:
+    unsicher:
+        wenn (auslassen & (1 << mitglied)) != 0 oder nicht array_pq_rebuild_seite_verfuegbar(r, zeiger(adresse_von(r.stand)), mitglied, seite):
+            gib_zurück falsch
+        gib_zurück ist_erfolg(array_pq_rebuild_roh_lesen(r, mitglied, seite, adresse_von(w.seiten[mitglied].bytes[0])))
+
+# Ausgelassene und nicht verfügbare Seiten werden in ihrem stabilen Slot
+# rekonstruiert. Daten jenseits des Endes eines Mitglieds tragen null bei.
+@nativ
+funktion array_pq_rebuild_zeile(r: ptr[ArrayPQRebuild], seite: u64, auslassen: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn seite >= r.daten_max:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BEREICH, 250))
+        setze fehlende_daten: u64 auf 0
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            wenn r.basis.mitglieder[i].rolle == ARRAY_DATEN und seite < r.basis.mitglieder[i].seiten:
+                wenn nicht array_pq_rebuild_seite_laden(r, i, seite, auslassen, w):
+                    setze fehlende_daten auf fehlende_daten | (1 << i)
+                setze daten: puffer[u8] auf pufferansicht(w.seiten[i].bytes)
+                setze w.quellen[anzahl] auf ArrayQQuelle(i, daten)
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        setze fehlt_p: bool auf nicht array_pq_rebuild_seite_laden(r, r.paritaet_p, seite, auslassen, w)
+        setze fehlt_q: bool auf nicht array_pq_rebuild_seite_laden(r, r.paritaet_q, seite, auslassen, w)
+        setze p: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_p].bytes)
+        setze q: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_q].bytes)
+        setze quellen: puffer[ArrayQQuelle] auf pufferansicht(w.quellen, 0, anzahl)
+        setze werke: ptr[ArrayQArbeitsraum] auf zeiger(adresse_von(w.loesung))
+        weitergeben(array_q_retten(p, q, quellen, fehlende_daten, fehlt_p, fehlt_q, r.modus, r.gf, werke))
+        gib_zurück erfolg(fehlende_daten | (als(u64, fehlt_p) << r.paritaet_p) | (als(u64, fehlt_q) << r.paritaet_q))

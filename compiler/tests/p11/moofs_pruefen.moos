@@ -1,0 +1,4 @@
+aus "moofs_pruef_probe" importiere moofs_pruef_test
+# FEHLERPFAD(M-F001): Regression bricht bei unerwartetem Sprachfehler ab.
+unsicher:
+    zeige moofs_pruef_test()

@@ -1,0 +1,14 @@
+aus "moofs_memmove_probe" importiere moofs_memmove_test
+# Linux-Teststart: derselbe Bare-Moo-Code wie im Kernel, libc nur für memcpy.
+@nativ
+@einstieg
+funktion moofs_memmove_linux_test() -> u32:
+    unsicher:
+        gib_zurück moofs_memmove_test()
+
+@nativ
+@nackt
+@einstieg
+funktion _start() -> void:
+    unsicher:
+        assembler(ziel="x86_64", code="call moofs_memmove_linux_test; movl %eax, %edi; movl $$60, %eax; syscall; ud2", clobber=[])

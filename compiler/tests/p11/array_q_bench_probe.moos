@@ -1,0 +1,62 @@
+importiere "array_q_probe"
+aus array_q importiere array_q_beitrag
+
+struktur ArrayQBenchZustand:
+    summe: u64
+@nativ
+statisch ARRAY_Q_BENCH: ArrayQBenchZustand auf 0
+
+@nativ
+@einstieg
+funktion array_q_bench_pruefsumme() -> u64:
+    unsicher:
+        gib_zurück ARRAY_Q_BENCH.summe
+
+struktur ArrayQZeit:
+    sekunden: i64
+    nano: i64
+extern "C" funktion clock_gettime(art: i32, zeit: ptr[ArrayQZeit]) -> i32
+
+@nativ
+funktion array_q_zeit() -> u64:
+    unsicher:
+        setze zeit: ArrayQZeit auf 0
+        wenn clock_gettime(1, zeiger(adresse_von(zeit))) != 0:
+            _exit(30)
+            gib_zurück 0
+        gib_zurück als(u64, zeit.sekunden) * 1000000000 + als(u64, zeit.nano)
+
+@nativ
+@einstieg
+funktion array_q_bench(modus: u32) -> u64:
+    unsicher:
+        setze s: ptr[ArrayQProbe] auf zeiger(adresse_von(ARRAY_Q_PROBE))
+        setze t: ptr[ArrayGf256] auf zeiger(adresse_von(s.tabelle))
+        array_gf256_starten(t)
+        setze q: puffer[u8] auf pufferansicht(s.q.bytes)
+        setze daten: puffer[u8] auf pufferansicht(s.daten[0].bytes)
+        setze i: u64 auf 0
+        solange i < 4096:
+            daten[i] = array_q_probe_wert(15, i)
+            q[i] = 0
+            setze i auf i + 1
+        setze start: u64 auf array_q_zeit()
+        setze runde: u64 auf 0
+        solange runde < 65521:
+            setze pos: u64 auf runde % 4096
+            daten[pos] = daten[pos] ^ als(u8, runde % 256)
+            setze r: ergebnis[void, BlockFehler] auf array_q_beitrag(q, daten, runde % 16, modus, t)
+            wenn nicht ist_erfolg(r):
+                _exit(31)
+                gib_zurück 0
+            setze runde auf runde + 1
+        setze dauer: u64 auf array_q_zeit() - start
+        setze summe: u64 auf 0
+        setze i auf 0
+        solange i < 4096:
+            setze summe auf summe + als(u64, q[i])
+            setze i auf i + 1
+        # Gleiches Resultat ist Teil der Messung, Ausgabe separat als Prüfsumme.
+        setze ARRAY_Q_BENCH.summe auf summe
+        gib_zurück dauer
+

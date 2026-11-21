@@ -859,10 +859,11 @@ impl FluchtPruefung<'_> {
                     im_rahmen.then(|| format!("adresse_von({wurzel}) zeigt in den Rahmen der Funktion"))
                         .or_else(|| self.geliehen.get(wurzel).filter(|_| !direkt && !self.zeiger.contains(wurzel)).cloned())
                 }
-                "byteansicht" | "byte_view" => {
+                "byteansicht" | "byte_view" | "pufferansicht" | "array_view" => {
                     let arg = args.first()?;
                     let wurzel = Self::wurzel(arg);
-                    let lokal = args.len() == 1 && wurzel.is_some_and(|n| self.eigener_speicher(n));
+                    let array_leihe = args.len() == 1 || matches!(name.as_str(), "pufferansicht" | "array_view");
+                    let lokal = array_leihe && wurzel.is_some_and(|n| self.eigener_speicher(n));
                     if lokal { Some("Byteansicht zeigt in den Rahmen der Funktion".into()) }
                     else { args.iter().find_map(|a| self.quelle(a)) }
                 }
@@ -1352,7 +1353,7 @@ fn expr_fehlbar(expr: &Expr, k: &FehlbarKontext<'_, '_>) -> bool {
         Expr::FunctionCall { name, args, .. } => {
             let cast_fehlbar = matches!(crate::native_arithmetic::cast_art(name),
                 Some(crate::native_arithmetic::CastArt::Geprueft | crate::native_arithmetic::CastArt::Saettigend));
-            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view" | "sicht")
+            k.bitfelder.contains_key(name) || cast_fehlbar || byte_zugriff(name).is_some() || matches!(name.as_str(), "byteansicht" | "byte_view" | "pufferansicht" | "array_view" | "sicht")
                 || (k.namen.contains(name.as_str()) && k.fehlbar.contains(name))
                 || k.fremd.contains(name.as_str())
                 || (!k.fremd.is_empty() && k.typen.contains_key(name.as_str()))
@@ -2237,7 +2238,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn cleanup_start(&mut self, body: &[Stmt]) -> Result<(), String> {
         if !crate::native_cleanup::contains(body) { return Ok(()); }
         let root = self.cleanup_alloca(self.ptrt().into(), "cleanup.function")?;
-        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let top = crate::native_cleanup::top(&self.builder, self.module)?;
         let current = self.builder.build_load(self.ptrt(), top, "cleanup.top").map_err(e)?;
         self.builder.build_store(root, current).map_err(e)?;
         self.cleanup_root = Some(root);
@@ -2253,7 +2254,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
     fn cleanup_mark(&self) -> Result<Option<PointerValue<'ctx>>, String> {
         if self.cleanup_root.is_none() { return Ok(None); }
         let marker = self.cleanup_alloca(self.ptrt().into(), "cleanup.scope")?;
-        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let top = crate::native_cleanup::top(&self.builder, self.module)?;
         let current = self.builder.build_load(self.ptrt(), top, "cleanup.top").map_err(e)?;
         self.builder.build_store(marker, current).map_err(e)?;
         Ok(Some(marker))
@@ -2348,7 +2349,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
         if emitter.open() { emitter.builder.build_return(None).map_err(e)?; }
         let frame_type = crate::native_cleanup::frame_type(self.context);
         let frame = self.cleanup_alloca(frame_type.into(), "cleanup.frame")?;
-        let top = crate::native_cleanup::top(self.module)?.as_pointer_value();
+        let top = crate::native_cleanup::top(&self.builder, self.module)?;
         let prev = self.builder.build_load(self.ptrt(), top, "cleanup.prev").map_err(e)?;
         for (index, value) in [prev, thunk.as_global_value().as_pointer_value().into(), capture.into()].into_iter().enumerate() {
             let dst = self.builder.build_struct_gep(frame_type, frame, index as u32, "cleanup.field").map_err(e)?;
@@ -3177,6 +3178,74 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             self.byte_pruefung(invalid)?;
             self.ergebnis_feldort(&ty, &ort, erfolg)
         }
+    }
+
+    fn pufferansicht_array(&self, array: &Expr) -> Option<(STy, u32)> {
+        let ty = self.infer(array).or_else(|| {
+            match self.array_kind_from_expr(array)? {
+                FieldKind::Array { element, length, .. } => {
+                    let element = match *element {
+                        FieldKind::Value(ty) => ty,
+                        FieldKind::Embedded(name) => self.struct_ty(&name).ok()?,
+                        FieldKind::Array { .. } => return None,
+                    };
+                    Some(STy::Array { element: Box::new(element), length: u32::try_from(length).ok()? })
+                }
+                _ => None,
+            }
+        })?;
+        match ty {
+            STy::Array { element, length } => Some((*element, length)),
+            _ => None,
+        }
+    }
+
+    /// Leiht vorhandenen Arrayspeicher; Deskriptor besitzt oder kopiert keine Daten.
+    fn pufferansicht(&mut self, args: &[Expr]) -> Result<SVal<'ctx>, String> {
+        if !matches!(args.len(), 1 | 3) {
+            return Err("pufferansicht erwartet (array) oder (array, start, anzahl)".into());
+        }
+        let array = &args[0];
+        if FluchtPruefung::wurzel(array).is_none() {
+            return Err("pufferansicht braucht vorhandenen Arrayspeicher".into());
+        }
+        let (element, length) = self.pufferansicht_array(array)
+            .ok_or("pufferansicht erwartet ein festes Zahlen- oder Strukturarray")?;
+        let ty = STy::puffer_element(&element.identity())?;
+        self.global_access(array, true)?;
+        if FluchtPruefung::wurzel(array).and_then(|n| self.slot(n)).is_some_and(|s| s.constant) {
+            return Err("pufferansicht: eine Konstante darf nicht schreibbar geliehen werden".into());
+        }
+        let array_ty = STy::Array { element: Box::new(element.clone()), length };
+        let base = if let Expr::PropertyAccess { object, property } = array {
+            self.field_address(object, property)?.0
+        } else {
+            self.struct_place(array, &array_ty, "Pufferansicht")?.ptr
+        };
+        let (start, count) = if args.len() == 1 {
+            (self.i64t().const_zero(), self.i64t().const_int(u64::from(length), false))
+        } else {
+            let want = STy::Int(NType::U64);
+            let start = self.expr(&args[1], Some(&want))?;
+            self.expect(&start, &want, "Pufferansicht-Start")?;
+            let count = self.expr(&args[2], Some(&want))?;
+            self.expect(&count, &want, "Pufferansicht-Anzahl")?;
+            let start = start.value.into_int_value();
+            let count = count.value.into_int_value();
+            let len = self.i64t().const_int(u64::from(length), false);
+            let outside = self.builder.build_int_compare(IntPredicate::UGT, start, len, "sys.array.offset").map_err(e)?;
+            let rest = self.builder.build_int_sub(len, start, "sys.array.rest").map_err(e)?;
+            let short = self.builder.build_int_compare(IntPredicate::UGT, count, rest, "sys.array.short").map_err(e)?;
+            let bad = self.builder.build_or(outside, short, "sys.array.invalid").map_err(e)?;
+            self.byte_pruefung(bad)?;
+            (start, count)
+        };
+        let data = unsafe { self.builder.build_gep(element.llvm(self.context, self.layouts)?,
+            base, &[start], "sys.array.data") }.map_err(e)?;
+        let llvm = ty.llvm(self.context, self.layouts)?.into_struct_type();
+        let value = self.builder.build_insert_value(llvm.get_undef(), data, 0, "sys.array.pointer").map_err(e)?;
+        let value = self.builder.build_insert_value(value.into_struct_value(), count, 1, "sys.array.view").map_err(e)?;
+        Ok(SVal { ty, value: value.into_struct_value().into() })
     }
 
     fn byteansicht(&mut self, args: &[Expr]) -> Result<SVal<'ctx>, String> {
@@ -4132,6 +4201,10 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                             },
                             _ => None,
                         };
+                    }
+                    if matches!(name.as_str(), "pufferansicht" | "array_view") {
+                        let (element, _) = self.pufferansicht_array(args.first()?)?;
+                        return STy::puffer_element(&element.identity()).ok();
                     }
                     if matches!(name.as_str(), "byteansicht" | "byte_view") { return Some(STy::Buffer(NType::U8)); }
                     if let Some((schreiben, ty, _)) = byte_zugriff(name) {
@@ -5374,6 +5447,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
                 || matches!(name, "bitfeld_wert" | "bitfeld_aus")
                 || self.puffer_builtin_typ(name, args).is_some()
                 || byte_zugriff(name).is_some()
+                || matches!(name, "pufferansicht" | "array_view")
                 || (matches!(name, "byteansicht" | "byte_view") && args.len() == 1);
             if !erlaubt {
                 // P2-T98 S3: M-M005 mit Zeile.
@@ -5437,6 +5511,7 @@ impl<'a, 'ctx> Emitter<'a, 'ctx> {
             if crate::native_crypto::wipe_name(name) { return self.crypto_bytes(args, true); }
             if crate::native_crypto::rng_name(name).is_some() { return self.crypto_rng(name, args); }
             if crate::native_arithmetic::bit_art(name).is_some() { return self.bit_call(name, args, expected); }
+            if matches!(name, "pufferansicht" | "array_view") { return self.pufferansicht(args).map(Some); }
             if matches!(name, "byteansicht" | "byte_view") { return self.byteansicht(args).map(Some); }
             if let Some((schreiben, ty, be)) = byte_zugriff(name) {
                 return self.byte_wort(name, args, schreiben, ty, be);

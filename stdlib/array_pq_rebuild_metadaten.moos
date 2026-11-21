@@ -1,0 +1,269 @@
+# Quellenbindung und dauerhafte Journalreplikation für P/Q-v3.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_GEOMETRIE, BLOCK_NUR_LESEN, BLOCK_NICHT_BEREIT, BLOCK_EA
+aus nativ_crc32c importiere crc32c
+aus array_format importiere ArrayLayout, ARRAY_MAX_MITGLIEDER, array_layout_gleich, array_identitaet_gleich
+aus array_pq_format importiere ArrayPQGrenzen, array_pq_layout_pruefen, array_pq_superblock_bauen, array_pq_superblock_lesen
+aus array_paritaet importiere ArrayAnschluss, array_io, array_barriere, array_sektoren_pro_seite
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildStand, ArrayPQRebuildArbeit, ARRAY_PQ_KEIN, ARRAY_PQ_JOURNAL_DATEN, ARRAY_PQ_JOURNAL_P, ARRAY_PQ_JOURNAL_Q, array_pq_rebuild_bitanzahl
+aus array_pq_rebuild_format importiere ARRAY_PQ_META_SEITEN, array_pq_rebuild_bankseite, array_pq_rebuild_kopf_bauen, array_pq_rebuild_kopf_lesen, array_pq_rebuild_stand_gleich, array_pq_rebuild_folgelayout
+
+@nativ
+funktion array_pq_rebuild_gebunden(r: ptr[ArrayPQRebuild], mitglied: u64) -> bool:
+    unsicher:
+        gib_zurück (r.anwesend & (1 << mitglied)) != 0
+
+@nativ
+funktion array_pq_rebuild_layout_setzen(r: ptr[ArrayPQRebuild], layout: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze g: ArrayPQGrenzen auf weitergeben(array_pq_layout_pruefen(layout))
+        setze r.basis auf layout[0]
+        setze r.paritaet_p auf g.paritaet_p
+        setze r.paritaet_q auf g.paritaet_q
+        setze r.daten_max auf g.daten_max
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_medium_pruefen(r: ptr[ArrayPQRebuild], mitglied: u64, q: ptr[ArrayAnschluss]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze d: BlockGeometrie auf q.medien.daten.geometrie()
+        setze m: BlockGeometrie auf q.medien.metadaten.geometrie()
+        setze df: u64 auf array_sektoren_pro_seite(d)
+        setze mf: u64 auf array_sektoren_pro_seite(m)
+        wenn df == 0 oder mf == 0 oder d.bloecke / df < r.basis.mitglieder[mitglied].seiten oder m.bloecke / mf < ARRAY_PQ_META_SEITEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 265))
+        wenn d.nur_lesend oder m.nur_lesend:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NUR_LESEN, 265))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_neu_binden(r: ptr[ArrayPQRebuild], layout: ptr[ArrayLayout], quellen: ptr[ArrayAnschluss], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r.anker auf layout[0]
+        weitergeben(array_pq_rebuild_layout_setzen(r, layout))
+        wenn anzahl != r.basis.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 266))
+        setze r.anwesend auf 0
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(quellen[i]))
+            setze slot: u64 auf 0
+            solange slot < anzahl und nicht array_identitaet_gleich(zeiger(adresse_von(q.identitaet)), zeiger(adresse_von(r.basis.mitglieder[slot].identitaet))):
+                setze slot auf slot + 1
+            wenn slot == anzahl oder array_pq_rebuild_gebunden(r, slot):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 267))
+            weitergeben(array_pq_rebuild_medium_pruefen(r, slot, q))
+            setze r.medien[slot] auf q.medien
+            setze r.anwesend auf r.anwesend | (1 << slot)
+            setze r.bank[slot] auf 0
+            setze r.folgen[slot] auf 0
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_basiskopie(m: ptr[dyn FatTransport], seite: u64, layout: ptr[ArrayLayout], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(array_io(m, BLOCK_LESEN, seite, 1, adresse_von(w.kopf[0])))
+        gib_zurück array_pq_superblock_lesen(pufferansicht(w.kopf), layout)
+
+@nativ
+funktion array_pq_rebuild_basis_laden(m: ptr[dyn FatTransport], layout: ptr[ArrayLayout], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze zweit: ArrayLayout auf 0
+        setze zweit_ptr: ptr[ArrayLayout] auf zeiger(adresse_von(zweit))
+        setze links: ergebnis[u64, BlockFehler] auf array_pq_rebuild_basiskopie(m, 0, layout, w)
+        setze rechts: ergebnis[u64, BlockFehler] auf array_pq_rebuild_basiskopie(m, 1, zweit_ptr, w)
+        wenn nicht ist_erfolg(rechts):
+            gib_zurück links
+        wenn nicht ist_erfolg(links) oder zweit.generation > layout.generation:
+            setze layout[0] auf zweit
+            gib_zurück rechts
+        wenn zweit.generation == layout.generation und (ergebnis_wert(links) != ergebnis_wert(rechts) oder nicht array_layout_gleich(layout, zweit_ptr)):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 265))
+        gib_zurück links
+
+@nativ
+funktion array_pq_rebuild_kopien_laden(r: ptr[ArrayPQRebuild], mitglied: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze m: ptr[dyn FatTransport] auf r.medien[mitglied].metadaten
+        setze tmp: ArrayPQRebuildStand auf 0
+        setze t: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(tmp))
+        setze r.bank[mitglied] auf 0
+        setze r.folgen[mitglied] auf 0
+        setze bank: u64 auf 0
+        solange bank < 2:
+            wenn ist_erfolg(array_io(m, BLOCK_LESEN, array_pq_rebuild_bankseite(bank), 1, adresse_von(w.kopf[0]))):
+                wenn ist_erfolg(array_pq_rebuild_kopf_lesen(pufferansicht(w.kopf), r, t)):
+                    wenn tmp.folge > r.folgen[mitglied]:
+                        setze r.folgen[mitglied] auf tmp.folge
+                        setze r.bank[mitglied] auf bank
+                    wenn tmp.folge == r.stand.folge und nicht array_pq_rebuild_stand_gleich(t, zeiger(adresse_von(r.stand))):
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 266))
+                    wenn tmp.folge > r.stand.folge:
+                        setze r.stand auf tmp
+            setze bank auf bank + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_ausfall(r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze bit: u64 auf 1 << mitglied
+        setze fehlende: u64 auf s.fehlende | bit
+        wenn array_pq_rebuild_bitanzahl(fehlende) > 2:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 265))
+        setze s.fehlende auf fehlende
+        wenn s.ersatz == mitglied:
+            setze s.ersatz auf ARRAY_PQ_KEIN
+            setze s.fertig auf 0
+        setze r.anwesend auf r.anwesend & (0xFFFFFFFFFFFFFFFF ^ bit)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_laden(r: ptr[ArrayPQRebuild], quellen: ptr[ArrayAnschluss], anzahl: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r.bereit auf falsch
+        setze r.anwesend auf 0
+        setze r.stand.folge auf 0
+        setze slots: [u64; 16] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze gelesen: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(gelesen))
+        setze i: u64 auf 0
+        # Vorbereitete Basisseiten allein aktivieren kein neues Layout.
+        solange i < anzahl:
+            setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(quellen[i]))
+            setze slot: u64 auf weitergeben(array_pq_rebuild_basis_laden(q.medien.metadaten, l, w))
+            slots[i] = slot
+            wenn i == 0:
+                setze r.anker auf gelesen
+            sonst wenn gelesen.generation < r.anker.generation:
+                wenn nicht array_pq_rebuild_folgelayout(l, zeiger(adresse_von(r.anker))):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 267))
+                setze r.anker auf gelesen
+            sonst wenn nicht array_pq_rebuild_folgelayout(zeiger(adresse_von(r.anker)), l):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 267))
+            setze i auf i + 1
+        weitergeben(array_pq_rebuild_layout_setzen(r, zeiger(adresse_von(r.anker))))
+        setze i auf 0
+        solange i < anzahl:
+            setze bank_slot: u64 auf slots[i]
+            setze r.medien[bank_slot] auf quellen[i].medien
+            weitergeben(array_pq_rebuild_kopien_laden(r, bank_slot, w))
+            setze i auf i + 1
+        wenn r.stand.folge == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 268))
+        weitergeben(array_pq_rebuild_layout_setzen(r, zeiger(adresse_von(r.stand.layout))))
+        # Neu erkannte physische Ausfälle erst nach dem Vergleich aller
+        # Journalrepliken übernehmen, sonst erscheint die gleiche Folge divergent.
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(stand))
+        setze i auf 0
+        solange i < r.basis.anzahl:
+            setze index: u64 auf anzahl
+            setze j: u64 auf 0
+            solange j < anzahl:
+                wenn slots[j] == i und array_identitaet_gleich(zeiger(adresse_von(quellen[j].identitaet)), zeiger(adresse_von(s.layout.mitglieder[i].identitaet))):
+                    wenn index != anzahl:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 269))
+                    setze index auf j
+                setze j auf j + 1
+            setze da: bool auf index != anzahl
+            wenn da:
+                setze quelle: ptr[ArrayAnschluss] auf zeiger(adresse_von(quellen[index]))
+                weitergeben(array_pq_rebuild_medium_pruefen(r, i, quelle))
+                setze r.medien[i] auf quelle.medien
+                weitergeben(array_pq_rebuild_kopien_laden(r, i, w))
+                wenn (s.fehlende & (1 << i)) != 0:
+                    setze da auf s.ersatz == i
+            wenn da:
+                setze r.anwesend auf r.anwesend | (1 << i)
+            sonst:
+                weitergeben(array_pq_rebuild_ausfall(r, s, i))
+            setze i auf i + 1
+        setze r.stand auf stand
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_bank_schreiben(r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand], mitglied: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze m: ptr[dyn FatTransport] auf r.medien[mitglied].metadaten
+        setze bank: u64 auf 1 - r.bank[mitglied]
+        setze seite: u64 auf array_pq_rebuild_bankseite(bank)
+        wenn (s.journal_beine & ARRAY_PQ_JOURNAL_DATEN) != 0:
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, seite + 1, 1, adresse_von(w.seiten[s.journal_ziel].bytes[0])))
+        wenn (s.journal_beine & ARRAY_PQ_JOURNAL_P) != 0:
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, seite + 2, 1, adresse_von(w.seiten[r.paritaet_p].bytes[0])))
+        wenn (s.journal_beine & ARRAY_PQ_JOURNAL_Q) != 0:
+            weitergeben(array_io(m, BLOCK_SCHREIBEN, seite + 3, 1, adresse_von(w.seiten[r.paritaet_q].bytes[0])))
+        wenn s.journal_beine != 0:
+            weitergeben(array_barriere(m))
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, seite, 1, adresse_von(w.kopf[0])))
+        weitergeben(array_barriere(m))
+        setze r.bank[mitglied] auf bank
+        setze r.folgen[mitglied] auf s.folge
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_speichern(r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze folge: u64 auf r.stand.folge
+        setze r.bereit auf falsch
+        setze erneut: bool auf wahr
+        solange erneut:
+            wenn folge == 0xFFFFFFFFFFFFFFFF oder r.anwesend == 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 269))
+            setze folge auf folge + 1
+            setze s.folge auf folge
+            weitergeben(array_pq_rebuild_kopf_bauen(pufferansicht(w.kopf), r, s))
+            setze erneut auf falsch
+            setze i: u64 auf 0
+            solange i < r.basis.anzahl und nicht erneut:
+                wenn array_pq_rebuild_gebunden(r, i):
+                    setze e: ergebnis[void, BlockFehler] auf array_pq_rebuild_bank_schreiben(r, s, i, w)
+                    wenn nicht ist_erfolg(e):
+                        setze r.zaehler[i].schreib_fehler auf r.zaehler[i].schreib_fehler + 1
+                        wenn r.stand.folge == 0:
+                            gib_zurück e
+                        weitergeben(array_pq_rebuild_ausfall(r, s, i))
+                        setze erneut auf wahr
+                    sonst wenn r.stand.folge == 0:
+                        weitergeben(array_pq_rebuild_bank_schreiben(r, s, i, w))
+                setze i auf i + 1
+        setze r.stand auf s[0]
+        setze r.bereit auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_bild_laden(m: ptr[dyn FatTransport], seite: u64, bytes: puffer[u8], crc: u32) -> bool:
+    unsicher:
+        gib_zurück ist_erfolg(array_io(m, BLOCK_LESEN, seite, 1, u64(puffer_zeiger(bytes)))) und crc32c(bytes) == crc
+
+@nativ
+funktion array_pq_rebuild_bilder_laden(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            wenn array_pq_rebuild_gebunden(r, i) und r.folgen[i] == s.folge:
+                setze m: ptr[dyn FatTransport] auf r.medien[i].metadaten
+                setze seite: u64 auf array_pq_rebuild_bankseite(r.bank[i])
+                setze gueltig: bool auf wahr
+                wenn (s.journal_beine & ARRAY_PQ_JOURNAL_DATEN) != 0:
+                    setze gueltig auf array_pq_rebuild_bild_laden(m, seite + 1, pufferansicht(w.seiten[s.journal_ziel].bytes), s.daten_crc)
+                wenn gueltig und (s.journal_beine & ARRAY_PQ_JOURNAL_P) != 0:
+                    setze gueltig auf array_pq_rebuild_bild_laden(m, seite + 2, pufferansicht(w.seiten[r.paritaet_p].bytes), s.p_crc)
+                wenn gueltig und (s.journal_beine & ARRAY_PQ_JOURNAL_Q) != 0:
+                    setze gueltig auf array_pq_rebuild_bild_laden(m, seite + 3, pufferansicht(w.seiten[r.paritaet_q].bytes), s.q_crc)
+                wenn gueltig:
+                    gib_zurück erfolg()
+            setze i auf i + 1
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 270))
+
+@nativ
+funktion array_pq_rebuild_basis_schreiben(r: ptr[ArrayPQRebuild], mitglied: u64, m: ptr[dyn FatTransport], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_superblock_bauen(pufferansicht(w.kopf), zeiger(adresse_von(r.basis)), mitglied))
+        setze adresse: u64 auf adresse_von(w.kopf[0])
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, 0, 1, adresse))
+        weitergeben(array_barriere(m))
+        weitergeben(array_io(m, BLOCK_SCHREIBEN, 1, 1, adresse))
+        gib_zurück array_barriere(m)

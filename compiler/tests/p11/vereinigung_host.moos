@@ -1,0 +1,310 @@
+# Mover-Abnahme auf persistenten MooFS-Testabbildern.
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler
+aus ds_moofs importiere MooFsEintrag
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_format importiere MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen
+aus ds_moofs_vfs importiere MooFsDateisystem, moofs_vfs_einrichten, moofs_vfs_void
+aus ds_vereinigung importiere Vereinigung, VereinigungQuelle, VereinigungRegel, VereinigungArbeit, vereinigung_einrichten, vereinigung_attribut
+aus ds_vereinigung_mover importiere vereinigung_verschieben, MOVER_OFFEN, MOVER_BEREITS_DATEN
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VfsEintrag, VfsTabelle, VfsDatei, vfs_einhaengen, vfs_oeffnen, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_VERZEICHNIS, VFS_ENOENT, VFS_EIO, VFS_EBADF
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion atoi(name: ptr[u8]) -> i32
+extern "C" funktion raise(signal_nr: i32) -> i32
+
+struktur MoverProbeFs implementiert Dateisystem:
+    innen: ptr[dyn Dateisystem]
+    offline: bool
+    vor_rename: bool
+    nach_rename: bool
+    veroeffentlicht: bool
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            wenn selbst.offline:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 280, 0))
+            gib_zurück selbst.innen.oeffnen(pfad, modus)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.schliessen(griff)
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.lesen(griff, offset, daten)
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.schreiben(griff, offset, daten)
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.stat(griff)
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.verzeichnis(griff, index)
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.groesse(griff, bytes)
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück selbst.innen.anlegen(pfad, verzeichnis)
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn selbst.offline:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 281, 0))
+            gib_zurück selbst.innen.loeschen(pfad)
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            wenn selbst.vor_rename:
+                setze signal_vor: i32 auf raise(19)
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 282, 0))
+            weitergeben(selbst.innen.umbenennen(quelle, ziel))
+            setze selbst.veroeffentlicht auf wahr
+            gib_zurück erfolg()
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(selbst.innen.abgleichen())
+            wenn selbst.nach_rename und selbst.veroeffentlicht:
+                setze signal_nach: i32 auf raise(19)
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 283, 0))
+            gib_zurück erfolg()
+
+struktur MoverProbeVolume:
+    medium: FatPosix
+    fs: MooFsDateisystem
+    test: MoverProbeFs
+    schreiber: MooFsSchreiber
+    eintraege: [MooFsEintrag; 64]
+    kinder: [MooFsBaumKind; 16]
+    karte: [u8; 64]
+
+@nativ
+statisch MOVER_PROBE_VOLUME: [MoverProbeVolume; 3] auf 0
+@nativ
+statisch MOVER_PROBE_FORMAT: MooFsFormatSpeicher auf 0
+@nativ
+statisch MOVER_PROBE_FREIGABE: Vereinigung auf 0
+@nativ
+statisch MOVER_PROBE_ARBEIT: VereinigungArbeit auf 0
+@nativ
+statisch MOVER_PROBE_DATEN: [VereinigungQuelle; 2] auf 0
+@nativ
+statisch MOVER_PROBE_TABELLE: VfsTabelle auf 0
+@nativ
+statisch MOVER_PROBE_KOPIE: [u8; 1024] auf 0
+@nativ
+statisch MOVER_PROBE_BYTES: [u8; 8193] auf 0
+
+@nativ
+funktion mover_probe_fd(nr: u64) -> i32:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 70, 68, 95, 48, 0]
+        name[13] = als(u8, 48 + nr)
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück -1
+        gib_zurück atoi(text)
+
+@nativ
+funktion mover_probe_medien(formatieren: bool) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze basis: [u8; 8] auf [47, 98, 101, 115, 116, 97, 110, 100]
+        setze i: u64 auf 0
+        solange i < 3:
+            setze v: ptr[MoverProbeVolume] auf zeiger(adresse_von(MOVER_PROBE_VOLUME[i]))
+            setze m: ptr[FatPosix] auf zeiger(adresse_von(v.medium))
+            setze sektor: u64 auf 512
+            wenn i == 1:
+                setze sektor auf 4096
+            setze bindung: ergebnis[void, BlockFehler] auf fat_posix_einrichten(m, mover_probe_fd(i), sektor, falsch)
+            wenn nicht ist_erfolg(bindung):
+                setze f_block: BlockFehler auf ergebnis_fehler(bindung)
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, f_block.code, f_block.geraete_status))
+            setze t: ptr[dyn FatTransport] auf m
+            wenn formatieren:
+                weitergeben(moofs_vfs_void(moofs_formatieren(t, nichts, 0, 0x900 + i, 0xA00 + i, zeiger(adresse_von(MOVER_PROBE_FORMAT)))))
+            setze s: ptr[MooFsSchreiber] auf zeiger(adresse_von(v.schreiber))
+            weitergeben(moofs_vfs_void(moofs_schreiber_oeffnen(s, t, zeiger(adresse_von(v.eintraege[0])), 64, zeiger(adresse_von(v.kinder[0])), 16, zeiger(adresse_von(v.karte[0])), 64)))
+            setze f: ptr[MooFsDateisystem] auf zeiger(adresse_von(v.fs))
+            weitergeben(moofs_vfs_einrichten(f, s))
+            setze innen: ptr[dyn Dateisystem] auf f
+            setze v.test.innen auf innen
+            wenn formatieren:
+                weitergeben(innen.anlegen(pufferansicht(basis), wahr))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion mover_probe_system(nr: u64) -> ptr[dyn Dateisystem]:
+    unsicher:
+        setze roh: ptr[MoverProbeFs] auf zeiger(adresse_von(MOVER_PROBE_VOLUME[nr].test))
+        setze fs: ptr[dyn Dateisystem] auf roh
+        gib_zurück fs
+
+@nativ
+funktion mover_probe_lesen() -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze name: [u8; 29] auf [47, 102, 114, 101, 105, 103, 97, 98, 101, 47, 98, 101, 108, 101, 103, 47, 117, 110, 116, 101, 114, 47, 98, 101, 114, 105, 99, 104, 116]
+        setze d: VfsDatei auf 0
+        setze datei: ptr[VfsDatei] auf zeiger(adresse_von(d))
+        weitergeben(vfs_oeffnen(zeiger(adresse_von(MOVER_PROBE_TABELLE)), pufferansicht(name), VFS_LESEN, datei))
+        setze gelesen: ergebnis[u64, VfsFehler] auf datei.lesen(pufferansicht(MOVER_PROBE_BYTES))
+        setze fertig: ergebnis[void, VfsFehler] auf datei.schliessen()
+        setze anzahl: u64 auf weitergeben(gelesen)
+        weitergeben(fertig)
+        wenn anzahl != 8193:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 284, 0))
+        setze i: u64 auf 0
+        solange i < anzahl:
+            wenn MOVER_PROBE_BYTES[i] != als(u8, (i * 31 + 5) & 255):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 285, 0))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion mover_probe_nicht_da(fs: ptr[dyn Dateisystem], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    setze r: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, pfad)
+    wenn ist_erfolg(r):
+        gib_zurück fehlschlag(VfsFehler(VFS_EIO, 286, 0))
+    setze f: VfsFehler auf ergebnis_fehler(r)
+    wenn f.code != VFS_ENOENT:
+        gib_zurück fehlschlag(f)
+    gib_zurück erfolg()
+
+@nativ
+funktion mover_probe_eintrag(fs: ptr[dyn Dateisystem]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze dir: [u8; 6] auf [47, 117, 110, 116, 101, 114]
+        setze h: u64 auf weitergeben(fs.oeffnen(pufferansicht(dir), VFS_LESEN | VFS_VERZEICHNIS))
+        setze erster: ergebnis[VfsEintrag, VfsFehler] auf fs.verzeichnis(h, 0)
+        setze zweiter: ergebnis[VfsEintrag, VfsFehler] auf fs.verzeichnis(h, 1)
+        weitergeben(fs.schliessen(h))
+        setze e: VfsEintrag auf weitergeben(erster)
+        wenn ist_erfolg(zweiter):
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 287, 0))
+        setze f: VfsFehler auf ergebnis_fehler(zweiter)
+        wenn f.code != VFS_ENOENT oder e.name_bytes != 7 oder e.bytes != 8193:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 288, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion mover_probe_lauf() -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 77, 79, 68, 69, 0]
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 289, 0))
+        setze mode: u8 auf text[0]
+        weitergeben(mover_probe_medien(mode == 97))
+        setze MOVER_PROBE_DATEN[0] auf VereinigungQuelle(mover_probe_system(0))
+        setze MOVER_PROBE_DATEN[1] auf VereinigungQuelle(mover_probe_system(1))
+        setze basis: [u8; 8] auf [47, 98, 101, 115, 116, 97, 110, 100]
+        setze regel: VereinigungRegel auf VereinigungRegel(wahr, falsch, 1)
+        wenn mode == 101:
+            setze regel auf VereinigungRegel(falsch, wahr, 0)
+        setze v: ptr[Vereinigung] auf zeiger(adresse_von(MOVER_PROBE_FREIGABE))
+        setze cache: ptr[dyn Dateisystem] auf mover_probe_system(2)
+        setze ziel: ptr[dyn Dateisystem] auf mover_probe_system(1)
+        weitergeben(vereinigung_einrichten(v, pufferansicht(MOVER_PROBE_DATEN), cache, pufferansicht(basis), regel, zeiger(adresse_von(MOVER_PROBE_ARBEIT))))
+        setze fs: ptr[dyn Dateisystem] auf v
+        setze mount: [u8; 15] auf [47, 102, 114, 101, 105, 103, 97, 98, 101, 47, 98, 101, 108, 101, 103]
+        weitergeben(vfs_einhaengen(zeiger(adresse_von(MOVER_PROBE_TABELLE)), pufferansicht(mount), fs))
+        setze datei: [u8; 14] auf [47, 117, 110, 116, 101, 114, 47, 98, 101, 114, 105, 99, 104, 116]
+        setze roh: [u8; 22] auf [47, 98, 101, 115, 116, 97, 110, 100, 47, 117, 110, 116, 101, 114, 47, 98, 101, 114, 105, 99, 104, 116]
+        setze p: puffer[u8] auf pufferansicht(datei)
+        setze backend: puffer[u8] auf pufferansicht(roh)
+        setze arbeit: puffer[u8] auf pufferansicht(MOVER_PROBE_KOPIE)
+        wenn mode == 97:
+            setze dir: [u8; 6] auf [47, 117, 110, 116, 101, 114]
+            weitergeben(fs.anlegen(pufferansicht(dir), wahr))
+            setze g: u64 auf weitergeben(fs.oeffnen(p, VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN))
+            setze i: u64 auf 0
+            solange i < 8193:
+                MOVER_PROBE_BYTES[i] = als(u8, (i * 31 + 5) & 255)
+                setze i auf i + 1
+            setze gesetzt: ergebnis[u64, VfsFehler] auf fs.schreiben(g, 0, pufferansicht(MOVER_PROBE_BYTES))
+            setze ergebnis_move: ergebnis[u32, VfsFehler] auf vereinigung_verschieben(v, p, arbeit)
+            weitergeben(fs.schliessen(g))
+            setze menge: u64 auf weitergeben(gesetzt)
+            setze ausgang: u32 auf weitergeben(ergebnis_move)
+            wenn menge != 8193 oder ausgang != MOVER_OFFEN:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 290, 0))
+            weitergeben(mover_probe_nicht_da(ziel, backend))
+            weitergeben(mover_probe_lesen())
+            gib_zurück erfolg(2)
+        wenn mode == 98 oder mode == 99:
+            setze MOVER_PROBE_VOLUME[1].test.vor_rename auf mode == 98
+            setze MOVER_PROBE_VOLUME[1].test.nach_rename auf mode == 99
+            setze unerwartet: u32 auf weitergeben(vereinigung_verschieben(v, p, arbeit))
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 291, unerwartet))
+        wenn mode == 112:
+            weitergeben(mover_probe_nicht_da(ziel, backend))
+            setze intern: [u8; 25] auf [47, 46, 109, 111, 111, 45, 109, 111, 118, 101, 114, 45, 115, 116, 97, 103, 105, 110, 103, 47, 107, 111, 112, 105, 101]
+            weitergeben(mover_probe_nicht_da(fs, pufferansicht(intern)))
+            setze staging: [u8; 33] auf [47, 98, 101, 115, 116, 97, 110, 100, 47, 46, 109, 111, 111, 45, 109, 111, 118, 101, 114, 45, 115, 116, 97, 103, 105, 110, 103, 47, 107, 111, 112, 105, 101]
+            setze temp: VfsStat auf weitergeben(vereinigung_attribut(ziel, pufferansicht(staging)))
+            wenn temp.bytes != 8193:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 292, 0))
+            weitergeben(mover_probe_lesen())
+            gib_zurück erfolg(1)
+        wenn mode == 100:
+            setze original: VfsStat auf weitergeben(vereinigung_attribut(cache, backend))
+            setze kopie: VfsStat auf weitergeben(vereinigung_attribut(ziel, backend))
+            wenn original.bytes != 8193 oder kopie.bytes != 8193:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 293, 0))
+            weitergeben(mover_probe_eintrag(fs))
+            setze MOVER_PROBE_VOLUME[2].test.offline auf wahr
+            weitergeben(mover_probe_lesen())
+            setze geloescht: ergebnis[void, VfsFehler] auf fs.loeschen(p)
+            wenn ist_erfolg(geloescht):
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 294, 0))
+            setze f: VfsFehler auf ergebnis_fehler(geloescht)
+            wenn f.code != VFS_EIO:
+                gib_zurück fehlschlag(f)
+            setze MOVER_PROBE_VOLUME[2].test.offline auf falsch
+            setze aufgeraeumt: u32 auf weitergeben(vereinigung_verschieben(v, p, arbeit))
+            wenn aufgeraeumt != MOVER_BEREITS_DATEN:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 295, 0))
+            weitergeben(mover_probe_nicht_da(cache, backend))
+            weitergeben(mover_probe_lesen())
+            weitergeben(mover_probe_eintrag(fs))
+            gib_zurück erfolg(1)
+        wenn mode == 101:
+            setze links: [u8; 2] auf [47, 97]
+            setze rechts: [u8; 2] auf [47, 99]
+            setze phys_links: [u8; 10] auf [47, 98, 101, 115, 116, 97, 110, 100, 47, 97]
+            setze phys_rechts: [u8; 10] auf [47, 98, 101, 115, 116, 97, 110, 100, 47, 99]
+            weitergeben(fs.anlegen(pufferansicht(links), falsch))
+            weitergeben(fs.anlegen(pufferansicht(rechts), falsch))
+            setze vol_a: ptr[dyn Dateisystem] auf mover_probe_system(0)
+            setze vol_b: ptr[dyn Dateisystem] auf mover_probe_system(1)
+            weitergeben(vereinigung_attribut(vol_a, pufferansicht(phys_links)))
+            weitergeben(vereinigung_attribut(vol_b, pufferansicht(phys_rechts)))
+            weitergeben(mover_probe_nicht_da(vol_b, pufferansicht(phys_links)))
+            weitergeben(mover_probe_nicht_da(vol_a, pufferansicht(phys_rechts)))
+            weitergeben(mover_probe_nicht_da(cache, pufferansicht(phys_links)))
+            weitergeben(mover_probe_nicht_da(cache, pufferansicht(phys_rechts)))
+            gib_zurück erfolg(1)
+        gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 280, 0))
+
+@nativ
+funktion mover_probe_ergebnis() -> u64:
+    unsicher:
+        setze r: ergebnis[u64, VfsFehler] auf mover_probe_lauf()
+        wenn ist_erfolg(r):
+            gib_zurück ergebnis_wert(r)
+        setze f: VfsFehler auf ergebnis_fehler(r)
+        gib_zurück (als(u64, f.code) << 48) | (als(u64, f.grund) << 32) | als(u64, f.status)
+
+unsicher:
+    zeige mover_probe_ergebnis()

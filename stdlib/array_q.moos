@@ -1,0 +1,237 @@
+# Längengeprüfte P/Q-Seitenrechnung. Alle Views/Workspace sind disjunkt
+# und bis zur Rückkehr geliehen. Slotgewichte ändern sich beim Rebuild nicht.
+aus array_gf256 importiere ArrayGf256, array_gf256_mal, array_gf256_invers, array_gf256_tabelle, array_gf256_koeffizient
+aus nativ_block importiere BlockFehler, BLOCK_GEOMETRIE, BLOCK_PUFFER
+
+@nativ
+konstante ARRAY_Q_SKALAR: u32 auf 0
+@nativ
+konstante ARRAY_Q_TABELLE: u32 auf 1
+@nativ
+konstante ARRAY_Q_SIMD: u32 auf 2
+
+struktur ArrayQQuelle:
+    slot: u64
+    bytes: puffer[u8]
+
+struktur ArrayQArbeitsraum:
+    p: [u8; 4096]
+    q: [u8; 4096]
+
+@nativ
+funktion array_q_modus_pruefen(modus: u32, t: ptr[ArrayGf256]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn modus > ARRAY_Q_SIMD:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 40))
+        wenn modus == ARRAY_Q_TABELLE:
+            wenn u64(t) == 0 oder nicht t.bereit:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 41))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_q_mal(modus: u32, t: ptr[ArrayGf256], a: u8, b: u8) -> u8:
+    wenn modus == ARRAY_Q_TABELLE:
+        gib_zurück array_gf256_tabelle(t, a, b)
+    gib_zurück array_gf256_mal(a, b)
+
+@nativ
+@simd
+funktion array_q_xor_simd(q: ptr[u8], daten: ptr[u8], n: u64, koeff: u8) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        setze faktor: u8x32 auf u8x32(koeff)
+        solange n - i >= 32:
+            setze a: u8x32 auf u8x32()
+            setze b: u8x32 auf u8x32()
+            setze lane: u64 auf 0
+            solange lane < 32:
+                a[lane] = daten[i + lane]
+                b[lane] = q[i + lane]
+                setze lane auf lane + 1
+            setze wert: u8x32 auf b ^ simd_gf256_mal(a, faktor)
+            setze lane auf 0
+            solange lane < 32:
+                q[i + lane] = wert[lane]
+                setze lane auf lane + 1
+            setze i auf i + 32
+        solange i < n:
+            q[i] = q[i] ^ array_gf256_mal(daten[i], koeff)
+            setze i auf i + 1
+
+# Interner Mul-Xor nach vollständiger Längen-/Modusprüfung.
+@nativ
+funktion array_q_xor(q: puffer[u8], daten: puffer[u8], koeff: u8, modus: u32, t: ptr[ArrayGf256]) -> void:
+    unsicher:
+        wenn modus == ARRAY_Q_SIMD:
+            array_q_xor_simd(puffer_zeiger(q), puffer_zeiger(daten), länge(q), koeff)
+            gib_zurück
+        setze i: u64 auf 0
+        solange i < länge(q):
+            q[i] = q[i] ^ array_q_mal(modus, t, daten[i], koeff)
+            setze i auf i + 1
+
+@nativ
+funktion array_q_beitrag(q: puffer[u8], daten: puffer[u8], slot: u64, modus: u32, t: ptr[ArrayGf256]) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_q_modus_pruefen(modus, t))
+    wenn slot >= 16 oder länge(q) != länge(daten) oder länge(q) > 4096:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 40))
+    array_q_xor(q, daten, array_gf256_koeffizient(slot), modus, t)
+    gib_zurück erfolg()
+
+@nativ
+funktion array_q_aktualisieren(q: puffer[u8], alt: puffer[u8], neue_bytes: puffer[u8], slot: u64, modus: u32, t: ptr[ArrayGf256]) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_q_modus_pruefen(modus, t))
+    wenn slot >= 16 oder länge(q) != länge(alt) oder länge(q) != länge(neue_bytes) oder länge(q) > 4096:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 41))
+    setze koeff: u8 auf array_gf256_koeffizient(slot)
+    array_q_xor(q, alt, koeff, modus, t)
+    array_q_xor(q, neue_bytes, koeff, modus, t)
+    gib_zurück erfolg()
+
+@nativ
+funktion array_q_quellen_pruefen(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], modus: u32, t: ptr[ArrayGf256]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(array_q_modus_pruefen(modus, t))
+        wenn länge(p) != länge(q) oder länge(p) > 4096 oder länge(daten) == 0 oder länge(daten) > 16:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 42))
+        setze maske: u64 auf 0
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            setze quelle: ArrayQQuelle auf daten[i]
+            wenn quelle.slot >= 16 oder länge(quelle.bytes) != länge(p):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 43))
+            setze bit: u64 auf 1 << quelle.slot
+            wenn (maske & bit) != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 42))
+            setze maske auf maske | bit
+            setze i auf i + 1
+        gib_zurück erfolg(maske)
+
+@nativ
+funktion array_q_leeren(ziel: puffer[u8]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(ziel):
+            ziel[i] = 0
+            setze i auf i + 1
+
+@nativ
+funktion array_q_kopieren(ziel: puffer[u8], quelle: puffer[u8]) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(ziel):
+            ziel[i] = quelle[i]
+            setze i auf i + 1
+
+@nativ
+funktion array_q_erzeugen(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], modus: u32, t: ptr[ArrayGf256]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze maske: u64 auf weitergeben(array_q_quellen_pruefen(p, q, daten, modus, t))
+        array_q_leeren(p)
+        array_q_leeren(q)
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            setze quelle: ArrayQQuelle auf daten[i]
+            array_q_xor(p, quelle.bytes, 1, modus, t)
+            array_q_xor(q, quelle.bytes, array_gf256_koeffizient(quelle.slot), modus, t)
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+@simd
+funktion array_q_zwei_simd(a: ptr[u8], b: ptr[u8], dp: ptr[u8], dq: ptr[u8], n: u64, cb: u8, invers: u8) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        setze faktor_b: u8x32 auf u8x32(cb)
+        setze faktor_inv: u8x32 auf u8x32(invers)
+        solange n - i >= 32:
+            setze vp: u8x32 auf u8x32()
+            setze vq: u8x32 auf u8x32()
+            setze lane: u64 auf 0
+            solange lane < 32:
+                vp[lane] = dp[i + lane]
+                vq[lane] = dq[i + lane]
+                setze lane auf lane + 1
+            setze va: u8x32 auf simd_gf256_mal(vq ^ simd_gf256_mal(vp, faktor_b), faktor_inv)
+            setze vb: u8x32 auf vp ^ va
+            setze lane auf 0
+            solange lane < 32:
+                a[i + lane] = va[lane]
+                b[i + lane] = vb[lane]
+                setze lane auf lane + 1
+            setze i auf i + 32
+        solange i < n:
+            setze wert: u8 auf array_gf256_mal(dq[i] ^ array_gf256_mal(dp[i], cb), invers)
+            a[i] = wert
+            b[i] = dp[i] ^ wert
+            setze i auf i + 1
+
+# Bis zu zwei bekannte Ausfälle. Bits beziehen sich auf stabile Mitgliedsslots,
+# nicht auf die Reihenfolge der Quellen. P/Q-Views sind bei Ausfall Ausgaben.
+@nativ
+funktion array_q_retten(p: puffer[u8], q: puffer[u8], daten: puffer[ArrayQQuelle], fehlt: u64, fehlt_p: bool, fehlt_q: bool, modus: u32, t: ptr[ArrayGf256], w: ptr[ArrayQArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze maske: u64 auf weitergeben(array_q_quellen_pruefen(p, q, daten, modus, t))
+        wenn u64(w) == 0 oder (fehlt & maske) != fehlt:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 44))
+        setze ausfaelle: u64 auf u64(fehlt_p) + u64(fehlt_q)
+        setze a_index: u64 auf 16
+        setze b_index: u64 auf 16
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            wenn (fehlt & (1 << daten[i].slot)) != 0:
+                setze ausfaelle auf ausfaelle + 1
+                wenn a_index == 16:
+                    setze a_index auf i
+                sonst:
+                    setze b_index auf i
+            setze i auf i + 1
+        wenn ausfaelle > 2:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 43))
+        setze dp_zeiger: ptr[u8] auf zeiger(adresse_von(w.p[0]))
+        setze dq_zeiger: ptr[u8] auf zeiger(adresse_von(w.q[0]))
+        setze dp: puffer[u8] auf byteansicht(dp_zeiger, länge(p))
+        setze dq: puffer[u8] auf byteansicht(dq_zeiger, länge(q))
+        array_q_leeren(dp)
+        array_q_leeren(dq)
+        wenn nicht fehlt_p:
+            array_q_kopieren(dp, p)
+        wenn nicht fehlt_q:
+            array_q_kopieren(dq, q)
+        setze i auf 0
+        solange i < länge(daten):
+            setze gesund: ArrayQQuelle auf daten[i]
+            wenn (fehlt & (1 << gesund.slot)) == 0:
+                array_q_xor(dp, gesund.bytes, 1, modus, t)
+                array_q_xor(dq, gesund.bytes, array_gf256_koeffizient(gesund.slot), modus, t)
+            setze i auf i + 1
+        wenn b_index != 16:
+            setze a: ArrayQQuelle auf daten[a_index]
+            setze b: ArrayQQuelle auf daten[b_index]
+            setze ca: u8 auf array_gf256_koeffizient(a.slot)
+            setze cb: u8 auf array_gf256_koeffizient(b.slot)
+            setze invers: u8 auf array_gf256_invers(ca ^ cb)
+            wenn modus == ARRAY_Q_SIMD:
+                array_q_zwei_simd(puffer_zeiger(a.bytes), puffer_zeiger(b.bytes), dp_zeiger, dq_zeiger, länge(p), cb, invers)
+            sonst:
+                setze j: u64 auf 0
+                solange j < länge(p):
+                    setze wert: u8 auf array_q_mal(modus, t, dq[j] ^ array_q_mal(modus, t, dp[j], cb), invers)
+                    a.bytes[j] = wert
+                    b.bytes[j] = dp[j] ^ wert
+                    setze j auf j + 1
+        sonst wenn a_index != 16:
+            setze einzig: ArrayQQuelle auf daten[a_index]
+            wenn fehlt_p:
+                array_q_leeren(einzig.bytes)
+                array_q_xor(einzig.bytes, dq, array_gf256_invers(array_gf256_koeffizient(einzig.slot)), modus, t)
+                array_q_xor(dp, einzig.bytes, 1, modus, t)
+            sonst:
+                array_q_kopieren(einzig.bytes, dp)
+                wenn fehlt_q:
+                    array_q_xor(dq, einzig.bytes, array_gf256_koeffizient(einzig.slot), modus, t)
+        wenn fehlt_p:
+            array_q_kopieren(p, dp)
+        wenn fehlt_q:
+            array_q_kopieren(q, dq)
+        gib_zurück erfolg()

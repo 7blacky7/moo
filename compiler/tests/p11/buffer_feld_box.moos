@@ -1,0 +1,9 @@
+struktur BufferFeldSicht:
+    bytes: puffer[u8]
+    marke: u64
+@nativ
+funktion buffer_feld_leer() -> BufferFeldSicht:
+    setze leer: BufferFeldSicht auf 0
+    gib_zurück leer
+setze geborgt auf buffer_feld_leer()
+zeige geborgt

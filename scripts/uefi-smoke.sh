@@ -149,6 +149,15 @@ case "$BLOCK_PROBE" in
     ;;
   *) fail "MOO_UEFI_BLOCK: 0 oder 1" ;;
 esac
+ARRAY_PROBE="${MOO_UEFI_ARRAY_PROBE:-0}"
+case "$ARRAY_PROBE" in
+  0) ;;
+  1)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] ||
+      fail "Array-Probe braucht das Kernprofil mit MOO_UEFI_SMP=4"
+    ;;
+  *) fail "MOO_UEFI_ARRAY_PROBE: 0 oder 1" ;;
+esac
 NVME_RW="${MOO_UEFI_NVME_RW:-0}"
 case "$NVME_RW" in
   0) ;;
@@ -233,12 +242,27 @@ esac
 INSTALL_PROBE="${MOO_UEFI_INSTALL_PROBE:-0}"
 case "$INSTALL_PROBE" in
   0) ;;
-  1)
+  1|gesamt)
     [ "$PRUEFUNG" = kern ] && [ "$BENUTZER_PROBE" = 0 ] && [ "$USB_MSC_PROBE" = 0 ] &&
       [ "${MOO_UEFI_ESP_KERN:-0}" = 1 ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] ||
       fail "Installerprobe braucht den eigenen 4-CPU-Kern- und ESP-Start"
     ;;
-  *) fail "MOO_UEFI_INSTALL_PROBE: 0 oder 1" ;;
+  *) fail "MOO_UEFI_INSTALL_PROBE: 0, 1 oder gesamt" ;;
+esac
+MOOFS_PROBE="${MOO_UEFI_MOOFS_PROBE:-0}"
+case "$MOOFS_PROBE" in
+  0) ;;
+  1|bitkipper|schreiben)
+    [ "$PRUEFUNG" = kern ] && [ "${MOO_UEFI_SMP:-1}" = 4 ] &&
+      [ "$INSTALL_PROBE" = 0 ] && [ "$BENUTZER_PROBE" = 0 ] &&
+      [ "$VFS_PROBE" = 0 ] && [ "$FAT_PROBE" = 0 ] && [ "$GPT_PROBE" = 0 ] &&
+      [ "$CACHE_PROBE" = 0 ] && [ "$AHCI_PROBE" = 0 ] && [ "$NVME_RW" = 0 ] &&
+      [ "${MOO_UEFI_NVME:-0}" = 0 ] && [ "${MOO_UEFI_USB_STORAGE:-0}" = 0 ] &&
+      [ "$USB_MSC_PROBE" = 0 ] && [ "${MOO_UEFI_SPEICHER_TEST:-0}" = 0 ] ||
+      fail "MooFS-Probe braucht ihr eigenes NVMe-Kernprofil"
+    [ -f "${MOO_UEFI_MOOFS_BILD:-}" ] || fail "MooFS-Probe braucht ein hosted erzeugtes Bild"
+    ;;
+  *) fail "MOO_UEFI_MOOFS_PROBE: 0, 1, bitkipper oder schreiben" ;;
 esac
 phase() { echo "############################################################"; echo "# PHASE $1: $2"; }
 skip() {
@@ -510,22 +534,40 @@ if [ "$PRUEFUNG" = "kern" ]; then
     1) KERN_STDLIB_FLAGS=(); KERN_IR_FLAGS=(--kernel) ;;
     *) fail "MOO_UEFI_KERN_LAUFZEIT: 0 oder 1" ;;
   esac
-  if [ "$BENUTZER_PROBE" != 0 ] || [ "$INSTALL_PROBE" = 1 ]; then
-    phase K2a "Benutzerprogramm: Moo-Start, Syscalls, x86_64-moos ELF"
-    BENUTZER_SRC="${MOO_UEFI_BENUTZER_SRC:-$ROOT/beispiele/moos/hallo_benutzer.moos}"
-    if [ "$INSTALL_PROBE" = 1 ]; then
-      BENUTZER_SRC="$ROOT/beispiele/moos/installieren.moos"
-      "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$KERN_LD" \
-        -o "$OUT/KERN-INSTALLIERT.ELF" >"$OUT/installierter-kern.err" 2>&1 ||
-        { sed 's/^/      | /' "$OUT/installierter-kern.err"; fail "Installierbares Kernel-ELF"; }
+  kern_benutzer_einbetten() {
+    local quelle="$1" name="$2" bindung="$3" linker="$4"
+    "$BIN" compile "$quelle" --target x86_64-moos \
+      --lib-pfad "$ROOT/stdlib" -o "$OUT/$name.ELF" || fail "Benutzer-ELF nicht gebaut"
+    if [ "$name" = GESAMT ]; then
+      uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/gesamt.py" \
+        profil benutzer "$OUT/$name.ELF" "$GESAMT_BYTES" || fail "Schreiblastprofil im Benutzer-ELF"
     fi
-    "$BIN" compile "$BENUTZER_SRC" --target x86_64-moos \
-      --lib-pfad "$ROOT/stdlib" -o "$OUT/HALLO.ELF" || fail "Benutzer-ELF nicht gebaut"
-    readelf -Whl "$OUT/HALLO.ELF" >"$OUT/benutzer-elf.txt" || fail "Benutzer-ELF nicht lesbar"
+    readelf -Whl "$OUT/$name.ELF" >"$OUT/$bindung-elf.txt" || fail "Benutzer-ELF nicht lesbar"
     objcopy -I binary -O elf64-x86-64 -B i386:x86-64 --strip-all \
       --rename-section .data=.moo_benutzer_elf,alloc,load,readonly,data,contents \
-      "$OUT/HALLO.ELF" "$OUT/benutzer-elf.o" || fail "Benutzer-ELF nicht als Probe einbettbar"
-    printf 'INPUT("%s")\nINCLUDE "%s"\n' "$OUT/benutzer-elf.o" "$KERN_LD" >"$OUT/linker-benutzer.ld"
+      "$OUT/$name.ELF" "$OUT/$bindung-elf.o" || fail "Benutzer-ELF nicht als Probe einbettbar"
+    printf 'INPUT("%s")\nINCLUDE "%s"\n' "$OUT/$bindung-elf.o" "$linker" >"$OUT/linker-$bindung.ld"
+  }
+  if [ "$BENUTZER_PROBE" != 0 ] || [ "$INSTALL_PROBE" != 0 ]; then
+    phase K2a "Benutzerprogramm: Moo-Start, Syscalls, x86_64-moos ELF"
+    BENUTZER_SRC="${MOO_UEFI_BENUTZER_SRC:-$ROOT/beispiele/moos/hallo_benutzer.moos}"
+    if [ "$INSTALL_PROBE" != 0 ]; then
+      BENUTZER_SRC="$ROOT/beispiele/moos/installieren.moos"
+      INSTALL_LD="$KERN_LD"
+      if [ "$INSTALL_PROBE" = gesamt ]; then
+        GESAMT_BYTES="${MOO_GESAMT_BYTES:-2147483648}"
+        kern_benutzer_einbetten "$ROOT/beispiele/moos/speicher_gesamt.moos" GESAMT gesamt "$KERN_LD"
+        INSTALL_LD="$OUT/linker-gesamt.ld"
+      fi
+      "$BIN" compile "$KERN_SRC" --no-stdlib --target x86_64-bare --kernel --linker-script "$INSTALL_LD" \
+        -o "$OUT/KERN-INSTALLIERT.ELF" >"$OUT/installierter-kern.err" 2>&1 ||
+        { sed 's/^/      | /' "$OUT/installierter-kern.err"; fail "Installierbares Kernel-ELF"; }
+      if [ "$INSTALL_PROBE" = gesamt ]; then
+        uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/gesamt.py" \
+          profil kern "$OUT/KERN-INSTALLIERT.ELF" "$GESAMT_BYTES" || fail "Gesamtprofil im installierten Kernel"
+      fi
+    fi
+    kern_benutzer_einbetten "$BENUTZER_SRC" HALLO benutzer "$KERN_LD"
     KERN_LD="$OUT/linker-benutzer.ld"
   fi
   phase K2 "Kern: moo -> ELF64 (--kernel, linker-uefi.ld, ohne Multiboot)"
@@ -820,6 +862,20 @@ elf.write_bytes(daten.replace(vertrag, b"MOOBLK01" + (1).to_bytes(8, "little")))
 PY
       fail "Blockprofil in privater ELF-Kopie"
   fi
+  if [ "$ARRAY_PROBE" = 1 ]; then
+    uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
+from pathlib import Path
+import sys
+
+elf = Path(sys.argv[1])
+daten = elf.read_bytes()
+vertrag = b"MOOARRY1" + bytes(8)
+if daten.count(vertrag) != 1:
+    sys.exit("Array-Profil nicht eindeutig")
+elf.write_bytes(daten.replace(vertrag, b"MOOARRY1" + (1).to_bytes(8, "little")))
+PY
+      fail "Array-Profil in privater ELF-Kopie"
+  fi
   if [ "$NVME_RW" != 0 ]; then
     uv run --no-project --offline python -B - "$OUT/KERN.ELF" "$NVME_RW" <<'PY' ||
 from pathlib import Path
@@ -891,6 +947,10 @@ elf.write_bytes(daten.replace(vertrag, b"MODAT001" + (1).to_bytes(8, "little")))
 PY
       fail "Datei-Profil in privater ELF-Kopie"
   fi
+  if [ "$MOOFS_PROBE" != 0 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/moofs/profil.py" "$OUT/KERN.ELF" "$MOOFS_PROBE" ||
+      fail "MooFS-Profil in privater ELF-Kopie"
+  fi
   if [ "$VFS_PROBE" = 1 ]; then
     uv run --no-project --offline python -B - "$OUT/KERN.ELF" <<'PY' ||
 from pathlib import Path
@@ -940,6 +1000,12 @@ PY
     [ -f "$c" ] && { KOVMF_CODE="$c"; KOVMF_VARS="${c/CODE/VARS}"; break; }
   done
   [ -n "$KOVMF_CODE" ] && [ -f "$KOVMF_VARS" ] || skip "OVMF fehlt" "sudo pacman -S edk2-ovmf" "Build K1/K2 gruen — OVMF-Boot GESKIPPT."
+  if [ "$INSTALL_PROBE" = gesamt ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/gesamt.py" pruefen \
+      "$OUT" "$LADER_EFI" "$OUT/KERN.ELF" "$OUT/KERN-INSTALLIERT.ELF" "$KOVMF_CODE" "$KOVMF_VARS" \
+      "$GESAMT_BYTES" "$WAIT_S" "${QEMU_ACCEL[@]}" || fail "P11-Gesamtprobe"
+    exit 0
+  fi
   if [ "$INSTALL_PROBE" = 1 ]; then
     uv run --no-project --offline python -B "$ROOT/skripte/p11/speicher/installer_probe.py" \
       "$OUT" "$LADER_EFI" "$OUT/KERN.ELF" "$OUT/KERN-INSTALLIERT.ELF" "$KOVMF_CODE" "$KOVMF_VARS" "$WAIT_S" \
@@ -1067,6 +1133,15 @@ PY
       -device "nvme,id=vfsnvme,serial=MOOP11-VFS-BOOT-0001,addr=0xd,msix-exclusive-bar=on,msix_qsize=2,mdts=6"
       -device "nvme-ns,bus=vfsnvme,drive=vfsboot,nsid=1,logical_block_size=512,physical_block_size=512")
   fi
+  if [ "$MOOFS_PROBE" != 0 ]; then
+    cp -- "$MOO_UEFI_MOOFS_BILD" "$OUT/moofs.img" || fail "MooFS-Testkopie"
+    sha256sum "$OUT/moofs.img" > "$OUT/moofs-vorher.sha256"
+    moofs_readonly=on
+    [ "$MOOFS_PROBE" != schreiben ] || moofs_readonly=off
+    KERN_QEMU+=(-drive "if=none,id=moofsdisk,format=raw,readonly=$moofs_readonly,file=$OUT/moofs.img"
+      -device "nvme,id=moofsnvme,serial=MOOP11-MOOFS-READ001,addr=0xe,msix-exclusive-bar=on,msix_qsize=2,mdts=6"
+      -device "nvme-ns,bus=moofsnvme,drive=moofsdisk,nsid=1,logical_block_size=512,physical_block_size=512")
+  fi
   # P11: beschreibbare Platten werden ausschließlich für diesen QEMU-Lauf angelegt.
   case "${MOO_UEFI_SPEICHER_TEST:-0}" in
     0) ;;
@@ -1162,7 +1237,7 @@ PY
       printf 'sendkey a\n' >&3
       KEY_SENT=1
     fi
-    grep -aqE "MOO-KERNEL OK|MOO-MSC-PROBE-FEHLER|MOO-(NVME|AHCI|GPT|FAT32|VFS|DATEI)-PROBE-FEHLER" "$OUT/serial.log" 2>/dev/null && break
+    grep -aqE "MOO-KERNEL OK|MOO-MSC-PROBE-FEHLER|MOO-(NVME|AHCI|GPT|FAT32|VFS|DATEI|MOOFS)-PROBE-FEHLER" "$OUT/serial.log" 2>/dev/null && break
     grep -aq "MOO-LADER FEHLER" "$OUT/serial.log" 2>/dev/null && break
     kill -0 "$QPID" 2>/dev/null || break
     sleep 1
@@ -1335,6 +1410,10 @@ PY
       { cat "$OUT/gpt-rohbilder.log"; fail "GPT-Rohimages oder Reparatur weichen ab"; }
     cat "$OUT/gpt-rohbilder.log"
   fi
+  if [ "$MOOFS_PROBE" != 0 ]; then
+    uv run --no-project --offline python -B "$ROOT/skripte/p11/moofs/vergleich.py" "$OUT" "$MOOFS_PROBE" ||
+      fail "MooFS-Kerninhalt, CRC-Diagnose oder Medium abweichend"
+  fi
   if [ "$DATEI_PROBE" = 1 ]; then
     grep -aqF "MOO-DATEI-PROBE-OK" "$OUT/serial.log" || fail "Datei-Syscall-/Cleanup-Probe unvollständig"
     if grep -aqF "MOO-DATEI-PROBE-FEHLER" "$OUT/serial.log"; then fail "Datei-Syscall-/Cleanup-Probe fehlerhaft"; fi
@@ -1420,6 +1499,19 @@ PY
       grep -aqF "$m" "$OUT/serial.log" || fail "Blockgeräteprobe: $m fehlt"
     done
     echo "      OK: Blockgeräteprüfung, IRQ-Abschluss und 1000000 geprüfte RAM-Operationen auf vier CPUs"
+  fi
+  if [ "$ARRAY_PROBE" = 1 ]; then
+    for m in "MOO-ARRAY PARITAET REGIONEN 0000000000000002" "MOO-ARRAY FADEN FERTIG 0000000000000002" \
+             "MOO-ARRAY UEBER REGIONSGRENZE 0000000000000001" "MOO-ARRAY MOOFS DATENPLATTEN 0000000000000002" \
+             "MOO-ARRAY MOOFS PARITAET 0000000000000001" "MOO-ARRAY REGISTER ATOMAR 0000000000000001" \
+             "MOO-ARRAY REBUILD SCHREIBEN 0000000000000001" "MOO-ARRAY REBUILD ERSATZSEITEN 0000000000000004" \
+             "MOO-ARRAY PQ ZWEI AUSFAELLE 0000000000000002" "MOO-ARRAY PQ ERSATZSEITEN 000000000000000B" \
+             "MOO-ARRAY CACHE OFFEN 0000000000000001" "MOO-ARRAY CACHE MOVER-BYTES 000000000000138B" \
+             "MOO-ARRAY CACHE RESYNC 0000000000000080" "MOO-ARRAY SCRUB PRUEFUNG 0000000000000001" \
+             "MOO-ARRAY PRUEFUNG 0000000000000001"; do
+      grep -aqF "$m" "$OUT/serial.log" || fail "Array-Probe: $m fehlt"
+    done
+    echo "      OK: P/PQ-Array mit Online-Ersatz und Cache-Pool mit MooFS, Mover und Resync"
   fi
   if [ "$USB" != 0 ]; then
     for m in "HCSPARAMS1" "HCSPARAMS2" "HCCPARAMS1" "PROTOCOL CAP" "PROTOCOL PORTBEREICH" "PORTSC" "CCS" "PED" "PR" "PLS" "PP" "SPEED" "CSC GESEHEN" "EVENT TYP" "EVENT TRB" "EVENT CC" "EVENT REST" "EVENT COMMAND PARAM24" "OUTPUT SLOT STATE" "OUTPUT USB ADRESSE" "OUTPUT EP0 STATE" "OUTPUT EP0 MPS" "CONTROL SETUP FLAGS" "DESCRIPTOR8 ROH" "DESCRIPTOR MPS0"; do

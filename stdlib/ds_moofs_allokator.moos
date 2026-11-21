@@ -1,0 +1,257 @@
+# CoW-Allokation: beide gültigen Superblockgenerationen bleiben geschützt.
+aus ds_moofs importiere MooFsVolume, MooFsBlock, MooFsSchluessel, MooFsEintrag, MooFsFehler, MOOFS_ARGUMENT, MOOFS_FORMAT, MOOFS_VOLL, MOOFS_FEHLT, MOOFS_NUR_LESEN, moofs_oeffnen, moofs_super_lesen, moofs_block_lesen, moofs_knoten_pruefen, moofs_baum_ab
+aus ds_moofs_baum_schreiben importiere MooFsBlockgeber, MooFsBaumKind, moofs_baum_bloecke
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie
+
+@nativ
+konstante MOOFS_SPEICHER: u32 auf 0x40008
+
+struktur MooFsLauf:
+    block: u64
+    crc: u64
+    ebene: u32
+    index: u64
+    anzahl: u64
+    untere: MooFsSchluessel
+    obere: MooFsSchluessel
+    hat_unten: bool
+    hat_oben: bool
+    geladen: bool
+
+struktur MooFsStatistik:
+    bloecke: u64
+    frei: u64
+    reserve: u64
+    generation: u64
+
+struktur MooFsSchreiber implementiert MooFsBlockgeber:
+    volume: MooFsVolume
+    eintraege: ptr[MooFsEintrag]
+    kapazitaet: u64
+    anzahl: u64
+    kinder: ptr[MooFsBaumKind]
+    kinder_kapazitaet: u64
+    karte: ptr[u8]
+    karte_bytes: u64
+    frei: u64
+    reserve: u64
+    suche: u64
+    neues_ende: u64
+    ziel: u64
+    redundant: bool
+    bereit: bool
+    lauf: [MooFsLauf; 9]
+    block: MooFsBlock
+    daten: MooFsBlock
+
+    funktion nehmen(selbst) -> ergebnis[u64, MooFsFehler]:
+        unsicher:
+            gib_zurück moofs_freien_block(selbst, wahr)
+
+@nativ
+funktion moofs_belegt(w: ptr[MooFsSchreiber], nr: u64) -> bool:
+    unsicher:
+        gib_zurück (w.karte[nr / 8] & als(u8, 1 << (nr % 8))) != 0
+
+@nativ
+funktion moofs_markieren(w: ptr[MooFsSchreiber], nr: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nr >= w.volume.bloecke:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 500, nr))
+        wenn nicht moofs_belegt(w, nr):
+            setze w.karte[nr / 8] auf w.karte[nr / 8] | als(u8, 1 << (nr % 8))
+            setze w.frei auf w.frei - 1
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_freien_block(w: ptr[MooFsSchreiber], metadaten: bool) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 501, 0))
+        wenn w.frei == 0 oder (nicht metadaten und w.frei <= w.reserve):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 500, 0))
+        setze versucht: u64 auf 0
+        solange versucht < w.volume.bloecke:
+            wenn w.suche < 2 oder w.suche >= w.volume.bloecke:
+                setze w.suche auf 2
+            setze nr: u64 auf w.suche
+            setze w.suche auf nr + 1
+            wenn nicht moofs_belegt(w, nr):
+                weitergeben(moofs_markieren(w, nr))
+                wenn nr >= w.neues_ende:
+                    setze w.neues_ende auf nr + 1
+                gib_zurück erfolg(nr)
+            setze versucht auf versucht + 1
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 502, 0))
+
+@nativ
+funktion moofs_lauf_setzen(w: ptr[MooFsSchreiber], tiefe: u32, block: u64, crc: u64, ebene: u32, unten: MooFsSchluessel, oben: MooFsSchluessel, hat_unten: bool, hat_oben: bool) -> void:
+    unsicher:
+        setze leer: MooFsLauf auf 0
+        setze leer.block auf block
+        setze leer.crc auf crc
+        setze leer.ebene auf ebene
+        setze leer.untere auf unten
+        setze leer.obere auf oben
+        setze leer.hat_unten auf hat_unten
+        setze leer.hat_oben auf hat_oben
+        setze w.lauf[als(u64, tiefe)] auf leer
+
+# Ein expliziter Stack statt Rekursion; maximal neun geprüfte Baumebenen.
+@nativ
+funktion moofs_generation_markieren(w: ptr[MooFsSchreiber], v: ptr[MooFsVolume]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze nullkey: MooFsSchluessel auf MooFsSchluessel(0, 0, 0)
+        moofs_lauf_setzen(w, 0, v.wurzel, u64(v.wurzel_crc), v.hoehe, nullkey, nullkey, falsch, falsch)
+        setze tiefe: u32 auf 0
+        setze bytes: puffer[u8] auf byteansicht(w.block.bytes)
+        solange wahr:
+            setze f: ptr[MooFsLauf] auf zeiger(adresse_von(w.lauf[als(u64, tiefe)]))
+            weitergeben(moofs_block_lesen(v, f.block, bytes))
+            setze n: u64 auf weitergeben(moofs_knoten_pruefen(v, bytes, f.block, f.crc, f.ebene, f.untere, f.obere, f.hat_unten, f.hat_oben))
+            wenn nicht f.geladen:
+                weitergeben(moofs_markieren(w, f.block))
+                setze f.anzahl auf n
+                setze f.geladen auf wahr
+            wenn f.ebene == 0:
+                setze i: u64 auf 0
+                solange i < n:
+                    setze o: u64 auf 64 + i * 320
+                    wenn byte_lesen_le64(bytes, o + 8) == 2:
+                        setze start: u64 auf byte_lesen_le64(bytes, o + 24)
+                        setze anzahl: u64 auf byte_lesen_le64(bytes, o + 32)
+                        setze j: u64 auf 0
+                        solange j < anzahl:
+                            weitergeben(moofs_markieren(w, start + j))
+                            setze j auf j + 1
+                    setze i auf i + 1
+                wenn tiefe == 0:
+                    stopp
+                setze tiefe auf tiefe - 1
+            sonst wenn f.index == f.anzahl:
+                wenn tiefe == 0:
+                    stopp
+                setze tiefe auf tiefe - 1
+            sonst:
+                wenn tiefe >= 8:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 503, f.block))
+                setze slot: u64 auf 64 + f.index * 40
+                setze oben: MooFsSchluessel auf MooFsSchluessel(byte_lesen_le64(bytes, slot), byte_lesen_le64(bytes, slot + 8), byte_lesen_le64(bytes, slot + 16))
+                setze unten: MooFsSchluessel auf f.untere
+                setze hat_unten: bool auf f.hat_unten
+                wenn f.index != 0:
+                    setze vor: u64 auf slot - 40
+                    setze unten auf MooFsSchluessel(byte_lesen_le64(bytes, vor), byte_lesen_le64(bytes, vor + 8), byte_lesen_le64(bytes, vor + 16))
+                    setze hat_unten auf wahr
+                setze kind: u64 auf byte_lesen_le64(bytes, slot + 24)
+                setze crc: u64 auf u64(byte_lesen_le32(bytes, slot + 32))
+                setze ebene: u32 auf f.ebene - 1
+                setze f.index auf f.index + 1
+                setze tiefe auf tiefe + 1
+                moofs_lauf_setzen(w, tiefe, kind, crc, ebene, unten, oben, hat_unten, wahr)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreiber_neuladen(w: ptr[MooFsSchreiber]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze w.bereit auf falsch
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(w.volume))
+        weitergeben(moofs_oeffnen(v, w.volume.transport))
+        setze bitmap_bytes: u64 auf v.bloecke / 8
+        wenn v.bloecke % 8 != 0:
+            setze bitmap_bytes auf bitmap_bytes + 1
+        wenn bitmap_bytes > w.karte_bytes:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 500, 0))
+        setze i: u64 auf 0
+        solange i < bitmap_bytes:
+            setze w.karte[i] auf 0
+            setze i auf i + 1
+        setze w.frei auf v.bloecke
+        weitergeben(moofs_markieren(w, 0))
+        weitergeben(moofs_markieren(w, 1))
+        setze a: ergebnis[MooFsVolume, MooFsFehler] auf moofs_super_lesen(v, 0)
+        setze b: ergebnis[MooFsVolume, MooFsFehler] auf moofs_super_lesen(v, 1)
+        setze a_ok: bool auf ist_erfolg(a)
+        setze b_ok: bool auf ist_erfolg(b)
+        setze w.ziel auf 0
+        setze w.redundant auf falsch
+        setze a_gen: u64 auf 0
+        wenn a_ok:
+            setze snapshot: MooFsVolume auf ergebnis_wert(a)
+            wenn snapshot.bloecke != v.bloecke:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 504, 0))
+            setze a_gen auf snapshot.generation
+            weitergeben(moofs_generation_markieren(w, zeiger(adresse_von(snapshot))))
+        wenn b_ok:
+            setze snapshot_b: MooFsVolume auf ergebnis_wert(b)
+            wenn snapshot_b.bloecke != v.bloecke:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 504, 1))
+            wenn a_ok und a_gen > snapshot_b.generation:
+                setze w.ziel auf 1
+            wenn a_ok und a_gen == snapshot_b.generation:
+                setze w.redundant auf wahr
+            weitergeben(moofs_generation_markieren(w, zeiger(adresse_von(snapshot_b))))
+        sonst:
+            setze w.ziel auf 1
+        setze w.anzahl auf 0
+        setze key: MooFsSchluessel auf MooFsSchluessel(1, 1, 0)
+        solange wahr:
+            setze r: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_baum_ab(v, key)
+            wenn nicht ist_erfolg(r):
+                setze f: MooFsFehler auf ergebnis_fehler(r)
+                wenn f.code == MOOFS_FEHLT:
+                    stopp
+                gib_zurück fehlschlag(f)
+            wenn w.anzahl >= w.kapazitaet:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 501, 0))
+            setze e: MooFsEintrag auf ergebnis_wert(r)
+            setze w.eintraege[w.anzahl] auf e
+            setze w.anzahl auf w.anzahl + 1
+            setze key auf e.schluessel
+            wenn key.index != 0xFFFFFFFFFFFFFFFF:
+                setze key.index auf key.index + 1
+            sonst wenn key.art < 3:
+                setze key.art auf key.art + 1
+                setze key.index auf 0
+            sonst:
+                wenn key.objekt == 0xFFFFFFFFFFFFFFFF:
+                    stopp
+                setze key.objekt auf key.objekt + 1
+                setze key.art auf 1
+                setze key.index auf 0
+        setze w.reserve auf moofs_baum_bloecke(w.anzahl + 3) + 1
+        setze blaetter: u64 auf w.anzahl / 12
+        wenn w.anzahl % 12 != 0:
+            setze blaetter auf blaetter + 1
+        wenn blaetter > w.kinder_kapazitaet:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_SPEICHER, 502, 0))
+        setze w.suche auf 2
+        setze w.neues_ende auf v.naechster
+        setze w.bereit auf wahr
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreiber_oeffnen(w: ptr[MooFsSchreiber], transport: ptr[dyn FatTransport], eintraege: ptr[MooFsEintrag], kapazitaet: u64, kinder: ptr[MooFsBaumKind], kinder_kapazitaet: u64, karte: ptr[u8], karte_bytes: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze w.bereit auf falsch
+        wenn u64(eintraege) == 0 oder kapazitaet == 0 oder kapazitaet > 0xFFFFFFFFFFFFFFFF / groesse_von(MooFsEintrag) oder u64(kinder) == 0 oder kinder_kapazitaet == 0 oder u64(karte) == 0 oder karte_bytes == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 505, 0))
+        setze geo: BlockGeometrie auf transport.geometrie()
+        wenn geo.nur_lesend:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_NUR_LESEN, 500, 0))
+        setze w.volume.transport auf transport
+        setze w.eintraege auf eintraege
+        setze w.kapazitaet auf kapazitaet
+        setze w.kinder auf kinder
+        setze w.kinder_kapazitaet auf kinder_kapazitaet
+        setze w.karte auf karte
+        setze w.karte_bytes auf karte_bytes
+        gib_zurück moofs_schreiber_neuladen(w)
+
+@nativ
+funktion moofs_statistik(w: ptr[MooFsSchreiber]) -> ergebnis[MooFsStatistik, MooFsFehler]:
+    unsicher:
+        wenn nicht w.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 506, 0))
+        gib_zurück erfolg(MooFsStatistik(w.volume.bloecke, w.frei, w.reserve, w.volume.generation))

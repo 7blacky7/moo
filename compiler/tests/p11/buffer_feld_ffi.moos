@@ -1,0 +1,10 @@
+struktur BufferFeldSicht:
+    bytes: puffer[u8]
+    marke: u64
+struktur BufferFeldSpeicher:
+    bytes: [u8; 9]
+
+@nativ
+@einstieg
+funktion buffer_feld_falsch(sicht: BufferFeldSicht) -> BufferFeldSicht:
+    gib_zurück sicht

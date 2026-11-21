@@ -1,0 +1,13 @@
+aus nativ_crc32c importiere crc32c
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen, moofs_statistik
+aus ds_moofs_format importiere moofs_formatieren, MooFsFormatSpeicher, MooFsQuelle
+aus ds_moofs importiere MooFsVolume, MooFsBlock, moofs_oeffnen, moofs_suchen, moofs_lesen
+aus ds_moofs_formate importiere MooFsKopf, MooFsSuper, MooFsBlatt, MooFsAst
+@nativ
+funktion moofs_basis_probe() -> u32:
+    setze bytes: [u8; 9] auf [49, 50, 51, 52, 53, 54, 55, 56, 57]
+    wenn groesse_von(MooFsKopf) != 64 oder groesse_von(MooFsSuper) != 120 oder groesse_von(MooFsBlatt) != 320 oder groesse_von(MooFsAst) != 40 oder versatz_von(MooFsKopf, crc32c) != 40:
+        gib_zurück 1
+    wenn crc32c(byteansicht(bytes)) != 0xE3069283:
+        gib_zurück 2
+    gib_zurück 0

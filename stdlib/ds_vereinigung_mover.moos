@@ -1,0 +1,167 @@
+# Ein Mover-Auftrag kopiert eine geschlossene Datei und veröffentlicht
+# das Ziel per Rename im selben Volume. Der Besitzer hält die VFS-Sperre.
+aus vfs importiere Dateisystem, VfsFehler, VfsPfad, VfsStat, VfsEintrag, VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_EXKLUSIV, VFS_VERZEICHNIS, VFS_DATEI, VFS_ORDNER, VFS_ENOENT, VFS_EIO, VFS_EBUSY, VFS_EISDIR, VFS_EINVAL
+aus ds_vereinigung importiere Vereinigung, VereinigungTreffer, VEREINIGUNG_MOVER_PFAD, vereinigung_erster_pfad, vereinigung_pfad_offen, vereinigung_finden, vereinigung_attribut, vereinigung_pfad_verbinden, vereinigung_datenziel, vereinigung_eltern
+
+@nativ
+konstante MOVER_VERSCHOBEN: u32 auf 1
+@nativ
+konstante MOVER_OFFEN: u32 auf 2
+@nativ
+konstante MOVER_BEREITS_DATEN: u32 auf 3
+
+@nativ
+funktion vereinigung_mover_verzeichnis_leer(fs: ptr[dyn Dateisystem], pfad: puffer[u8]) -> ergebnis[bool, VfsFehler]:
+    unsicher:
+        setze griff: u64 auf weitergeben(fs.oeffnen(pfad, VFS_LESEN | VFS_VERZEICHNIS))
+        setze e: ergebnis[VfsEintrag, VfsFehler] auf fs.verzeichnis(griff, 0)
+        weitergeben(fs.schliessen(griff))
+        wenn ist_erfolg(e):
+            gib_zurück erfolg(falsch)
+        setze fehler: VfsFehler auf ergebnis_fehler(e)
+        wenn fehler.code != VFS_ENOENT:
+            gib_zurück fehlschlag(fehler)
+        gib_zurück erfolg(wahr)
+
+@nativ
+funktion vereinigung_mover_ordner(fs: ptr[dyn Dateisystem], pfad: puffer[u8], marker: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze dir: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, pfad)
+        wenn ist_erfolg(dir):
+            setze st: VfsStat auf ergebnis_wert(dir)
+            wenn st.art != VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 250, 0))
+        sonst:
+            setze f: VfsFehler auf ergebnis_fehler(dir)
+            wenn f.code != VFS_ENOENT:
+                gib_zurück fehlschlag(f)
+            weitergeben(fs.anlegen(pfad, wahr))
+        setze erkannt: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, marker)
+        wenn ist_erfolg(erkannt):
+            setze st_marker: VfsStat auf ergebnis_wert(erkannt)
+            wenn st_marker.art != VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 251, 0))
+            gib_zurück erfolg()
+        setze f_marker: VfsFehler auf ergebnis_fehler(erkannt)
+        wenn f_marker.code != VFS_ENOENT:
+            gib_zurück fehlschlag(f_marker)
+        wenn nicht weitergeben(vereinigung_mover_verzeichnis_leer(fs, pfad)):
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 252, 0))
+        weitergeben(fs.anlegen(marker, wahr))
+        gib_zurück fs.abgleichen()
+
+# Pro Zielvolume bleibt höchstens eine Staging-Datei eines abgebrochenen
+# Auftrags zurück. Der Eigentumsmarker liegt im reservierten Unterbaum.
+@nativ
+funktion vereinigung_mover_staging(v: ptr[Vereinigung], fs: ptr[dyn Dateisystem]) -> ergebnis[ptr[VfsPfad], VfsFehler]:
+    unsicher:
+        setze ordner: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.zweiter))
+        setze stufe: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.normal))
+        setze root: [u8; 19] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        setze i: u64 auf 0
+        solange i < 19:
+            root[i] = VEREINIGUNG_MOVER_PFAD[i]
+            setze i auf i + 1
+        weitergeben(vereinigung_pfad_verbinden(pufferansicht(v.basis.bytes, 0, v.basis.anzahl), pufferansicht(root), ordner))
+        setze dir: puffer[u8] auf pufferansicht(ordner.bytes, 0, ordner.anzahl)
+        setze v1: [u8; 3] auf [47, 118, 49]
+        weitergeben(vereinigung_pfad_verbinden(dir, pufferansicht(v1), stufe))
+        weitergeben(vereinigung_mover_ordner(fs, dir, pufferansicht(stufe.bytes, 0, stufe.anzahl)))
+        setze kopie: [u8; 6] auf [47, 107, 111, 112, 105, 101]
+        weitergeben(vereinigung_pfad_verbinden(dir, pufferansicht(kopie), stufe))
+        setze staging: puffer[u8] auf pufferansicht(stufe.bytes, 0, stufe.anzahl)
+        setze alt: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, staging)
+        wenn ist_erfolg(alt):
+            setze alt_stat: VfsStat auf ergebnis_wert(alt)
+            wenn alt_stat.art != VFS_DATEI:
+                gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 253, 0))
+            weitergeben(fs.loeschen(staging))
+        sonst:
+            setze fehler: VfsFehler auf ergebnis_fehler(alt)
+            wenn fehler.code != VFS_ENOENT:
+                gib_zurück fehlschlag(fehler)
+        gib_zurück erfolg(stufe)
+
+@nativ
+funktion vereinigung_mover_kopieren(quelle: ptr[dyn Dateisystem], q: u64, ziel: ptr[dyn Dateisystem], z: u64, gesamt: u64, arbeit: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze offset: u64 auf 0
+        solange offset < gesamt:
+            setze menge: u64 auf gesamt - offset
+            wenn menge > länge(arbeit):
+                setze menge auf länge(arbeit)
+            setze teil: puffer[u8] auf byteansicht(puffer_zeiger(arbeit), menge)
+            setze gelesen: u64 auf weitergeben(quelle.lesen(q, offset, teil))
+            wenn gelesen != menge:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 250, 0))
+            setze geschrieben: u64 auf weitergeben(ziel.schreiben(z, offset, teil))
+            wenn geschrieben != menge:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 251, 0))
+            setze offset auf offset + menge
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_mover_datei(quelle: ptr[dyn Dateisystem], ziel: ptr[dyn Dateisystem], pfad: puffer[u8], staging: puffer[u8], groesse: u64, arbeit: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze q: u64 auf weitergeben(quelle.oeffnen(pfad, VFS_LESEN))
+        setze resultat: ergebnis[u64, VfsFehler] auf ziel.oeffnen(staging, VFS_SCHREIBEN | VFS_ANLEGEN | VFS_EXKLUSIV)
+        wenn nicht ist_erfolg(resultat):
+            setze f: VfsFehler auf ergebnis_fehler(resultat)
+            weitergeben(quelle.schliessen(q))
+            gib_zurück fehlschlag(f)
+        setze z: u64 auf ergebnis_wert(resultat)
+        setze kopie: ergebnis[void, VfsFehler] auf vereinigung_mover_kopieren(quelle, q, ziel, z, groesse, arbeit)
+        setze z_zu: ergebnis[void, VfsFehler] auf ziel.schliessen(z)
+        setze q_zu: ergebnis[void, VfsFehler] auf quelle.schliessen(q)
+        weitergeben(kopie)
+        weitergeben(z_zu)
+        weitergeben(q_zu)
+        gib_zurück ziel.abgleichen()
+
+@nativ
+funktion vereinigung_mover_cache_loeschen(cache: ptr[dyn Dateisystem], daten: ptr[dyn Dateisystem], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    weitergeben(daten.abgleichen())
+    weitergeben(cache.loeschen(pfad))
+    gib_zurück cache.abgleichen()
+
+@nativ
+funktion vereinigung_verschieben(v: ptr[Vereinigung], pfad: puffer[u8], arbeit: puffer[u8]) -> ergebnis[u32, VfsFehler]:
+    unsicher:
+        wenn länge(arbeit) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 250, 0))
+        setze p: ptr[VfsPfad] auf weitergeben(vereinigung_erster_pfad(v, pfad))
+        wenn p.anzahl == v.basis.anzahl:
+            gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 250, 0))
+        setze physisch: puffer[u8] auf pufferansicht(p.bytes, 0, p.anzahl)
+        wenn vereinigung_pfad_offen(v, physisch, falsch):
+            gib_zurück erfolg(MOVER_OFFEN)
+        setze cache: ptr[dyn Dateisystem] auf v.quellen[v.daten].system
+        setze in_daten: ergebnis[VereinigungTreffer, VfsFehler] auf vereinigung_finden(v, physisch, 0, v.daten)
+        wenn ist_erfolg(in_daten):
+            setze t: VereinigungTreffer auf ergebnis_wert(in_daten)
+            setze im_cache: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(cache, physisch)
+            wenn nicht ist_erfolg(im_cache):
+                setze cache_fehler: VfsFehler auf ergebnis_fehler(im_cache)
+                wenn cache_fehler.code == VFS_ENOENT:
+                    gib_zurück erfolg(MOVER_BEREITS_DATEN)
+                gib_zurück fehlschlag(cache_fehler)
+            setze schatten: VfsStat auf ergebnis_wert(im_cache)
+            wenn schatten.art != VFS_DATEI oder t.stat.art != VFS_DATEI:
+                gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 251, 0))
+            weitergeben(vereinigung_mover_cache_loeschen(cache, v.quellen[t.quelle].system, physisch))
+            gib_zurück erfolg(MOVER_BEREITS_DATEN)
+        setze daten_fehler: VfsFehler auf ergebnis_fehler(in_daten)
+        wenn daten_fehler.code != VFS_ENOENT:
+            gib_zurück fehlschlag(daten_fehler)
+        setze da: VfsStat auf weitergeben(vereinigung_attribut(cache, physisch))
+        wenn da.art != VFS_DATEI:
+            gib_zurück fehlschlag(VfsFehler(VFS_EISDIR, 252, 0))
+        setze idx: u64 auf vereinigung_datenziel(v, physisch)
+        setze ziel: ptr[dyn Dateisystem] auf v.quellen[idx].system
+        weitergeben(vereinigung_eltern(v, idx, physisch))
+        setze temp: ptr[VfsPfad] auf weitergeben(vereinigung_mover_staging(v, ziel))
+        setze staging: puffer[u8] auf pufferansicht(temp.bytes, 0, temp.anzahl)
+        weitergeben(vereinigung_mover_datei(cache, ziel, physisch, staging, da.bytes, arbeit))
+        weitergeben(ziel.umbenennen(staging, physisch))
+        weitergeben(vereinigung_mover_cache_loeschen(cache, ziel, physisch))
+        gib_zurück erfolg(MOVER_VERSCHOBEN)

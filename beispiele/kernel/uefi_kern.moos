@@ -19,6 +19,8 @@
 
 # P10-T5: benannte x86-Bitbereiche statt Handmasken in GDT/IDT.
 importiere nativ_x86_deskriptoren
+# Generischer C-ABI-Träger für LLVM-Aggregatverschiebungen im Kern.
+importiere nativ_memmove
 
 # Optionaler skalarer Laufzeit-Einstieg; Minimalprofil liefert weak return 0.
 extern "C" funktion moo_laufzeit_programm() -> i32
@@ -31,6 +33,7 @@ aus "kern_irq" importiere kern_irq_ist_geraet, kern_irq_aufrufen
 aus "kern_irq_idt" importiere kern_irq_idt
 aus "kern_irq_probe" importiere irq_probe_starten
 aus "kern_block_probe" importiere block_probe_starten
+aus "kern_array_probe" importiere array_probe_starten
 aus "kern_elf_probe" importiere elf_probe_starten
 aus "kern_smp" importiere smp_madt_lesen, smp_ressourcen, smp_planer, smp_faden_stapel, smp_melden, smp_nummer
 aus "kern_smp_planer" importiere IPI_NEUPLAN, IPI_TLB, IPI_HALT, smp_planer_initialisieren, smp_tlb_lokal, smp_tlb_abgleich, smp_alle_halten
@@ -52,6 +55,7 @@ aus "usb_speicher" importiere usb_speicher_pruefen
 aus "usb_speicher_block" importiere usb_msc_eingabe
 aus "usb_msc_probe" importiere usb_msc_probe_ziel, usb_msc_probe_starten
 aus "kern_installieren_probe" importiere installer_probe_usb, installer_probe_starten
+aus "kern_speicher_gesamt" importiere gesamt_probe_starten
 aus "nvme" importiere nvme_pruefen
 aus "nvme_probe" importiere nvme_probe_starten
 aus "ahci_probe" importiere ahci_probe_starten
@@ -60,6 +64,7 @@ aus "speicher_gpt_probe" importiere gpt_probe_starten
 aus "speicher_fat_probe" importiere fat_probe_starten
 aus "kern_vfs_probe" importiere vfs_probe_starten
 aus "kern_datei_probe" importiere datei_probe_einrichten, datei_probe_abschliessen
+aus "speicher_moofs_probe" importiere moofs_probe_starten
 aus "i226_diagnose" importiere i226_inventar
 aus "netz_ipv4" importiere netz_ipv4_poll
 aus "netz_ipv6" importiere netz_ipv6_port_an, netz_ipv6_wartung, netz_ipv6_link_aus
@@ -321,6 +326,10 @@ konstante T_IRQ_FEHLER: [u8; _] auf "MOO-IRQ-FEHLER\n"
 @nativ
 statisch BLOCK_PROFIL: [u64; 2] auf [0x31304B4C424F4F4D, 0]
 @nativ
+statisch ARRAY_PROFIL: [u64; 2] auf [0x31595252414F4F4D, 0]
+@nativ
+konstante T_ARRAY_FEHLER: [u8; _] auf "MOO-ARRAY-PROBE-FEHLER\n"
+@nativ
 statisch NVME_SCHREIB_PROFIL: [u64; 2] auf [0x315257564E4F4F4D, 0]
 @nativ
 konstante T_NVME_PROBE_OK: [u8; _] auf "MOO-NVME-PROBE-OK\n"
@@ -338,6 +347,12 @@ statisch CACHE_PROFIL: [u64; 2] auf [0x3130484341434F4D, 0]
 konstante T_CACHE_BARRIERE: [u8; _] auf "MOO-CACHE-BARRIERE-OK\n"
 @nativ
 konstante T_CACHE_PROBE_FEHLER: [u8; _] auf "MOO-CACHE-PROBE-FEHLER\n"
+@nativ
+statisch MOOFS_PROFIL: [u64; 2] auf [0x31303053464D4F4D, 0]
+@nativ
+konstante T_MOOFS_PROBE_OK: [u8; _] auf "MOO-MOOFS-PROBE-OK\n"
+@nativ
+konstante T_MOOFS_PROBE_FEHLER: [u8; _] auf "MOO-MOOFS-PROBE-FEHLER\n"
 @nativ
 statisch DATEI_PROFIL: [u64; 2] auf [0x3130305441444F4D, 0]
 @nativ
@@ -364,6 +379,8 @@ konstante T_USB_MSC_PROBE_OK: [u8; _] auf "MOO-MSC-PROBE-OK\n"
 konstante T_USB_MSC_PROBE_FEHLER: [u8; _] auf "MOO-MSC-PROBE-FEHLER\n"
 @nativ
 statisch INSTALL_PROFIL: [u64; 2] auf [0x313054534E494F4D, 0]
+@nativ
+statisch SPEICHER_GESAMT_PROFIL: [u64; 2] auf [0x544D415345474F4D, 0]
 @nativ
 konstante T_INSTALL_PROBE_OK: [u8; _] auf "MOO-INSTALL-PROBE-OK\n"
 @nativ
@@ -3227,6 +3244,10 @@ funktion kern_haupt(bi: u64) -> void:
                 kern_text(adresse_von(T_BLOCK_FEHLER))
                 anhalten()
             kern_text(adresse_von(T_BLOCK_OK))
+        wenn speicher_lesen(adresse_von(ARRAY_PROFIL) + 8, 8) == 1:
+            wenn nicht array_probe_starten(tsc, adresse_von(meldung)):
+                kern_text(adresse_von(T_ARRAY_FEHLER))
+                anhalten()
         setze nvme_profil: u64 auf speicher_lesen(adresse_von(NVME_SCHREIB_PROFIL) + 8, 8)
         wenn nvme_profil != 0:
             wenn nicht nvme_probe_starten(nvme_profil, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
@@ -3244,6 +3265,12 @@ funktion kern_haupt(bi: u64) -> void:
                 anhalten()
             kern_text(adresse_von(T_CACHE_BARRIERE))
             anhalten()
+        setze moofs_profil: u64 auf speicher_lesen(adresse_von(MOOFS_PROFIL) + 8, 8)
+        wenn moofs_profil != 0:
+            wenn nicht moofs_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung), moofs_profil == 2):
+                kern_text(adresse_von(T_MOOFS_PROBE_FEHLER))
+                anhalten()
+            kern_text(adresse_von(T_MOOFS_PROBE_OK))
         wenn speicher_lesen(adresse_von(VFS_PROFIL) + 8, 8) == 1:
             wenn nicht vfs_probe_starten(tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
                 kern_text(adresse_von(T_VFS_PROBE_FEHLER))
@@ -3310,6 +3337,11 @@ funktion kern_haupt(bi: u64) -> void:
                 kern_text(adresse_von(T_INSTALL_PROBE_OK))
             sonst:
                 kern_text(adresse_von(T_INSTALL_PROBE_FEHLER))
+        sonst wenn speicher_lesen(adresse_von(SPEICHER_GESAMT_PROFIL) + 8, 8) == 1:
+            wenn benutzer_ende > benutzer_elf und gesamt_probe_starten(benutzer_elf, benutzer_ende - benutzer_elf, tsc, bi, adresse_von(kern_mmio_abbilden), adresse_von(meldung)):
+                kern_text(adresse_von(T_OK))
+            # Das isolierte Gesamtprofil endet für alle Phasen erst per QMP.
+            anhalten()
         sonst wenn benutzer_ende > benutzer_elf:
             wenn speicher_lesen(adresse_von(DATEI_PROFIL) + 8, 8) == 1:
                 wenn nicht datei_probe_einrichten(adresse_von(meldung)):

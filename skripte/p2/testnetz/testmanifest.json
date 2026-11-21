@@ -13,6 +13,197 @@
   },
   "cases": [
     {
+      "path": "beispiele/kernel/kern_array.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_array_moofs.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_array_moofs_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_array_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_cache_pool_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_spiegel.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/moos/mover.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11: explizites Bare-Ziel und opt verify dc64ee3e-96d7-415d-b32e-d2b77817985a, QEMU-Abnahme da7fa025 bzw. 63ff11f4."
+    },
+    {
+      "path": "beispiele/kernel/kern_speicher_gesamt.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T25: Bare-IR und opt verify 9582e560. QEMU-Abnahmekette mit mise run -C skripte/p11/speicher gesamt."
+    },
+    {
+      "path": "beispiele/kernel/kern_speicher_gesamt_medien.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T25: Bare-IR und opt verify 9582e560."
+    },
+    {
+      "path": "beispiele/moos/speicher_gesamt.moos",
+      "category": "profile",
+      "args": [
+        "--target",
+        "x86_64-moos"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T25: MoOS-IR und opt verify f4fbd2de, Benutzer-ELF 4c2a046f."
+    },
+    {
+      "path": "beispiele/kernel/kern_array_scrub_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T23: Bare-IR+opt verify 590f78c5-fc9e-4be2-8bbd-54345f0cebd0"
+    },
+    {
+      "path": "beispiele/kernel/kern_array_pq.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T21/T22: Ziel-IR und opt verify 841f0b6c-874a-48a4-b8ff-d53c10d1d4bd; integriertes QEMU -smp4 63ff11f4-dfba-4518-bf9d-36122efee8c5"
+    },
+    {
+      "path": "beispiele/kernel/kern_native_cleanup.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T18: Ziel-IR und opt verify, Synapse-Shell 251ce436; integrierter QEMU/KVM -smp4 a1fbc7b5"
+    },
+    {
+      "path": "beispiele/kernel/kern_native_cleanup_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T18: Ziel-IR und opt verify, Synapse-Shell 251ce436; integrierter QEMU/KVM -smp4 a1fbc7b5"
+    },
+    {
+      "path": "beispiele/kernel/speicher_moofs_scrub.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T18: Ziel-IR und opt verify, Synapse-Shell 251ce436; integrierter QEMU/KVM -smp4 a1fbc7b5"
+    },
+    {
+      "path": "beispiele/kernel/speicher_moofs_scrub_probe.moos",
+      "category": "profile",
+      "args": [
+        "--no-stdlib",
+        "--target",
+        "x86_64-bare"
+      ],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T18: Ziel-IR und opt verify, Synapse-Shell 251ce436; integrierter QEMU/KVM -smp4 a1fbc7b5"
+    },
+    {
       "path": "beispiele/kernel/ahci.moos",
       "category": "profile",
       "args": [
@@ -335,6 +526,14 @@
       "context": "source-relative",
       "status": "ir_only_observed_success",
       "proof": "P11-T15: Ziel-IR und opt verify, Synapse-Shell ba943399"
+    },
+    {
+      "path": "beispiele/kernel/speicher_moofs_probe.moos",
+      "category": "profile",
+      "args": ["--no-stdlib", "--target", "x86_64-bare"],
+      "context": "source-relative",
+      "status": "ir_only_observed_success",
+      "proof": "P11-T16: Ziel-IR und opt verify, Synapse-Shell c94f9cff"
     },
     {
       "path": "beispiele/kernel/usb_msc_probe.moos",

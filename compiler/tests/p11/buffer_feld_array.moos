@@ -1,0 +1,15 @@
+struktur BufferFeldSicht:
+    bytes: puffer[u8]
+    marke: u64
+struktur BufferFeldSpeicher:
+    bytes: [u8; 9]
+
+struktur BufferFeldPaar:
+    werte: [BufferFeldSicht; 2]
+@nativ
+funktion buffer_feld_falsch() -> BufferFeldSicht:
+    setze speicher: BufferFeldSpeicher auf 0
+    setze paar: BufferFeldPaar auf 0
+    setze i: u64 auf 1
+    paar.werte[i] = BufferFeldSicht(byteansicht(speicher.bytes), 1)
+    gib_zurück paar.werte[i]

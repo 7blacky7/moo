@@ -1,0 +1,20 @@
+[tasks.spiegel-host]
+description = "Cache-Spiegel und Bitmap-Resync auf regulären Abbildern"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/cache-pool
+lauf="$(mktemp -d "$PWD/build/p11/cache-pool/spiegel.XXXXXX")"
+uv run --no-project --offline python -B skripte/p11/cache-pool/spiegel.py "$lauf" "${MOO_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+'''
+
+[tasks.vereinigung-host]
+description = "MooFS-Freigabe, offener Griff und atomarer Mover unter SIGKILL"
+run = '''
+set -eu
+cd ../../..
+mkdir -p build/p11/cache-pool
+lauf="$(mktemp -d "$PWD/build/p11/cache-pool/vereinigung.XXXXXX")"
+uv run --no-project --offline python -B skripte/p11/cache-pool/vereinigung.py "$lauf" "${MOO_COMPILER:-$PWD/compiler/target/release/moo-compiler}"
+'''
+

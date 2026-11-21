@@ -1,0 +1,167 @@
+# Eigenes lesendes QEMU-Profil: ein hosted mit Moo erzeugtes MooFS-Bild.
+aus ds_moofs importiere MooFsVolume, MooFsInode, MooFsBlock, MooFsFehler, MOOFS_ARGUMENT, MOOFS_EA, MOOFS_CRC, moofs_oeffnen, moofs_suchen, moofs_lesen
+aus ds_moofs importiere MooFsEintrag
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen, moofs_schreiber_neuladen
+aus ds_moofs_schreiben importiere moofs_anlegen, moofs_schreiben, moofs_kuerzen, moofs_umbenennen, moofs_loeschen, moofs_abgleichen
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler
+aus nativ_crc32c importiere crc32c_fortsetzen
+aus "speicher_moofs_scrub_probe" importiere moofs_scrub_probe
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus "nvme_block" importiere NvmeBlockController, NvmeBlockGeraet, NvmeBlockStart, NVME_BLOCK_DMA_SEITEN, nvme_block_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_smp" importiere smp_kern, smp_nummer
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+
+@nativ
+statisch MOOFS_PROBE_CTRL: NvmeBlockController auf 0
+@nativ
+statisch MOOFS_PROBE_NVME: NvmeBlockGeraet auf 0
+@nativ
+statisch MOOFS_PROBE_TRANSPORT: FatKernTransport auf 0
+@nativ
+statisch MOOFS_PROBE_VOLUME: MooFsVolume auf 0
+@nativ
+statisch MOOFS_PROBE_PUFFER: MooFsBlock auf 0
+@nativ
+statisch MOOFS_PROBE_ZIEL: [u64; 7] auf [0x4E564D45524F3031, 0x68, 1, 20, 0x4d2d3131504f4f4d, 0x4145522d53464f4f, 0x31303044]
+@nativ
+konstante MOOFS_T_BYTES: [u8; _] auf "MOO-MOOFS BYTES "
+@nativ
+konstante MOOFS_T_CRC: [u8; _] auf "MOO-MOOFS CRC32C "
+@nativ
+konstante MOOFS_T_BLOCK: [u8; _] auf "MOO-MOOFS CRC BLOCK "
+@nativ
+konstante MOOFS_T_FEHLER: [u8; _] auf "MOO-MOOFS FEHLER CODE GRUND "
+@nativ
+konstante MOOFS_T_FEHLBLOCK: [u8; _] auf "MOO-MOOFS FEHLER BLOCK "
+
+@nativ
+funktion moofs_probe_ablauf(tsc: u64, bi: u64, map: u64, log_adr: u64, bitkipper: bool) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze dma: u64 auf ar_rahmen_nehmen(NVME_BLOCK_DMA_SEITEN)
+        wenn dma == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 400, 0))
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze schreibbar: bool auf speicher_lesen(adresse_von(MOOFS_SCHREIB_PROFIL) + 8, 8) == 1
+        setze start: NvmeBlockStart auf NvmeBlockStart(adresse_von(MOOFS_PROBE_ZIEL), 0x00101B36, dma, apic, 4, 4096, schreibbar)
+        setze roh: ergebnis[u64, BlockFehler] auf nvme_block_einrichten(zeiger(adresse_von(MOOFS_PROBE_CTRL)), zeiger(adresse_von(MOOFS_PROBE_NVME)), zeiger(adresse_von(start)), tsc, bi, map, 0)
+        wenn nicht ist_erfolg(roh):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, ergebnis_fehler(roh).code, 0))
+        setze transport: ptr[FatKernTransport] auf zeiger(adresse_von(MOOFS_PROBE_TRANSPORT))
+        setze bereit: ergebnis[void, BlockFehler] auf fat_kern_transport_einrichten(transport, ergebnis_wert(roh))
+        wenn nicht ist_erfolg(bereit):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, ergebnis_fehler(bereit).code, 0))
+        setze t: ptr[dyn FatTransport] auf transport
+        setze v: ptr[MooFsVolume] auf zeiger(adresse_von(MOOFS_PROBE_VOLUME))
+        weitergeben(moofs_oeffnen(v, t))
+        setze name: [u8; 9] auf [100, 97, 116, 101, 110, 46, 98, 105, 110]
+        setze inode: MooFsInode auf weitergeben(moofs_suchen(v, byteansicht(name)))
+        wenn inode.bytes != 1048576:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 401, inode.metablock))
+        setze daten: ptr[u8] auf zeiger(adresse_von(MOOFS_PROBE_PUFFER.bytes[0]))
+        wenn bitkipper:
+            setze MOOFS_PROBE_PUFFER.bytes[0] auf 0xA5
+            setze r: ergebnis[u64, MooFsFehler] auf moofs_lesen(v, inode.nummer, 0, byteansicht(daten, 4032))
+            wenn ist_erfolg(r):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 402, 3))
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            wenn f.code != MOOFS_CRC oder f.block != 3 oder MOOFS_PROBE_PUFFER.bytes[0] != 0xA5:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 403, f.block))
+            log(adresse_von(MOOFS_T_BLOCK), f.block)
+            gib_zurück erfolg()
+        setze gesamt: u64 auf 0
+        setze crc: u32 auf 0xFFFFFFFF
+        solange gesamt < inode.bytes:
+            setze n: u64 auf weitergeben(moofs_lesen(v, inode.nummer, gesamt, byteansicht(daten, 4032)))
+            wenn n == 0 oder n > 4032:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 404, 0))
+            setze i: u64 auf 0
+            solange i < n:
+                wenn daten[i] != als_wrap(u8, (gesamt + i) * 37 + 11):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 405, 0))
+                setze i auf i + 1
+            setze crc auf crc32c_fortsetzen(crc, byteansicht(daten, n))
+            setze gesamt auf gesamt + n
+        log(adresse_von(MOOFS_T_BYTES), gesamt)
+        log(adresse_von(MOOFS_T_CRC), u64(crc ^ 0xFFFFFFFF))
+        wenn schreibbar:
+            weitergeben(moofs_probe_schreiben(t, log_adr))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_probe_starten(tsc: u64, bi: u64, map: u64, log_adr: u64, bitkipper: bool) -> bool:
+    unsicher:
+        setze irq: u64 auf irq_sichern()
+        aufräumen: irq_wiederherstellen(irq)
+        unterbrechungen_an()
+        setze r: ergebnis[void, MooFsFehler] auf moofs_probe_ablauf(tsc, bi, map, log_adr, bitkipper)
+        wenn nicht ist_erfolg(r):
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+            log(adresse_von(MOOFS_T_FEHLER), (u64(f.code) << 32) | u64(f.grund))
+            log(adresse_von(MOOFS_T_FEHLBLOCK), f.block)
+            gib_zurück falsch
+        gib_zurück wahr
+
+struktur MooFsProbeSchreiben:
+    eintraege: [MooFsEintrag; 1024]
+    kinder: [MooFsBaumKind; 86]
+    karte: [u8; 128]
+    schreiber: MooFsSchreiber
+    quelle: [u8; 12289]
+    ziel: [u8; 12289]
+@nativ
+statisch MOOFS_PROBE_SCHREIBEN: MooFsProbeSchreiben auf 0
+@nativ
+statisch MOOFS_SCHREIB_PROFIL: [u64; 2] auf [0x31303057464D4F4D, 0]
+@nativ
+konstante MOOFS_T_COW: [u8; _] auf "MOO-MOOFS COW OK "
+
+@nativ
+funktion moofs_probe_schreiben(t: ptr[dyn FatTransport], log_adr: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze p: ptr[MooFsProbeSchreiben] auf zeiger(adresse_von(MOOFS_PROBE_SCHREIBEN))
+        setze w: ptr[MooFsSchreiber] auf zeiger(adresse_von(p.schreiber))
+        weitergeben(moofs_schreiber_oeffnen(w, t, zeiger(adresse_von(p.eintraege[0])), 1024, zeiger(adresse_von(p.kinder[0])), 86, zeiger(adresse_von(p.karte[0])), 128))
+        setze x: [u8; 1] auf [120]
+        setze y: [u8; 1] auf [121]
+        setze temp: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(x), falsch))
+        setze i: u64 auf 0
+        solange i < 12289:
+            setze p.quelle[i] auf als(u8, (i * 53 + 23) & 255)
+            setze i auf i + 1
+        setze n: u64 auf weitergeben(moofs_schreiben(w, temp, 0, byteansicht(p.quelle)))
+        weitergeben(moofs_umbenennen(w, 1, byteansicht(x), 1, byteansicht(y)))
+        weitergeben(moofs_kuerzen(w, temp, 4097))
+        weitergeben(moofs_kuerzen(w, temp, 8193))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), temp, 0, byteansicht(p.ziel)))
+        wenn n != 8193:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 420, 0))
+        setze i auf 0
+        solange i < n:
+            setze erwartet: u8 auf 0
+            wenn i < 4097:
+                setze erwartet auf p.quelle[i]
+            wenn p.ziel[i] != erwartet:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 421, 0))
+            setze i auf i + 1
+        weitergeben(moofs_loeschen(w, 1, byteansicht(y)))
+        setze temp auf weitergeben(moofs_anlegen(w, 1, byteansicht(y), falsch))
+        setze n auf weitergeben(moofs_schreiben(w, temp, 0, byteansicht(p.quelle)))
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreiber_neuladen(w))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), temp, 0, byteansicht(p.ziel)))
+        wenn n != 12289:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 422, 0))
+        setze i auf 0
+        solange i < n:
+            wenn p.ziel[i] != p.quelle[i]:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 423, 0))
+            setze i auf i + 1
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        log(adresse_von(MOOFS_T_COW), w.volume.generation)
+        weitergeben(moofs_scrub_probe(w, log_adr))
+        gib_zurück erfolg()

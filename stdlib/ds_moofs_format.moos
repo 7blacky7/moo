@@ -1,0 +1,179 @@
+# MooFS-mkfs: neuer Datenträger aus einem geliehenen, geprüften Manifest.
+# Keine Änderung eines gemounteten Volumes; CoW gehört zum separaten Schreibpfad.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_SCHREIBEN, BLOCK_FLUSH
+aus ds_moofs importiere MooFsVolume, MooFsBlock, MooFsEintrag, MooFsSchluessel, MooFsFehler, MOOFS_MAGIE, MOOFS_ARGUMENT, MOOFS_NAME, MOOFS_VOLL, MOOFS_NUR_LESEN, MOOFS_EA, moofs_crc, moofs_name_pruefen, moofs_schluessel_vergleichen
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind, MooFsBaum, MooFsGerade, MooFsBlockgeber, moofs_baum_schreiben, moofs_baum_bloecke
+aus ds_moofs_io importiere moofs_block_vorbereiten, moofs_block_schreiben, moofs_barriere
+aus ds_moofs_formate importiere MooFsKopf, MooFsSuper, MooFsBlatt, MooFsAst
+
+struktur MooFsQuelle:
+    nummer: u64
+    eltern: u64
+    art: u64
+    name_bytes: u64
+    daten: u64
+    bytes: u64
+    name: [u8; 256]
+struktur MooFsFormatSpeicher:
+    eintraege: [MooFsEintrag; 385]
+    kinder: [MooFsBaumKind; 33]
+    anzahl: u64
+    block: MooFsBlock
+
+@nativ
+funktion moofs_format_manifest(quellen: ptr[MooFsQuelle], anzahl: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn anzahl > 128 oder (anzahl != 0 und u64(quellen) == 0):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 100, 0))
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze q: ptr[MooFsQuelle] auf zeiger(adresse_von(quellen[i]))
+            setze name: ptr[u8] auf zeiger(adresse_von(q.name[0]))
+            wenn q.nummer < 2 oder q.eltern == 0 oder (q.art != 1 und q.art != 2) oder q.name_bytes > 255 oder nicht moofs_name_pruefen(byteansicht(name, q.name_bytes)):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_NAME, als(u32, i), 0))
+            wenn (q.art == 2 und q.bytes != 0) oder (q.bytes != 0 und (q.daten == 0 oder q.bytes - 1 > 0xFFFFFFFFFFFFFFFF - q.daten)):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 101, 0))
+            setze j: u64 auf 0
+            solange j < i:
+                wenn quellen[j].nummer == q.nummer:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 102, 0))
+                wenn quellen[j].eltern == q.eltern und quellen[j].name_bytes == q.name_bytes:
+                    setze gleich: bool auf wahr
+                    setze k: u64 auf 0
+                    solange gleich und k < q.name_bytes:
+                        setze gleich auf quellen[j].name[k] == q.name[k]
+                        setze k auf k + 1
+                    wenn gleich:
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_NAME, 103, 0))
+                setze j auf j + 1
+            # Jede Elternkette muss innerhalb der Manifestlänge an Wurzel 1 enden.
+            setze eltern: u64 auf q.eltern
+            setze tiefe: u64 auf 0
+            solange eltern != 1:
+                wenn tiefe >= anzahl:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 104, 0))
+                setze j auf 0
+                solange j < anzahl und quellen[j].nummer != eltern:
+                    setze j auf j + 1
+                wenn j == anzahl oder quellen[j].art != 2:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 105, 0))
+                setze eltern auf quellen[j].eltern
+                setze tiefe auf tiefe + 1
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_format_kopf(w: ptr[MooFsFormatSpeicher], nr: u64, art: u32, ebene: u32, anzahl: u32, inode: u64, logisch: u64) -> void:
+    unsicher:
+        moofs_block_vorbereiten(zeiger(adresse_von(w.block)), nr, art, ebene, anzahl, inode, logisch, 1)
+
+@nativ
+funktion moofs_format_record(w: ptr[MooFsFormatSpeicher], key: MooFsSchluessel, a: u64, b: u64, c: u64) -> void:
+    unsicher:
+        setze leer: MooFsEintrag auf 0
+        setze leer.schluessel auf key
+        setze leer.a auf a
+        setze leer.b auf b
+        setze leer.c auf c
+        setze w.eintraege[w.anzahl] auf leer
+        setze w.anzahl auf w.anzahl + 1
+
+@nativ
+funktion moofs_formatieren(transport: ptr[dyn FatTransport], quellen: ptr[MooFsQuelle], anzahl: u64, kennung1: u64, kennung2: u64, w: ptr[MooFsFormatSpeicher]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        weitergeben(moofs_format_manifest(quellen, anzahl))
+        setze geo: BlockGeometrie auf transport.geometrie()
+        wenn geo.block_bytes < 512 oder geo.block_bytes > 4096 oder (geo.block_bytes & (geo.block_bytes - 1)) != 0 oder (kennung1 == 0 und kennung2 == 0) oder u64(w) == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 106, 0))
+        wenn geo.nur_lesend:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_NUR_LESEN, 0, 0))
+        setze gesamt: u64 auf geo.bloecke / (4096 / geo.block_bytes)
+        setze records: u64 auf 1 + anzahl * 2
+        setze datenbloecke: u64 auf 0
+        setze i: u64 auf 0
+        solange i < anzahl:
+            wenn quellen[i].bytes != 0:
+                setze geplant: u64 auf quellen[i].bytes / 4032
+                wenn quellen[i].bytes % 4032 != 0:
+                    setze geplant auf geplant + 1
+                wenn datenbloecke > gesamt oder geplant > gesamt - datenbloecke:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 1, 0))
+                setze datenbloecke auf datenbloecke + geplant
+                setze records auf records + 1
+            setze i auf i + 1
+        setze blaetter: u64 auf (records + 11) / 12
+        setze datenstart: u64 auf 2 + blaetter
+        wenn blaetter > 1:
+            setze datenstart auf datenstart + 1
+        wenn gesamt < 4 oder datenstart > gesamt oder datenbloecke > gesamt - datenstart oder moofs_baum_bloecke(records) > gesamt - datenstart - datenbloecke:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_VOLL, 2, 0))
+        setze v: MooFsVolume auf MooFsVolume(transport, geo.block_bytes, gesamt, 0, 0, 0, 1, datenstart + datenbloecke, kennung1, kennung2, falsch, falsch)
+        setze vp: ptr[MooFsVolume] auf zeiger(adresse_von(v))
+        setze bytes: puffer[u8] auf byteansicht(w.block.bytes)
+        setze w.anzahl auf 0
+        moofs_format_record(w, MooFsSchluessel(1, 1, 0), 0, 2, 1)
+        setze naechster: u64 auf datenstart
+        setze i auf 0
+        solange i < anzahl:
+            setze q: ptr[MooFsQuelle] auf zeiger(adresse_von(quellen[i]))
+            moofs_format_record(w, MooFsSchluessel(q.nummer, 1, 0), q.bytes, q.art, 1)
+            moofs_format_record(w, MooFsSchluessel(q.eltern, 3, i), q.nummer, q.name_bytes, q.art)
+            setze j: u64 auf 0
+            solange j < q.name_bytes:
+                setze w.eintraege[w.anzahl - 1].name[j] auf q.name[j]
+                setze j auf j + 1
+            wenn q.bytes != 0:
+                setze anzahl_daten: u64 auf q.bytes / 4032
+                wenn q.bytes % 4032 != 0:
+                    setze anzahl_daten auf anzahl_daten + 1
+                moofs_format_record(w, MooFsSchluessel(q.nummer, 2, 0), naechster, anzahl_daten, 0)
+                setze logisch: u64 auf 0
+                solange logisch < anzahl_daten:
+                    setze menge: u64 auf q.bytes - logisch * 4032
+                    wenn menge > 4032:
+                        setze menge auf 4032
+                    moofs_format_kopf(w, naechster, 4, 0, als(u32, menge), q.nummer, logisch)
+                    setze p: ptr[u8] auf zeiger(q.daten + logisch * 4032)
+                    setze j auf 0
+                    solange j < menge:
+                        setze bytes[64 + j] auf p[j]
+                        setze j auf j + 1
+                    setze crc_daten: u32 auf weitergeben(moofs_block_schreiben(vp, naechster, bytes))
+                    setze naechster auf naechster + 1
+                    setze logisch auf logisch + 1
+            setze i auf i + 1
+        # Deterministische Sortierung des begrenzten Manifests.
+        setze i auf 1
+        solange i < w.anzahl:
+            setze wert: MooFsEintrag auf w.eintraege[i]
+            setze j auf i
+            solange j > 0 und moofs_schluessel_vergleichen(w.eintraege[j - 1].schluessel, wert.schluessel) > 0:
+                setze w.eintraege[j] auf w.eintraege[j - 1]
+                setze j auf j - 1
+            setze w.eintraege[j] auf wert
+            setze i auf i + 1
+        setze linear: MooFsGerade auf MooFsGerade(2, datenstart)
+        setze lp: ptr[MooFsGerade] auf zeiger(adresse_von(linear))
+        setze geber: ptr[dyn MooFsBlockgeber] auf lp
+        setze baum: MooFsBaum auf weitergeben(moofs_baum_schreiben(vp, 1, zeiger(adresse_von(w.eintraege[0])), records, zeiger(adresse_von(w.kinder[0])), 33, geber, zeiger(adresse_von(w.block))))
+        setze wurzel: u64 auf baum.wurzel
+        setze wurzel_crc: u32 auf baum.crc
+        setze hoehe: u32 auf baum.hoehe
+        weitergeben(moofs_barriere(transport))
+        setze kopie: u64 auf 0
+        solange kopie < 2:
+            moofs_format_kopf(w, kopie, 1, 0, 0, 0, 0)
+            setze s: puffer[MooFsSuper] auf sicht(bytes, MooFsSuper, 0)
+            setze s[0].version auf 1
+            setze s[0].bloecke auf gesamt
+            setze s[0].wurzel auf wurzel
+            setze s[0].wurzel_crc auf wurzel_crc
+            setze s[0].hoehe auf hoehe
+            setze s[0].naechster auf naechster
+            setze s[0].kennung1 auf kennung1
+            setze s[0].kennung2 auf kennung2
+            setze crc_super: u32 auf weitergeben(moofs_block_schreiben(vp, kopie, bytes))
+            weitergeben(moofs_barriere(transport))
+            setze kopie auf kopie + 1
+        gib_zurück erfolg()

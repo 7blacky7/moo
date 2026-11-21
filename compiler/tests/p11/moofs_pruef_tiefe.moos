@@ -1,0 +1,81 @@
+# Mehr als hundert Blätter erzwingen zwei innere Ebenen.
+aus ds_moofs importiere MooFsVolume, MooFsEintrag, MooFsSchluessel, MooFsFehler, MOOFS_CRC, moofs_oeffnen
+aus ds_moofs_allokator importiere MooFsSchreiber
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind, MooFsBaum, MooFsGerade, MooFsBlockgeber, moofs_baum_schreiben
+aus ds_moofs_io importiere moofs_barriere
+aus ds_moofs_schreiben importiere moofs_super_veroeffentlichen
+aus ds_moofs_pruefen importiere MooFsPruefung, MooFsPruefRecord, moofs_pruefung_starten, moofs_pruefung_schritt
+aus ds_fat_transport importiere FatTransport
+aus ds_moofs_format importiere moofs_formatieren, MooFsQuelle
+aus "moofs_probe" importiere MOOFS_TEST, MooFsTestSpeicher, moofs_test_pruefe
+struktur MooFsPruefTiefe:
+    eintraege: [MooFsEintrag; 1201]
+    kinder: [MooFsBaumKind; 101]
+    records: [MooFsPruefRecord; 1300]
+    karte: [u8; 64]
+    schreiber: MooFsSchreiber
+    pruefung: MooFsPruefung
+@nativ
+statisch MOOFS_PRUEF_TIEFE: MooFsPruefTiefe auf 0
+@nativ
+funktion moofs_pruef_tief(t: ptr[dyn FatTransport]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze p: ptr[MooFsTestSpeicher] auf zeiger(adresse_von(MOOFS_TEST))
+        setze a: ptr[MooFsPruefTiefe] auf zeiger(adresse_von(MOOFS_PRUEF_TIEFE))
+        setze leer: ptr[MooFsQuelle] auf nichts
+        weitergeben(moofs_formatieren(t, leer, 0, 11, 22, zeiger(adresse_von(p.arbeit))))
+        setze w: ptr[MooFsSchreiber] auf zeiger(adresse_von(a.schreiber))
+        weitergeben(moofs_oeffnen(zeiger(adresse_von(w.volume)), t))
+        setze root: MooFsEintrag auf 0
+        setze root.schluessel auf MooFsSchluessel(1, 1, 0)
+        setze root.b auf 2
+        setze root.c auf 1
+        setze a.eintraege[0] auf root
+        setze i: u64 auf 0
+        solange i < 600:
+            setze dir: MooFsEintrag auf 0
+            setze dir.schluessel auf MooFsSchluessel(1, 3, i)
+            setze dir.a auf i + 2
+            setze dir.b auf 3
+            setze dir.c auf 1
+            setze dir.name[0] auf als(u8, 48 + i / 100)
+            setze dir.name[1] auf als(u8, 48 + (i / 10) % 10)
+            setze dir.name[2] auf als(u8, 48 + i % 10)
+            setze a.eintraege[1 + i] auf dir
+            setze inode: MooFsEintrag auf 0
+            setze inode.schluessel auf MooFsSchluessel(i + 2, 1, 0)
+            setze inode.b auf 1
+            setze inode.c auf 1
+            setze a.eintraege[601 + i] auf inode
+            setze i auf i + 1
+        setze gerade: MooFsGerade auf MooFsGerade(3, 512)
+        setze gp: ptr[MooFsGerade] auf zeiger(adresse_von(gerade))
+        setze geber: ptr[dyn MooFsBlockgeber] auf gp
+        setze baum: MooFsBaum auf weitergeben(moofs_baum_schreiben(zeiger(adresse_von(w.volume)), 2, zeiger(adresse_von(a.eintraege[0])), 1201, zeiger(adresse_von(a.kinder[0])), 101, geber, zeiger(adresse_von(w.block))))
+        weitergeben(moofs_test_pruefe(baum.hoehe == 2, 3120))
+        weitergeben(moofs_barriere(t))
+        setze kandidat: MooFsVolume auf w.volume
+        setze kandidat.generation auf 2
+        setze kandidat.wurzel auf baum.wurzel
+        setze kandidat.wurzel_crc auf baum.crc
+        setze kandidat.hoehe auf baum.hoehe
+        setze kandidat.naechster auf gerade.naechster
+        weitergeben(moofs_super_veroeffentlichen(w, kandidat, 0))
+        setze s: ptr[MooFsPruefung] auf zeiger(adresse_von(a.pruefung))
+        weitergeben(moofs_pruefung_starten(s, t, zeiger(adresse_von(a.records[0])), 1300, zeiger(adresse_von(a.karte[0])), 64))
+        setze fertig: bool auf falsch
+        solange nicht fertig:
+            setze fertig auf weitergeben(moofs_pruefung_schritt(s, 64))
+        weitergeben(moofs_test_pruefe(s.knoten == 105 und s.eintraege == 1202 und s.daten == 0, 3121))
+        setze bild: ptr[u8] auf zeiger(adresse_von(p.platte[0]))
+        setze innerer: u64 auf byte_lesen_le64(byteansicht(bild, 2097152), baum.wurzel * 4096 + 64 + 40 + 24)
+        setze p.platte[innerer * 4096 + 4000] auf p.platte[innerer * 4096 + 4000] ^ 1
+        weitergeben(moofs_pruefung_starten(s, t, zeiger(adresse_von(a.records[0])), 1300, zeiger(adresse_von(a.karte[0])), 64))
+        solange wahr:
+            setze r: ergebnis[bool, MooFsFehler] auf moofs_pruefung_schritt(s, 64)
+            wenn nicht ist_erfolg(r):
+                setze f: MooFsFehler auf ergebnis_fehler(r)
+                weitergeben(moofs_test_pruefe(f.code == MOOFS_CRC und f.block == innerer, 3122))
+                stopp
+            weitergeben(moofs_test_pruefe(nicht ergebnis_wert(r), 3123))
+        gib_zurück erfolg()

@@ -1,0 +1,6 @@
+importiere "array_q_bench_probe"
+für modus in [0, 1, 2]:
+    # Dieser Messlauf soll bei unerwarteten nativen Fehlern abbrechen.
+    unsicher:
+        zeige array_q_bench(modus)
+        zeige array_q_bench_pruefsumme()

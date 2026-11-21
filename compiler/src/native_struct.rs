@@ -281,6 +281,16 @@ fn validate_function_value(ty: &TypeRef, names: &HashSet<String>, allow_void: bo
     }
 }
 
+/// Native Bufferfelder leihen Elemente; sie erzeugen keine Layoutzyklen.
+/// Dieselben Zahl-/Strukturelemente wie STy::Buffer/StrukturPuffer.
+fn validate_buffer_element(ty: &TypeRef, names: &HashSet<String>) -> Result<(), String> {
+    match &ty.kind {
+        TypeKind::Name(name) if names.contains(name) => Ok(()),
+        TypeKind::Name(name) if NType::from_name(name).is_some_and(|t| t != NType::Bool) => Ok(()),
+        _ => Err("puffer[T]-Strukturfeld braucht einen Zahlen- oder Strukturtyp als Element".into()),
+    }
+}
+
 /// Endianbezeichnungen sind Speicherfeldtypen, keine numerischen Casts.
 pub(crate) fn endian_feld(ty: &TypeRef) -> Option<(NType, bool)> {
     let TypeKind::Name(name) = &ty.kind else { return None; };
@@ -307,6 +317,8 @@ fn collect_value_dependencies(
         TypeKind::Array { element, .. } => collect_value_dependencies(element, names, dependencies),
         TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
             crate::native_type_id::atom_element(ty).map(|_| ()),
+        TypeKind::Generic { name, args } if matches!(name.as_str(), "puffer" | "buffer") && args.len() == 1 =>
+            validate_buffer_element(&args[0], names),
         TypeKind::Generic { name, args } if (name == "ptr" || name == "zeiger") && args.len() == 1 =>
             validate_pointer_target(&args[0], names),
         _ => Err("Strukturfeldtyp wird noch nicht unterstützt".into()),
@@ -459,6 +471,10 @@ impl<'ctx> NativeStructRegistry<'ctx> {
                 }
                 self.layouts.get(name).map(|layout| layout.llvm_type.into())
                     .ok_or_else(|| format!("Unbekannter Strukturfeldtyp '{name}'"))
+            }
+            TypeKind::Generic { name, args } if matches!(name.as_str(), "puffer" | "buffer") && args.len() == 1 => {
+                validate_buffer_element(&args[0], &self.visible_names)?;
+                Ok(context.struct_type(&[context.ptr_type(AddressSpace::default()).into(), context.i64_type().into()], false).into())
             }
             TypeKind::Generic { name, .. } if crate::native_type_id::ist_atom_typ(name) =>
                 self.field_type(context, target, crate::native_type_id::atom_element(ty)?),

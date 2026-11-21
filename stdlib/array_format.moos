@@ -1,0 +1,257 @@
+# P-Array v1. Alle Positionen auf den Metadatenpartitionen sind 4096-Byte-Seiten.
+# Superblöcke liegen auf Seiten 0 und 1. Dirty-Bitmap-Kopien beginnen auf Seite 2.
+aus nativ_block importiere BlockFehler, BLOCK_GEOMETRIE, BLOCK_PUFFER, BLOCK_EA
+aus nativ_crc32c importiere crc32c
+
+@nativ
+konstante ARRAY_SEITEN_BYTES: u64 auf 4096
+@nativ
+konstante ARRAY_MAX_MITGLIEDER: u64 auf 16
+@nativ
+konstante ARRAY_DATEN: u32 auf 1
+@nativ
+konstante ARRAY_PARITAET_P: u32 auf 2
+@nativ
+konstante ARRAY_REGION_SEITEN: u64 auf 256
+@nativ
+konstante ARRAY_STREIFENSPERREN: u64 auf 64
+@nativ
+konstante ARRAY_BITMAP_START: u64 auf 32
+@nativ
+konstante ARRAY_BITMAP_BITS: u64 auf 32480
+@nativ
+konstante ARRAY_CRC_VERSATZ: u64 auf 4092
+@nativ
+konstante ARRAY_SUPER_MAGIE: u64 auf 0x31505252414F4F4D
+@nativ
+konstante ARRAY_BITMAP_MAGIE: u64 auf 0x31595452444F4F4D
+
+struktur ArrayIdentitaet:
+    guid_lo: u64
+    guid_hi: u64
+    serien_bytes: u32
+    serie: [u8; 32]
+
+struktur ArrayMitgliedsdaten:
+    rolle: u32
+    seiten: u64
+    identitaet: ArrayIdentitaet
+
+struktur ArrayLayout:
+    guid_lo: u64
+    guid_hi: u64
+    generation: u64
+    anzahl: u64
+    mitglieder: [ArrayMitgliedsdaten; 16]
+
+struktur ArrayGrenzen:
+    paritaet: u64
+    daten_max: u64
+    regionen: u64
+    bitmap_seiten: u64
+
+struktur ArrayBitmapOrt:
+    seite: u64
+    byteindex: u64
+    maske: u8
+
+@gepackt
+struktur ArraySuperblockDisk:
+    magie: u64le
+    version: u32le
+    anzahl: u32le
+    generation: u64le
+    guid_lo: u64le
+    guid_hi: u64le
+    eigenes_mitglied: u32le
+    seiten_bytes: u32le
+    region_seiten: u32le
+    reserviert: u32le
+
+@gepackt
+struktur ArrayMitgliedDisk:
+    rolle: u32le
+    serien_bytes: u32le
+    guid_lo: u64le
+    guid_hi: u64le
+    seiten: u64le
+
+@gepackt
+struktur ArrayBitmapDisk:
+    magie: u64le
+    generation: u64le
+    seite: u64le
+    folge: u64le
+
+@gepackt
+struktur ArrayCrcDisk:
+    wert: u32le
+
+@nativ
+funktion array_serien_gleich(a: ptr[ArrayIdentitaet], b: ptr[ArrayIdentitaet]) -> bool:
+    unsicher:
+        wenn a.serien_bytes == 0 oder a.serien_bytes > 32 oder a.serien_bytes != b.serien_bytes:
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < als(u64, a.serien_bytes):
+            wenn a.serie[i] != b.serie[i]:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion array_identitaet_gleich(a: ptr[ArrayIdentitaet], b: ptr[ArrayIdentitaet]) -> bool:
+    unsicher:
+        gib_zurück a.guid_lo == b.guid_lo und a.guid_hi == b.guid_hi und array_serien_gleich(a, b)
+
+@nativ
+funktion array_layout_pruefen(layout: ptr[ArrayLayout]) -> ergebnis[ArrayGrenzen, BlockFehler]:
+    unsicher:
+        wenn u64(layout) == 0 oder layout.generation == 0 oder (layout.guid_lo | layout.guid_hi) == 0 oder layout.anzahl < 2 oder layout.anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 1))
+        setze daten_max: u64 auf 0
+        setze paritaet: u64 auf ARRAY_MAX_MITGLIEDER
+        setze i: u64 auf 0
+        solange i < layout.anzahl:
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(layout.mitglieder[i]))
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            wenn (ident.guid_lo | ident.guid_hi) == 0 oder ident.serien_bytes == 0 oder ident.serien_bytes > 32 oder eintrag.seiten == 0 oder eintrag.seiten > 0xFFFFFFFFFFFFFFFF / ARRAY_SEITEN_BYTES:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 2))
+            setze j: u64 auf 0
+            solange j < i:
+                setze andere: ptr[ArrayIdentitaet] auf zeiger(adresse_von(layout.mitglieder[j].identitaet))
+                wenn (ident.guid_lo == andere.guid_lo und ident.guid_hi == andere.guid_hi) oder array_serien_gleich(ident, andere):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 3))
+                setze j auf j + 1
+            wenn eintrag.rolle == ARRAY_PARITAET_P und paritaet == ARRAY_MAX_MITGLIEDER:
+                setze paritaet auf i
+            sonst wenn eintrag.rolle == ARRAY_DATEN:
+                wenn eintrag.seiten > daten_max:
+                    setze daten_max auf eintrag.seiten
+            sonst:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 4))
+            setze i auf i + 1
+        wenn paritaet == ARRAY_MAX_MITGLIEDER oder daten_max == 0 oder layout.mitglieder[paritaet].seiten < daten_max:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 5))
+        setze regionen: u64 auf (daten_max - 1) / ARRAY_REGION_SEITEN + 1
+        setze bitmap_gruppen: u64 auf (regionen - 1) / (ARRAY_BITMAP_BITS * ARRAY_STREIFENSPERREN) + 1
+        gib_zurück erfolg(ArrayGrenzen(paritaet, daten_max, regionen, bitmap_gruppen * ARRAY_STREIFENSPERREN))
+
+@nativ
+funktion array_layout_gleich(a: ptr[ArrayLayout], b: ptr[ArrayLayout]) -> bool:
+    unsicher:
+        wenn a.guid_lo != b.guid_lo oder a.guid_hi != b.guid_hi oder a.generation != b.generation oder a.anzahl != b.anzahl oder a.anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < a.anzahl:
+            setze aa: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(a.mitglieder[i]))
+            setze bb: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(b.mitglieder[i]))
+            wenn aa.rolle != bb.rolle oder aa.seiten != bb.seiten oder nicht array_identitaet_gleich(zeiger(adresse_von(aa.identitaet)), zeiger(adresse_von(bb.identitaet))):
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion array_seite_leeren(bytes: puffer[u8]) -> void:
+    setze i: u64 auf 0
+    solange i < länge(bytes):
+        bytes[i] = 0
+        setze i auf i + 1
+
+@nativ
+funktion array_crc(bytes: puffer[u8]) -> u32:
+    unsicher:
+        gib_zurück crc32c(byteansicht(puffer_zeiger(bytes), ARRAY_CRC_VERSATZ))
+
+@nativ
+funktion array_siegeln(bytes: puffer[u8]) -> void:
+    setze feld: puffer[ArrayCrcDisk] auf sicht(bytes, ArrayCrcDisk, ARRAY_CRC_VERSATZ)
+    feld[0].wert = array_crc(bytes)
+
+@nativ
+funktion array_crc_gueltig(bytes: puffer[u8]) -> bool:
+    wenn länge(bytes) != ARRAY_SEITEN_BYTES:
+        gib_zurück falsch
+    setze feld: puffer[ArrayCrcDisk] auf sicht(bytes, ArrayCrcDisk, ARRAY_CRC_VERSATZ)
+    gib_zurück feld[0].wert == array_crc(bytes)
+
+@nativ
+funktion array_superblock_bauen(bytes: puffer[u8], layout: ptr[ArrayLayout], eigenes: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_layout_pruefen(layout))
+        wenn länge(bytes) != ARRAY_SEITEN_BYTES oder eigenes >= layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 1))
+        array_seite_leeren(bytes)
+        setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+        kopf[0] = ArraySuperblockDisk(ARRAY_SUPER_MAGIE, 1, als(u32, layout.anzahl), layout.generation, layout.guid_lo, layout.guid_hi, als(u32, eigenes), 4096, 256, 0)
+        setze i: u64 auf 0
+        solange i < layout.anzahl:
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(layout.mitglieder[i]))
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            setze versatz: u64 auf 64 + i * 64
+            setze feld: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, versatz)
+            feld[0] = ArrayMitgliedDisk(eintrag.rolle, ident.serien_bytes, ident.guid_lo, ident.guid_hi, eintrag.seiten)
+            setze j: u64 auf 0
+            solange j < als(u64, ident.serien_bytes):
+                bytes[versatz + 32 + j] = ident.serie[j]
+                setze j auf j + 1
+            setze i auf i + 1
+        array_siegeln(bytes)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_superblock_lesen(bytes: puffer[u8], layout: ptr[ArrayLayout]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(layout) == 0 oder nicht array_crc_gueltig(bytes):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 1))
+        setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+        setze anzahl: u64 auf als(u64, kopf[0].anzahl)
+        setze eigenes: u64 auf als(u64, kopf[0].eigenes_mitglied)
+        wenn kopf[0].magie != ARRAY_SUPER_MAGIE oder kopf[0].version != 1 oder anzahl < 2 oder anzahl > ARRAY_MAX_MITGLIEDER oder eigenes >= anzahl oder kopf[0].seiten_bytes != 4096 oder kopf[0].region_seiten != 256 oder kopf[0].reserviert != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 2))
+        setze layout.guid_lo auf kopf[0].guid_lo
+        setze layout.guid_hi auf kopf[0].guid_hi
+        setze layout.generation auf kopf[0].generation
+        setze layout.anzahl auf anzahl
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze versatz: u64 auf 64 + i * 64
+            setze feld: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, versatz)
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(layout.mitglieder[i]))
+            setze eintrag.rolle auf feld[0].rolle
+            setze eintrag.seiten auf feld[0].seiten
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            setze ident.guid_lo auf feld[0].guid_lo
+            setze ident.guid_hi auf feld[0].guid_hi
+            setze ident.serien_bytes auf feld[0].serien_bytes
+            setze j: u64 auf 0
+            solange j < 32:
+                setze ident.serie[j] auf bytes[versatz + 32 + j]
+                setze j auf j + 1
+            setze i auf i + 1
+        weitergeben(array_layout_pruefen(layout))
+        gib_zurück erfolg(eigenes)
+
+# Regionen, die dieselbe Bitmapseite ändern, halten dieselbe Streifensperre.
+@nativ
+funktion array_bitmap_ort(region: u64) -> ArrayBitmapOrt:
+    setze pro_sperre: u64 auf region / ARRAY_STREIFENSPERREN
+    setze seite: u64 auf (pro_sperre / ARRAY_BITMAP_BITS) * ARRAY_STREIFENSPERREN + region % ARRAY_STREIFENSPERREN
+    setze bit: u64 auf pro_sperre % ARRAY_BITMAP_BITS
+    setze maske: u64 auf 1 << (bit % 8)
+    gib_zurück ArrayBitmapOrt(seite, ARRAY_BITMAP_START + bit / 8, als(u8, maske))
+
+@nativ
+funktion array_bitmap_siegeln(bytes: puffer[u8], generation: u64, seite: u64, folge: u64) -> void:
+    setze kopf: puffer[ArrayBitmapDisk] auf sicht(bytes, ArrayBitmapDisk, 0)
+    kopf[0] = ArrayBitmapDisk(ARRAY_BITMAP_MAGIE, generation, seite, folge)
+    array_siegeln(bytes)
+
+@nativ
+funktion array_bitmap_folge(bytes: puffer[u8], generation: u64, seite: u64) -> u64:
+    wenn nicht array_crc_gueltig(bytes):
+        gib_zurück 0
+    setze kopf: puffer[ArrayBitmapDisk] auf sicht(bytes, ArrayBitmapDisk, 0)
+    wenn kopf[0].magie != ARRAY_BITMAP_MAGIE oder kopf[0].generation != generation oder kopf[0].seite != seite:
+        gib_zurück 0
+    gib_zurück kopf[0].folge

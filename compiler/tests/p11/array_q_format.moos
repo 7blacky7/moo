@@ -1,0 +1,192 @@
+aus array_pq_format importiere ArrayPQGrenzen, array_pq_layout_pruefen, array_pq_superblock_bauen, array_pq_superblock_lesen
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ArraySuperblockDisk, ArrayMitgliedDisk, array_layout_gleich, array_superblock_lesen, array_siegeln
+aus nativ_block importiere BlockFehler
+
+struktur ArrayQFormatBlock:
+    bytes: [u8; 4096]
+
+@nativ
+funktion array_q_format_layout() -> ArrayLayout:
+    unsicher:
+        setze l: ArrayLayout auf 0
+        setze l.guid_lo auf 999
+        setze l.guid_hi auf 111
+        setze l.generation auf 7
+        setze l.anzahl auf 5
+        setze i: u64 auf 0
+        solange i < 5:
+            setze m: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(l.mitglieder[i]))
+            setze m.rolle auf 1
+            setze m.seiten auf 3 + i
+            wenn i == 1:
+                setze m.rolle auf 2
+                setze m.seiten auf 8
+            sonst wenn i == 3:
+                setze m.rolle auf 3
+                setze m.seiten auf 9
+            setze m.identitaet.guid_lo auf 10 + i
+            setze m.identitaet.guid_hi auf 20 + i
+            setze m.identitaet.serien_bytes auf 32
+            setze j: u64 auf 0
+            solange j < 31:
+                setze m.identitaet.serie[j] auf als(u8, j + 65)
+                setze j auf j + 1
+            setze m.identitaet.serie[31] auf als(u8, 48 + i)
+            setze i auf i + 1
+        gib_zurück l
+
+@nativ
+funktion array_q_format_probe() -> u64:
+    unsicher:
+        setze basis: ArrayLayout auf array_q_format_layout()
+        setze lp: ptr[ArrayLayout] auf zeiger(adresse_von(basis))
+        setze grenzen: ergebnis[ArrayPQGrenzen, BlockFehler] auf array_pq_layout_pruefen(lp)
+        wenn nicht ist_erfolg(grenzen):
+            gib_zurück 1
+        setze g: ArrayPQGrenzen auf ergebnis_wert(grenzen)
+        wenn g.paritaet_p != 1 oder g.paritaet_q != 3 oder g.daten_max != 7:
+            gib_zurück 2
+        setze block: ArrayQFormatBlock auf 0
+        setze bytes: puffer[u8] auf byteansicht(block.bytes)
+        setze ausgabe: ArrayLayout auf 0
+        setze ziel: ptr[ArrayLayout] auf zeiger(adresse_von(ausgabe))
+        setze eigenes: u64 auf 0
+        solange eigenes < 5:
+            setze gebaut: ergebnis[void, BlockFehler] auf array_pq_superblock_bauen(bytes, lp, eigenes)
+            wenn nicht ist_erfolg(gebaut):
+                gib_zurück 3
+            setze gelesen: ergebnis[u64, BlockFehler] auf array_pq_superblock_lesen(bytes, ziel)
+            wenn nicht ist_erfolg(gelesen):
+                gib_zurück 4
+            wenn ergebnis_wert(gelesen) != eigenes oder nicht array_layout_gleich(lp, ziel):
+                gib_zurück 5
+            setze eigenes auf eigenes + 1
+        setze variante: u64 auf 0
+        solange variante < 27:
+            setze neu_bauen: ergebnis[void, BlockFehler] auf array_pq_superblock_bauen(bytes, lp, 0)
+            wenn nicht ist_erfolg(neu_bauen):
+                gib_zurück 6
+            setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+            setze m0: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, 64)
+            setze mp: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, 128)
+            setze m2: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, 192)
+            setze mq: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, 256)
+            setze code: u32 auf 9
+            setze grund: u32 auf 81
+            wenn variante == 0:
+                bytes[100] = bytes[100] ^ 1
+                setze grund auf 80
+            sonst wenn variante < 4:
+                setze kopf[0].version auf als(u32, variante)
+                wenn variante == 3:
+                    setze kopf[0].version auf 4
+            sonst wenn variante == 4:
+                setze kopf[0].reserviert auf 1
+            sonst wenn variante == 5:
+                bytes[56] = 1
+                setze grund auf 82
+            sonst wenn variante == 6:
+                setze m0[0].serien_bytes auf 1
+                setze grund auf 84
+            sonst wenn variante == 7:
+                bytes[384] = 1
+                setze grund auf 85
+            sonst wenn variante == 8:
+                setze mq[0].rolle auf 2
+                setze code auf 2
+                setze grund auf 83
+            sonst wenn variante == 9:
+                setze mq[0].seiten auf 6
+                setze code auf 2
+                setze grund auf 85
+            sonst wenn variante == 10:
+                setze mp[0].rolle auf 1
+                setze code auf 2
+                setze grund auf 84
+            sonst wenn variante == 11:
+                setze mq[0].rolle auf 1
+                setze code auf 2
+                setze grund auf 84
+            sonst wenn variante == 12:
+                setze m0[0].guid_lo auf m2[0].guid_lo
+                setze m0[0].guid_hi auf m2[0].guid_hi
+                setze code auf 2
+                setze grund auf 82
+            sonst wenn variante == 13:
+                setze j_serie: u64 auf 0
+                solange j_serie < 32:
+                    bytes[96 + j_serie] = bytes[224 + j_serie]
+                    setze j_serie auf j_serie + 1
+                setze code auf 2
+                setze grund auf 82
+            sonst wenn variante == 14:
+                setze m0[0].serien_bytes auf 0
+                setze grund auf 83
+            sonst wenn variante == 15:
+                setze kopf[0].eigenes_mitglied auf 5
+            sonst wenn variante == 16:
+                setze kopf[0].anzahl auf 2
+            sonst wenn variante == 17:
+                setze kopf[0].magie auf kopf[0].magie ^ 1
+            sonst wenn variante == 18:
+                setze m0[0].seiten auf 0
+                setze code auf 2
+            sonst wenn variante == 19:
+                setze kopf[0].generation auf 0
+                setze code auf 2
+                setze grund auf 80
+            sonst wenn variante == 20:
+                setze kopf[0].guid_lo auf 0
+                setze kopf[0].guid_hi auf 0
+                setze code auf 2
+                setze grund auf 80
+            sonst wenn variante == 21:
+                setze kopf[0].seiten_bytes auf 512
+            sonst wenn variante == 22:
+                setze m0[0].rolle auf 9
+                setze code auf 2
+                setze grund auf 83
+            sonst wenn variante == 23:
+                setze mp[0].seiten auf 6
+                setze code auf 2
+                setze grund auf 85
+            sonst wenn variante == 24:
+                setze m0[0].seiten auf 18446744073709551615
+                setze code auf 2
+            sonst:
+                setze grund auf 80
+            wenn variante != 0:
+                array_siegeln(bytes)
+            setze ausgabe.generation auf 99
+            setze ausgabe.anzahl auf 77
+            setze ausgabe.guid_lo auf 123456
+            setze eingang: puffer[u8] auf bytes
+            wenn variante == 25:
+                setze eingang auf pufferansicht(block.bytes, 0, 4095)
+            setze ziel_test: ptr[ArrayLayout] auf ziel
+            wenn variante == 26:
+                setze ziel_test auf zeiger(0)
+            setze fehlerfall: ergebnis[u64, BlockFehler] auf array_pq_superblock_lesen(eingang, ziel_test)
+            wenn ist_erfolg(fehlerfall):
+                gib_zurück 100 + variante
+            setze fehler: BlockFehler auf ergebnis_fehler(fehlerfall)
+            wenn fehler.code != code oder fehler.geraete_status != grund:
+                gib_zurück 200 + variante
+            wenn ausgabe.generation != 99 oder ausgabe.anzahl != 77 oder ausgabe.guid_lo != 123456:
+                gib_zurück 300 + variante
+            setze variante auf variante + 1
+        # Fehler beim Bauen verändert keine Ausgabebytes.
+        setze i_wache: u64 auf 0
+        solange i_wache < 4096:
+            bytes[i_wache] = 0xCC
+            setze i_wache auf i_wache + 1
+        setze basis.generation auf 0
+        setze ungueltig: ergebnis[void, BlockFehler] auf array_pq_superblock_bauen(bytes, lp, 0)
+        wenn ist_erfolg(ungueltig):
+            gib_zurück 400
+        setze i_wache auf 0
+        solange i_wache < 4096:
+            wenn bytes[i_wache] != 0xCC:
+                gib_zurück 401
+            setze i_wache auf i_wache + 1
+        gib_zurück 0

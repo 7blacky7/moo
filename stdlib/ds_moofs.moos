@@ -1,0 +1,460 @@
+# MooFS v1: geprüfter, rein lesender Kern auf dem vorhandenen Blocktransport.
+# Aufrufer serialisiert das Volume und hält Transport sowie Puffer gültig.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN
+aus nativ_crc32c importiere crc32c_byte
+aus ds_moofs_formate importiere MooFsKopf, MooFsSuper, MooFsBlatt, MooFsAst
+
+@nativ
+konstante MOOFS_MAGIE: u64 auf 0x003153464F4F4D
+@nativ
+konstante MOOFS_FORMAT: u32 auf 0x40000
+@nativ
+konstante MOOFS_CRC: u32 auf 0x40001
+@nativ
+konstante MOOFS_EA: u32 auf 0x40002
+@nativ
+konstante MOOFS_FEHLT: u32 auf 0x40003
+@nativ
+konstante MOOFS_NAME: u32 auf 0x40004
+@nativ
+konstante MOOFS_VOLL: u32 auf 0x40005
+@nativ
+konstante MOOFS_ARGUMENT: u32 auf 0x40006
+@nativ
+konstante MOOFS_NUR_LESEN: u32 auf 0x40007
+
+struktur MooFsFehler:
+    code: u32
+    grund: u32
+    block: u64
+struktur MooFsBlock:
+    bytes: [u8; 4096]
+struktur MooFsSchluessel:
+    objekt: u64
+    art: u64
+    index: u64
+struktur MooFsEintrag:
+    schluessel: MooFsSchluessel
+    a: u64
+    b: u64
+    c: u64
+    d: u64
+    name: [u8; 256]
+    block: u64
+struktur MooFsInode:
+    nummer: u64
+    bytes: u64
+    art: u64
+    metablock: u64
+struktur MooFsVolume:
+    transport: ptr[dyn FatTransport]
+    sektor_bytes: u64
+    bloecke: u64
+    wurzel: u64
+    wurzel_crc: u32
+    hoehe: u32
+    generation: u64
+    naechster: u64
+    kennung1: u64
+    kennung2: u64
+    bereit: bool
+    degradiert: bool
+
+@nativ
+funktion moofs_schluessel_vergleichen(a: MooFsSchluessel, b: MooFsSchluessel) -> i32:
+    wenn a.objekt < b.objekt:
+        gib_zurück -1
+    wenn a.objekt > b.objekt:
+        gib_zurück 1
+    wenn a.art < b.art:
+        gib_zurück -1
+    wenn a.art > b.art:
+        gib_zurück 1
+    wenn a.index < b.index:
+        gib_zurück -1
+    wenn a.index > b.index:
+        gib_zurück 1
+    gib_zurück 0
+
+# Prüfsummenfeld bleibt logisch null, ohne den geliehenen Block zu verändern.
+@nativ
+funktion moofs_crc(bytes: puffer[u8]) -> ergebnis[u32, MooFsFehler]:
+    wenn länge(bytes) != 4096:
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 1, 0))
+    setze crc: u32 auf 0xFFFFFFFF
+    setze i: u64 auf 0
+    solange i < 4096:
+        setze wert: u8 auf bytes[i]
+        wenn i >= 40 und i < 44:
+            setze wert auf 0
+        setze crc auf crc32c_byte(crc, wert)
+        setze i auf i + 1
+    gib_zurück erfolg(crc ^ 0xFFFFFFFF)
+
+@nativ
+funktion moofs_block_pruefen(bytes: puffer[u8], block: u64, erwartet: u64) -> ergebnis[void, MooFsFehler]:
+    setze crc: u32 auf weitergeben(moofs_crc(bytes))
+    setze kopf: puffer[MooFsKopf] auf sicht(bytes, MooFsKopf, 0)
+    wenn kopf[0].crc32c != crc oder (erwartet <= 0xFFFFFFFF und als(u64, crc) != erwartet):
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_CRC, 0, block))
+    wenn kopf[0].magie != MOOFS_MAGIE oder kopf[0].block != block oder kopf[0].generation == 0 oder kopf[0].flags != 0 oder kopf[0].reserviert != 0:
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 1, block))
+    gib_zurück erfolg()
+
+@nativ
+funktion moofs_block_lesen(v: ptr[MooFsVolume], block: u64, bytes: puffer[u8]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn länge(bytes) != 4096 oder block >= v.bloecke:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 2, block))
+        setze r: ergebnis[void, BlockFehler] auf v.transport.uebertragen(BLOCK_LESEN, block * (4096 / v.sektor_bytes), 4096 / v.sektor_bytes, u64(puffer_zeiger(bytes)), 4096)
+        wenn nicht ist_erfolg(r):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, ergebnis_fehler(r).code, block))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_super_lesen(v: ptr[MooFsVolume], block: u64) -> ergebnis[MooFsVolume, MooFsFehler]:
+    unsicher:
+        setze speicher: MooFsBlock auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        weitergeben(moofs_block_lesen(v, block, bytes))
+        weitergeben(moofs_block_pruefen(bytes, block, 0x100000000))
+        setze s: puffer[MooFsSuper] auf sicht(bytes, MooFsSuper, 0)
+        wenn s[0].kopf.art != 1 oder s[0].kopf.ebene != 0 oder s[0].kopf.anzahl != 0 oder s[0].kopf.eigentuemer != 0 oder s[0].kopf.logisch != 0 oder s[0].version != 1 oder s[0].merkmale != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 3, block))
+        setze gesamt: u64 auf als(u64, s[0].bloecke)
+        setze root: u64 auf als(u64, s[0].wurzel)
+        setze frei: u64 auf als(u64, s[0].naechster)
+        wenn gesamt < 4 oder gesamt > v.bloecke oder frei < 3 oder frei > gesamt oder root < 2 oder root >= frei oder s[0].hoehe > 8 oder (s[0].kennung1 == 0 und s[0].kennung2 == 0):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 4, block))
+        setze i: u64 auf 120
+        solange i < 4096:
+            wenn bytes[i] != 0:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 5, block))
+            setze i auf i + 1
+        gib_zurück erfolg(MooFsVolume(v.transport, v.sektor_bytes, gesamt, root, als(u32, s[0].wurzel_crc), als(u32, s[0].hoehe), als(u64, s[0].kopf.generation), frei, als(u64, s[0].kennung1), als(u64, s[0].kennung2), wahr, falsch))
+
+# Gemeinsame vollständige Knotenprüfung für Suche und Allokationsinventar.
+@nativ
+funktion moofs_knoten_pruefen(v: ptr[MooFsVolume], bytes: puffer[u8], block: u64, crc: u64, ebene: u32, untere: MooFsSchluessel, obere: MooFsSchluessel, hat_unten: bool, hat_oben: bool) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        wenn block < 2 oder block >= v.naechster:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 6, block))
+        weitergeben(moofs_block_pruefen(bytes, block, crc))
+        setze h: puffer[MooFsKopf] auf sicht(bytes, MooFsKopf, 0)
+        setze n: u64 auf u64(h[0].anzahl)
+        setze breite: u64 auf 40
+        setze maximum: u64 auf 100
+        setze art: u32 auf 3
+        wenn ebene == 0:
+            setze breite auf 320
+            setze maximum auf 12
+            setze art auf 2
+        wenn h[0].art != art oder h[0].ebene != ebene oder h[0].generation > v.generation oder h[0].eigentuemer != 0 oder h[0].logisch != 0 oder n == 0 oder n > maximum:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 7, block))
+        setze vorher: MooFsSchluessel auf untere
+        setze pruefe_unten: bool auf hat_unten
+        setze i: u64 auf 0
+        solange i < n:
+            setze o: u64 auf 64 + i * breite
+            setze key: MooFsSchluessel auf MooFsSchluessel(byte_lesen_le64(bytes, o), byte_lesen_le64(bytes, o + 8), byte_lesen_le64(bytes, o + 16))
+            wenn key.objekt == 0 oder key.art < 1 oder key.art > 3 oder (pruefe_unten und moofs_schluessel_vergleichen(vorher, key) >= 0):
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 8, block))
+            wenn ebene != 0:
+                wenn byte_lesen_le64(bytes, o + 24) < 2 oder byte_lesen_le64(bytes, o + 24) >= v.naechster oder byte_lesen_le32(bytes, o + 36) != 0:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 9, block))
+            sonst:
+                wenn byte_lesen_le64(bytes, o + 312) != 0:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 10, block))
+                setze a: u64 auf byte_lesen_le64(bytes, o + 24)
+                setze b: u64 auf byte_lesen_le64(bytes, o + 32)
+                setze c: u64 auf byte_lesen_le64(bytes, o + 40)
+                wenn byte_lesen_le64(bytes, o + 48) != 0:
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 25, block))
+                setze name_ende: u64 auf 0
+                wenn key.art == 1:
+                    wenn key.index != 0 oder (b != 1 und b != 2) oder c != 1 oder (b == 2 und a != 0):
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 26, block))
+                sonst wenn key.art == 2:
+                    wenn b == 0 oder a < 2 oder a >= v.naechster oder b > v.naechster - a oder b - 1 > 0xFFFFFFFFFFFFFFFF - key.index oder c != 0:
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 27, block))
+                sonst:
+                    wenn a < 2 oder b == 0 oder b > 255 oder (c != 1 und c != 2):
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 28, block))
+                    wenn bytes[o + 56] == 46 und (b == 1 oder (b == 2 und bytes[o + 57] == 46)):
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 29, block))
+                    setze name_ende auf b
+                setze j: u64 auf 0
+                solange j < 256:
+                    wenn j < name_ende:
+                        wenn bytes[o + 56 + j] == 0 oder bytes[o + 56 + j] == 47:
+                            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 30, block))
+                    sonst wenn bytes[o + 56 + j] != 0:
+                        gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 31, block))
+                    setze j auf j + 1
+            setze vorher auf key
+            setze pruefe_unten auf wahr
+            setze i auf i + 1
+        wenn hat_oben und moofs_schluessel_vergleichen(vorher, obere) != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 11, block))
+        setze i auf 64 + n * breite
+        solange i < 4096:
+            wenn bytes[i] != 0:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 12, block))
+            setze i auf i + 1
+        gib_zurück erfolg(n)
+
+# Erster Schlüssel >= gesucht. Innere Schlüssel sind exakte Unterbaum-Maxima.
+@nativ
+funktion moofs_baum_ab(v: ptr[MooFsVolume], gesucht: MooFsSchluessel) -> ergebnis[MooFsEintrag, MooFsFehler]:
+    unsicher:
+        wenn nicht v.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 2, 0))
+        setze block: u64 auf v.wurzel
+        setze crc: u64 auf u64(v.wurzel_crc)
+        setze ebene: u32 auf v.hoehe
+        setze untere: MooFsSchluessel auf MooFsSchluessel(0, 0, 0)
+        setze obere: MooFsSchluessel auf MooFsSchluessel(0, 0, 0)
+        setze hat_unten: bool auf falsch
+        setze hat_oben: bool auf falsch
+        setze speicher: MooFsBlock auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze i: u64 auf 0
+        solange wahr:
+            wenn block < 2 oder block >= v.naechster:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 6, block))
+            weitergeben(moofs_block_lesen(v, block, bytes))
+            setze n: u64 auf weitergeben(moofs_knoten_pruefen(v, bytes, block, crc, ebene, untere, obere, hat_unten, hat_oben))
+            setze breite: u64 auf 40
+            wenn ebene == 0:
+                setze breite auf 320
+            setze auswahl: u64 auf 0
+            solange auswahl < n:
+                setze pruefslot: u64 auf 64 + auswahl * breite
+                setze pruefkey: MooFsSchluessel auf MooFsSchluessel(byte_lesen_le64(bytes, pruefslot), byte_lesen_le64(bytes, pruefslot + 8), byte_lesen_le64(bytes, pruefslot + 16))
+                wenn moofs_schluessel_vergleichen(pruefkey, gesucht) >= 0:
+                    stopp
+                setze auswahl auf auswahl + 1
+            wenn auswahl == n:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 0, block))
+            setze slot: u64 auf 64 + auswahl * breite
+            setze aus_key: MooFsSchluessel auf MooFsSchluessel(byte_lesen_le64(bytes, slot), byte_lesen_le64(bytes, slot + 8), byte_lesen_le64(bytes, slot + 16))
+            wenn ebene == 0:
+                gib_zurück erfolg(moofs_blatt_eintrag(bytes, slot, block))
+            wenn auswahl > 0:
+                setze p: u64 auf slot - breite
+                setze untere auf MooFsSchluessel(byte_lesen_le64(bytes, p), byte_lesen_le64(bytes, p + 8), byte_lesen_le64(bytes, p + 16))
+                setze hat_unten auf wahr
+            setze obere auf aus_key
+            setze hat_oben auf wahr
+            setze block auf byte_lesen_le64(bytes, slot + 24)
+            setze crc auf u64(byte_lesen_le32(bytes, slot + 32))
+            setze ebene auf ebene - 1
+
+@nativ
+funktion moofs_inode(v: ptr[MooFsVolume], nummer: u64) -> ergebnis[MooFsInode, MooFsFehler]:
+    unsicher:
+        setze e: MooFsEintrag auf weitergeben(moofs_baum_ab(v, MooFsSchluessel(nummer, 1, 0)))
+        wenn e.schluessel.objekt != nummer oder e.schluessel.art != 1 oder e.schluessel.index != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 1, v.wurzel))
+        wenn (e.b != 1 und e.b != 2) oder e.c != 1 oder e.d != 0 oder (e.b == 2 und e.a != 0):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 13, e.block))
+        gib_zurück erfolg(MooFsInode(nummer, e.a, e.b, e.block))
+
+@nativ
+funktion moofs_oeffnen(v: ptr[MooFsVolume], transport: ptr[dyn FatTransport]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze v.bereit auf falsch
+        setze geo: BlockGeometrie auf transport.geometrie()
+        wenn geo.block_bytes < 512 oder geo.block_bytes > 4096 oder (geo.block_bytes & (geo.block_bytes - 1)) != 0 oder geo.bloecke < 4 * (4096 / geo.block_bytes):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 3, 0))
+        setze basis: MooFsVolume auf MooFsVolume(transport, geo.block_bytes, geo.bloecke / (4096 / geo.block_bytes), 0, 0, 0, 0, 0, 0, 0, falsch, falsch)
+        setze p: ptr[MooFsVolume] auf zeiger(adresse_von(basis))
+        setze a: ergebnis[MooFsVolume, MooFsFehler] auf moofs_super_lesen(p, 0)
+        setze b: ergebnis[MooFsVolume, MooFsFehler] auf moofs_super_lesen(p, 1)
+        setze a_ok: bool auf ist_erfolg(a)
+        setze b_ok: bool auf ist_erfolg(b)
+        wenn nicht a_ok und nicht b_ok:
+            gib_zurück fehlschlag(ergebnis_fehler(a))
+        setze gewaehlt: MooFsVolume auf basis
+        wenn a_ok:
+            setze gewaehlt auf ergebnis_wert(a)
+        sonst:
+            setze gewaehlt auf ergebnis_wert(b)
+        wenn a_ok und b_ok:
+            setze andere: MooFsVolume auf ergebnis_wert(b)
+            setze gewaehlt auf weitergeben(moofs_super_auswaehlen(gewaehlt, andere))
+        setze gewaehlt.degradiert auf nicht a_ok oder nicht b_ok
+        setze p auf zeiger(adresse_von(gewaehlt))
+        setze root: MooFsInode auf weitergeben(moofs_inode(p, 1))
+        wenn root.art != 2:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 16, root.metablock))
+        setze v[0] auf gewaehlt
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_name_pruefen(name: puffer[u8]) -> bool:
+    wenn länge(name) == 0 oder länge(name) > 255:
+        gib_zurück falsch
+    wenn name[0] == 46 und (länge(name) == 1 oder (länge(name) == 2 und name[1] == 46)):
+        gib_zurück falsch
+    setze i: u64 auf 0
+    solange i < länge(name):
+        wenn name[i] == 0 oder name[i] == 47:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+@nativ
+funktion moofs_verzeichnis(v: ptr[MooFsVolume], ordner: u64, ab_index: u64) -> ergebnis[MooFsEintrag, MooFsFehler]:
+    unsicher:
+        setze inode: MooFsInode auf weitergeben(moofs_inode(v, ordner))
+        wenn inode.art != 2:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 4, v.wurzel))
+        setze e: MooFsEintrag auf weitergeben(moofs_baum_ab(v, MooFsSchluessel(ordner, 3, ab_index)))
+        wenn e.schluessel.objekt != ordner oder e.schluessel.art != 3:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 2, v.wurzel))
+        wenn e.a < 2 oder e.b == 0 oder e.b > 255 oder e.d != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 17, e.block))
+        setze name: ptr[u8] auf zeiger(adresse_von(e.name[0]))
+        wenn nicht moofs_name_pruefen(byteansicht(name, e.b)):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 18, e.block))
+        setze kind: MooFsInode auf weitergeben(moofs_inode(v, e.a))
+        wenn kind.art != e.c:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 19, e.block))
+        gib_zurück erfolg(e)
+
+@nativ
+funktion moofs_suchen(v: ptr[MooFsVolume], pfad: puffer[u8]) -> ergebnis[MooFsInode, MooFsFehler]:
+    unsicher:
+        wenn länge(pfad) == 0 oder länge(pfad) > 4095:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_NAME, 0, 0))
+        setze inode: MooFsInode auf weitergeben(moofs_inode(v, 1))
+        setze pos: u64 auf 0
+        solange pos < länge(pfad):
+            wenn pfad[pos] == 47:
+                setze pos auf pos + 1
+            sonst:
+                setze ende: u64 auf pos
+                solange ende < länge(pfad) und pfad[ende] != 47:
+                    setze ende auf ende + 1
+                setze name: ptr[u8] auf zeiger(u64(puffer_zeiger(pfad)) + pos)
+                wenn nicht moofs_name_pruefen(byteansicht(name, ende - pos)):
+                    gib_zurück fehlschlag(MooFsFehler(MOOFS_NAME, 1, 0))
+                setze index: u64 auf 0
+                setze gefunden: bool auf falsch
+                solange nicht gefunden:
+                    setze r: ergebnis[MooFsEintrag, MooFsFehler] auf moofs_verzeichnis(v, inode.nummer, index)
+                    wenn nicht ist_erfolg(r):
+                        gib_zurück fehlschlag(ergebnis_fehler(r))
+                    setze e: MooFsEintrag auf ergebnis_wert(r)
+                    setze gleich: bool auf e.b == ende - pos
+                    setze i: u64 auf 0
+                    solange gleich und i < e.b:
+                        setze gleich auf e.name[i] == pfad[pos + i]
+                        setze i auf i + 1
+                    wenn gleich:
+                        setze inode auf weitergeben(moofs_inode(v, e.a))
+                        setze gefunden auf wahr
+                    sonst:
+                        wenn e.schluessel.index == 0xFFFFFFFFFFFFFFFF:
+                            gib_zurück fehlschlag(MooFsFehler(MOOFS_FEHLT, 3, v.wurzel))
+                        setze index auf e.schluessel.index + 1
+                setze pos auf ende
+        gib_zurück erfolg(inode)
+
+@nativ
+funktion moofs_extent(v: ptr[MooFsVolume], inode: u64, logisch: u64) -> ergebnis[MooFsEintrag, MooFsFehler]:
+    unsicher:
+        setze index: u64 auf 0
+        solange wahr:
+            setze e: MooFsEintrag auf weitergeben(moofs_baum_ab(v, MooFsSchluessel(inode, 2, index)))
+            wenn e.schluessel.objekt != inode oder e.schluessel.art != 2 oder e.schluessel.index > logisch:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 20, e.block))
+            wenn e.b == 0 oder e.a < 2 oder e.a >= v.naechster oder e.b > v.naechster - e.a oder e.b - 1 > 0xFFFFFFFFFFFFFFFF - e.schluessel.index oder e.c != 0 oder e.d != 0:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 21, e.block))
+            wenn logisch - e.schluessel.index < e.b:
+                gib_zurück erfolg(e)
+            wenn e.b > 0xFFFFFFFFFFFFFFFF - e.schluessel.index:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 22, e.block))
+            setze index auf e.schluessel.index + e.b
+
+# Vor jedem Kopieren ist der vollständige Datenblock CRC-/Owner-geprüft.
+# Bei späterem Fehler kann ein bereits geprüfter Präfix im Ziel stehen.
+@nativ
+funktion moofs_lesen(v: ptr[MooFsVolume], nummer: u64, offset: u64, ziel: puffer[u8]) -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze inode: MooFsInode auf weitergeben(moofs_inode(v, nummer))
+        wenn inode.art != 1:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 5, v.wurzel))
+        wenn offset >= inode.bytes oder länge(ziel) == 0:
+            gib_zurück erfolg(0)
+        setze anzahl: u64 auf länge(ziel)
+        wenn anzahl > inode.bytes - offset:
+            setze anzahl auf inode.bytes - offset
+        setze speicher: MooFsBlock auf 0
+        setze bytes: puffer[u8] auf byteansicht(speicher.bytes)
+        setze fertig: u64 auf 0
+        solange fertig < anzahl:
+            setze logisch: u64 auf (offset + fertig) / 4032
+            setze innen: u64 auf (offset + fertig) % 4032
+            setze e: MooFsEintrag auf weitergeben(moofs_extent(v, nummer, logisch))
+            setze block: u64 auf e.a + (logisch - e.schluessel.index)
+            weitergeben(moofs_block_lesen(v, block, bytes))
+            setze erwartet: u64 auf inode.bytes - logisch * 4032
+            wenn erwartet > 4032:
+                setze erwartet auf 4032
+            weitergeben(moofs_daten_pruefen(v, bytes, block, nummer, logisch, erwartet))
+            setze i: u64 auf 0
+            setze menge: u64 auf erwartet - innen
+            wenn menge > anzahl - fertig:
+                setze menge auf anzahl - fertig
+            setze i auf 0
+            solange i < menge:
+                setze ziel[fertig + i] auf bytes[64 + innen + i]
+                setze i auf i + 1
+            setze fertig auf fertig + menge
+        gib_zurück erfolg(fertig)
+
+# Gemeinsame Paarregel für Einhängen und die vollständige Prüfung.
+@nativ
+funktion moofs_super_auswaehlen(a: MooFsVolume, b: MooFsVolume) -> ergebnis[MooFsVolume, MooFsFehler]:
+    unsicher:
+        wenn a.kennung1 != b.kennung1 oder a.kennung2 != b.kennung2:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 14, 1))
+        wenn a.generation == b.generation und (a.wurzel != b.wurzel oder a.wurzel_crc != b.wurzel_crc oder a.hoehe != b.hoehe oder a.bloecke != b.bloecke oder a.naechster != b.naechster):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 15, 1))
+        wenn b.generation > a.generation:
+            gib_zurück erfolg(b)
+        gib_zurück erfolg(a)
+
+# Aufrufer hat Blatt und Slotgrenzen bereits mit moofs_knoten_pruefen geprüft.
+@nativ
+funktion moofs_blatt_eintrag(bytes: puffer[u8], slot: u64, block: u64) -> MooFsEintrag:
+    unsicher:
+        setze wert: MooFsEintrag auf 0
+        setze wert.schluessel auf MooFsSchluessel(byte_lesen_le64(bytes, slot), byte_lesen_le64(bytes, slot + 8), byte_lesen_le64(bytes, slot + 16))
+        setze wert.block auf block
+        setze wert.a auf byte_lesen_le64(bytes, slot + 24)
+        setze wert.b auf byte_lesen_le64(bytes, slot + 32)
+        setze wert.c auf byte_lesen_le64(bytes, slot + 40)
+        setze wert.d auf byte_lesen_le64(bytes, slot + 48)
+        setze i: u64 auf 0
+        solange i < 256:
+            setze wert.name[i] auf bytes[slot + 56 + i]
+            setze i auf i + 1
+        gib_zurück wert
+
+@nativ
+funktion moofs_daten_pruefen(v: ptr[MooFsVolume], bytes: puffer[u8], block: u64, inode: u64, logisch: u64, erwartet: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        weitergeben(moofs_block_pruefen(bytes, block, 0x100000000))
+        setze h: puffer[MooFsKopf] auf sicht(bytes, MooFsKopf, 0)
+        wenn erwartet == 0 oder erwartet > 4032 oder h[0].art != 4 oder h[0].ebene != 0 oder u64(h[0].anzahl) != erwartet oder h[0].generation > v.generation oder h[0].eigentuemer != inode oder h[0].logisch != logisch:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 23, block))
+        setze i: u64 auf 64 + erwartet
+        solange i < 4096:
+            wenn bytes[i] != 0:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_FORMAT, 24, block))
+            setze i auf i + 1
+        gib_zurück erfolg()

@@ -1,0 +1,26 @@
+[tasks.pruef-abbild]
+run = "bash pruef-abbild.sh"
+
+[tasks.pruefen]
+run = "bash pruefen.sh"
+
+[tasks.pruef-test]
+run = "bash pruef-test.sh"
+
+[tasks.host]
+run = "bash host.sh"
+
+[tasks.abbild]
+run = "bash abbild.sh"
+
+[tasks.kern]
+run = "bash kern.sh"
+
+[tasks.crash]
+run = "bash crash.sh"
+
+[tasks.schreiben]
+run = "bash schreiben.sh"
+
+[tasks.mkfs]
+run = "bash mkfs.sh"

@@ -1,0 +1,126 @@
+# P/Q-v3, Basissuperblöcke 0/1. Seiten 2..9 gehören den Rebuild-Intentbanken.
+# Mitgliedsslots sind stabil; Q-Gewicht = 2^Slot in GF(0x11D).
+aus array_format importiere ArrayIdentitaet, ArrayMitgliedsdaten, ArrayLayout, ArraySuperblockDisk, ArrayMitgliedDisk, ARRAY_SEITEN_BYTES, ARRAY_MAX_MITGLIEDER, ARRAY_DATEN, ARRAY_PARITAET_P, ARRAY_REGION_SEITEN, ARRAY_CRC_VERSATZ, ARRAY_SUPER_MAGIE, array_serien_gleich, array_seite_leeren, array_siegeln, array_crc_gueltig
+aus nativ_block importiere BlockFehler, BLOCK_GEOMETRIE, BLOCK_PUFFER, BLOCK_EA
+
+@nativ
+konstante ARRAY_PARITAET_Q: u32 auf 3
+@nativ
+konstante ARRAY_PQ_VERSION: u32 auf 3
+
+struktur ArrayPQGrenzen:
+    paritaet_p: u64
+    paritaet_q: u64
+    daten_max: u64
+
+@nativ
+funktion array_pq_layout_pruefen(layout: ptr[ArrayLayout]) -> ergebnis[ArrayPQGrenzen, BlockFehler]:
+    unsicher:
+        wenn u64(layout) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 80))
+        wenn layout.generation == 0 oder (layout.guid_lo | layout.guid_hi) == 0 oder layout.anzahl < 3 oder layout.anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 80))
+        setze daten_max: u64 auf 0
+        setze p: u64 auf ARRAY_MAX_MITGLIEDER
+        setze q: u64 auf ARRAY_MAX_MITGLIEDER
+        setze i: u64 auf 0
+        solange i < layout.anzahl:
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(layout.mitglieder[i]))
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            wenn (ident.guid_lo | ident.guid_hi) == 0 oder ident.serien_bytes == 0 oder ident.serien_bytes > 32 oder eintrag.seiten == 0 oder eintrag.seiten > 0xFFFFFFFFFFFFFFFF / ARRAY_SEITEN_BYTES:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 81))
+            setze j: u64 auf 0
+            solange j < i:
+                setze andere: ptr[ArrayIdentitaet] auf zeiger(adresse_von(layout.mitglieder[j].identitaet))
+                wenn (ident.guid_lo == andere.guid_lo und ident.guid_hi == andere.guid_hi) oder array_serien_gleich(ident, andere):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 82))
+                setze j auf j + 1
+            wenn eintrag.rolle == ARRAY_PARITAET_P und p == ARRAY_MAX_MITGLIEDER:
+                setze p auf i
+            sonst wenn eintrag.rolle == ARRAY_PARITAET_Q und q == ARRAY_MAX_MITGLIEDER:
+                setze q auf i
+            sonst wenn eintrag.rolle == ARRAY_DATEN:
+                wenn eintrag.seiten > daten_max:
+                    setze daten_max auf eintrag.seiten
+            sonst:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 83))
+            setze i auf i + 1
+        wenn p == ARRAY_MAX_MITGLIEDER oder q == ARRAY_MAX_MITGLIEDER oder daten_max == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 84))
+        wenn layout.mitglieder[p].seiten < daten_max oder layout.mitglieder[q].seiten < daten_max:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 85))
+        gib_zurück erfolg(ArrayPQGrenzen(p, q, daten_max))
+
+@nativ
+funktion array_pq_superblock_bauen(bytes: puffer[u8], layout: ptr[ArrayLayout], eigenes: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_layout_pruefen(layout))
+        wenn länge(bytes) != ARRAY_SEITEN_BYTES oder eigenes >= layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_PUFFER, 80))
+        array_seite_leeren(bytes)
+        setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+        kopf[0] = ArraySuperblockDisk(ARRAY_SUPER_MAGIE, ARRAY_PQ_VERSION, als(u32, layout.anzahl), layout.generation, layout.guid_lo, layout.guid_hi, als(u32, eigenes), 4096, 256, 0)
+        setze i: u64 auf 0
+        solange i < layout.anzahl:
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(layout.mitglieder[i]))
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            setze versatz: u64 auf 64 + i * 64
+            setze feld: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, versatz)
+            feld[0] = ArrayMitgliedDisk(eintrag.rolle, ident.serien_bytes, ident.guid_lo, ident.guid_hi, eintrag.seiten)
+            setze j: u64 auf 0
+            solange j < als(u64, ident.serien_bytes):
+                bytes[versatz + 32 + j] = ident.serie[j]
+                setze j auf j + 1
+            setze i auf i + 1
+        array_siegeln(bytes)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_superblock_lesen(bytes: puffer[u8], layout: ptr[ArrayLayout]) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(layout) == 0 oder nicht array_crc_gueltig(bytes):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 80))
+        setze kopf: puffer[ArraySuperblockDisk] auf sicht(bytes, ArraySuperblockDisk, 0)
+        setze anzahl: u64 auf als(u64, kopf[0].anzahl)
+        setze eigenes: u64 auf als(u64, kopf[0].eigenes_mitglied)
+        wenn kopf[0].magie != ARRAY_SUPER_MAGIE oder kopf[0].version != ARRAY_PQ_VERSION oder anzahl < 3 oder anzahl > ARRAY_MAX_MITGLIEDER oder eigenes >= anzahl oder kopf[0].seiten_bytes != 4096 oder kopf[0].region_seiten != 256 oder kopf[0].reserviert != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 81))
+        setze reserviert: u64 auf 56
+        solange reserviert < 64:
+            wenn bytes[reserviert] != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 82))
+            setze reserviert auf reserviert + 1
+        setze tmp: ArrayLayout auf 0
+        setze tmp.guid_lo auf kopf[0].guid_lo
+        setze tmp.guid_hi auf kopf[0].guid_hi
+        setze tmp.generation auf kopf[0].generation
+        setze tmp.anzahl auf anzahl
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze versatz: u64 auf 64 + i * 64
+            setze feld: puffer[ArrayMitgliedDisk] auf sicht(bytes, ArrayMitgliedDisk, versatz)
+            setze eintrag: ptr[ArrayMitgliedsdaten] auf zeiger(adresse_von(tmp.mitglieder[i]))
+            setze eintrag.rolle auf feld[0].rolle
+            setze eintrag.seiten auf feld[0].seiten
+            setze ident: ptr[ArrayIdentitaet] auf zeiger(adresse_von(eintrag.identitaet))
+            setze ident.guid_lo auf feld[0].guid_lo
+            setze ident.guid_hi auf feld[0].guid_hi
+            setze ident.serien_bytes auf feld[0].serien_bytes
+            wenn ident.serien_bytes == 0 oder ident.serien_bytes > 32:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 83))
+            setze j: u64 auf 0
+            solange j < 32:
+                wenn j < als(u64, ident.serien_bytes):
+                    setze ident.serie[j] auf bytes[versatz + 32 + j]
+                sonst wenn bytes[versatz + 32 + j] != 0:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 84))
+                setze j auf j + 1
+            setze i auf i + 1
+        setze ende: u64 auf 64 + anzahl * 64
+        solange ende < ARRAY_CRC_VERSATZ:
+            wenn bytes[ende] != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 85))
+            setze ende auf ende + 1
+        weitergeben(array_pq_layout_pruefen(zeiger(adresse_von(tmp))))
+        setze layout[0] auf tmp
+        gib_zurück erfolg(eigenes)

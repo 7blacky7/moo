@@ -1,0 +1,137 @@
+# P/Q-v3 Journal auf den Metadaten-Seiten 2 bis 9.
+# Zwei Banken, je ein Kopf und je eine Seite für D-, P- und Q-Schreibbilder.
+aus nativ_block importiere BlockFehler, BLOCK_EA
+aus array_format importiere ArrayLayout, ARRAY_DATEN, ARRAY_MAX_MITGLIEDER, array_siegeln, array_crc_gueltig, array_layout_gleich
+aus array_pq_format importiere ArrayPQGrenzen, array_pq_layout_pruefen, array_pq_superblock_bauen, array_pq_superblock_lesen
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildStand, ARRAY_PQ_KEIN, ARRAY_PQ_JOURNAL_DATEN, ARRAY_PQ_JOURNAL_P, ARRAY_PQ_JOURNAL_Q, array_pq_rebuild_bitanzahl, array_pq_rebuild_zielseiten
+
+@nativ
+konstante ARRAY_PQ_META_SEITEN: u64 auf 10
+@nativ
+konstante ARRAY_PQ_KOPF_MAGIE: u64 auf 0x31545351504F4F4D
+@nativ
+konstante ARRAY_PQ_KOPF_VERSATZ: u64 auf 3968
+@nativ
+konstante ARRAY_PQ_KOPF_BYTES: u64 auf 68
+
+@gepackt
+struktur ArrayPQRebuildKopfDisk:
+    magie: u64le
+    folge: u64le
+    fehlende: u64le
+    ersatz: u32le
+    journal_ziel: u32le
+    journal_beine: u32le
+    reserviert: u32le
+    fertig: u64le
+    journal_seite: u64le
+    daten_crc: u32le
+    p_crc: u32le
+    q_crc: u32le
+
+@nativ
+funktion array_pq_rebuild_bankseite(bank: u64) -> u64:
+    gib_zurück 2 + bank * 4
+
+# Journalisierte Topologien erhalten Daten-Slots und Datenkapazitäten.
+@nativ
+funktion array_pq_rebuild_folgelayout(a: ptr[ArrayLayout], b: ptr[ArrayLayout]) -> bool:
+    unsicher:
+        wenn a.guid_lo != b.guid_lo oder a.guid_hi != b.guid_hi oder b.generation < a.generation oder b.anzahl < a.anzahl oder b.anzahl > ARRAY_MAX_MITGLIEDER:
+            gib_zurück falsch
+        setze i: u64 auf 0
+        solange i < a.anzahl:
+            wenn a.mitglieder[i].rolle != b.mitglieder[i].rolle oder b.mitglieder[i].seiten < a.mitglieder[i].seiten:
+                gib_zurück falsch
+            wenn a.mitglieder[i].rolle == ARRAY_DATEN und a.mitglieder[i].seiten != b.mitglieder[i].seiten:
+                gib_zurück falsch
+            wenn a.generation == b.generation und a.mitglieder[i].seiten != b.mitglieder[i].seiten:
+                gib_zurück falsch
+            setze i auf i + 1
+        wenn a.generation == b.generation und a.anzahl != b.anzahl:
+            gib_zurück falsch
+        solange i < b.anzahl:
+            wenn b.mitglieder[i].rolle != ARRAY_DATEN:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion array_pq_rebuild_stand_pruefen(r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn s.folge == 0 oder nicht array_pq_rebuild_folgelayout(zeiger(adresse_von(r.anker)), zeiger(adresse_von(s.layout))):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 251))
+        setze moeglich: u64 auf (1 << s.layout.anzahl) - 1
+        wenn (s.fehlende & moeglich) != s.fehlende oder array_pq_rebuild_bitanzahl(s.fehlende) > 2:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 253))
+        wenn s.ersatz == ARRAY_PQ_KEIN:
+            wenn s.fertig != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 254))
+        sonst:
+            wenn s.ersatz >= s.layout.anzahl oder (s.fehlende & (1 << s.ersatz)) == 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 255))
+            setze zielseiten: u64 auf s.layout.mitglieder[s.ersatz].seiten
+            wenn s.ersatz == r.paritaet_p oder s.ersatz == r.paritaet_q:
+                setze grenzen: ArrayPQGrenzen auf weitergeben(array_pq_layout_pruefen(zeiger(adresse_von(s.layout))))
+                setze zielseiten auf grenzen.daten_max
+            wenn s.fertig > zielseiten:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 256))
+        wenn s.journal_beine == 0:
+            wenn s.journal_ziel != ARRAY_PQ_KEIN oder s.journal_seite != 0 oder s.daten_crc != 0 oder s.p_crc != 0 oder s.q_crc != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 257))
+            gib_zurück erfolg()
+        wenn s.journal_ziel >= s.layout.anzahl oder s.journal_beine > (ARRAY_PQ_JOURNAL_DATEN | ARRAY_PQ_JOURNAL_P | ARRAY_PQ_JOURNAL_Q):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 258))
+        wenn s.layout.mitglieder[s.journal_ziel].rolle != ARRAY_DATEN oder s.journal_seite >= s.layout.mitglieder[s.journal_ziel].seiten:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 259))
+        wenn ((s.journal_beine & ARRAY_PQ_JOURNAL_DATEN) == 0 und s.daten_crc != 0) oder ((s.journal_beine & ARRAY_PQ_JOURNAL_P) == 0 und s.p_crc != 0) oder ((s.journal_beine & ARRAY_PQ_JOURNAL_Q) == 0 und s.q_crc != 0):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 260))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_kopf_bauen(bytes: puffer[u8], r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_rebuild_stand_pruefen(r, s))
+        weitergeben(array_pq_superblock_bauen(bytes, zeiger(adresse_von(s.layout)), 0))
+        setze kopf: puffer[ArrayPQRebuildKopfDisk] auf sicht(bytes, ArrayPQRebuildKopfDisk, ARRAY_PQ_KOPF_VERSATZ)
+        kopf[0] = ArrayPQRebuildKopfDisk(ARRAY_PQ_KOPF_MAGIE, s.folge, s.fehlende, als(u32, s.ersatz), als(u32, s.journal_ziel), s.journal_beine, 0, s.fertig, s.journal_seite, s.daten_crc, s.p_crc, s.q_crc)
+        array_siegeln(bytes)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_kopf_lesen(bytes: puffer[u8], r: ptr[ArrayPQRebuild], s: ptr[ArrayPQRebuildStand]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht array_crc_gueltig(bytes):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 261))
+        setze kopf: puffer[ArrayPQRebuildKopfDisk] auf sicht(bytes, ArrayPQRebuildKopfDisk, ARRAY_PQ_KOPF_VERSATZ)
+        wenn kopf[0].magie != ARRAY_PQ_KOPF_MAGIE oder kopf[0].reserviert != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 262))
+        setze s.folge auf kopf[0].folge
+        setze s.fehlende auf kopf[0].fehlende
+        setze s.ersatz auf als(u64, kopf[0].ersatz)
+        setze s.fertig auf kopf[0].fertig
+        setze s.journal_ziel auf als(u64, kopf[0].journal_ziel)
+        setze s.journal_beine auf kopf[0].journal_beine
+        setze s.journal_seite auf kopf[0].journal_seite
+        setze s.daten_crc auf kopf[0].daten_crc
+        setze s.p_crc auf kopf[0].p_crc
+        setze s.q_crc auf kopf[0].q_crc
+        # Der Layoutcodec prüft den unbenutzten Raum des Basissuperblocks.
+        setze i: u64 auf 0
+        solange i < ARRAY_PQ_KOPF_BYTES:
+            bytes[ARRAY_PQ_KOPF_VERSATZ + i] = 0
+            setze i auf i + 1
+        array_siegeln(bytes)
+        setze eigenes: u64 auf weitergeben(array_pq_superblock_lesen(bytes, zeiger(adresse_von(s.layout))))
+        wenn eigenes != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 263))
+        gib_zurück array_pq_rebuild_stand_pruefen(r, s)
+
+@nativ
+funktion array_pq_rebuild_stand_gleich(a: ptr[ArrayPQRebuildStand], b: ptr[ArrayPQRebuildStand]) -> bool:
+    unsicher:
+        wenn a.folge != b.folge oder a.fehlende != b.fehlende oder a.ersatz != b.ersatz oder a.fertig != b.fertig:
+            gib_zurück falsch
+        wenn a.journal_ziel != b.journal_ziel oder a.journal_seite != b.journal_seite oder a.journal_beine != b.journal_beine or a.daten_crc != b.daten_crc oder a.p_crc != b.p_crc oder a.q_crc != b.q_crc:
+            gib_zurück falsch
+        gib_zurück array_layout_gleich(zeiger(adresse_von(a.layout)), zeiger(adresse_von(b.layout)))

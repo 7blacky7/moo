@@ -1,0 +1,48 @@
+# MooFS v1: ausschließlich gepackte Little-Endian-Datenträgerformate.
+@gepackt
+struktur MooFsKopf:
+    magie: u64le
+    art: u32le
+    ebene: u32le
+    block: u64le
+    generation: u64le
+    anzahl: u32le
+    flags: u32le
+    crc32c: u32le
+    reserviert: u32le
+    eigentuemer: u64le
+    logisch: u64le
+
+@gepackt
+struktur MooFsSuper:
+    kopf: MooFsKopf
+    version: u32le
+    merkmale: u32le
+    bloecke: u64le
+    wurzel: u64le
+    wurzel_crc: u32le
+    hoehe: u32le
+    naechster: u64le
+    kennung1: u64le
+    kennung2: u64le
+
+@gepackt
+struktur MooFsBlatt:
+    objekt: u64le
+    art: u64le
+    index: u64le
+    a: u64le
+    b: u64le
+    c: u64le
+    d: u64le
+    name: [u8; 256]
+    reserviert: [u8; 8]
+
+@gepackt
+struktur MooFsAst:
+    objekt: u64le
+    art: u64le
+    index: u64le
+    kind: u64le
+    crc32c: u32le
+    reserviert: u32le

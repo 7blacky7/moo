@@ -1,0 +1,113 @@
+# Schreiblast mit fester Arbeitsmenge für die P11-Gesamtprobe.
+# Jeder bestätigte Schreibtransfer wird vollständig über Ring 3 rückgelesen.
+aus moos_syscall importiere _start, moos_schreiben
+aus moos_datei importiere moos_datei_oeffnen, moos_datei_lesen, moos_datei_schreiben, moos_datei_position, moos_datei_stat, moos_datei_abgleichen, moos_datei_schliessen
+aus moos_datei_abi importiere MoosDateiStat
+aus vfs importiere VFS_LESEN, VFS_SCHREIBEN, VFS_ANLEGEN, VFS_EXKLUSIV, VFS_ENOENT
+
+@nativ
+statisch GESAMT_USER_VERTRAG: [u64; 2] auf [0x44414F4C53474F4D, 2147483648]
+@nativ
+statisch GESAMT_USER_PFAD: [u8; 19] auf "/freigabe/beleg.bin"
+@nativ
+konstante GESAMT_USER_BYTES: [u8; _] auf "MOO-GESAMT RING3 BYTES "
+@nativ
+konstante GESAMT_USER_WRITE: [u8; _] auf "MOO-GESAMT RING3 SCHREIBEN OK\n"
+@nativ
+konstante GESAMT_USER_READ: [u8; _] auf "MOO-GESAMT RING3 LESEN OK\n"
+@nativ
+konstante GESAMT_USER_HEX: [u8; 16] auf "0123456789ABCDEF"
+@nativ
+statisch GESAMT_USER_PUFFER: [u64; 16384] auf 0
+@nativ
+konstante GESAMT_USER_TRANSFER: u64 auf 131072
+
+@nativ
+funktion gesamt_user_melden(bytes: u64) -> void:
+    unsicher:
+        setze zeile: [u8; 17] auf [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10]
+        setze i: u64 auf 0
+        solange i < 16:
+            zeile[i] = GESAMT_USER_HEX[(bytes >> ((15 - i) * 4)) & 15]
+            setze i auf i + 1
+        moos_schreiben(adresse_von(GESAMT_USER_BYTES), 23)
+        moos_schreiben(adresse_von(zeile[0]), 17)
+
+@nativ
+funktion gesamt_user_wort(nummer: u64, wort: u64) -> u64:
+    gib_zurück 0xB36C62A51F8429DE ^ (nummer << 33) ^ (nummer * 0x333D) ^ (wort * 0x9E3779B9)
+
+@nativ
+funktion gesamt_user_lesen(fd: u64, nummer: u64, p: ptr[u64]) -> ergebnis[void, u32]:
+    unsicher:
+        setze position: u64 auf weitergeben(moos_datei_position(fd, 0, 0))
+        setze b: ptr[u8] auf zeiger(u64(p))
+        setze gelesen: u64 auf weitergeben(moos_datei_lesen(fd, byteansicht(b, GESAMT_USER_TRANSFER)))
+        wenn position != 0 oder gelesen != GESAMT_USER_TRANSFER:
+            gib_zurück fehlschlag(u32(0x101))
+        setze i: u64 auf 0
+        solange i < GESAMT_USER_TRANSFER / 8:
+            wenn p[i] != gesamt_user_wort(nummer, i):
+                gib_zurück fehlschlag(u32(0x102))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion gesamt_user_schreiben(fd: u64, nummer: u64, p: ptr[u64]) -> ergebnis[void, u32]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < GESAMT_USER_TRANSFER / 8:
+            p[i] = gesamt_user_wort(nummer, i)
+            setze i auf i + 1
+        setze position: u64 auf weitergeben(moos_datei_position(fd, 0, 0))
+        setze b: ptr[u8] auf zeiger(u64(p))
+        setze geschrieben: u64 auf weitergeben(moos_datei_schreiben(fd, byteansicht(b, GESAMT_USER_TRANSFER)))
+        wenn position != 0 oder geschrieben != GESAMT_USER_TRANSFER:
+            gib_zurück fehlschlag(u32(0x103))
+        gib_zurück gesamt_user_lesen(fd, nummer, p)
+
+@nativ
+funktion gesamt_user_lauf(bytes: u64) -> ergebnis[void, u32]:
+    unsicher:
+        setze p: ptr[u64] auf zeiger(adresse_von(GESAMT_USER_PUFFER[0]))
+        setze pn: puffer[u8] auf pufferansicht(GESAMT_USER_PFAD)
+        setze geoeffnet: ergebnis[u64, u32] auf moos_datei_oeffnen(pn, VFS_LESEN)
+        setze anzahl: u64 auf bytes / GESAMT_USER_TRANSFER
+        wenn ist_erfolg(geoeffnet):
+            setze lesegriff: u64 auf ergebnis_wert(geoeffnet)
+            setze stat: MoosDateiStat auf weitergeben(moos_datei_stat(lesegriff))
+            wenn stat.bytes != GESAMT_USER_TRANSFER:
+                gib_zurück fehlschlag(u32(0x104))
+            weitergeben(gesamt_user_lesen(lesegriff, anzahl - 1, p))
+            weitergeben(moos_datei_schliessen(lesegriff))
+            moos_schreiben(adresse_von(GESAMT_USER_READ), 26)
+            gib_zurück erfolg()
+        wenn ergebnis_fehler(geoeffnet) != VFS_ENOENT:
+            gib_zurück fehlschlag(ergebnis_fehler(geoeffnet))
+        setze fd: u64 auf weitergeben(moos_datei_oeffnen(pn, VFS_LESEN | VFS_SCHREIBEN | VFS_ANLEGEN | VFS_EXKLUSIV))
+        setze intervall: u64 auf 512
+        wenn bytes <= 16777216:
+            setze intervall auf 8
+        setze n: u64 auf 0
+        solange n < anzahl:
+            weitergeben(gesamt_user_schreiben(fd, n, p))
+            setze n auf n + 1
+            wenn n % intervall == 0:
+                gesamt_user_melden(n * GESAMT_USER_TRANSFER)
+        weitergeben(moos_datei_abgleichen(fd))
+        weitergeben(moos_datei_schliessen(fd))
+        gesamt_user_melden(bytes)
+        moos_schreiben(adresse_von(GESAMT_USER_WRITE), 30)
+        gib_zurück erfolg()
+
+@nativ
+@einstieg
+funktion benutzer_haupt() -> u64:
+    unsicher:
+        setze bytes: u64 auf speicher_lesen(adresse_von(GESAMT_USER_VERTRAG[0]) + 8, 8)
+        wenn bytes < GESAMT_USER_TRANSFER oder bytes > 2147483648 oder bytes % GESAMT_USER_TRANSFER != 0:
+            gib_zurück 0x100
+        setze r: ergebnis[void, u32] auf gesamt_user_lauf(bytes)
+        wenn nicht ist_erfolg(r):
+            gib_zurück u64(ergebnis_fehler(r))
+        gib_zurück 0

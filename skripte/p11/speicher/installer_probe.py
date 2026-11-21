@@ -86,16 +86,16 @@ class FirmwareStartFehler(RuntimeError):
     pass
 
 
-def starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen=False):
+def starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen=False, fehler_marker=INSTALL_FEHLER):
     try:
-        return gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen)
+        return gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen, fehler_marker)
     except FirmwareStartFehler as fehler:
         print(f"{fehler}. Ein neuer OVMF-Kaltstart folgt.", flush=True)
         zweiter_lauf = lauf.with_name(lauf.name + "-wiederholung")
-        return gast_starten(zweiter_lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen)
+        return gast_starten(zweiter_lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen, fehler_marker)
 
 
-def gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen):
+def gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbrechen, fehler_marker):
     lauf.mkdir()
     vars_kopie = lauf / "vars.fd"
     shutil.copyfile(vars_vorlage, vars_kopie)
@@ -111,12 +111,17 @@ def gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbreche
     with (lauf / "qemu.log").open("wb") as qemu_log, \
          subprocess.Popen(befehl, stdin=subprocess.DEVNULL, stdout=qemu_log, stderr=qemu_log) as qemu:
         try:
-            ende = time.monotonic() + frist
+            beginn = time.monotonic()
+            ende = beginn + frist
+            firmware_ende = beginn + min(45, frist / 2)
             taste_frist = 0
             firmware_frist = None
             with Qmp(sockel) as qmp:
                 while time.monotonic() < ende:
                     daten = serial.read_bytes() if serial.exists() else b""
+                    if (marker != BOOT or fehler_marker != INSTALL_FEHLER) and fehler_marker in daten:
+                        zeilen = b"\n".join(s for s in daten.splitlines() if fehler_marker.split()[0] in s)
+                        raise RuntimeError(f"Gastfehler {serial}\n{zeilen.decode(errors='replace')[-4000:]}")
                     if marker in daten:
                         if abbrechen:
                             qemu.kill()
@@ -132,9 +137,6 @@ def gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbreche
                             if qemu.wait(timeout=10) != 0:
                                 raise RuntimeError("QEMU endete fehlerhaft")
                         return daten
-                    if marker != BOOT and INSTALL_FEHLER in daten:
-                        zeilen = b"\n".join(s for s in daten.splitlines() if b"MOO-INSTALL" in s)
-                        raise RuntimeError(f"Installationsfehler {serial}\n{zeilen.decode(errors='replace')}")
                     if qemu.poll() is not None:
                         raise RuntimeError(f"QEMU endete vor dem erwarteten Marker {marker!r}")
                     jetzt = time.monotonic()
@@ -145,6 +147,10 @@ def gast_starten(lauf, fw, vars_vorlage, frist, accel, geraete, marker, abbreche
                             firmware_frist = jetzt + 12
                         if jetzt >= firmware_frist:
                             raise FirmwareStartFehler(f"OVMF fand das Bootgerät nicht ({serial})")
+                    if jetzt >= firmware_ende and b"MOO-LADER START" not in daten:
+                        debug = lauf / "debug.log"
+                        if not debug.exists() or b"MOO-LADER START" not in debug.read_bytes():
+                            raise FirmwareStartFehler(f"OVMF erreichte den Loader nicht ({serial})")
                     if b"TASTATUR BEREIT" in daten and jetzt >= taste_frist:
                         qmp.ausfuehren("human-monitor-command", **{"command-line": "sendkey a 50"})
                         taste_frist = jetzt + 0.75

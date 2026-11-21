@@ -1,0 +1,99 @@
+# Medienbindung für das isolierte P11-Gesamtprofil. Die Seriennummern
+# gehören ausschließlich den vom QEMU-Geschirr erzeugten Testimages.
+aus "ahci" importiere AhciHba, AhciHbaZiel, AhciPortZiel, AHCI_DMA_SEITEN, ahci_hba_einrichten, ahci_port_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen
+aus "kern_smp" importiere smp_kern, smp_nummer
+aus "kern_array" importiere ArrayKernAnschluss
+aus "kern_block" importiere BlockAnfrage, BlockFehler, block_anfordern, block_geometrie
+aus "speicher_gpt_block" importiere GptMedium, GptPartition, gpt_oeffnen, gpt_laden, gpt_partition_registrieren
+aus "../uefi/hardware_pci" importiere nt_cfg_lese32, nt_mmio_lese32
+aus "../uefi/netz_geraet" importiere nt_kopiere
+aus nativ_block importiere BlockGeometrie, BLOCK_LESEN, BLOCK_VOLL, BLOCK_NICHT_BEREIT, BLOCK_GEOMETRIE
+aus array_format importiere ArrayIdentitaet
+
+@nativ
+konstante GESAMT_SEITEN: u64 auf 512
+@nativ
+konstante GESAMT_PCI_AHCI: u32 auf 0x29228086
+@nativ
+konstante GESAMT_SERIENPRAEFIX: [u8; 19] auf "MOOP11-GESAMT-DISK0"
+
+struktur GesamtMedien:
+    hba: AhciHba
+    ersatz_hba: AhciHba
+    partitionen: [GptPartition; 14]
+    anschluss: [ArrayKernAnschluss; 7]
+    pruefblock: [u8; 4096]
+    anfrage: BlockAnfrage
+    ersatz_anwesend: bool
+
+@nativ
+funktion gesamt_medien_port(m: ptr[GesamtMedien], hba: ptr[AhciHba], port: u64, slot: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze ident: ArrayIdentitaet auf 0
+        ident.serien_bytes = 20
+        nt_kopiere(adresse_von(ident.serie[0]), adresse_von(GESAMT_SERIENPRAEFIX), 19)
+        ident.serie[19] = als(u8, 48 + slot)
+        setze dma: u64 auf ar_rahmen_nehmen(AHCI_DMA_SEITEN)
+        wenn dma == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 360))
+        setze ziel: AhciPortZiel auf AhciPortZiel(port, dma, adresse_von(ident.serie[0]), wahr, wahr)
+        setze id: u64 auf weitergeben(ahci_port_einrichten(hba, zeiger(adresse_von(ziel))))
+        setze gpt: ptr[GptMedium] auf weitergeben(gpt_oeffnen(id))
+        # Die CRC-geprüfte GPT liefert die Plattenidentität.
+        weitergeben(gpt_laden(gpt, 1))
+        ident.guid_lo = speicher_lesen(gpt.kopf + 56, 8)
+        ident.guid_hi = speicher_lesen(gpt.kopf + 64, 8)
+        setze d: u64 auf weitergeben(gpt_partition_registrieren(gpt, zeiger(adresse_von(m.partitionen[2 * slot])), 1, falsch))
+        setze meta: u64 auf weitergeben(gpt_partition_registrieren(gpt, zeiger(adresse_von(m.partitionen[2 * slot + 1])), 2, falsch))
+        setze dg: BlockGeometrie auf weitergeben(block_geometrie(d))
+        setze mg: BlockGeometrie auf weitergeben(block_geometrie(meta))
+        wenn dg.block_bytes != 512 oder dg.bloecke != 8 * GESAMT_SEITEN oder mg.block_bytes != 512 oder mg.bloecke != 8 * GESAMT_SEITEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, als(u32, 360 + slot)))
+        m.anschluss[slot] = ArrayKernAnschluss(ident, d, meta)
+        gib_zurück erfolg()
+
+@nativ
+funktion gesamt_medien_einrichten(m: ptr[GesamtMedien], tsc: u64, bi: u64, map: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze apic: u64 auf u64(smp_kern(smp_nummer()).apic_id)
+        setze ersatz_id: u32 auf nt_cfg_lese32(0x80005800)
+        wenn ersatz_id != 0xFFFFFFFF und ersatz_id != GESAMT_PCI_AHCI:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 360))
+        m.ersatz_anwesend = ersatz_id == GESAMT_PCI_AHCI
+        setze ziel: AhciHbaZiel auf AhciHbaZiel(0x60, u64(GESAMT_PCI_AHCI), 4096, apic)
+        setze hba: ptr[AhciHba] auf zeiger(adresse_von(m.hba))
+        weitergeben(ahci_hba_einrichten(hba, zeiger(adresse_von(ziel)), tsc, bi, map, 0))
+        setze i: u64 auf 0
+        wenn m.ersatz_anwesend:
+            wenn (nt_mmio_lese32(hba.ports[0].registerbasis + 0x28) & 15) != 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 361))
+            setze i auf 1
+        solange i < 6:
+            weitergeben(gesamt_medien_port(m, hba, i, i))
+            setze i auf i + 1
+        wenn m.ersatz_anwesend:
+            setze ersatz: ptr[AhciHba] auf zeiger(adresse_von(m.ersatz_hba))
+            ziel.bdf = 0x58
+            weitergeben(ahci_hba_einrichten(ersatz, zeiger(adresse_von(ziel)), tsc, bi, map, 0))
+            weitergeben(gesamt_medien_port(m, ersatz, 0, 6))
+        gib_zurück erfolg()
+
+# Neue Verbünde betreten den Formatierpfad nur mit leeren Testmedien.
+# Eine beschädigte oder nur teilweise lesbare Kopfkopie wird nicht überschrieben.
+@nativ
+funktion gesamt_medien_leer(m: ptr[GesamtMedien], slot: u64) -> ergebnis[bool, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf adresse_von(m.pruefblock[0])
+        setze meta: u64 auf m.anschluss[slot].metadaten
+        setze frage: ptr[BlockAnfrage] auf zeiger(adresse_von(m.anfrage))
+        setze seite: u64 auf 0
+        solange seite < 10:
+            weitergeben(block_anfordern(meta, frage, BLOCK_LESEN, seite * 8, 8, basis, 4096))
+            setze i: u64 auf 0
+            solange i < 4096:
+                wenn speicher_lesen(basis + i, 8) != 0:
+                    gib_zurück erfolg(falsch)
+                setze i auf i + 8
+            setze seite auf seite + 1
+        gib_zurück erfolg(wahr)

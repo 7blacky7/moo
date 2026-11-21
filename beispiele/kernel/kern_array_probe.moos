@@ -1,0 +1,470 @@
+# Privates QEMU-RAM-Profil für virtuelle P-Array-Blockgeräte und SMP-RMW.
+aus array_format importiere ArrayIdentitaet, ArrayLayout, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus "kern_array" importiere ArrayKern, ArrayKernAnschluss, array_kern_einrichten, array_kern_kennung, array_kern_rebuild_einrichten, array_kern_rebuild_verloren, array_kern_rebuild_ersatz, array_kern_rebuild_schritt, array_kern_rebuild_status
+aus array_rebuild importiere ArrayRebuildFortschritt, ArrayRebuildStatus, ARRAY_MITGLIED_FEHLT, ARRAY_MITGLIED_AKTIV
+aus "kern_array_pq" importiere KernArrayPQ, kern_array_pq_einrichten, kern_array_pq_kennung, kern_array_pq_verloren, kern_array_pq_ersatz, kern_array_pq_schritt, kern_array_pq_status
+aus array_pq_format importiere ARRAY_PARITAET_Q
+aus array_q importiere ARRAY_Q_TABELLE
+aus array_gf256 importiere array_gf256_mal
+aus "kern_array_moofs_probe" importiere array_probe_moofs_lauf
+aus "kern_cache_pool_probe" importiere cache_pool_probe_lauf
+aus "kern_array_scrub_probe" importiere array_probe_scrub_lauf
+aus vfs importiere VfsFehler
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BlockEintrag, BLOCK_PLAETZE, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_OK, BLOCK_EA, BLOCK_VOLL, BLOCK_ZEIT, block_registrieren, block_registrieren_gruppe, block_vorhanden, block_geometrie, block_anfordern
+aus "block_ram" importiere RamPlatte, block_ram_einrichten
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben, ar_nullseiten
+aus "kern_smp" importiere smp_planer
+aus "kern_smp_planer" importiere smp_faden_anbieten
+aus "kern_faden" importiere faden_abgeben
+aus "kern_sperre" importiere irq_sichern, irq_wiederherstellen, unterbrechungen_an
+aus "../uefi/hardware_pci" importiere takt
+
+struktur ArrayProbeFaden:
+    kennung: u64
+    bereit: atom[u32]
+    fertig: atom[u32]
+    fehler: BlockFehler
+
+@nativ
+statisch ARRAY_PROBE_KERN: ArrayKern auf 0
+@nativ
+statisch ARRAY_PROBE_RAM: [RamPlatte; 26] auf 0
+@nativ
+statisch ARRAY_PROBE_PQ_KERN: KernArrayPQ auf 0
+@nativ
+statisch ARRAY_PROBE_PQ_QUELLEN: [ArrayKernAnschluss; 4] auf 0
+@nativ
+statisch ARRAY_PROBE_REBUILD_KERN: ArrayKern auf 0
+@nativ
+statisch ARRAY_PROBE_REBUILD_QUELLEN: [ArrayKernAnschluss; 3] auf 0
+@nativ
+statisch ARRAY_KERN_PROBE_ANSCHLUESSE: [ArrayKernAnschluss; 3] auf 0
+@nativ
+statisch ARRAY_PROBE_BASIS: [u64; 26] auf 0
+@nativ
+statisch ARRAY_PROBE_FADEN: [ArrayProbeFaden; 2] auf 0
+@nativ
+statisch ARRAY_PROBE_REGISTER: [BlockEintrag; 64] auf 0
+@nativ
+konstante T_ARRAY_PROBE_FADEN: [u8; _] auf "MOO-ARRAY FADEN FERTIG "
+@nativ
+konstante T_ARRAY_PROBE_REBUILD: [u8; _] auf "MOO-ARRAY PARITAET REGIONEN "
+@nativ
+konstante T_ARRAY_PROBE_GRENZE: [u8; _] auf "MOO-ARRAY UEBER REGIONSGRENZE "
+@nativ
+konstante T_ARRAY_PROBE_STATUS: [u8; _] auf "MOO-ARRAY PRUEFUNG "
+@nativ
+konstante T_ARRAY_PROBE_MOOFS: [u8; _] auf "MOO-ARRAY MOOFS DATENPLATTEN "
+@nativ
+konstante T_ARRAY_PROBE_MOOFS_P: [u8; _] auf "MOO-ARRAY MOOFS PARITAET "
+@nativ
+konstante T_ARRAY_PROBE_REGISTER: [u8; _] auf "MOO-ARRAY REGISTER ATOMAR "
+@nativ
+konstante T_ARRAY_PROBE_REBUILD_WRITE: [u8; _] auf "MOO-ARRAY REBUILD SCHREIBEN "
+@nativ
+konstante T_ARRAY_PROBE_REBUILD_SEITEN: [u8; _] auf "MOO-ARRAY REBUILD ERSATZSEITEN "
+@nativ
+konstante T_ARRAY_PROBE_PQ_AUSFAELLE: [u8; _] auf "MOO-ARRAY PQ ZWEI AUSFAELLE "
+@nativ
+konstante T_ARRAY_PROBE_PQ_SEITEN: [u8; _] auf "MOO-ARRAY PQ ERSATZSEITEN "
+@nativ
+konstante T_ARRAY_PROBE_CODE: [u8; _] auf "MOO-ARRAY FEHLER CODE STATUS "
+
+@nativ
+funktion array_probe_ram(index: u64, seiten: u64, sektor_bytes: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(seiten)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 70))
+        ar_nullseiten(basis, seiten)
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(ARRAY_PROBE_RAM[index]))
+        weitergeben(block_ram_einrichten(ram, basis, seiten * 4096, sektor_bytes, falsch))
+        setze ARRAY_PROBE_BASIS[index] auf basis
+        setze block: ptr[dyn BlockGeraet] auf ram
+        gib_zurück block_registrieren(block)
+
+@nativ
+funktion array_probe_registergrenze(naechste: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        # Mindestens die RAM-Platten sind registriert. Eine Gruppe in Größe
+        # des vollen Registers muss scheitern und die nächste Kennung freilassen.
+        wenn block_vorhanden(naechste):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 80))
+        setze ram: ptr[RamPlatte] auf zeiger(adresse_von(ARRAY_PROBE_RAM[0]))
+        setze block: ptr[dyn BlockGeraet] auf ram
+        setze i: u64 auf 0
+        solange i < BLOCK_PLAETZE:
+            setze ARRAY_PROBE_REGISTER[i].geraet auf block
+            setze i auf i + 1
+        setze liste: ptr[BlockEintrag] auf zeiger(adresse_von(ARRAY_PROBE_REGISTER[0]))
+        setze r: ergebnis[u64, BlockFehler] auf block_registrieren_gruppe(liste, BLOCK_PLAETZE)
+        wenn ist_erfolg(r) oder block_vorhanden(naechste):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 81))
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        wenn f.code != BLOCK_VOLL:
+            gib_zurück fehlschlag(f)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_fuellen(adresse: u64, wert: u64) -> void:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            speicher_schreiben(adresse + i, als(u8, wert), 1)
+            setze i auf i + 1
+
+@nativ
+funktion array_probe_bytes_gleich(adresse: u64, wert: u8) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            setze gelesen: u8 auf speicher_lesen(adresse + i, 1)
+            wenn gelesen != wert:
+                gib_zurück falsch
+            setze i auf i + 1
+        gib_zurück wahr
+
+@nativ
+funktion array_probe_schreiber(nr: u64) -> void:
+    unsicher:
+        setze f: ptr[ArrayProbeFaden] auf zeiger(adresse_von(ARRAY_PROBE_FADEN[nr]))
+        setze anderer: ptr[ArrayProbeFaden] auf zeiger(adresse_von(ARRAY_PROBE_FADEN[1 - nr]))
+        atom_speichern(f.bereit, 1, ordnung=freigeben)
+        solange atom_laden(anderer.bereit, ordnung=erwerben) == 0:
+            faden_abgeben(smp_planer())
+        setze basis: u64 auf ar_rahmen_nehmen(1)
+        wenn basis == 0:
+            setze f.fehler auf BlockFehler(BLOCK_VOLL, 71)
+        sonst:
+            setze anfrage: BlockAnfrage auf 0
+            setze q: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+            setze i: u64 auf 0
+            solange i < 32 und f.fehler.code == BLOCK_OK:
+                array_probe_fuellen(basis, 32 + nr * 64 + i)
+                setze r: ergebnis[void, BlockFehler] auf block_anfordern(f.kennung, q, BLOCK_SCHREIBEN, 0, 1, basis, 4096)
+                wenn nicht ist_erfolg(r):
+                    setze f.fehler auf ergebnis_fehler(r)
+                setze i auf i + 1
+            ar_rahmen_freigeben(basis)
+        atom_speichern(f.fertig, 1, ordnung=freigeben)
+
+@nativ
+funktion array_probe_zwei_faeden(a: ptr[ArrayKern], tsc: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze links: ptr[ArrayProbeFaden] auf zeiger(adresse_von(ARRAY_PROBE_FADEN[0]))
+        setze rechts: ptr[ArrayProbeFaden] auf zeiger(adresse_von(ARRAY_PROBE_FADEN[1]))
+        setze links.kennung auf array_kern_kennung(a, 0)
+        setze rechts.kennung auf array_kern_kennung(a, 1)
+        wenn smp_faden_anbieten(adresse_von(array_probe_schreiber), 0, 2) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 72))
+        wenn smp_faden_anbieten(adresse_von(array_probe_schreiber), 1, 4) == 0:
+            atom_speichern(rechts.bereit, 1, ordnung=freigeben)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 73))
+        setze start: u64 auf takt()
+        solange atom_laden(links.fertig, ordnung=erwerben) == 0 oder atom_laden(rechts.fertig, ordnung=erwerben) == 0:
+            wenn takt() - start >= tsc * 30000000:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_ZEIT, 70))
+            faden_abgeben(smp_planer())
+        wenn links.fehler.code != BLOCK_OK:
+            gib_zurück fehlschlag(links.fehler)
+        wenn rechts.fehler.code != BLOCK_OK:
+            gib_zurück fehlschlag(rechts.fehler)
+        wenn nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[0], 63) oder nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[1], 127) oder nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[2], 64):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 71))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_grenze_frei(basis: u64) -> void:
+    unsicher:
+        ar_rahmen_freigeben(basis)
+        ar_rahmen_freigeben(basis + 4096)
+
+@nativ
+funktion array_probe_regionsgrenze(kennung: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze basis: u64 auf ar_rahmen_nehmen(2)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 74))
+        aufräumen: array_probe_grenze_frei(basis)
+        setze anfrage: BlockAnfrage auf 0
+        setze q: ptr[BlockAnfrage] auf zeiger(adresse_von(anfrage))
+        array_probe_fuellen(basis, 165)
+        array_probe_fuellen(basis + 4096, 90)
+        weitergeben(block_anfordern(kennung, q, BLOCK_SCHREIBEN_FUA, 255, 2, basis, 8192))
+        array_probe_fuellen(basis, 0)
+        array_probe_fuellen(basis + 4096, 0)
+        weitergeben(block_anfordern(kennung, q, BLOCK_LESEN, 255, 2, basis, 8192))
+        setze p: u64 auf ARRAY_PROBE_BASIS[2] + 255 * 4096
+        wenn nicht array_probe_bytes_gleich(basis, 165) oder nicht array_probe_bytes_gleich(basis + 4096, 90) oder nicht array_probe_bytes_gleich(p, 165) oder nicht array_probe_bytes_gleich(p + 4096, 90):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 72))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_rebuild_schreiben(kennung: u64, seite: u64, adresse: u64, wert: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        array_probe_fuellen(adresse, als(u64, wert))
+        setze a: BlockAnfrage auf 0
+        setze anfrage: ptr[BlockAnfrage] auf zeiger(adresse_von(a))
+        weitergeben(block_anfordern(kennung, anfrage, BLOCK_SCHREIBEN_FUA, seite, 1, adresse, 4096))
+        array_probe_fuellen(adresse, 0)
+        weitergeben(block_anfordern(kennung, anfrage, BLOCK_LESEN, seite, 1, adresse, 4096))
+        wenn nicht array_probe_bytes_gleich(adresse, wert):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 180))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_rebuild_lauf(log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        setze l.guid_lo auf 0xB1002681
+        setze l.guid_hi auf 0xB2002681
+        setze l.generation auf 1
+        setze l.anzahl auf 3
+        setze i: u64 auf 0
+        solange i < 3:
+            setze seiten: u64 auf 7
+            setze meta: u64 auf 8
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 0:
+                setze seiten auf 4
+            wenn i == 2:
+                setze meta auf 136
+                setze rolle auf ARRAY_PARITAET_P
+            setze d: u64 auf weitergeben(array_probe_ram(6 + i, seiten, 512))
+            setze m: u64 auf weitergeben(array_probe_ram(9 + i, meta, 512))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x3140 + i
+            setze ident.guid_hi auf 0x4120 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 82
+            ident.serie[1] = als(u8, 48 + i)
+            setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, seiten, ident)
+            setze ARRAY_PROBE_REBUILD_QUELLEN[i] auf ArrayKernAnschluss(ident, d, m)
+            setze i auf i + 1
+        setze a: ptr[ArrayKern] auf zeiger(adresse_von(ARRAY_PROBE_REBUILD_KERN))
+        setze repariert: u64 auf weitergeben(array_kern_rebuild_einrichten(a, l, zeiger(adresse_von(ARRAY_PROBE_REBUILD_QUELLEN[0])), 3))
+        wenn repariert != 1:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 181))
+        setze kennung: u64 auf array_kern_kennung(a, 0)
+        setze basis: u64 auf ar_rahmen_nehmen(1)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 180))
+        aufräumen: ar_rahmen_freigeben(basis)
+        weitergeben(array_probe_rebuild_schreiben(kennung, 0, basis, 0x17))
+        weitergeben(array_kern_rebuild_verloren(a, 0))
+        setze fehlt: ArrayRebuildStatus auf weitergeben(array_kern_rebuild_status(a, 0))
+        wenn fehlt.zustand != ARRAY_MITGLIED_FEHLT oder fehlt.fortschritt.gesamt != 4:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 182))
+        weitergeben(array_probe_rebuild_schreiben(kennung, 1, basis, 0x62))
+        setze ed: u64 auf weitergeben(array_probe_ram(12, 4, 4096))
+        setze em: u64 auf weitergeben(array_probe_ram(13, 8, 4096))
+        setze ident_ersatz: ArrayIdentitaet auf l.mitglieder[0].identitaet
+        setze ident_ersatz.guid_lo auf 0x3180
+        ident_ersatz.serie[1] = 69
+        setze kandidat: ArrayKernAnschluss auf ArrayKernAnschluss(ident_ersatz, ed, em)
+        weitergeben(array_kern_rebuild_ersatz(a, zeiger(adresse_von(kandidat))))
+        setze f: ArrayRebuildFortschritt auf weitergeben(array_kern_rebuild_schritt(a))
+        wenn f.fertig != 1 oder f.abgeschlossen:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 183))
+        weitergeben(array_probe_rebuild_schreiben(kennung, 0, basis, 0x37))
+        weitergeben(array_probe_rebuild_schreiben(array_kern_kennung(a, 1), 1, basis, 0x0F))
+        wenn nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[12], 0x37) oder nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[12] + 4096, 0):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 184))
+        log(adresse_von(T_ARRAY_PROBE_REBUILD_WRITE), 1)
+        setze i auf 2
+        solange i <= 4:
+            setze stand: ArrayRebuildFortschritt auf weitergeben(array_kern_rebuild_schritt(a))
+            wenn stand.fertig != i oder stand.gesamt != 4 oder stand.abgeschlossen != (i == 4):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 185))
+            setze i auf i + 1
+        setze zuletzt: ArrayRebuildStatus auf weitergeben(array_kern_rebuild_status(a, 0))
+        wenn zuletzt.zustand != ARRAY_MITGLIED_AKTIV oder array_kern_kennung(a, 0) != kennung:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 186))
+        setze ersatz: u64 auf ARRAY_PROBE_BASIS[12]
+        setze p: u64 auf ARRAY_PROBE_BASIS[8]
+        wenn nicht array_probe_bytes_gleich(ersatz, 0x37) oder nicht array_probe_bytes_gleich(ersatz + 4096, 0x62) oder nicht array_probe_bytes_gleich(ersatz + 8192, 0) oder nicht array_probe_bytes_gleich(ersatz + 12288, 0):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 187))
+        wenn nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[6], 0x17) oder nicht array_probe_bytes_gleich(p, 0x37) oder nicht array_probe_bytes_gleich(p + 4096, 0x6D):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 188))
+        log(adresse_von(T_ARRAY_PROBE_REBUILD_SEITEN), 4)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_pq_ersatz(a: ptr[KernArrayPQ], l: ptr[ArrayLayout], slot: u64, index: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze d: u64 auf weitergeben(array_probe_ram(index, l.mitglieder[slot].seiten, 4096))
+        setze m: u64 auf weitergeben(array_probe_ram(index + 1, 10, 4096))
+        setze ident: ArrayIdentitaet auf l.mitglieder[slot].identitaet
+        setze ident.guid_lo auf ident.guid_lo + 0x40
+        ident.serie[1] = als(u8, 65 + slot)
+        setze quelle: ArrayKernAnschluss auf ArrayKernAnschluss(ident, d, m)
+        gib_zurück kern_array_pq_ersatz(a, slot, zeiger(adresse_von(quelle)))
+
+@nativ
+funktion array_probe_pq_schritte(a: ptr[KernArrayPQ], start: u64, ende: u64, gesamt: u64) -> ergebnis[void, BlockFehler]:
+    setze zahl: u64 auf start
+    solange zahl < ende:
+        setze unterschritt: ArrayRebuildFortschritt auf weitergeben(kern_array_pq_schritt(a))
+        setze zahl auf zahl + 1
+        wenn unterschritt.fertig != zahl oder unterschritt.gesamt != gesamt oder unterschritt.abgeschlossen != (zahl == gesamt):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 190))
+    gib_zurück erfolg()
+
+@nativ
+funktion array_probe_pq_lauf(log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        setze l.guid_lo auf 0x50315433
+        setze l.guid_hi auf 0x51315433
+        setze l.generation auf 3
+        setze l.anzahl auf 4
+        setze i: u64 auf 0
+        solange i < 4:
+            setze seiten: u64 auf 7
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 0:
+                setze seiten auf 4
+            wenn i == 1:
+                setze rolle auf ARRAY_PARITAET_P
+            wenn i == 2:
+                setze rolle auf ARRAY_PARITAET_Q
+            setze d: u64 auf weitergeben(array_probe_ram(14 + i, seiten, 512))
+            setze m: u64 auf weitergeben(array_probe_ram(18 + i, 10, 512))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x5520 + i
+            setze ident.guid_hi auf 0x5530 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 80
+            ident.serie[1] = als(u8, 48 + i)
+            setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, seiten, ident)
+            setze ARRAY_PROBE_PQ_QUELLEN[3 - i] auf ArrayKernAnschluss(ident, d, m)
+            setze i auf i + 1
+        setze a: ptr[KernArrayPQ] auf zeiger(adresse_von(ARRAY_PROBE_PQ_KERN))
+        setze initial: u64 auf weitergeben(kern_array_pq_einrichten(a, l, zeiger(adresse_von(ARRAY_PROBE_PQ_QUELLEN[0])), 4, ARRAY_Q_TABELLE))
+        wenn initial != 7 oder kern_array_pq_kennung(a, 1) != 0 oder kern_array_pq_kennung(a, 2) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 191))
+        setze id_a: u64 auf kern_array_pq_kennung(a, 0)
+        setze id_b: u64 auf kern_array_pq_kennung(a, 3)
+        setze basis: u64 auf ar_rahmen_nehmen(1)
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 190))
+        aufräumen: ar_rahmen_freigeben(basis)
+        weitergeben(array_probe_rebuild_schreiben(id_a, 0, basis, 0x15))
+        weitergeben(array_probe_rebuild_schreiben(id_b, 1, basis, 0x19))
+        weitergeben(kern_array_pq_verloren(a, 0))
+        weitergeben(kern_array_pq_verloren(a, 3))
+        weitergeben(array_probe_rebuild_schreiben(id_a, 1, basis, 0x32))
+        weitergeben(array_probe_rebuild_schreiben(id_b, 1, basis, 0x54))
+        wenn a.rebuild.stand.fehlende != 9:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 192))
+        log(adresse_von(T_ARRAY_PROBE_PQ_AUSFAELLE), 2)
+        weitergeben(array_probe_pq_ersatz(a, l, 0, 22))
+        weitergeben(array_probe_pq_schritte(a, 0, 1, 4))
+        weitergeben(array_probe_rebuild_schreiben(id_a, 0, basis, 0xC0))
+        weitergeben(array_probe_rebuild_schreiben(id_b, 1, basis, 0xA5))
+        weitergeben(array_probe_pq_schritte(a, 1, 4, 4))
+        wenn a.rebuild.stand.fehlende != 8:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 193))
+        weitergeben(array_probe_pq_ersatz(a, l, 3, 24))
+        weitergeben(array_probe_pq_schritte(a, 0, 7, 7))
+        setze status_a: ArrayRebuildStatus auf weitergeben(kern_array_pq_status(a, 0))
+        setze status_b: ArrayRebuildStatus auf weitergeben(kern_array_pq_status(a, 3))
+        wenn status_a.zustand != ARRAY_MITGLIED_AKTIV oder status_b.zustand != ARRAY_MITGLIED_AKTIV oder kern_array_pq_kennung(a, 0) != id_a oder kern_array_pq_kennung(a, 3) != id_b:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 194))
+        setze ersatz_a: u64 auf ARRAY_PROBE_BASIS[22]
+        setze ersatz_b: u64 auf ARRAY_PROBE_BASIS[24]
+        wenn nicht array_probe_bytes_gleich(ersatz_a, 0xC0) oder nicht array_probe_bytes_gleich(ersatz_a + 4096, 0x32) oder nicht array_probe_bytes_gleich(ersatz_b + 4096, 0xA5):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 195))
+        wenn nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[14], 0x15) oder nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[17] + 4096, 0x19):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 196))
+        setze qbyte: u8 auf 0x32 ^ array_gf256_mal(0xA5, 8)
+        wenn nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[15] + 4096, 0x97) oder nicht array_probe_bytes_gleich(ARRAY_PROBE_BASIS[16] + 4096, qbyte):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 197))
+        log(adresse_von(T_ARRAY_PROBE_PQ_SEITEN), status_a.fortschritt.gesamt + status_b.fortschritt.gesamt)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_lauf(tsc: u64, log: ptr[fn[sysv64](u64, u64) -> void]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn tsc == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_ZEIT, 71))
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        setze l.guid_lo auf 0xA001
+        setze l.guid_hi auf 0xA002
+        setze l.generation auf 1
+        setze l.anzahl auf 3
+        setze i: u64 auf 0
+        solange i < 3:
+            setze seiten: u64 auf 258
+            setze sektor: u64 auf 512
+            setze metaseiten: u64 auf 2
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 0:
+                setze seiten auf 64
+            wenn i == 1:
+                setze sektor auf 4096
+            wenn i == 2:
+                setze rolle auf ARRAY_PARITAET_P
+                setze metaseiten auf 130
+            setze daten: u64 auf weitergeben(array_probe_ram(i, seiten, sektor))
+            setze meta: u64 auf weitergeben(array_probe_ram(i + 3, metaseiten, sektor))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x1000 + i
+            setze ident.guid_hi auf 0x2000 + i
+            setze ident.serien_bytes auf 2
+            ident.serie[0] = 65
+            ident.serie[1] = als(u8, 48 + i)
+            setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, seiten, ident)
+            setze ARRAY_KERN_PROBE_ANSCHLUESSE[i] auf ArrayKernAnschluss(ident, daten, meta)
+            setze i auf i + 1
+        setze a: ptr[ArrayKern] auf zeiger(adresse_von(ARRAY_PROBE_KERN))
+        setze repariert: u64 auf weitergeben(array_kern_einrichten(a, l, zeiger(adresse_von(ARRAY_KERN_PROBE_ANSCHLUESSE[0])), 3))
+        setze d0: BlockGeometrie auf weitergeben(block_geometrie(array_kern_kennung(a, 0)))
+        setze d1: BlockGeometrie auf weitergeben(block_geometrie(array_kern_kennung(a, 1)))
+        wenn repariert != 2 oder d0.bloecke != 64 oder d1.bloecke != 258 oder d0.block_bytes != 4096 oder d1.block_bytes != 4096 oder array_kern_kennung(a, 2) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 73))
+        log(adresse_von(T_ARRAY_PROBE_REBUILD), repariert)
+        weitergeben(array_probe_zwei_faeden(a, tsc))
+        log(adresse_von(T_ARRAY_PROBE_FADEN), 2)
+        weitergeben(array_probe_regionsgrenze(array_kern_kennung(a, 1)))
+        log(adresse_von(T_ARRAY_PROBE_GRENZE), 1)
+        setze fs: ergebnis[void, VfsFehler] auf array_probe_moofs_lauf(a, ARRAY_KERN_PROBE_ANSCHLUESSE[0].daten, ARRAY_KERN_PROBE_ANSCHLUESSE[1].daten)
+        wenn nicht ist_erfolg(fs):
+            setze f: VfsFehler auf ergebnis_fehler(fs)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, (f.code << 16) | (f.grund & 0xFFFF)))
+        log(adresse_von(T_ARRAY_PROBE_MOOFS), 2)
+        setze pos: u64 auf 0
+        solange pos < 258 * 4096:
+            setze erwartet: u8 auf speicher_lesen(ARRAY_PROBE_BASIS[1] + pos, 1)
+            wenn pos < 64 * 4096:
+                setze links: u8 auf speicher_lesen(ARRAY_PROBE_BASIS[0] + pos, 1)
+                setze erwartet auf erwartet ^ links
+            setze p_byte: u8 auf speicher_lesen(ARRAY_PROBE_BASIS[2] + pos, 1)
+            wenn p_byte != erwartet:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 79))
+            setze pos auf pos + 1
+        log(adresse_von(T_ARRAY_PROBE_MOOFS_P), 1)
+        weitergeben(array_probe_registergrenze(array_kern_kennung(a, 1) + 1))
+        log(adresse_von(T_ARRAY_PROBE_REGISTER), 1)
+        weitergeben(array_probe_rebuild_lauf(log))
+        weitergeben(array_probe_pq_lauf(log))
+        weitergeben(cache_pool_probe_lauf(tsc, log))
+        gib_zurück array_probe_scrub_lauf(log)
+
+@nativ
+funktion array_probe_starten(tsc: u64, log_adr: u64) -> bool:
+    unsicher:
+        setze log: ptr[fn[sysv64](u64, u64) -> void] auf zeiger(log_adr)
+        setze irq: u64 auf irq_sichern()
+        unterbrechungen_an()
+        setze r: ergebnis[void, BlockFehler] auf array_probe_lauf(tsc, log)
+        irq_wiederherstellen(irq)
+        wenn nicht ist_erfolg(r):
+            setze f: BlockFehler auf ergebnis_fehler(r)
+            log(adresse_von(T_ARRAY_PROBE_CODE), (als(u64, f.code) << 32) | als(u64, f.geraete_status))
+            gib_zurück falsch
+        log(adresse_von(T_ARRAY_PROBE_STATUS), 1)
+        gib_zurück wahr

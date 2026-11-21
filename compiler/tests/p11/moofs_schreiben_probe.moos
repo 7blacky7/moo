@@ -1,0 +1,202 @@
+aus ds_moofs importiere MooFsEintrag, MooFsFehler, MOOFS_ARGUMENT, MOOFS_VOLL, MooFsInode, moofs_inode, moofs_lesen
+aus ds_moofs_format importiere MooFsQuelle, MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_baum_schreiben importiere MooFsBaumKind
+aus ds_moofs_allokator importiere MooFsSchreiber, moofs_schreiber_oeffnen, moofs_schreiber_neuladen, moofs_freien_block
+aus ds_moofs_schreiben importiere moofs_anlegen, moofs_loeschen, moofs_abgleichen, MOOFS_NICHT_LEER, moofs_schreiben, moofs_kuerzen, moofs_umbenennen, moofs_schreib_name
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_moofs_vfs importiere MooFsDateisystem
+aus vfs importiere VfsTabelle
+aus "moofs_vfs_probe" importiere moofs_schreib_vfs_test
+struktur MooFsSchreibTest:
+    platte: [u8; 1048576]
+    format: MooFsFormatSpeicher
+    eintraege: [MooFsEintrag; 512]
+    kinder: [MooFsBaumKind; 43]
+    karte: [u8; 32]
+    quelle: [u8; 16384]
+    ziel: [u8; 16384]
+    system: MooFsDateisystem
+    mounts: VfsTabelle
+    schreiber: MooFsSchreiber
+@nativ
+statisch MOOFS_SCHREIB_TEST: MooFsSchreibTest auf 0
+@nativ
+funktion moofs_schreib_pruefe(gut: bool, nummer: u32) -> ergebnis[void, MooFsFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, nummer, 0))
+    gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreib_ablauf() -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze p: ptr[MooFsSchreibTest] auf zeiger(adresse_von(MOOFS_SCHREIB_TEST))
+        setze ram: FatRam auf 0
+        setze rp: ptr[FatRam] auf zeiger(adresse_von(ram))
+        setze ok: bool auf ist_erfolg(fat_ram_einrichten(rp, adresse_von(p.platte[0]), 1048576, 512, falsch))
+        weitergeben(moofs_schreib_pruefe(ok, 1000))
+        setze t: ptr[dyn FatTransport] auf rp
+        setze leer: ptr[MooFsQuelle] auf nichts
+        weitergeben(moofs_formatieren(t, leer, 0, 11, 22, zeiger(adresse_von(p.format))))
+        setze w: ptr[MooFsSchreiber] auf zeiger(adresse_von(p.schreiber))
+        weitergeben(moofs_schreiber_oeffnen(w, t, zeiger(adresse_von(p.eintraege[0])), 512, zeiger(adresse_von(p.kinder[0])), 43, zeiger(adresse_von(p.karte[0])), 32))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253 und w.redundant, 1001))
+        setze a: [u8; 1] auf [97]
+        setze b: [u8; 1] auf [98]
+        setze d: [u8; 1] auf [100]
+        setze nr: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(a), falsch))
+        weitergeben(moofs_schreib_pruefe(nr == 2 und w.volume.generation == 2 und nicht w.redundant, 1002))
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253 und w.redundant, 1003))
+        setze runde: u64 auf 0
+        solange runde < 100:
+            setze nr auf weitergeben(moofs_anlegen(w, 1, byteansicht(b), falsch))
+            weitergeben(moofs_loeschen(w, 1, byteansicht(b)))
+            weitergeben(moofs_abgleichen(w))
+            weitergeben(moofs_schreib_pruefe(w.frei == 253, 1004))
+            setze runde auf runde + 1
+        setze ordner: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(d), wahr))
+        setze kind: u64 auf weitergeben(moofs_anlegen(w, ordner, byteansicht(a), falsch))
+        setze nichtleer: ergebnis[void, MooFsFehler] auf moofs_loeschen(w, 1, byteansicht(d))
+        weitergeben(moofs_schreib_pruefe(nicht ist_erfolg(nichtleer), 1005))
+        weitergeben(moofs_schreib_pruefe(ergebnis_fehler(nichtleer).code == MOOFS_NICHT_LEER, 1006))
+        weitergeben(moofs_loeschen(w, ordner, byteansicht(a)))
+        weitergeben(moofs_loeschen(w, 1, byteansicht(d)))
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253, 1007))
+        weitergeben(moofs_schreib_daten_test(w, 2, byteansicht(p.quelle), byteansicht(p.ziel)))
+        weitergeben(moofs_schreib_rename_test(w))
+        weitergeben(moofs_schreib_vfs_test(w, zeiger(adresse_von(p.system)), zeiger(adresse_von(p.mounts)), byteansicht(p.quelle), byteansicht(p.ziel)))
+        setze name: [u8; 2] auf [120, 65]
+        setze i: u64 auf 0
+        solange i < 40:
+            setze name[1] auf als(u8, 65 + i)
+            setze nr auf weitergeben(moofs_anlegen(w, 1, byteansicht(name), falsch))
+            setze i auf i + 1
+        # Beide noch gültigen Generationen enthalten acht eigene Metadatenblöcke.
+        weitergeben(moofs_schreib_pruefe(w.volume.hoehe == 1 und w.frei == 238, 1008))
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 246, 1009))
+        solange wahr:
+            setze block: ergebnis[u64, MooFsFehler] auf moofs_freien_block(w, falsch)
+            wenn nicht ist_erfolg(block):
+                weitergeben(moofs_schreib_pruefe(ergebnis_fehler(block).code == MOOFS_VOLL und w.frei == w.reserve, 1010))
+                stopp
+            setze genommen: u64 auf ergebnis_wert(block)
+        weitergeben(moofs_schreiber_neuladen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 246, 1011))
+        setze i auf 0
+        solange i < 40:
+            setze name[1] auf als(u8, 65 + i)
+            weitergeben(moofs_loeschen(w, 1, byteansicht(name)))
+            setze i auf i + 1
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253, 1012))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreib_test() -> u32:
+    unsicher:
+        setze r: ergebnis[void, MooFsFehler] auf moofs_schreib_ablauf()
+        wenn nicht ist_erfolg(r):
+            setze f: MooFsFehler auf ergebnis_fehler(r)
+            gib_zurück f.code + f.grund * 1000000
+        gib_zurück 0
+
+@nativ
+funktion moofs_schreib_daten_test(w: ptr[MooFsSchreiber], nr: u64, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < länge(quelle):
+            setze quelle[i] auf als(u8, (i * 37 + 11) & 255)
+            setze i auf i + 1
+        setze qp: ptr[u8] auf puffer_zeiger(quelle)
+        setze zp: ptr[u8] auf puffer_zeiger(ziel)
+        setze n: u64 auf weitergeben(moofs_schreiben(w, nr, 0, byteansicht(qp, 12289)))
+        weitergeben(moofs_schreib_pruefe(n == 12289, 1020))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), nr, 0, ziel))
+        weitergeben(moofs_schreib_pruefe(n == 12289, 1021))
+        setze i auf 0
+        solange i < n:
+            weitergeben(moofs_schreib_pruefe(ziel[i] == quelle[i], 1022))
+            setze i auf i + 1
+        setze n auf weitergeben(moofs_schreiben(w, nr, 4000, byteansicht(qp, 5000)))
+        setze n auf weitergeben(moofs_schreiben(w, nr, 16000, byteansicht(qp, 31)))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), nr, 0, ziel))
+        weitergeben(moofs_schreib_pruefe(n == 16031, 1023))
+        setze i auf 0
+        solange i < n:
+            setze erwartet: u8 auf 0
+            wenn i < 12289:
+                setze erwartet auf quelle[i]
+            wenn i >= 4000 und i < 9000:
+                setze erwartet auf quelle[i - 4000]
+            wenn i >= 16000:
+                setze erwartet auf quelle[i - 16000]
+            weitergeben(moofs_schreib_pruefe(ziel[i] == erwartet, 1024))
+            setze i auf i + 1
+        weitergeben(moofs_kuerzen(w, nr, 4097))
+        weitergeben(moofs_kuerzen(w, nr, 10000))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), nr, 0, ziel))
+        weitergeben(moofs_schreib_pruefe(n == 10000, 1025))
+        setze i auf 0
+        solange i < n:
+            setze vergleich: u8 auf 0
+            wenn i < 4000:
+                setze vergleich auf quelle[i]
+            sonst wenn i < 4097:
+                setze vergleich auf quelle[i - 4000]
+            weitergeben(moofs_schreib_pruefe(ziel[i] == vergleich, 1026))
+            setze i auf i + 1
+        # Ein fehlgeschlagener großer Schreibversuch darf keine Teildatei publizieren.
+        weitergeben(moofs_kuerzen(w, nr, 0))
+        setze voll_bytes: u64 auf 0
+        solange wahr:
+            setze r: ergebnis[u64, MooFsFehler] auf moofs_schreiben(w, nr, voll_bytes, byteansicht(qp, 4032))
+            wenn nicht ist_erfolg(r):
+                weitergeben(moofs_schreib_pruefe(ergebnis_fehler(r).code == MOOFS_VOLL, 1027))
+                stopp
+            weitergeben(moofs_schreib_pruefe(ergebnis_wert(r) == 4032, 1028))
+            setze voll_bytes auf voll_bytes + 4032
+        setze inode: MooFsInode auf weitergeben(moofs_inode(zeiger(adresse_von(w.volume)), nr))
+        weitergeben(moofs_schreib_pruefe(inode.bytes == voll_bytes und voll_bytes > 900000, 1029))
+        # Auch ohne Datenplatz bleibt der letzte Teilblock verkleinerbar.
+        weitergeben(moofs_kuerzen(w, nr, voll_bytes - 1))
+        setze n auf weitergeben(moofs_lesen(zeiger(adresse_von(w.volume)), nr, voll_bytes - 4032, byteansicht(zp, 4032)))
+        weitergeben(moofs_schreib_pruefe(n == 4031, 1030))
+        setze i auf 0
+        solange i < n:
+            weitergeben(moofs_schreib_pruefe(ziel[i] == quelle[i], 1031))
+            setze i auf i + 1
+        setze kapazitaet: u64 auf w.kapazitaet
+        setze w.kapazitaet auf w.anzahl
+        weitergeben(moofs_kuerzen(w, nr, 0))
+        setze w.kapazitaet auf kapazitaet
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253, 1032))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_schreib_rename_test(w: ptr[MooFsSchreiber]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze a: [u8; 1] auf [97]
+        setze b: [u8; 1] auf [98]
+        setze d: [u8; 1] auf [100]
+        setze e: [u8; 1] auf [101]
+        setze dir: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(d), wahr))
+        setze kind: u64 auf weitergeben(moofs_anlegen(w, dir, byteansicht(e), wahr))
+        setze r: ergebnis[void, MooFsFehler] auf moofs_umbenennen(w, 1, byteansicht(d), kind, byteansicht(d))
+        weitergeben(moofs_schreib_pruefe(nicht ist_erfolg(r), 1040))
+        weitergeben(moofs_schreib_pruefe(ergebnis_fehler(r).code == MOOFS_ARGUMENT, 1041))
+        weitergeben(moofs_umbenennen(w, dir, byteansicht(e), 1, byteansicht(e)))
+        weitergeben(moofs_loeschen(w, 1, byteansicht(e)))
+        setze datei: u64 auf weitergeben(moofs_anlegen(w, 1, byteansicht(b), falsch))
+        weitergeben(moofs_umbenennen(w, 1, byteansicht(a), dir, byteansicht(a)))
+        weitergeben(moofs_umbenennen(w, dir, byteansicht(a), 1, byteansicht(b)))
+        setze index: u64 auf weitergeben(moofs_schreib_name(w, 1, byteansicht(b)))
+        weitergeben(moofs_schreib_pruefe(w.eintraege[index].a != datei, 1042))
+        weitergeben(moofs_umbenennen(w, 1, byteansicht(b), 1, byteansicht(a)))
+        weitergeben(moofs_loeschen(w, 1, byteansicht(d)))
+        weitergeben(moofs_abgleichen(w))
+        weitergeben(moofs_schreib_pruefe(w.frei == 253, 1043))
+        gib_zurück erfolg()

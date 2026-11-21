@@ -1,0 +1,4 @@
+importiere "array_q_probe"
+# Der Selbsttest soll bei einem unerwarteten Fehler abbrechen.
+unsicher:
+    array_q_probe_alle()

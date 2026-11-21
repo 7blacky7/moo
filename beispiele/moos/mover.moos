@@ -1,0 +1,68 @@
+# Eine geschlossene Datei je Kernel-Faden. Der Aufrufer hält Auftrag und
+# Freigabe bis zur abgeholten Rückmeldung gültig.
+aus "../kernel/kern_vfs" importiere kern_vfs_global_nimm, kern_vfs_global_gib
+aus "../kernel/kern_smp_planer" importiere smp_faden_anbieten
+aus ds_vereinigung importiere Vereinigung, vereinigung_bereit
+aus ds_vereinigung_mover importiere vereinigung_verschieben
+aus vfs importiere VfsFehler, VfsPfad, vfs_pfad, VFS_EINVAL, VFS_EBUSY, VFS_ENOMEM
+
+struktur KernMover:
+    freigabe: ptr[Vereinigung]
+    pfad: VfsPfad
+    puffer: [u8; 4096]
+    phase: atom[u32]
+    ausgang: u32
+    fehler: VfsFehler
+
+@nativ
+funktion mover_faden(adresse: u64) -> void:
+    unsicher:
+        setze m: ptr[KernMover] auf zeiger(adresse)
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        setze r: ergebnis[u32, VfsFehler] auf vereinigung_verschieben(m.freigabe, pufferansicht(m.pfad.bytes, 0, m.pfad.anzahl), pufferansicht(m.puffer))
+        wenn ist_erfolg(r):
+            setze m.ausgang auf ergebnis_wert(r)
+            atom_speichern(m.phase, 2, ordnung=freigeben)
+        sonst:
+            setze m.fehler auf ergebnis_fehler(r)
+            atom_speichern(m.phase, 3, ordnung=freigeben)
+
+@nativ
+funktion mover_starten(m: ptr[KernMover], v: ptr[Vereinigung], pfad: puffer[u8], affinitaet: u64) -> ergebnis[u32, VfsFehler]:
+    unsicher:
+        wenn u64(m) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 260, 0))
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        weitergeben(vereinigung_bereit(v))
+        wenn atom_laden(m.phase, ordnung=erwerben) != 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 260, 0))
+        weitergeben(vfs_pfad(pfad, zeiger(adresse_von(m.pfad))))
+        setze m.freigabe auf v
+        atom_speichern(m.phase, 1, ordnung=freigeben)
+        setze faden: u32 auf smp_faden_anbieten(adresse_von(mover_faden), u64(m), affinitaet)
+        wenn faden == 0:
+            atom_speichern(m.phase, 0, ordnung=freigeben)
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOMEM, 260, 0))
+        gib_zurück erfolg(faden)
+
+@nativ
+funktion mover_ist_fertig(m: ptr[KernMover]) -> bool:
+    unsicher:
+        gib_zurück u64(m) != 0 und atom_laden(m.phase, ordnung=erwerben) >= 2
+
+@nativ
+funktion mover_ergebnis(m: ptr[KernMover]) -> ergebnis[u32, VfsFehler]:
+    unsicher:
+        wenn u64(m) == 0:
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 261, 0))
+        kern_vfs_global_nimm()
+        aufräumen: kern_vfs_global_gib()
+        setze phase: u32 auf atom_laden(m.phase, ordnung=erwerben)
+        wenn phase < 2:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 261, 0))
+        atom_speichern(m.phase, 0, ordnung=freigeben)
+        wenn phase == 2:
+            gib_zurück erfolg(m.ausgang)
+        gib_zurück fehlschlag(m.fehler)

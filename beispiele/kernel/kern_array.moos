@@ -1,0 +1,332 @@
+# Virtuelle BlockGeraete über unabhängigen Datenpartitionen eines P-Arrays.
+# Der Kernel-Bootpfad besitzt disjunkte Daten-/Metadatenpartitionen und gibt
+# vom Treiber/GPT verifizierte Seriennummern und Laufwerks-GUIDs weiter.
+aus nativ_block importiere BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_SCHREIBEN_FUA, BLOCK_FLUSH, BLOCK_OK, BLOCK_BELEGT, BLOCK_VOLL, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, BLOCK_UNBEKANNT, block_pruefen
+aus "kern_block" importiere BlockGeraet, BlockGeometrie, BlockAnfrage, BlockFehler, BlockEintrag, block_registrieren_gruppe, block_abschliessen
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_adressraum" importiere ar_rahmen_nehmen, ar_rahmen_freigeben
+aus "speicher_fat" importiere FatKernTransport, fat_kern_transport_einrichten
+aus ds_fat_transport importiere FatTransport
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ARRAY_MAX_MITGLIEDER, ARRAY_DATEN, ARRAY_SEITEN_BYTES, ARRAY_REGION_SEITEN, ARRAY_STREIFENSPERREN
+aus array_rebuild importiere ArrayRebuildFortschritt, ArrayRebuildStatus, array_rebuild_starten, array_rebuild_oeffnen, array_rebuild_flush, array_rebuild_ersatz_beginnen, array_rebuild_schritt, array_rebuild_status
+aus array_rebuild_format importiere ARRAY_REBUILD_KEIN
+aus array_rebuild_metadaten importiere ArrayRebuild
+aus array_rebuild_io importiere array_rebuild_lesen, array_rebuild_schreiben, array_rebuild_verloren
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayMedien, ArrayArbeitsraum, array_anlegen, array_oeffnen, array_wiederherstellen, array_daten_geometrie, array_daten_lesen, array_daten_barriere, array_schreiben_region
+
+struktur ArrayKernAnschluss:
+    identitaet: ArrayIdentitaet
+    daten: u64
+    metadaten: u64
+
+struktur ArrayKernGeraet implementiert BlockGeraet:
+    besitzer: u64
+    mitglied: u64
+    geo: BlockGeometrie
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.geo
+
+    funktion block_starten(selbst, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze r: ergebnis[void, BlockFehler] auf array_kern_auftrag(selbst, anfrage)
+            wenn ist_erfolg(r):
+                block_abschliessen(anfrage, BlockFehler(BLOCK_OK, 0))
+            sonst:
+                block_abschliessen(anfrage, ergebnis_fehler(r))
+            gib_zurück erfolg()
+
+struktur ArrayKern:
+    p: ArrayP
+    erweitert: bool
+    rebuild: ArrayRebuild
+    rebuild_sperre: KernMutex
+    rebuild_arbeit: ArrayArbeitsraum
+    ersatz_daten: [FatKernTransport; 16]
+    ersatz_meta: [FatKernTransport; 16]
+    aktiv: atom[u32]
+    mounts_sperre: KernMutex
+    eingehaengt: u64
+    sperren: [KernMutex; 64]
+    datentransporte: [FatKernTransport; 16]
+    metatransporte: [FatKernTransport; 16]
+    anschluesse: [ArrayAnschluss; 16]
+    geraete: [ArrayKernGeraet; 16]
+    kennungen: [u64; 16]
+
+@nativ
+funktion array_kern_arbeitsseiten() -> u64:
+    gib_zurück (groesse_von(ArrayArbeitsraum) + 4095) / 4096
+
+@nativ
+funktion array_kern_arbeitsraum_frei(basis: u64) -> void:
+    unsicher:
+        setze seite: u64 auf 0
+        solange seite < array_kern_arbeitsseiten():
+            ar_rahmen_freigeben(basis + seite * 4096)
+            setze seite auf seite + 1
+
+@nativ
+funktion array_kern_schreiben(a: ptr[ArrayKern], p: ptr[ArrayP], mitglied: u64, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze lauf: u64 auf 0
+        solange lauf < anfrage.anzahl:
+            setze seite: u64 auf anfrage.lba + lauf
+            setze region: u64 auf seite / ARRAY_REGION_SEITEN
+            setze menge: u64 auf ARRAY_REGION_SEITEN - seite % ARRAY_REGION_SEITEN
+            wenn menge > anfrage.anzahl - lauf:
+                setze menge auf anfrage.anzahl - lauf
+            # Die Bitmapseite einer Region gehört derselben Sperre. Verschiedene
+            # Sperren bearbeiten disjunkte P-Seiten und Metadatenblöcke.
+            setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.sperren[region % ARRAY_STREIFENSPERREN]))
+            mutex_nimm(smp_planer(), sperre)
+            setze basis: u64 auf ar_rahmen_nehmen(array_kern_arbeitsseiten())
+            wenn basis == 0:
+                mutex_gib(smp_planer(), sperre)
+                gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 18))
+            setze w: ptr[ArrayArbeitsraum] auf zeiger(basis)
+            setze r: ergebnis[void, BlockFehler] auf array_schreiben_region(p, mitglied, seite, menge, anfrage.puffer + lauf * ARRAY_SEITEN_BYTES, w)
+            array_kern_arbeitsraum_frei(basis)
+            mutex_gib(smp_planer(), sperre)
+            weitergeben(r)
+            setze lauf auf lauf + menge
+        gib_zurück erfolg()
+
+@nativ
+funktion array_kern_rebuild_freigeben(sperre: ptr[KernMutex]) -> void:
+    unsicher:
+        setze gehalten: bool auf mutex_gib(smp_planer(), sperre)
+
+@nativ
+funktion array_kern_rebuild_seite(a: ptr[ArrayKern], mitglied: u64, art: u32, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.rebuild_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_kern_rebuild_freigeben(sperre)
+        setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(a.rebuild))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(a.rebuild_arbeit))
+        wenn art == BLOCK_LESEN:
+            gib_zurück array_rebuild_lesen(r, mitglied, seite, adresse, w)
+        wenn art == BLOCK_FLUSH:
+            gib_zurück array_rebuild_flush(r)
+        gib_zurück array_rebuild_schreiben(r, mitglied, seite, adresse, w)
+
+# Zwischen zwei Seiten kann ein konkurrierender Auftrag oder ein
+# Rebuild-Schritt die Sperre übernehmen.
+@nativ
+funktion array_kern_rebuild_auftrag(a: ptr[ArrayKern], mitglied: u64, anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn anfrage.art == BLOCK_FLUSH:
+            gib_zurück array_kern_rebuild_seite(a, mitglied, BLOCK_FLUSH, 0, 0)
+        wenn anfrage.art != BLOCK_LESEN und anfrage.art != BLOCK_SCHREIBEN und anfrage.art != BLOCK_SCHREIBEN_FUA:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 22))
+        setze i: u64 auf 0
+        solange i < anfrage.anzahl:
+            weitergeben(array_kern_rebuild_seite(a, mitglied, anfrage.art, anfrage.lba + i, anfrage.puffer + i * ARRAY_SEITEN_BYTES))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_kern_auftrag(g: ptr[ArrayKernGeraet], anfrage: ptr[BlockAnfrage]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze a: ptr[ArrayKern] auf zeiger(g.besitzer)
+        wenn atom_laden(a.aktiv, ordnung=erwerben) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 18))
+        weitergeben(block_pruefen(g.geo, anfrage.art, anfrage.lba, anfrage.anzahl, anfrage.puffer, anfrage.laenge))
+        wenn a.erweitert:
+            gib_zurück array_kern_rebuild_auftrag(a, g.mitglied, anfrage)
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(a.p))
+        wenn anfrage.art == BLOCK_LESEN:
+            gib_zurück array_daten_lesen(p, g.mitglied, anfrage.lba, anfrage.anzahl, anfrage.puffer)
+        wenn anfrage.art == BLOCK_FLUSH:
+            gib_zurück array_daten_barriere(p, g.mitglied)
+        wenn anfrage.art == BLOCK_SCHREIBEN oder anfrage.art == BLOCK_SCHREIBEN_FUA:
+            gib_zurück array_kern_schreiben(a, p, g.mitglied, anfrage)
+        gib_zurück fehlschlag(BlockFehler(BLOCK_UNBEKANNT, 18))
+
+@nativ
+funktion array_kern_transporte(a: ptr[ArrayKern], eingabe: ptr[ArrayKernAnschluss], anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze d: u64 auf eingabe[i].daten
+            setze m: u64 auf eingabe[i].metadaten
+            wenn d == 0 oder m == 0 oder d == m:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 19))
+            setze j: u64 auf 0
+            solange j < i:
+                wenn d == eingabe[j].daten oder d == eingabe[j].metadaten oder m == eingabe[j].daten oder m == eingabe[j].metadaten:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 20))
+                setze j auf j + 1
+            setze dtransport: ptr[FatKernTransport] auf zeiger(adresse_von(a.datentransporte[i]))
+            setze mtransport: ptr[FatKernTransport] auf zeiger(adresse_von(a.metatransporte[i]))
+            weitergeben(fat_kern_transport_einrichten(dtransport, d))
+            weitergeben(fat_kern_transport_einrichten(mtransport, m))
+            setze td: ptr[dyn FatTransport] auf dtransport
+            setze tm: ptr[dyn FatTransport] auf mtransport
+            setze a.anschluesse[i] auf ArrayAnschluss(eingabe[i].identitaet, ArrayMedien(td, tm))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_kern_oeffnen_und_reparieren(a: ptr[ArrayKern], layout: ptr[ArrayLayout], anzahl: u64, w: ptr[ArrayArbeitsraum], erweitert: bool) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(a.p))
+        setze quellen: ptr[ArrayAnschluss] auf zeiger(adresse_von(a.anschluesse[0]))
+        wenn erweitert:
+            setze r: ptr[ArrayRebuild] auf zeiger(adresse_von(a.rebuild))
+            wenn u64(layout) == 0:
+                gib_zurück array_rebuild_oeffnen(r, p, quellen, anzahl, w)
+            weitergeben(array_anlegen(p, layout, quellen, anzahl, w))
+            gib_zurück array_rebuild_starten(r, p, w)
+        wenn u64(layout) == 0:
+            weitergeben(array_oeffnen(p, quellen, anzahl, w))
+        sonst:
+            weitergeben(array_anlegen(p, layout, quellen, anzahl, w))
+        gib_zurück array_wiederherstellen(p, w)
+
+@nativ
+funktion array_kern_registrieren(a: ptr[ArrayKern], eintraege: ptr[BlockEintrag]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf zeiger(adresse_von(a.p))
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < a.p.layout.anzahl:
+            wenn a.p.layout.mitglieder[i].rolle == ARRAY_DATEN:
+                setze geo: BlockGeometrie auf weitergeben(array_daten_geometrie(p, i))
+                setze g: ptr[ArrayKernGeraet] auf zeiger(adresse_von(a.geraete[i]))
+                setze g[0] auf ArrayKernGeraet(u64(a), i, geo)
+                setze block: ptr[dyn BlockGeraet] auf g
+                setze eintraege[anzahl].geraet auf block
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+
+        setze kennung: u64 auf weitergeben(block_registrieren_gruppe(eintraege, anzahl))
+        setze i auf 0
+        solange i < a.p.layout.anzahl:
+            wenn a.p.layout.mitglieder[i].rolle == ARRAY_DATEN:
+                setze a.kennungen[i] auf kennung
+                setze kennung auf kennung + 1
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+# Das nullinitialisierte ArrayKern besitzt die Geräte bis zum Neustart.
+@nativ
+funktion array_kern_einrichten_intern(a: ptr[ArrayKern], layout: ptr[ArrayLayout], eingabe: ptr[ArrayKernAnschluss], anzahl: u64, erweitert: bool) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(a) == 0 oder u64(eingabe) == 0 oder anzahl == 0 oder anzahl > ARRAY_MAX_MITGLIEDER oder (nicht erweitert und anzahl < 2):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 21))
+        wenn a.p.offen oder atom_laden(a.aktiv, ordnung=erwerben) != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 18))
+        weitergeben(array_kern_transporte(a, eingabe, anzahl))
+        setze basis: u64 auf ar_rahmen_nehmen(array_kern_arbeitsseiten())
+        wenn basis == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 19))
+        aufräumen: array_kern_arbeitsraum_frei(basis)
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(basis)
+        setze r: ergebnis[u64, BlockFehler] auf array_kern_oeffnen_und_reparieren(a, layout, anzahl, w, erweitert)
+        wenn nicht ist_erfolg(r):
+            setze a.p.offen auf falsch
+            setze a.rebuild.bereit auf falsch
+        setze repariert: u64 auf weitergeben(r)
+
+        # Nach dem Reparieren ist der Arbeitsraum frei für die Anmeldeliste.
+        setze eintraege: ptr[BlockEintrag] auf zeiger(basis)
+        setze angemeldet: ergebnis[void, BlockFehler] auf array_kern_registrieren(a, eintraege)
+        wenn nicht ist_erfolg(angemeldet):
+            setze a.p.offen auf falsch
+            setze a.rebuild.bereit auf falsch
+        weitergeben(angemeldet)
+        setze a.erweitert auf erweitert
+        atom_speichern(a.aktiv, 1, ordnung=freigeben)
+        gib_zurück erfolg(repariert)
+
+# Exklusive Einrichtung vor der Veröffentlichung der virtuellen Geräte.
+# layout=0 öffnet die vorhandenen Metadaten des gewählten Formats.
+@nativ
+funktion array_kern_einrichten(a: ptr[ArrayKern], layout: ptr[ArrayLayout], eingabe: ptr[ArrayKernAnschluss], anzahl: u64) -> ergebnis[u64, BlockFehler]:
+    gib_zurück array_kern_einrichten_intern(a, layout, eingabe, anzahl, falsch)
+
+@nativ
+funktion array_kern_rebuild_einrichten(a: ptr[ArrayKern], layout: ptr[ArrayLayout], eingabe: ptr[ArrayKernAnschluss], anzahl: u64) -> ergebnis[u64, BlockFehler]:
+    gib_zurück array_kern_einrichten_intern(a, layout, eingabe, anzahl, wahr)
+
+@nativ
+funktion array_kern_kennung(a: ptr[ArrayKern], mitglied: u64) -> u64:
+    unsicher:
+        wenn u64(a) == 0 oder atom_laden(a.aktiv, ordnung=erwerben) == 0 oder mitglied >= a.p.layout.anzahl oder a.p.layout.mitglieder[mitglied].rolle != ARRAY_DATEN:
+            gib_zurück 0
+        gib_zurück a.kennungen[mitglied]
+
+@nativ
+funktion array_kern_rebuild_aktiv(a: ptr[ArrayKern]) -> bool:
+    unsicher:
+        gib_zurück u64(a) != 0 und atom_laden(a.aktiv, ordnung=erwerben) != 0 und a.erweitert
+
+@nativ
+funktion array_kern_rebuild_verloren(a: ptr[ArrayKern], mitglied: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht array_kern_rebuild_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 22))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.rebuild_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_kern_rebuild_freigeben(sperre)
+        gib_zurück array_rebuild_verloren(zeiger(adresse_von(a.rebuild)), mitglied, zeiger(adresse_von(a.rebuild_arbeit)))
+
+@nativ
+funktion array_kern_rebuild_ersatz(a: ptr[ArrayKern], eingabe: ptr[ArrayKernAnschluss]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(eingabe) == 0 oder nicht array_kern_rebuild_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 23))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.rebuild_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_kern_rebuild_freigeben(sperre)
+        setze slot: u64 auf a.rebuild.stand.fehlt
+        wenn nicht a.rebuild.bereit oder a.rebuild.stand.ersatz oder slot == ARRAY_REBUILD_KEIN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_BELEGT, 22))
+        setze d: u64 auf eingabe.daten
+        setze m: u64 auf eingabe.metadaten
+        wenn d == 0 oder m == 0 oder d == m:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 22))
+        setze i: u64 auf 0
+        solange i < ARRAY_MAX_MITGLIEDER:
+            setze belegt: [u64; 5] auf [a.datentransporte[i].kennung, a.metatransporte[i].kennung, a.ersatz_daten[i].kennung, a.ersatz_meta[i].kennung, a.kennungen[i]]
+            wenn i == slot:
+                belegt[2] = 0
+                belegt[3] = 0
+            setze j: u64 auf 0
+            solange j < 5:
+                wenn d == belegt[j] oder m == belegt[j]:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 23))
+                setze j auf j + 1
+            setze i auf i + 1
+        setze dt: ptr[FatKernTransport] auf zeiger(adresse_von(a.ersatz_daten[slot]))
+        setze mt: ptr[FatKernTransport] auf zeiger(adresse_von(a.ersatz_meta[slot]))
+        weitergeben(fat_kern_transport_einrichten(dt, d))
+        weitergeben(fat_kern_transport_einrichten(mt, m))
+        setze td: ptr[dyn FatTransport] auf dt
+        setze tm: ptr[dyn FatTransport] auf mt
+        setze quelle: ArrayAnschluss auf ArrayAnschluss(eingabe.identitaet, ArrayMedien(td, tm))
+        gib_zurück array_rebuild_ersatz_beginnen(zeiger(adresse_von(a.rebuild)), zeiger(adresse_von(quelle)), zeiger(adresse_von(a.rebuild_arbeit)))
+
+@nativ
+funktion array_kern_rebuild_schritt(a: ptr[ArrayKern]) -> ergebnis[ArrayRebuildFortschritt, BlockFehler]:
+    unsicher:
+        wenn nicht array_kern_rebuild_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 24))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.rebuild_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_kern_rebuild_freigeben(sperre)
+        gib_zurück array_rebuild_schritt(zeiger(adresse_von(a.rebuild)), zeiger(adresse_von(a.rebuild_arbeit)))
+
+@nativ
+funktion array_kern_rebuild_status(a: ptr[ArrayKern], mitglied: u64) -> ergebnis[ArrayRebuildStatus, BlockFehler]:
+    unsicher:
+        wenn nicht array_kern_rebuild_aktiv(a):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 25))
+        setze sperre: ptr[KernMutex] auf zeiger(adresse_von(a.rebuild_sperre))
+        mutex_nimm(smp_planer(), sperre)
+        aufräumen: array_kern_rebuild_freigeben(sperre)
+        gib_zurück array_rebuild_status(zeiger(adresse_von(a.rebuild)), mitglied)

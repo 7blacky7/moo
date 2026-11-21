@@ -1,0 +1,14 @@
+[tasks.format]
+run = "bash format.sh"
+
+[tasks.winrm]
+run = "bash winrm.sh"
+
+[tasks.bench]
+run = "uv run python bench.py"
+
+[tasks.matrix]
+run = "uv run python gate.py"
+
+[tasks.gf]
+run = "uv run python gf.py"

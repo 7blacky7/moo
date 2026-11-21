@@ -1,0 +1,162 @@
+# Seitenweises logisches Lesen und Schreiben im P-Array. Der Aufrufer hält
+# die Rebuild-Sperre von der Auswahl der Seite bis nach der Barriere.
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_NICHT_BEREIT, BLOCK_GEOMETRIE, BLOCK_EA, block_pruefen
+aus nativ_crc32c importiere crc32c
+aus array_format importiere ARRAY_DATEN, ARRAY_SEITEN_BYTES, array_seite_leeren
+aus array_paritaet importiere ArrayP, ArrayArbeitsraum, array_io, array_barriere, array_p_xor
+aus array_rebuild_format importiere ArrayRebuildStand, ARRAY_REBUILD_KEIN, ARRAY_JOURNAL_DATEN, ARRAY_JOURNAL_P
+aus array_rebuild_metadaten importiere ArrayRebuild, array_rebuild_gebunden, array_rebuild_ausfall, array_rebuild_speichern
+
+@nativ
+funktion array_rebuild_seite_gueltig(r: ptr[ArrayRebuild], s: ptr[ArrayRebuildStand], mitglied: u64, seite: u64) -> bool:
+    unsicher:
+        wenn nicht array_rebuild_gebunden(r, mitglied):
+            gib_zurück falsch
+        gib_zurück s.fehlt != mitglied oder (s.ersatz und seite < s.fertig)
+
+@nativ
+funktion array_rebuild_roh_lesen(r: ptr[ArrayRebuild], mitglied: u64, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze e: ergebnis[void, BlockFehler] auf array_io(p.medien[mitglied].daten, BLOCK_LESEN, seite, 1, adresse)
+        wenn nicht ist_erfolg(e):
+            setze r.zaehler[mitglied].lese_fehler auf r.zaehler[mitglied].lese_fehler + 1
+        gib_zurück e
+
+@nativ
+funktion array_rebuild_schreiben_barriere(m: ptr[dyn FatTransport], seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_io(m, BLOCK_SCHREIBEN, seite, 1, adresse))
+    gib_zurück array_barriere(m)
+
+@nativ
+funktion array_rebuild_roh_schreiben(r: ptr[ArrayRebuild], mitglied: u64, seite: u64, adresse: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze e: ergebnis[void, BlockFehler] auf array_rebuild_schreiben_barriere(p.medien[mitglied].daten, seite, adresse)
+        wenn nicht ist_erfolg(e):
+            setze r.zaehler[mitglied].schreib_fehler auf r.zaehler[mitglied].schreib_fehler + 1
+        gib_zurück e
+
+@nativ
+funktion array_rebuild_rekonstruieren(r: ptr[ArrayRebuild], ziel: u64, seite: u64, adresse: u64, scratch: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze zustand: ptr[ArrayRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze raus: ptr[u8] auf zeiger(adresse)
+        setze temp: ptr[u8] auf zeiger(scratch)
+        setze bytes: puffer[u8] auf byteansicht(raus, ARRAY_SEITEN_BYTES)
+        setze anderes: puffer[u8] auf byteansicht(temp, ARRAY_SEITEN_BYTES)
+        array_seite_leeren(bytes)
+        setze i: u64 auf 0
+        solange i < p.layout.anzahl:
+            wenn i != ziel und (i == p.grenzen.paritaet oder seite < p.layout.mitglieder[i].seiten):
+                wenn nicht array_rebuild_seite_gueltig(r, zustand, i, seite):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 130))
+                weitergeben(array_rebuild_roh_lesen(r, i, seite, scratch))
+                array_p_xor(bytes, anderes)
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_verloren(r: ptr[ArrayRebuild], mitglied: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 131))
+        wenn mitglied >= r.stand.layout.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 130))
+        wenn nicht array_rebuild_gebunden(r, mitglied) und r.stand.fehlt == mitglied:
+            gib_zurück erfolg()
+        setze stand: ArrayRebuildStand auf r.stand
+        setze s: ptr[ArrayRebuildStand] auf zeiger(adresse_von(stand))
+        setze r.bereit auf falsch
+        weitergeben(array_rebuild_ausfall(r, s, mitglied))
+        gib_zurück array_rebuild_speichern(r, s, w, 0, 0)
+
+@nativ
+funktion array_rebuild_seite_lesen(r: ptr[ArrayRebuild], mitglied: u64, seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze s: ptr[ArrayRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze da: bool auf array_rebuild_seite_gueltig(r, s, mitglied, seite)
+        wenn da:
+            wenn ist_erfolg(array_rebuild_roh_lesen(r, mitglied, seite, adresse)):
+                gib_zurück erfolg()
+        weitergeben(array_rebuild_rekonstruieren(r, mitglied, seite, adresse, adresse_von(w.bitmap_b[0])))
+        wenn da:
+            wenn ist_erfolg(array_rebuild_roh_schreiben(r, mitglied, seite, adresse)):
+                setze r.zaehler[mitglied].heilungen auf r.zaehler[mitglied].heilungen + 1
+            sonst:
+                weitergeben(array_rebuild_verloren(r, mitglied, w))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_rebuild_anfrage_pruefen(r: ptr[ArrayRebuild], mitglied: u64, art: u32, seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 132))
+        wenn u64(w) == 0 oder mitglied >= r.stand.layout.anzahl oder r.stand.layout.mitglieder[mitglied].rolle != ARRAY_DATEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 131))
+        setze geo: BlockGeometrie auf BlockGeometrie(r.stand.layout.mitglieder[mitglied].seiten, ARRAY_SEITEN_BYTES, falsch)
+        gib_zurück block_pruefen(geo, art, seite, 1, adresse, ARRAY_SEITEN_BYTES)
+
+@nativ
+funktion array_rebuild_lesen(r: ptr[ArrayRebuild], mitglied: u64, seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    weitergeben(array_rebuild_anfrage_pruefen(r, mitglied, BLOCK_LESEN, seite, adresse, w))
+    gib_zurück array_rebuild_seite_lesen(r, mitglied, seite, adresse, w)
+
+@nativ
+funktion array_rebuild_journal_anwenden(r: ptr[ArrayRebuild], w: ptr[ArrayArbeitsraum], daten: u64, p_bild: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ArrayP] auf r.basis
+        setze stand: ArrayRebuildStand auf r.stand
+        setze s: ptr[ArrayRebuildStand] auf zeiger(adresse_von(stand))
+        setze ziel: u64 auf stand.journal_ziel
+        setze seite: u64 auf stand.journal_seite
+        setze paritaet: u64 auf p.grenzen.paritaet
+        setze r.bereit auf falsch
+        wenn (stand.journal_beine & ARRAY_JOURNAL_DATEN) != 0 und array_rebuild_seite_gueltig(r, s, ziel, seite):
+            wenn nicht ist_erfolg(array_rebuild_roh_schreiben(r, ziel, seite, daten)):
+                weitergeben(array_rebuild_ausfall(r, s, ziel))
+        wenn (stand.journal_beine & ARRAY_JOURNAL_P) != 0 und array_rebuild_seite_gueltig(r, s, paritaet, seite):
+            wenn nicht ist_erfolg(array_rebuild_roh_schreiben(r, paritaet, seite, p_bild)):
+                weitergeben(array_rebuild_ausfall(r, s, paritaet))
+        setze stand.journal_ziel auf ARRAY_REBUILD_KEIN
+        setze stand.journal_beine auf 0
+        setze stand.journal_seite auf 0
+        setze stand.daten_crc auf 0
+        setze stand.p_crc auf 0
+        gib_zurück array_rebuild_speichern(r, s, w, 0, 0)
+
+@nativ
+funktion array_rebuild_schreiben(r: ptr[ArrayRebuild], mitglied: u64, seite: u64, adresse: u64, w: ptr[ArrayArbeitsraum]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_rebuild_anfrage_pruefen(r, mitglied, BLOCK_SCHREIBEN, seite, adresse, w))
+        setze p: ptr[ArrayP] auf r.basis
+        setze paritaet: u64 auf p.grenzen.paritaet
+        setze s: ptr[ArrayRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze alt: u64 auf adresse_von(w.alt[0])
+        setze p_bild: u64 auf adresse_von(w.paritaet[0])
+        setze neuer_block: ptr[u8] auf zeiger(adresse)
+        setze daten: puffer[u8] auf byteansicht(neuer_block, ARRAY_SEITEN_BYTES)
+        wenn array_rebuild_seite_gueltig(r, s, paritaet, seite):
+            weitergeben(array_rebuild_seite_lesen(r, mitglied, seite, alt, w))
+            wenn array_rebuild_seite_gueltig(r, s, paritaet, seite):
+                weitergeben(array_rebuild_seite_lesen(r, paritaet, seite, p_bild, w))
+        setze stand: ArrayRebuildStand auf r.stand
+        setze ziel: ptr[ArrayRebuildStand] auf zeiger(adresse_von(stand))
+        setze stand.journal_ziel auf mitglied
+        setze stand.journal_seite auf seite
+        wenn array_rebuild_seite_gueltig(r, s, mitglied, seite):
+            setze stand.journal_beine auf ARRAY_JOURNAL_DATEN
+            setze stand.daten_crc auf crc32c(daten)
+        wenn array_rebuild_seite_gueltig(r, s, paritaet, seite):
+            setze vorher: puffer[u8] auf byteansicht(w.alt)
+            setze p_bytes: puffer[u8] auf byteansicht(w.paritaet)
+            array_p_xor(p_bytes, vorher)
+            array_p_xor(p_bytes, daten)
+            setze stand.journal_beine auf stand.journal_beine | ARRAY_JOURNAL_P
+            setze stand.p_crc auf crc32c(p_bytes)
+        wenn stand.journal_beine == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 130))
+        weitergeben(array_rebuild_speichern(r, ziel, w, adresse, p_bild))
+        gib_zurück array_rebuild_journal_anwenden(r, w, adresse, p_bild)

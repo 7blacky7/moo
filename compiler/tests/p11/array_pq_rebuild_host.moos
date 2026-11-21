@@ -1,0 +1,296 @@
+# Gehostete physische P/Q-Ausfallprobe auf regulären Bildern.
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_pq_format importiere ARRAY_PARITAET_Q
+aus array_paritaet importiere ArrayAnschluss, ArrayMedien
+aus array_gf256 importiere ArrayGf256, array_gf256_starten
+aus array_q importiere ARRAY_Q_TABELLE
+aus array_rebuild importiere ArrayRebuildFortschritt, ArrayRebuildStatus, ARRAY_MITGLIED_AUFBAU, ARRAY_MITGLIED_AKTIV
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildArbeit, ARRAY_PQ_KEIN, array_pq_rebuild_zielseiten
+aus array_pq_rebuild importiere array_pq_rebuild_anlegen, array_pq_rebuild_oeffnen, array_pq_rebuild_ersatz_beginnen, array_pq_rebuild_status, array_pq_rebuild_schritt
+aus array_pq_rebuild_io importiere array_pq_rebuild_lesen, array_pq_rebuild_schreiben
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_EA, BLOCK_NICHT_BEREIT
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion atoi(name: ptr[u8]) -> i32
+extern "C" funktion raise(signal_nr: i32) -> i32
+
+struktur PqProbeTransport implementiert FatTransport:
+    unter: ptr[dyn FatTransport]
+    sektoren: u64
+    geschrieben: u64
+    erste_schreibseite: u64
+    ende_schreibseite: u64
+    filter: bool
+    abbruch: bool
+    lese_stoerung: bool
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.unter.geometrie()
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn art == BLOCK_LESEN und selbst.lese_stoerung und lba == selbst.sektoren:
+                setze selbst.lese_stoerung auf falsch
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 304))
+            wenn art == BLOCK_SCHREIBEN:
+                wenn selbst.abbruch:
+                    setze rueckgabe_signal: i32 auf raise(19)
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 290))
+                setze seite: u64 auf lba / selbst.sektoren
+                setze seiten: u64 auf anzahl / selbst.sektoren
+                wenn selbst.filter und (seite < selbst.erste_schreibseite oder seite + seiten > selbst.ende_schreibseite):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 291))
+                setze selbst.geschrieben auf selbst.geschrieben + seiten
+            gib_zurück selbst.unter.uebertragen(art, lba, anzahl, puffer, bytes)
+
+@nativ
+statisch PQ_PROBE: ArrayPQRebuild auf 0
+@nativ
+statisch PQ_PROBE_ARBEIT: ArrayPQRebuildArbeit auf 0
+@nativ
+statisch PQ_PROBE_GF: ArrayGf256 auf 0
+@nativ
+statisch PQ_PROBE_DATEN: [FatPosix; 6] auf 0
+@nativ
+statisch PQ_PROBE_META: [FatPosix; 6] auf 0
+@nativ
+statisch PQ_PROBE_TRANSPORTE: [PqProbeTransport; 6] auf 0
+@nativ
+statisch PQ_PROBE_QUELLEN: [ArrayAnschluss; 6] auf 0
+@nativ
+statisch PQ_PROBE_AUSWAHL: [ArrayAnschluss; 4] auf 0
+@nativ
+statisch PQ_PROBE_BLOCK: [u8; 4096] auf 0
+
+@nativ
+funktion pq_probe_fd(nr: u64) -> i32:
+    unsicher:
+        setze name: [u8; 16] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 70, 68, 95, 48, 0, 0]
+        wenn nr >= 10:
+            name[13] = 49
+            name[14] = als(u8, 48 + nr - 10)
+        sonst:
+            name[13] = als(u8, 48 + nr)
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück -1
+        gib_zurück atoi(text)
+
+@nativ
+funktion pq_probe_medien(l: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze l.anzahl auf 4
+        setze l.generation auf 9
+        setze l.guid_lo auf 0x514155
+        setze l.guid_hi auf 0x51415577
+        setze i: u64 auf 0
+        solange i < 6:
+            setze sektor: u64 auf 512
+            wenn (i & 1) != 0:
+                setze sektor auf 4096
+            setze d: ptr[FatPosix] auf zeiger(adresse_von(PQ_PROBE_DATEN[i]))
+            setze m: ptr[FatPosix] auf zeiger(adresse_von(PQ_PROBE_META[i]))
+            weitergeben(fat_posix_einrichten(d, pq_probe_fd(i), sektor, falsch))
+            weitergeben(fat_posix_einrichten(m, pq_probe_fd(6 + i), sektor, falsch))
+            setze darunter: ptr[dyn FatTransport] auf d
+            setze transport: ptr[PqProbeTransport] auf zeiger(adresse_von(PQ_PROBE_TRANSPORTE[i]))
+            setze transport.unter auf darunter
+            setze transport.sektoren auf 4096 / sektor
+            setze td: ptr[dyn FatTransport] auf transport
+            setze tm: ptr[dyn FatTransport] auf m
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x500 + i
+            setze ident.guid_hi auf 0x600 + i
+            setze ident.serien_bytes auf 3
+            ident.serie[0] = 80
+            ident.serie[1] = 81
+            ident.serie[2] = als(u8, 48 + i)
+            setze PQ_PROBE_QUELLEN[i] auf ArrayAnschluss(ident, ArrayMedien(td, tm))
+            wenn i < 4:
+                setze seiten: u64 auf 7
+                setze rolle: u32 auf ARRAY_DATEN
+                wenn i == 0:
+                    setze seiten auf 4
+                wenn i == 1:
+                    setze rolle auf ARRAY_PARITAET_P
+                wenn i == 2:
+                    setze rolle auf ARRAY_PARITAET_Q
+                setze l.mitglieder[i] auf ArrayMitgliedsdaten(rolle, seiten, ident)
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion pq_probe_auswahl(a: u64, b: u64, bestand: u64) -> u64:
+    unsicher:
+        setze anzahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 4:
+            setze slot: u64 auf 3 - i
+            setze index: u64 auf slot
+            wenn slot == a:
+                setze index auf ARRAY_PQ_KEIN
+                wenn bestand >= 1:
+                    setze index auf 4
+            wenn slot == b:
+                setze index auf ARRAY_PQ_KEIN
+                wenn bestand >= 2:
+                    setze index auf 5
+            wenn index != ARRAY_PQ_KEIN:
+                setze PQ_PROBE_AUSWAHL[anzahl] auf PQ_PROBE_QUELLEN[index]
+                setze anzahl auf anzahl + 1
+            setze i auf i + 1
+        gib_zurück anzahl
+
+@nativ
+funktion pq_probe_lesen(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], slot: u64, seite: u64, wert: u8, muster: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_rebuild_lesen(r, slot, seite, adresse_von(PQ_PROBE_BLOCK[0]), w))
+        setze i: u64 auf 0
+        solange i < 4096:
+            setze erwartet: u8 auf wert
+            wenn muster:
+                setze erwartet auf als(u8, (als(u64, wert) + seite * 7 + i * 13) & 255)
+            wenn PQ_PROBE_BLOCK[i] != erwartet:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 292))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion pq_probe_schreiben(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], slot: u64, seite: u64, wert: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4096:
+            PQ_PROBE_BLOCK[i] = wert
+            setze i auf i + 1
+        weitergeben(array_pq_rebuild_schreiben(r, slot, seite, adresse_von(PQ_PROBE_BLOCK[0]), w))
+        gib_zurück pq_probe_lesen(r, w, slot, seite, wert, falsch)
+
+@nativ
+funktion pq_probe_schritte(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], start: u64, ende: u64, gesamt: u64) -> ergebnis[void, BlockFehler]:
+    setze fertig: u64 auf start
+    solange fertig < ende:
+        setze f: ArrayRebuildFortschritt auf weitergeben(array_pq_rebuild_schritt(r, w))
+        setze fertig auf fertig + 1
+        wenn f.fertig != fertig oder f.gesamt != gesamt oder f.abgeschlossen != (fertig == gesamt):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 293))
+    gib_zurück erfolg()
+
+@nativ
+funktion pq_probe_degradiert(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], a: u64, b: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn r.stand.fehlende != ((1 << a) | (1 << b)):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 294))
+        weitergeben(pq_probe_lesen(r, w, 0, 2, 11, wahr))
+        weitergeben(pq_probe_lesen(r, w, 3, 6, 153, wahr))
+        weitergeben(pq_probe_schreiben(r, w, 0, 1, 0xA1))
+        weitergeben(pq_probe_schreiben(r, w, 3, 5, 0xB5))
+        gib_zurück erfolg(1)
+
+@nativ
+funktion pq_probe_start_ersatz(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], a: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_rebuild_ersatz_beginnen(r, a, zeiger(adresse_von(PQ_PROBE_QUELLEN[4])), w))
+        weitergeben(pq_probe_schritte(r, w, 0, 2, array_pq_rebuild_zielseiten(r, a)))
+        weitergeben(pq_probe_schreiben(r, w, 0, 0, 0xC0))
+        weitergeben(pq_probe_schreiben(r, w, 3, 3, 0xD3))
+        gib_zurück erfolg(2)
+
+@nativ
+funktion pq_probe_ende_ersatz(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit], a: u64, b: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze stand: ArrayRebuildStatus auf weitergeben(array_pq_rebuild_status(r, a))
+        wenn stand.zustand != ARRAY_MITGLIED_AUFBAU oder stand.fortschritt.fertig != 2:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 295))
+        setze gesamt_a: u64 auf array_pq_rebuild_zielseiten(r, a)
+        setze gesamt_b: u64 auf array_pq_rebuild_zielseiten(r, b)
+        setze PQ_PROBE_TRANSPORTE[4].filter auf wahr
+        setze PQ_PROBE_TRANSPORTE[4].erste_schreibseite auf 2
+        setze PQ_PROBE_TRANSPORTE[4].ende_schreibseite auf gesamt_a
+        weitergeben(pq_probe_schritte(r, w, 2, gesamt_a, gesamt_a))
+        wenn r.stand.fehlende != (1 << b):
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 296))
+        weitergeben(array_pq_rebuild_ersatz_beginnen(r, b, zeiger(adresse_von(PQ_PROBE_QUELLEN[5])), w))
+        weitergeben(pq_probe_schritte(r, w, 0, gesamt_b, gesamt_b))
+        wenn r.stand.fehlende != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 297))
+        gib_zurück erfolg((PQ_PROBE_TRANSPORTE[4].geschrieben << 32) | PQ_PROBE_TRANSPORTE[5].geschrieben)
+
+@nativ
+funktion pq_probe_lauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 77, 79, 68, 69, 0]
+        setze mode: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(mode) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 298))
+        setze op: u8 auf mode[0]
+        setze a: u64 auf ARRAY_PQ_KEIN
+        setze b: u64 auf ARRAY_PQ_KEIN
+        wenn mode[1] != 0:
+            wenn mode[1] < 48 oder mode[1] > 51 oder mode[2] <= mode[1] oder mode[2] > 51:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 299))
+            setze a auf als(u64, mode[1] - 48)
+            setze b auf als(u64, mode[2] - 48)
+        setze layout: ArrayLayout auf 0
+        setze l: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        weitergeben(pq_probe_medien(l))
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(PQ_PROBE))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(PQ_PROBE_ARBEIT))
+        setze tab: ptr[ArrayGf256] auf zeiger(adresse_von(PQ_PROBE_GF))
+        array_gf256_starten(tab)
+        wenn op == 104:
+            setze a auf 1
+        setze bestand: u64 auf 0
+        wenn op == 114:
+            setze bestand auf 1
+        wenn op == 120:
+            setze bestand auf 2
+        setze anzahl: u64 auf pq_probe_auswahl(a, b, bestand)
+        setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(PQ_PROBE_AUSWAHL[0]))
+        wenn op == 97:
+            gib_zurück array_pq_rebuild_anlegen(r, l, q, anzahl, ARRAY_Q_TABELLE, tab, w)
+        wenn op == 120:
+            setze unvollstaendig: ergebnis[u64, BlockFehler] auf array_pq_rebuild_oeffnen(r, q, 1, ARRAY_Q_TABELLE, tab, w)
+            wenn nicht ist_erfolg(unvollstaendig):
+                setze fehler: BlockFehler auf ergebnis_fehler(unvollstaendig)
+                wenn fehler.code == BLOCK_NICHT_BEREIT:
+                    gib_zurück erfolg(1)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 300))
+        weitergeben(array_pq_rebuild_oeffnen(r, q, anzahl, ARRAY_Q_TABELLE, tab, w))
+        wenn op == 104:
+            setze PQ_PROBE_TRANSPORTE[0].lese_stoerung auf wahr
+            weitergeben(pq_probe_lesen(r, w, 0, 1, 11, wahr))
+            setze heil_status: ArrayRebuildStatus auf weitergeben(array_pq_rebuild_status(r, 0))
+            wenn heil_status.zustand != ARRAY_MITGLIED_AKTIV oder heil_status.fehler.lese_fehler != 1 oder heil_status.fehler.heilungen != 1 oder r.stand.fehlende != 2:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 305))
+            gib_zurück erfolg(1)
+        wenn op == 100:
+            gib_zurück pq_probe_degradiert(r, w, a, b)
+        wenn op == 98:
+            gib_zurück pq_probe_start_ersatz(r, w, a)
+        wenn op == 114:
+            gib_zurück pq_probe_ende_ersatz(r, w, a, b)
+        wenn op == 99:
+            setze PQ_PROBE_TRANSPORTE[2].abbruch auf wahr
+            weitergeben(pq_probe_schreiben(r, w, 0, 2, 0xE2))
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 301))
+        wenn op == 106:
+            wenn r.stand.fehlende != ((1 << a) | (1 << b)):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 302))
+            weitergeben(pq_probe_lesen(r, w, 0, 2, 0xE2, falsch))
+            gib_zurück erfolg(1)
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 303))
+
+@nativ
+funktion pq_probe_ergebnis() -> u64:
+    unsicher:
+        setze r: ergebnis[u64, BlockFehler] auf pq_probe_lauf()
+        wenn ist_erfolg(r):
+            gib_zurück ergebnis_wert(r)
+        setze f: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück (als(u64, f.code) << 32) | als(u64, f.geraete_status)
+
+unsicher:
+    zeige pq_probe_ergebnis()

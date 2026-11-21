@@ -1,0 +1,13 @@
+# Opaque LLVM-Pointer dürfen den Cleanup-Slotvertrag nicht abschwächen.
+@nativ
+funktion kern_native_cleanup_ort() -> ptr[u64]:
+    unsicher:
+        gib_zurück zeiger(0)
+
+@nativ
+funktion cleanup_kontext_leer() -> void:
+    gib_zurück
+
+@nativ
+funktion cleanup_kontext_probe() -> void:
+    aufräumen: cleanup_kontext_leer()

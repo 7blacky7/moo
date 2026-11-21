@@ -1,0 +1,452 @@
+# Ein Dateisystem je Freigabe. Datenvolumes stehen vor dem Cache. Der Besitzer
+# serialisiert Operationen mit Mover und hält die Backings exklusiv eingebunden.
+aus vfs importiere Dateisystem, VfsFehler, VfsStat, VfsEintrag, VfsPfad, vfs_pfad, VFS_LESEN, VFS_ANLEGEN, VFS_VERZEICHNIS, VFS_ORDNER, VFS_ENOENT, VFS_EIO, VFS_EBADF, VFS_EBUSY, VFS_EEXIST, VFS_EXDEV, VFS_ENOTDIR, VFS_EINVAL, VFS_EMFILE, VFS_ENAMETOOLONG
+aus nativ_crc32c importiere crc32c
+
+struktur VereinigungQuelle:
+    system: ptr[dyn Dateisystem]
+
+struktur VereinigungRegel:
+    cache_neue: bool
+    nach_name: bool
+    datenplatte: u64
+
+struktur VereinigungGriff:
+    aktiv: bool
+    generation: u64
+    quelle: u64
+    griff: u64
+    pfad: VfsPfad
+
+struktur VereinigungTreffer:
+    quelle: u64
+    stat: VfsStat
+
+struktur VereinigungArbeit:
+    normal: VfsPfad
+    pfad: VfsPfad
+    zweiter: VfsPfad
+
+@nativ
+konstante VEREINIGUNG_GRIFFE: u64 auf 32
+@nativ
+konstante VEREINIGUNG_MOVER_PFAD: [u8; 19] auf "/.moo-mover-staging"
+
+struktur Vereinigung implementiert Dateisystem:
+    bereit: bool
+    daten: u64
+    regel: VereinigungRegel
+    basis: VfsPfad
+    arbeit: ptr[VereinigungArbeit]
+    quellen: [VereinigungQuelle; 16]
+    griffe: [VereinigungGriff; 32]
+
+    funktion oeffnen(selbst, pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            gib_zurück vereinigung_oeffnen(selbst, pfad, modus)
+
+    funktion schliessen(selbst, griff: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(selbst, griff))
+            setze g.aktiv auf falsch
+            gib_zurück selbst.quellen[g.quelle].system.schliessen(g.griff)
+
+    funktion lesen(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(selbst, griff))
+            gib_zurück selbst.quellen[g.quelle].system.lesen(g.griff, offset, daten)
+
+    funktion schreiben(selbst, griff: u64, offset: u64, daten: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+        unsicher:
+            setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(selbst, griff))
+            gib_zurück selbst.quellen[g.quelle].system.schreiben(g.griff, offset, daten)
+
+    funktion stat(selbst, griff: u64) -> ergebnis[VfsStat, VfsFehler]:
+        unsicher:
+            setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(selbst, griff))
+            gib_zurück selbst.quellen[g.quelle].system.stat(g.griff)
+
+    funktion verzeichnis(selbst, griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+        unsicher:
+            gib_zurück vereinigung_verzeichnis(selbst, griff, index)
+
+    funktion groesse(selbst, griff: u64, bytes: u64) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(selbst, griff))
+            gib_zurück selbst.quellen[g.quelle].system.groesse(g.griff, bytes)
+
+    funktion anlegen(selbst, pfad: puffer[u8], verzeichnis: bool) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            setze p: ptr[VfsPfad] auf weitergeben(vereinigung_erster_pfad(selbst, pfad))
+            setze physisch: puffer[u8] auf pufferansicht(p.bytes, 0, p.anzahl)
+            setze idx: u64 auf weitergeben(vereinigung_neues_ziel(selbst, physisch))
+            weitergeben(vereinigung_eltern(selbst, idx, physisch))
+            gib_zurück selbst.quellen[idx].system.anlegen(physisch, verzeichnis)
+
+    funktion loeschen(selbst, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück vereinigung_loeschen(selbst, pfad)
+
+    funktion umbenennen(selbst, quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            gib_zurück vereinigung_umbenennen(selbst, quelle, ziel)
+
+    funktion abgleichen(selbst) -> ergebnis[void, VfsFehler]:
+        unsicher:
+            weitergeben(vereinigung_bereit(selbst))
+            setze i: u64 auf 0
+            solange i <= selbst.daten:
+                weitergeben(selbst.quellen[i].system.abgleichen())
+                setze i auf i + 1
+            gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_bereit(v: ptr[Vereinigung]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn u64(v) == 0 oder nicht v.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 240, 0))
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_praefix(a: puffer[u8], b: puffer[u8]) -> bool:
+    wenn länge(a) > länge(b):
+        gib_zurück falsch
+    setze i: u64 auf 0
+    solange i < länge(a):
+        wenn a[i] != b[i]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+@nativ
+funktion vereinigung_pfade_gleich(a: puffer[u8], b: puffer[u8]) -> bool:
+    gib_zurück länge(a) == länge(b) und vereinigung_praefix(a, b)
+
+@nativ
+funktion vereinigung_reserviert(name: puffer[u8]) -> bool:
+    wenn länge(name) < 18 oder (länge(name) > 18 und name[18] != 47):
+        gib_zurück falsch
+    setze i: u64 auf 0
+    solange i < 18:
+        wenn name[i] != VEREINIGUNG_MOVER_PFAD[i + 1]:
+            gib_zurück falsch
+        setze i auf i + 1
+    gib_zurück wahr
+
+# Beide Argumente sind kanonisch. Der zweite Pfad beginnt mit einem Schrägstrich.
+@nativ
+funktion vereinigung_pfad_verbinden(basis: puffer[u8], name: puffer[u8], ziel: ptr[VfsPfad]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze prefix: u64 auf länge(basis)
+        setze suffix: u64 auf länge(name)
+        wenn prefix == 1:
+            setze prefix auf 0
+        sonst wenn suffix == 1:
+            setze suffix auf 0
+        wenn prefix + suffix > 4095:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 240, 0))
+        setze i: u64 auf 0
+        solange i < prefix:
+            ziel.bytes[i] = basis[i]
+            setze i auf i + 1
+        setze j: u64 auf 0
+        solange j < suffix:
+            ziel.bytes[i + j] = name[j]
+            setze j auf j + 1
+        setze ziel.anzahl auf prefix + suffix
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_physisch(v: ptr[Vereinigung], pfad: puffer[u8], ziel: ptr[VfsPfad]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze normal: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.normal))
+        weitergeben(vfs_pfad(pfad, normal))
+        wenn normal.anzahl > 1 und vereinigung_reserviert(pufferansicht(normal.bytes, 1, normal.anzahl - 1)):
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 240, 0))
+        gib_zurück vereinigung_pfad_verbinden(pufferansicht(v.basis.bytes, 0, v.basis.anzahl), pufferansicht(normal.bytes, 0, normal.anzahl), ziel)
+
+@nativ
+funktion vereinigung_erster_pfad(v: ptr[Vereinigung], pfad: puffer[u8]) -> ergebnis[ptr[VfsPfad], VfsFehler]:
+    unsicher:
+        weitergeben(vereinigung_bereit(v))
+        setze ziel: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.pfad))
+        weitergeben(vereinigung_physisch(v, pfad, ziel))
+        gib_zurück erfolg(ziel)
+
+@nativ
+funktion vereinigung_attribut(fs: ptr[dyn Dateisystem], pfad: puffer[u8]) -> ergebnis[VfsStat, VfsFehler]:
+    unsicher:
+        setze griff: u64 auf weitergeben(fs.oeffnen(pfad, VFS_LESEN))
+        setze a: ergebnis[VfsStat, VfsFehler] auf fs.stat(griff)
+        setze zu: ergebnis[void, VfsFehler] auf fs.schliessen(griff)
+        setze daten: VfsStat auf weitergeben(a)
+        weitergeben(zu)
+        gib_zurück erfolg(daten)
+
+@nativ
+funktion vereinigung_finden(v: ptr[Vereinigung], pfad: puffer[u8], start: u64, ende: u64) -> ergebnis[VereinigungTreffer, VfsFehler]:
+    unsicher:
+        setze i: u64 auf start
+        solange i < ende:
+            setze r: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(v.quellen[i].system, pfad)
+            wenn ist_erfolg(r):
+                gib_zurück erfolg(VereinigungTreffer(i, ergebnis_wert(r)))
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            wenn f.code != VFS_ENOENT:
+                gib_zurück fehlschlag(f)
+            setze i auf i + 1
+        gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+
+@nativ
+funktion vereinigung_datenziel(v: ptr[Vereinigung], pfad: puffer[u8]) -> u64:
+    unsicher:
+        wenn v.regel.nach_name:
+            gib_zurück als(u64, crc32c(pfad)) % v.daten
+        gib_zurück v.regel.datenplatte
+
+@nativ
+funktion vereinigung_schreibziel(v: ptr[Vereinigung], pfad: puffer[u8]) -> u64:
+    unsicher:
+        wenn v.regel.cache_neue:
+            gib_zurück v.daten
+        gib_zurück vereinigung_datenziel(v, pfad)
+
+@nativ
+funktion vereinigung_neues_ziel(v: ptr[Vereinigung], pfad: puffer[u8]) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze r: ergebnis[VereinigungTreffer, VfsFehler] auf vereinigung_finden(v, pfad, 0, v.daten + 1)
+        wenn ist_erfolg(r):
+            gib_zurück fehlschlag(VfsFehler(VFS_EEXIST, 240, 0))
+        setze e: VfsFehler auf ergebnis_fehler(r)
+        wenn e.code != VFS_ENOENT:
+            gib_zurück fehlschlag(e)
+        gib_zurück erfolg(vereinigung_schreibziel(v, pfad))
+
+@nativ
+funktion vereinigung_eltern(v: ptr[Vereinigung], ziel: u64, pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze fs: ptr[dyn Dateisystem] auf v.quellen[ziel].system
+        setze i: u64 auf v.basis.anzahl + 1
+        solange i < länge(pfad):
+            wenn pfad[i] == 47:
+                setze eltern: puffer[u8] auf byteansicht(puffer_zeiger(pfad), i)
+                setze hier: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, eltern)
+                wenn ist_erfolg(hier):
+                    setze eigenschaft: VfsStat auf ergebnis_wert(hier)
+                    wenn eigenschaft.art != VFS_ORDNER:
+                        gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 240, 0))
+                sonst:
+                    setze f: VfsFehler auf ergebnis_fehler(hier)
+                    wenn f.code != VFS_ENOENT:
+                        gib_zurück fehlschlag(f)
+                    setze logisch: VereinigungTreffer auf weitergeben(vereinigung_finden(v, eltern, 0, v.daten + 1))
+                    wenn logisch.stat.art != VFS_ORDNER:
+                        gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 241, 0))
+                    weitergeben(fs.anlegen(eltern, wahr))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_griff(v: ptr[Vereinigung], griff: u64) -> ergebnis[ptr[VereinigungGriff], VfsFehler]:
+    unsicher:
+        weitergeben(vereinigung_bereit(v))
+        setze g: ptr[VereinigungGriff] auf zeiger(adresse_von(v.griffe[griff % VEREINIGUNG_GRIFFE]))
+        wenn nicht g.aktiv oder g.generation != griff / VEREINIGUNG_GRIFFE:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBADF, 240, 0))
+        gib_zurück erfolg(g)
+
+@nativ
+funktion vereinigung_pfad_offen(v: ptr[Vereinigung], pfad: puffer[u8], unterbaum: bool) -> bool:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < VEREINIGUNG_GRIFFE:
+            wenn v.griffe[i].aktiv:
+                setze g: puffer[u8] auf pufferansicht(v.griffe[i].pfad.bytes, 0, v.griffe[i].pfad.anzahl)
+                wenn vereinigung_pfade_gleich(pfad, g):
+                    gib_zurück wahr
+                wenn unterbaum und länge(g) > länge(pfad) und vereinigung_praefix(pfad, g) und g[länge(pfad)] == 47:
+                    gib_zurück wahr
+            setze i auf i + 1
+        gib_zurück falsch
+
+@nativ
+funktion vereinigung_oeffnen(v: ptr[Vereinigung], pfad: puffer[u8], modus: u32) -> ergebnis[u64, VfsFehler]:
+    unsicher:
+        setze p: ptr[VfsPfad] auf weitergeben(vereinigung_erster_pfad(v, pfad))
+        setze physisch: puffer[u8] auf pufferansicht(p.bytes, 0, p.anzahl)
+        setze slot: u64 auf 0
+        solange slot < VEREINIGUNG_GRIFFE und (v.griffe[slot].aktiv oder v.griffe[slot].generation == 0x07FFFFFFFFFFFFFF):
+            setze slot auf slot + 1
+        wenn slot == VEREINIGUNG_GRIFFE:
+            gib_zurück fehlschlag(VfsFehler(VFS_EMFILE, 240, 0))
+        setze idx: u64 auf 0
+        setze r: ergebnis[VereinigungTreffer, VfsFehler] auf vereinigung_finden(v, physisch, 0, v.daten + 1)
+        wenn ist_erfolg(r):
+            setze treffer: VereinigungTreffer auf ergebnis_wert(r)
+            setze idx auf treffer.quelle
+        sonst:
+            setze f: VfsFehler auf ergebnis_fehler(r)
+            wenn f.code != VFS_ENOENT oder (modus & VFS_ANLEGEN) == 0:
+                gib_zurück fehlschlag(f)
+            setze idx auf vereinigung_schreibziel(v, physisch)
+            weitergeben(vereinigung_eltern(v, idx, physisch))
+        setze g: ptr[VereinigungGriff] auf zeiger(adresse_von(v.griffe[slot]))
+        setze griff: u64 auf weitergeben(v.quellen[idx].system.oeffnen(physisch, modus))
+        setze g.quelle auf idx
+        setze g.griff auf griff
+        setze g.pfad auf p[0]
+        setze g.generation auf g.generation + 1
+        setze g.aktiv auf wahr
+        gib_zurück erfolg(g.generation * VEREINIGUNG_GRIFFE + slot)
+
+@nativ
+funktion vereinigung_kind(eltern: puffer[u8], eintrag: ptr[VfsEintrag], ziel: ptr[VfsPfad]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn eintrag.name_bytes == 0 oder eintrag.name_bytes > 1020:
+            gib_zurück fehlschlag(VfsFehler(VFS_EIO, 241, 0))
+        setze trenner: u64 auf als(u64, länge(eltern) > 1)
+        wenn länge(eltern) + trenner + eintrag.name_bytes > 4095:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENAMETOOLONG, 241, 0))
+        setze i: u64 auf 0
+        solange i < länge(eltern):
+            ziel.bytes[i] = eltern[i]
+            setze i auf i + 1
+        wenn trenner != 0:
+            ziel.bytes[i] = 47
+        setze i auf i + trenner
+        setze j: u64 auf 0
+        solange j < eintrag.name_bytes:
+            wenn eintrag.name[j] == 0 oder eintrag.name[j] == 47:
+                gib_zurück fehlschlag(VfsFehler(VFS_EIO, 242, 0))
+            ziel.bytes[i + j] = eintrag.name[j]
+            setze j auf j + 1
+        setze ziel.anzahl auf i + j
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_verzeichniseintrag(v: ptr[Vereinigung], dir: ptr[VfsPfad], quelle: u64, griff: u64, index: ptr[u64]) -> ergebnis[VfsEintrag, VfsFehler]:
+    unsicher:
+        setze fs: ptr[dyn Dateisystem] auf v.quellen[quelle].system
+        setze kind: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.zweiter))
+        setze i: u64 auf 0
+        solange wahr:
+            setze e: VfsEintrag auf weitergeben(fs.verzeichnis(griff, i))
+            setze i auf i + 1
+            setze ad: ptr[VfsEintrag] auf zeiger(adresse_von(e))
+            weitergeben(vereinigung_kind(pufferansicht(dir.bytes, 0, dir.anzahl), ad, kind))
+            wenn dir.anzahl == v.basis.anzahl und vereinigung_reserviert(pufferansicht(e.name, 0, e.name_bytes)):
+                weiter
+            setze frueher: ergebnis[VereinigungTreffer, VfsFehler] auf vereinigung_finden(v, pufferansicht(kind.bytes, 0, kind.anzahl), 0, quelle)
+            wenn ist_erfolg(frueher):
+                weiter
+            setze f: VfsFehler auf ergebnis_fehler(frueher)
+            wenn f.code != VFS_ENOENT und f.code != VFS_ENOTDIR:
+                gib_zurück fehlschlag(f)
+            wenn index[0] == 0:
+                gib_zurück erfolg(e)
+            setze index[0] auf index[0] - 1
+        gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+
+@nativ
+funktion vereinigung_verzeichnis(v: ptr[Vereinigung], griff: u64, index: u64) -> ergebnis[VfsEintrag, VfsFehler]:
+    unsicher:
+        setze g: ptr[VereinigungGriff] auf weitergeben(vereinigung_griff(v, griff))
+        setze stat: VfsStat auf weitergeben(v.quellen[g.quelle].system.stat(g.griff))
+        wenn stat.art != VFS_ORDNER:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 242, 0))
+        setze dir: ptr[VfsPfad] auf zeiger(adresse_von(g.pfad))
+        setze rest: u64 auf index
+        setze i: u64 auf 0
+        solange i <= v.daten:
+            setze fs: ptr[dyn Dateisystem] auf v.quellen[i].system
+            setze aufgegangen: ergebnis[u64, VfsFehler] auf fs.oeffnen(pufferansicht(dir.bytes, 0, dir.anzahl), VFS_LESEN | VFS_VERZEICHNIS)
+            wenn ist_erfolg(aufgegangen):
+                setze offen: u64 auf ergebnis_wert(aufgegangen)
+                setze e: ergebnis[VfsEintrag, VfsFehler] auf vereinigung_verzeichniseintrag(v, dir, i, offen, zeiger(adresse_von(rest)))
+                weitergeben(fs.schliessen(offen))
+                wenn ist_erfolg(e):
+                    gib_zurück e
+                setze fehler: VfsFehler auf ergebnis_fehler(e)
+                wenn fehler.code != VFS_ENOENT:
+                    gib_zurück fehlschlag(fehler)
+            sonst:
+                setze nicht_offen: VfsFehler auf ergebnis_fehler(aufgegangen)
+                wenn nicht_offen.code != VFS_ENOENT und nicht_offen.code != VFS_ENOTDIR:
+                    gib_zurück fehlschlag(nicht_offen)
+            setze i auf i + 1
+        gib_zurück fehlschlag(VfsFehler(VFS_ENOENT, 0, 0))
+
+@nativ
+funktion vereinigung_schatten_loeschen(v: ptr[Vereinigung], pfad: puffer[u8], treffer: VereinigungTreffer, verschieben: bool) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze i: u64 auf v.daten + 1
+        solange i > treffer.quelle + 1:
+            setze i auf i - 1
+            setze fs: ptr[dyn Dateisystem] auf v.quellen[i].system
+            setze alt: ergebnis[VfsStat, VfsFehler] auf vereinigung_attribut(fs, pfad)
+            wenn ist_erfolg(alt):
+                setze s: VfsStat auf ergebnis_wert(alt)
+                wenn s.art != treffer.stat.art oder (verschieben und s.art == VFS_ORDNER):
+                    gib_zurück fehlschlag(VfsFehler(VFS_EXDEV, 240, 0))
+                weitergeben(fs.loeschen(pfad))
+                weitergeben(fs.abgleichen())
+            sonst:
+                setze f: VfsFehler auf ergebnis_fehler(alt)
+                wenn f.code != VFS_ENOENT und f.code != VFS_ENOTDIR:
+                    gib_zurück fehlschlag(f)
+        gib_zurück erfolg()
+
+@nativ
+funktion vereinigung_loeschen(v: ptr[Vereinigung], pfad: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze p: ptr[VfsPfad] auf weitergeben(vereinigung_erster_pfad(v, pfad))
+        setze bytes: puffer[u8] auf pufferansicht(p.bytes, 0, p.anzahl)
+        wenn p.anzahl == v.basis.anzahl oder vereinigung_pfad_offen(v, bytes, wahr):
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 240, 0))
+        setze t: VereinigungTreffer auf weitergeben(vereinigung_finden(v, bytes, 0, v.daten + 1))
+        weitergeben(vereinigung_schatten_loeschen(v, bytes, t, falsch))
+        gib_zurück v.quellen[t.quelle].system.loeschen(bytes)
+
+@nativ
+funktion vereinigung_umbenennen(v: ptr[Vereinigung], quelle: puffer[u8], ziel: puffer[u8]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        setze alt: ptr[VfsPfad] auf weitergeben(vereinigung_erster_pfad(v, quelle))
+        setze nach: ptr[VfsPfad] auf zeiger(adresse_von(v.arbeit.zweiter))
+        weitergeben(vereinigung_physisch(v, ziel, nach))
+        setze a: puffer[u8] auf pufferansicht(alt.bytes, 0, alt.anzahl)
+        setze b: puffer[u8] auf pufferansicht(nach.bytes, 0, nach.anzahl)
+        wenn alt.anzahl == v.basis.anzahl oder nach.anzahl == v.basis.anzahl oder vereinigung_pfad_offen(v, a, wahr) oder vereinigung_pfad_offen(v, b, wahr):
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 241, 0))
+        setze t: VereinigungTreffer auf weitergeben(vereinigung_finden(v, a, 0, v.daten + 1))
+        wenn vereinigung_pfade_gleich(a, b):
+            gib_zurück erfolg()
+        weitergeben(vereinigung_neues_ziel(v, b))
+        weitergeben(vereinigung_eltern(v, t.quelle, b))
+        weitergeben(vereinigung_schatten_loeschen(v, a, t, wahr))
+        gib_zurück v.quellen[t.quelle].system.umbenennen(a, b)
+
+@nativ
+funktion vereinigung_einrichten(v: ptr[Vereinigung], daten: puffer[VereinigungQuelle], cache: ptr[dyn Dateisystem], basis: puffer[u8], regel: VereinigungRegel, w: ptr[VereinigungArbeit]) -> ergebnis[void, VfsFehler]:
+    unsicher:
+        wenn u64(v) == 0 oder u64(w) == 0 oder länge(daten) == 0 oder länge(daten) > 15 oder (nicht regel.nach_name und regel.datenplatte >= länge(daten)):
+            gib_zurück fehlschlag(VfsFehler(VFS_EINVAL, 240, 0))
+        wenn v.bereit:
+            gib_zurück fehlschlag(VfsFehler(VFS_EBUSY, 242, 0))
+        weitergeben(vfs_pfad(basis, zeiger(adresse_von(v.basis))))
+        setze ps: puffer[u8] auf pufferansicht(v.basis.bytes, 0, v.basis.anzahl)
+        setze i: u64 auf 0
+        solange i < länge(daten):
+            setze d: VfsStat auf weitergeben(vereinigung_attribut(daten[i].system, ps))
+            wenn d.art != VFS_ORDNER:
+                gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 243, 0))
+            setze v.quellen[i] auf daten[i]
+            setze i auf i + 1
+        setze c: VfsStat auf weitergeben(vereinigung_attribut(cache, ps))
+        wenn c.art != VFS_ORDNER:
+            gib_zurück fehlschlag(VfsFehler(VFS_ENOTDIR, 244, 0))
+        setze v.quellen[i].system auf cache
+        setze v.daten auf länge(daten)
+        setze v.regel auf regel
+        setze v.arbeit auf w
+        setze v.bereit auf wahr
+        gib_zurück erfolg()

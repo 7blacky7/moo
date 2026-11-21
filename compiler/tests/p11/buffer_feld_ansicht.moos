@@ -1,0 +1,10 @@
+struktur BufferFeldSicht:
+    bytes: puffer[u8]
+    marke: u64
+struktur BufferFeldSpeicher:
+    bytes: [u8; 9]
+
+@nativ
+funktion buffer_feld_falsch() -> BufferFeldSicht:
+    setze speicher: BufferFeldSpeicher auf 0
+    gib_zurück BufferFeldSicht(pufferansicht(speicher.bytes, 0, 9), 1)

@@ -44,23 +44,42 @@ statisch BLOCK_REGISTER_SPERRE: KernSperre auf 0
 @nativ
 statisch BLOCK_REGISTER_ANZAHL: atom[u64] auf 0
 
+# Alle Geräte einer Gruppe werden unter derselben Sperre veröffentlicht.
+# Ergebnis ist die erste Kennung. Geräte und Geometrien bleiben gültig.
+@nativ
+funktion block_registrieren_gruppe(eintraege: ptr[BlockEintrag], anzahl: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        wenn u64(eintraege) == 0 oder anzahl == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+        wenn anzahl > BLOCK_PLAETZE:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze i: u64 auf 0
+        solange i < anzahl:
+            setze geraet: ptr[dyn BlockGeraet] auf eintraege[i].geraet
+            setze geo: BlockGeometrie auf geraet.geometrie()
+            wenn geo.bloecke == 0 oder geo.block_bytes == 0:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
+            setze i auf i + 1
+        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(BLOCK_REGISTER_SPERRE))
+        setze irq: u64 auf spin_nimm(sperre)
+        setze platz: u64 auf atom_laden(BLOCK_REGISTER_ANZAHL, ordnung=locker)
+        wenn anzahl > BLOCK_PLAETZE - platz:
+            spin_gib(sperre, irq)
+            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
+        setze i auf 0
+        solange i < anzahl:
+            setze BLOCK_REGISTER[platz + i] auf eintraege[i]
+            setze i auf i + 1
+        atom_speichern(BLOCK_REGISTER_ANZAHL, platz + anzahl, ordnung=freigeben)
+        spin_gib(sperre, irq)
+        gib_zurück erfolg(platz + 1)
+
 # Der Kern hält registrierte Geräte bis zum Neustart vor. Kennungen beginnen bei 1.
 @nativ
 funktion block_registrieren(geraet: ptr[dyn BlockGeraet]) -> ergebnis[u64, BlockFehler]:
     unsicher:
-        setze geo: BlockGeometrie auf geraet.geometrie()
-        wenn geo.bloecke == 0 oder geo.block_bytes == 0:
-            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 0))
-        setze sperre: ptr[KernSperre] auf zeiger(adresse_von(BLOCK_REGISTER_SPERRE))
-        setze irq: u64 auf spin_nimm(sperre)
-        setze platz: u64 auf atom_laden(BLOCK_REGISTER_ANZAHL, ordnung=locker)
-        wenn platz == BLOCK_PLAETZE:
-            spin_gib(sperre, irq)
-            gib_zurück fehlschlag(BlockFehler(BLOCK_VOLL, 0))
-        setze BLOCK_REGISTER[platz].geraet auf geraet
-        atom_speichern(BLOCK_REGISTER_ANZAHL, platz + 1, ordnung=freigeben)
-        spin_gib(sperre, irq)
-        gib_zurück erfolg(platz + 1)
+        setze eintrag: BlockEintrag auf BlockEintrag(geraet)
+        gib_zurück block_registrieren_gruppe(zeiger(adresse_von(eintrag)), 1)
 
 @nativ
 funktion block_vorhanden(kennung: u64) -> bool:

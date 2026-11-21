@@ -1,0 +1,4 @@
+aus "moofs_probe" importiere moofs_test
+# FEHLERPFAD(M-F001): Regression bricht bei unerwartetem Laufzeitfehler ab.
+unsicher:
+    zeige moofs_test()

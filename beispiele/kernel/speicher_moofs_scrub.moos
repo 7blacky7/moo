@@ -1,0 +1,117 @@
+# Ein Scrubdurchlauf im vorhandenen Kernelplaner. Der Besitzer hält Dienst,
+# Writer, Mutex und Arbeitsbereiche bis zum terminalen Status gültig.
+aus ds_moofs importiere MooFsFehler, MOOFS_ARGUMENT
+aus ds_moofs_allokator importiere MooFsSchreiber, MOOFS_SPEICHER
+aus ds_moofs_pruefen importiere MooFsPruefung, MooFsPruefRecord, MOOFS_PRUEF_NEUSTART, moofs_pruefung_online, moofs_pruefung_schritt
+aus "kern_mutex" importiere KernMutex, mutex_nimm, mutex_gib
+aus "kern_smp" importiere smp_planer
+aus "kern_faden" importiere faden_erzeugen, faden_abgeben
+aus "kern_sperre" importiere unterbrechungen_an
+
+@nativ
+konstante MOOFS_SCRUB_LAEUFT: u32 auf 1
+@nativ
+konstante MOOFS_SCRUB_FERTIG: u32 auf 2
+@nativ
+konstante MOOFS_SCRUB_FEHLER: u32 auf 3
+@nativ
+konstante MOOFS_SCRUB_ABBRUCH: u32 auf 4
+
+struktur MooFsScrubDienst:
+    schreiber: ptr[MooFsSchreiber]
+    mutex: ptr[KernMutex]
+    records: ptr[MooFsPruefRecord]
+    kapazitaet: u64
+    karte: ptr[u8]
+    karte_bytes: u64
+    budget: u64
+    pruefung: MooFsPruefung
+    status: atom[u32]
+    abbrechen: atom[u32]
+    fortschritt: atom[u64]
+    neustarts: atom[u64]
+    fehler: MooFsFehler
+
+@nativ
+funktion moofs_scrub_entsperren(d: ptr[MooFsScrubDienst]) -> void:
+    unsicher:
+        setze frei: bool auf mutex_gib(smp_planer(), d.mutex)
+
+@nativ
+funktion moofs_scrub_neu(d: ptr[MooFsScrubDienst]) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn nicht d.schreiber.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 720, 0))
+        gib_zurück moofs_pruefung_online(zeiger(adresse_von(d.pruefung)), zeiger(adresse_von(d.schreiber.volume)), d.records, d.kapazitaet, d.karte, d.karte_bytes)
+
+@nativ
+funktion moofs_scrub_arbeit(d: ptr[MooFsScrubDienst]) -> ergebnis[bool, MooFsFehler]:
+    unsicher:
+        mutex_nimm(smp_planer(), d.mutex)
+        aufräumen: moofs_scrub_entsperren(d)
+        wenn nicht d.schreiber.bereit:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 720, 0))
+        wenn nicht d.pruefung.laufend und d.pruefung.fehler.code == MOOFS_PRUEF_NEUSTART:
+            weitergeben(moofs_scrub_neu(d))
+        gib_zurück moofs_pruefung_schritt(zeiger(adresse_von(d.pruefung)), d.budget)
+
+@nativ
+funktion moofs_scrub_faden(daten: u64) -> void:
+    unsicher:
+        setze d: ptr[MooFsScrubDienst] auf zeiger(daten)
+        unterbrechungen_an()
+        solange wahr:
+            wenn atom_laden(d.abbrechen, ordnung=erwerben) != 0:
+                atom_speichern(d.status, MOOFS_SCRUB_ABBRUCH, ordnung=freigeben)
+                gib_zurück
+            setze r: ergebnis[bool, MooFsFehler] auf moofs_scrub_arbeit(d)
+            setze n: u64 auf atom_laden(d.fortschritt, ordnung=locker)
+            atom_speichern(d.fortschritt, n + 1, ordnung=freigeben)
+            wenn nicht ist_erfolg(r):
+                setze f: MooFsFehler auf ergebnis_fehler(r)
+                wenn f.code == MOOFS_PRUEF_NEUSTART:
+                    setze neu_start: u64 auf atom_laden(d.neustarts, ordnung=locker)
+                    atom_speichern(d.neustarts, neu_start + 1, ordnung=freigeben)
+                sonst:
+                    setze d.fehler auf f
+                    atom_speichern(d.status, MOOFS_SCRUB_FEHLER, ordnung=freigeben)
+                    gib_zurück
+            sonst wenn ergebnis_wert(r):
+                atom_speichern(d.status, MOOFS_SCRUB_FERTIG, ordnung=freigeben)
+                gib_zurück
+            faden_abgeben(smp_planer())
+
+# Start-/Kontrollaufrufe desselben Dienstes werden vom Besitzer serialisiert.
+# Alle Writerzugriffe benutzen denselben schlafenden Mutex; IRQs bleiben möglich.
+@nativ
+funktion moofs_scrub_starten(d: ptr[MooFsScrubDienst], w: ptr[MooFsSchreiber], mutex: ptr[KernMutex], records: ptr[MooFsPruefRecord], kapazitaet: u64, karte: ptr[u8], karte_bytes: u64, budget: u64) -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        wenn atom_laden(d.status, ordnung=erwerben) == MOOFS_SCRUB_LAEUFT oder u64(w) == 0 oder u64(mutex) == 0 oder budget == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 721, 0))
+        setze d.schreiber auf w
+        setze d.mutex auf mutex
+        setze d.records auf records
+        setze d.kapazitaet auf kapazitaet
+        setze d.karte auf karte
+        setze d.karte_bytes auf karte_bytes
+        setze d.budget auf budget
+        setze d.fehler auf MooFsFehler(0, 0, 0)
+        atom_speichern(d.abbrechen, 0, ordnung=locker)
+        atom_speichern(d.fortschritt, 0, ordnung=locker)
+        atom_speichern(d.neustarts, 0, ordnung=locker)
+        mutex_nimm(smp_planer(), mutex)
+        setze r: ergebnis[void, MooFsFehler] auf moofs_scrub_neu(d)
+        moofs_scrub_entsperren(d)
+        wenn nicht ist_erfolg(r):
+            gib_zurück fehlschlag(ergebnis_fehler(r))
+        atom_speichern(d.status, MOOFS_SCRUB_LAEUFT, ordnung=freigeben)
+        wenn faden_erzeugen(smp_planer(), adresse_von(moofs_scrub_faden), u64(d)) == 0:
+            setze d.fehler auf MooFsFehler(MOOFS_SPEICHER, 720, 0)
+            atom_speichern(d.status, MOOFS_SCRUB_FEHLER, ordnung=freigeben)
+            gib_zurück fehlschlag(d.fehler)
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_scrub_abbrechen(d: ptr[MooFsScrubDienst]) -> void:
+    unsicher:
+        atom_speichern(d.abbrechen, 1, ordnung=freigeben)

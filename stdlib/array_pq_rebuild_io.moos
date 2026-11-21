@@ -1,0 +1,143 @@
+# Logische P/Q-Blockzugriffe. Ein Journal schreibt pro Seite die neuen
+# D/P/Q-Bilder dauerhaft, bevor die physischen Ziele geändert werden.
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_LESEN, BLOCK_SCHREIBEN, BLOCK_GEOMETRIE, BLOCK_NICHT_BEREIT, block_pruefen
+aus nativ_crc32c importiere crc32c
+aus array_format importiere ARRAY_DATEN, ARRAY_SEITEN_BYTES
+aus array_paritaet importiere array_p_xor
+aus array_q importiere array_q_aktualisieren, array_q_kopieren
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildStand, ArrayPQRebuildArbeit, ARRAY_PQ_KEIN, ARRAY_PQ_JOURNAL_DATEN, ARRAY_PQ_JOURNAL_P, ARRAY_PQ_JOURNAL_Q, array_pq_rebuild_seite_verfuegbar, array_pq_rebuild_roh_lesen, array_pq_rebuild_roh_schreiben, array_pq_rebuild_seite_laden, array_pq_rebuild_zeile
+aus array_pq_rebuild_metadaten importiere array_pq_rebuild_gebunden, array_pq_rebuild_ausfall, array_pq_rebuild_speichern
+
+@nativ
+funktion array_pq_rebuild_anfrage_pruefen(r: ptr[ArrayPQRebuild], mitglied: u64, art: u32, seite: u64, adresse: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 275))
+        wenn u64(w) == 0 oder mitglied >= r.basis.anzahl oder r.basis.mitglieder[mitglied].rolle != ARRAY_DATEN:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 275))
+        setze geo: BlockGeometrie auf BlockGeometrie(r.basis.mitglieder[mitglied].seiten, ARRAY_SEITEN_BYTES, falsch)
+        gib_zurück block_pruefen(geo, art, seite, 1, adresse, ARRAY_SEITEN_BYTES)
+
+@nativ
+funktion array_pq_rebuild_verloren(r: ptr[ArrayPQRebuild], mitglied: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        wenn u64(r) == 0 oder u64(w) == 0 oder nicht r.bereit oder r.stand.journal_beine != 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 276))
+        wenn mitglied >= r.basis.anzahl:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_GEOMETRIE, 276))
+        wenn nicht array_pq_rebuild_gebunden(r, mitglied) und (r.stand.fehlende & (1 << mitglied)) != 0:
+            gib_zurück erfolg()
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(stand))
+        setze r.bereit auf falsch
+        weitergeben(array_pq_rebuild_ausfall(r, s, mitglied))
+        gib_zurück array_pq_rebuild_speichern(r, s, w)
+
+@nativ
+funktion array_pq_rebuild_heilen(r: ptr[ArrayPQRebuild], seite: u64, fehlte: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(stand))
+        setze geaendert: bool auf falsch
+        setze i: u64 auf 0
+        solange i < r.basis.anzahl:
+            wenn (fehlte & (1 << i)) != 0 und array_pq_rebuild_seite_verfuegbar(r, s, i, seite):
+                wenn ist_erfolg(array_pq_rebuild_roh_schreiben(r, i, seite, adresse_von(w.seiten[i].bytes[0]))):
+                    setze r.zaehler[i].heilungen auf r.zaehler[i].heilungen + 1
+                sonst:
+                    setze r.bereit auf falsch
+                    weitergeben(array_pq_rebuild_ausfall(r, s, i))
+                    setze geaendert auf wahr
+            setze i auf i + 1
+        wenn geaendert:
+            gib_zurück array_pq_rebuild_speichern(r, s, w)
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_lesen(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, adresse: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_rebuild_anfrage_pruefen(r, mitglied, BLOCK_LESEN, seite, adresse, w))
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(r.stand))
+        wenn array_pq_rebuild_seite_verfuegbar(r, s, mitglied, seite) und ist_erfolg(array_pq_rebuild_roh_lesen(r, mitglied, seite, adresse)):
+            gib_zurück erfolg()
+        setze fehlt: u64 auf weitergeben(array_pq_rebuild_zeile(r, seite, 1 << mitglied, w))
+        weitergeben(array_pq_rebuild_heilen(r, seite, fehlt, w))
+        setze ziel: ptr[u8] auf zeiger(adresse)
+        array_q_kopieren(byteansicht(ziel, ARRAY_SEITEN_BYTES), pufferansicht(w.seiten[mitglied].bytes))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_rmw_laden(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(r.stand))
+        setze p: u64 auf r.paritaet_p
+        setze q: u64 auf r.paritaet_q
+        setze braucht_p: bool auf array_pq_rebuild_seite_verfuegbar(r, s, p, seite)
+        setze braucht_q: bool auf array_pq_rebuild_seite_verfuegbar(r, s, q, seite)
+        wenn nicht braucht_p und nicht braucht_q:
+            gib_zurück erfolg()
+        setze auslassen: u64 auf 0
+        wenn nicht array_pq_rebuild_seite_laden(r, mitglied, seite, 0, w):
+            setze auslassen auf 1 << mitglied
+        wenn braucht_p und nicht array_pq_rebuild_seite_laden(r, p, seite, 0, w):
+            setze auslassen auf auslassen | (1 << p)
+        wenn braucht_q und nicht array_pq_rebuild_seite_laden(r, q, seite, 0, w):
+            setze auslassen auf auslassen | (1 << q)
+        wenn auslassen != 0:
+            setze fehlt: u64 auf weitergeben(array_pq_rebuild_zeile(r, seite, auslassen, w))
+            weitergeben(array_pq_rebuild_heilen(r, seite, fehlt, w))
+        gib_zurück erfolg()
+
+@nativ
+funktion array_pq_rebuild_journal_anwenden(r: ptr[ArrayPQRebuild], w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(stand))
+        setze slots: [u64; 3] auf [stand.journal_ziel, r.paritaet_p, r.paritaet_q]
+        setze r.bereit auf falsch
+        setze i: u64 auf 0
+        solange i < 3:
+            setze mitglied: u64 auf slots[i]
+            wenn (stand.journal_beine & als(u32, 1 << i)) != 0 und array_pq_rebuild_seite_verfuegbar(r, s, mitglied, stand.journal_seite):
+                wenn nicht ist_erfolg(array_pq_rebuild_roh_schreiben(r, mitglied, stand.journal_seite, adresse_von(w.seiten[mitglied].bytes[0]))):
+                    weitergeben(array_pq_rebuild_ausfall(r, s, mitglied))
+            setze i auf i + 1
+        setze stand.journal_beine auf 0
+        setze stand.journal_ziel auf ARRAY_PQ_KEIN
+        setze stand.journal_seite auf 0
+        setze stand.daten_crc auf 0
+        setze stand.p_crc auf 0
+        setze stand.q_crc auf 0
+        gib_zurück array_pq_rebuild_speichern(r, s, w)
+
+@nativ
+funktion array_pq_rebuild_schreiben(r: ptr[ArrayPQRebuild], mitglied: u64, seite: u64, adresse: u64, w: ptr[ArrayPQRebuildArbeit]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_pq_rebuild_anfrage_pruefen(r, mitglied, BLOCK_SCHREIBEN, seite, adresse, w))
+        weitergeben(array_pq_rebuild_rmw_laden(r, mitglied, seite, w))
+        setze stand: ArrayPQRebuildStand auf r.stand
+        setze s: ptr[ArrayPQRebuildStand] auf zeiger(adresse_von(stand))
+        setze neuer_block: ptr[u8] auf zeiger(adresse)
+        setze daten: puffer[u8] auf byteansicht(neuer_block, ARRAY_SEITEN_BYTES)
+        setze alt: puffer[u8] auf pufferansicht(w.seiten[mitglied].bytes)
+        setze stand.journal_ziel auf mitglied
+        setze stand.journal_seite auf seite
+        wenn array_pq_rebuild_seite_verfuegbar(r, s, r.paritaet_p, seite):
+            setze p: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_p].bytes)
+            array_p_xor(p, alt)
+            array_p_xor(p, daten)
+            setze stand.journal_beine auf stand.journal_beine | ARRAY_PQ_JOURNAL_P
+            setze stand.p_crc auf crc32c(p)
+        wenn array_pq_rebuild_seite_verfuegbar(r, s, r.paritaet_q, seite):
+            setze q: puffer[u8] auf pufferansicht(w.seiten[r.paritaet_q].bytes)
+            weitergeben(array_q_aktualisieren(q, alt, daten, mitglied, r.modus, r.gf))
+            setze stand.journal_beine auf stand.journal_beine | ARRAY_PQ_JOURNAL_Q
+            setze stand.q_crc auf crc32c(q)
+        wenn array_pq_rebuild_seite_verfuegbar(r, s, mitglied, seite):
+            array_q_kopieren(alt, daten)
+            setze stand.journal_beine auf stand.journal_beine | ARRAY_PQ_JOURNAL_DATEN
+            setze stand.daten_crc auf crc32c(alt)
+        wenn stand.journal_beine == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_NICHT_BEREIT, 277))
+        weitergeben(array_pq_rebuild_speichern(r, s, w))
+        gib_zurück array_pq_rebuild_journal_anwenden(r, w)

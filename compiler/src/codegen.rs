@@ -1455,8 +1455,8 @@ impl<'ctx> CodeGen<'ctx> {
                 // [unsicher:]-Koerper, Zeiger-/Puffer-Signaturen und Bare-
                 // Strukturrueckgaben behalten ihre bisherigen Pfade.
                 // Hosted puffer[T]-/ptr-Signaturen (Review 074b5d17) laufen auch in
-                // Pure-Slice-Form hier (Pure-Emitter kennt sie nicht); Bare-Zeiger-
-                // funktionen behalten ihren Bestandspfad.
+                // Pure-Slice-Form hier (Pure-Emitter kennt sie nicht). Bestehende
+                // unsicher:-Bare-Zeigerformen behalten ihren engen Bestandspfad.
                 let zeiger_puffer = has_pointer || returns_pointer || has_buffer || has_registration;
                 // P2-T16: ebenso Strukturwerte (z. B. vec3/mat4) in Signatur oder
                 // Locals; der Pure-Emitter kennt nur Skalare.
@@ -1470,9 +1470,11 @@ impl<'ctx> CodeGen<'ctx> {
                     || crate::native_system::has_struct_values(body, &native_nominals));
                 let lokaler_speicher = crate::native_system::has_struct_locals(body, &native_nominals);
                 let sicher_system = !matches!(body.as_slice(), [Stmt::UnsafeBlock { .. }])
-                    && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode)
+                    && (!crate::native_system::is_pure_slice(body) || (pure_ungeeignet && !self.bare_mode) || has_pointer || returns_pointer
                         || bare_strukturwerte || has_buffer || lokaler_speicher || zyklische_natives.contains(name))
-                    && !(self.bare_mode && (returns_struct || ((has_pointer || returns_pointer) && !lokaler_speicher)))
+                    // Pointer weiterreichen braucht auch bare kein unsicher.
+                    // Reale Dereferenzierungen prüft der sichere System-Emitter.
+                    && !(self.bare_mode && returns_struct)
                     && (hosted_x86 || self.bare_mode);
                 if (self.bare_mode && (crate::native_system::is_system_body(body, params) || returns_struct || has_buffer))
                     || hosted_system || sicher_system || simd.is_some()
@@ -1959,6 +1961,7 @@ impl<'ctx> CodeGen<'ctx> {
             let target = self.target_data.as_ref().ok_or("Ziel-Datenlayout für Runtime-Provider fehlt")?;
             crate::runtime_provider::bind(self.context, &self.module, target, program, &self.native_functions, &self.native_structs)?;
         }
+        crate::native_cleanup::bind(self.context, &self.module, &self.native_functions)?;
         Ok(())
     }
 

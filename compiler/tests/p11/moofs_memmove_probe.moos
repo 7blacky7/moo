@@ -1,0 +1,44 @@
+aus nativ_memmove importiere memmove
+struktur MooFsMemmoveProbe:
+    bytes: [u8; 2048]
+    vorher: [u8; 2048]
+@nativ
+statisch MOOFS_MEMMOVE_PROBE: MooFsMemmoveProbe auf 0
+@nativ
+funktion moofs_memmove_fall(ab: u64, ziel: u64, n: u64) -> u32:
+    unsicher:
+        setze p: ptr[MooFsMemmoveProbe] auf zeiger(adresse_von(MOOFS_MEMMOVE_PROBE))
+        setze i: u64 auf 0
+        solange i < 2048:
+            setze p.bytes[i] auf als(u8, (i * 37 + 11) & 255)
+            setze p.vorher[i] auf p.bytes[i]
+            setze i auf i + 1
+        setze z: ptr[u8] auf zeiger(adresse_von(p.bytes[ziel]))
+        setze q: ptr[u8] auf zeiger(adresse_von(p.bytes[ab]))
+        wenn u64(memmove(z, q, n)) != u64(z):
+            gib_zurück 1
+        setze i auf 0
+        solange i < 2048:
+            setze erwartet: u8 auf p.vorher[i]
+            wenn i >= ziel und i - ziel < n:
+                setze erwartet auf p.vorher[ab + i - ziel]
+            wenn p.bytes[i] != erwartet:
+                gib_zurück 2
+            setze i auf i + 1
+        gib_zurück 0
+@nativ
+funktion moofs_memmove_test() -> u32:
+    unsicher:
+        setze null: ptr[u8] auf nichts
+        wenn u64(memmove(null, null, 0)) != 0:
+            gib_zurück 3
+        setze groessen: [u64; 11] auf [0, 1, 7, 8, 31, 64, 383, 384, 385, 1024, 1536]
+        setze i: u64 auf 0
+        solange i < 11:
+            setze n: u64 auf groessen[i]
+            wenn moofs_memmove_fall(0, 1, n) != 0 oder moofs_memmove_fall(1, 0, n) != 0 oder moofs_memmove_fall(7, 32, n) != 0 oder moofs_memmove_fall(32, 7, n) != 0 oder moofs_memmove_fall(7, 7, n) != 0:
+                gib_zurück 4
+            setze i auf i + 1
+        wenn moofs_memmove_fall(0, 1024, 512) != 0 oder moofs_memmove_fall(1024, 0, 512) != 0:
+            gib_zurück 5
+        gib_zurück 0

@@ -1,0 +1,197 @@
+# Host-Probe für vom Python-Gate geöffnete, reguläre Testabbilder.
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_paritaet importiere ArrayP, ArrayAnschluss, ArrayMedien, ArrayArbeitsraum, array_anlegen, array_oeffnen, array_wiederherstellen, array_schreiben_region, array_daten_lesen
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten, fsync
+aus ds_fat_transport importiere FatTransport
+aus nativ_block importiere BlockFehler, BlockGeometrie, BLOCK_EA, BLOCK_GEOMETRIE, BLOCK_SCHREIBEN
+
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion raise(signal_nr: i32) -> i32
+
+struktur ArrayProbeParitaet implementiert FatTransport:
+    unter: ptr[dyn FatTransport]
+    daten_fd: i32
+    abbruch: bool
+    nur_dirty: bool
+    geschrieben: u64
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.unter.geometrie()
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, puffer: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            wenn art == BLOCK_SCHREIBEN:
+                wenn selbst.abbruch:
+                    # Am Aufruf steht der Daten-Write bereits im Host-Cache.
+                    # fsync simuliert die ungünstige Medienreihenfolge beim Ausfall.
+                    wenn fsync(selbst.daten_fd) != 0:
+                        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 100))
+                    setze signal_status: i32 auf raise(19)
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, als_wrap(u32, signal_status)))
+                wenn selbst.nur_dirty und (lba < 256 * 8 oder lba >= 512 * 8 oder anzahl > 512 * 8 - lba):
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 101))
+                setze selbst.geschrieben auf selbst.geschrieben + bytes / 4096
+            gib_zurück selbst.unter.uebertragen(art, lba, anzahl, puffer, bytes)
+
+@nativ
+statisch ARRAY_PROBE_DATEN: [FatPosix; 3] auf 0
+@nativ
+statisch ARRAY_PROBE_META: [FatPosix; 3] auf 0
+@nativ
+statisch ARRAY_PROBE_QUELLEN: [ArrayAnschluss; 3] auf 0
+@nativ
+statisch ARRAY_PROBE_P: ArrayProbeParitaet auf 0
+@nativ
+statisch ARRAY_PROBE_W: ArrayArbeitsraum auf 0
+@nativ
+statisch ARRAY_PROBE_NEU: [u8; 4096] auf 0
+@nativ
+statisch ARRAY_PROBE_VERBUND: ArrayP auf 0
+
+@nativ
+funktion array_probe_fd(nr: u64) -> i32:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 70, 68, 95, 48, 0]
+        name[13] = als(u8, 48 + nr)
+        setze text: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(text) == 0:
+            gib_zurück -1
+        setze zahl: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 9 und text[i] != 0:
+            wenn text[i] < 48 oder text[i] > 57:
+                gib_zurück -1
+            setze zahl auf zahl * 10 + als(u64, text[i] - 48)
+            setze i auf i + 1
+        wenn i == 0 oder text[i] != 0:
+            gib_zurück -1
+        gib_zurück als(i32, zahl)
+
+@nativ
+funktion array_probe_befuellen(bytes: puffer[u8], wert: u8) -> void:
+    setze i: u64 auf 0
+    solange i < länge(bytes):
+        bytes[i] = wert
+        setze i auf i + 1
+
+@nativ
+funktion array_probe_quellen(layout: ptr[ArrayLayout]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze layout.guid_lo auf 0x12345678
+        setze layout.guid_hi auf 0xAABBCCDD
+        setze layout.generation auf 7
+        setze layout.anzahl auf 3
+        setze i: u64 auf 0
+        solange i < 3:
+            setze fd: i32 auf array_probe_fd(i)
+            setze fm: i32 auf array_probe_fd(3 + i)
+            setze d: ptr[FatPosix] auf zeiger(adresse_von(ARRAY_PROBE_DATEN[i]))
+            setze m: ptr[FatPosix] auf zeiger(adresse_von(ARRAY_PROBE_META[i]))
+            setze sektor: u64 auf 512
+            wenn i == 1:
+                setze sektor auf 4096
+                setze ARRAY_PROBE_P.daten_fd auf fd
+            weitergeben(fat_posix_einrichten(d, fd, sektor, falsch))
+            weitergeben(fat_posix_einrichten(m, fm, sektor, falsch))
+            setze td: ptr[dyn FatTransport] auf d
+            setze tm: ptr[dyn FatTransport] auf m
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf 0x1000 + i
+            setze ident.guid_hi auf 0x2000 + i
+            setze ident.serien_bytes auf 24
+            setze j: u64 auf 0
+            solange j < 23:
+                ident.serie[j] = als(u8, 65 + j)
+                setze j auf j + 1
+            ident.serie[23] = als(u8, 48 + i)
+            setze groesse: u64 auf 520
+            setze rolle: u32 auf ARRAY_DATEN
+            wenn i == 0:
+                setze groesse auf 260
+            wenn i == 2:
+                setze rolle auf ARRAY_PARITAET_P
+                setze ARRAY_PROBE_P.unter auf td
+                setze p: ptr[ArrayProbeParitaet] auf zeiger(adresse_von(ARRAY_PROBE_P))
+                setze td auf p
+            setze layout.mitglieder[i] auf ArrayMitgliedsdaten(rolle, groesse, ident)
+            setze ARRAY_PROBE_QUELLEN[2 - i] auf ArrayAnschluss(ident, ArrayMedien(td, tm))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_lesen(a: ptr[ArrayP], w: ptr[ArrayArbeitsraum], nr: u64, seite: u64, erwartet: u8) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        weitergeben(array_daten_lesen(a, nr, seite, 1, adresse_von(w.alt[0])))
+        setze i: u64 auf 0
+        solange i < 4096:
+            wenn w.alt[i] != erwartet:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 102))
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion array_probe_ablauf() -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze name: [u8; 15] auf [77, 79, 79, 95, 65, 82, 82, 65, 89, 95, 77, 79, 68, 69, 0]
+        setze mode: ptr[u8] auf getenv(zeiger(adresse_von(name[0])))
+        wenn u64(mode) == 0:
+            gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 103))
+        setze layout: ArrayLayout auf 0
+        setze info: ptr[ArrayLayout] auf zeiger(adresse_von(layout))
+        weitergeben(array_probe_quellen(info))
+        setze a: ptr[ArrayP] auf zeiger(adresse_von(ARRAY_PROBE_VERBUND))
+        setze q: ptr[ArrayAnschluss] auf zeiger(adresse_von(ARRAY_PROBE_QUELLEN[0]))
+        setze w: ptr[ArrayArbeitsraum] auf zeiger(adresse_von(ARRAY_PROBE_W))
+        wenn mode[0] == 97:
+            weitergeben(array_anlegen(a, info, q, 3, w))
+            gib_zurück array_wiederherstellen(a, w)
+        wenn mode[0] == 98:
+            # Nur das letzte Byte der vollständigen Seriennummer ist falsch.
+            setze q[2].identitaet.serie[23] auf 90
+            setze falsch_gebunden: ergebnis[void, BlockFehler] auf array_oeffnen(a, q, 3, w)
+            wenn ist_erfolg(falsch_gebunden):
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 104))
+            setze f: BlockFehler auf ergebnis_fehler(falsch_gebunden)
+            wenn f.code == BLOCK_GEOMETRIE und f.geraete_status == 12:
+                gib_zurück erfolg(1)
+            gib_zurück fehlschlag(f)
+
+        weitergeben(array_oeffnen(a, q, 3, w))
+        wenn mode[0] == 118:
+            gib_zurück array_wiederherstellen(a, w)
+        wenn mode[0] == 114:
+            setze ARRAY_PROBE_P.nur_dirty auf wahr
+            setze repariert: u64 auf weitergeben(array_wiederherstellen(a, w))
+            wenn repariert != 1 oder ARRAY_PROBE_P.geschrieben != 256:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 105))
+            weitergeben(array_probe_lesen(a, w, 1, 300, 199))
+            gib_zurück erfolg(repariert)
+
+        setze daten: puffer[u8] auf byteansicht(ARRAY_PROBE_NEU)
+        setze adr: u64 auf adresse_von(ARRAY_PROBE_NEU[0])
+        wenn mode[0] == 119:
+            array_probe_befuellen(daten, 90)
+            weitergeben(array_schreiben_region(a, 0, 3, 1, adr, w))
+            weitergeben(array_probe_lesen(a, w, 0, 3, 90))
+            array_probe_befuellen(daten, 163)
+            weitergeben(array_schreiben_region(a, 1, 517, 1, adr, w))
+            weitergeben(array_probe_lesen(a, w, 1, 517, 163))
+            gib_zurück erfolg(ARRAY_PROBE_P.geschrieben)
+        wenn mode[0] == 99:
+            array_probe_befuellen(daten, 199)
+            setze ARRAY_PROBE_P.abbruch auf wahr
+            weitergeben(array_schreiben_region(a, 1, 300, 1, adr, w))
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 106))
+
+@nativ
+funktion array_probe_ergebnis() -> u64:
+    unsicher:
+        setze r: ergebnis[u64, BlockFehler] auf array_probe_ablauf()
+        wenn ist_erfolg(r):
+            gib_zurück ergebnis_wert(r)
+        setze fehler: BlockFehler auf ergebnis_fehler(r)
+        gib_zurück (als(u64, fehler.code) << 32) | als(u64, fehler.geraete_status)
+
+unsicher:
+    zeige array_probe_ergebnis()

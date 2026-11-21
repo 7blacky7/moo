@@ -1,0 +1,448 @@
+# Dieselbe native Abnahme auf Host und Bare; echte MooFS-Formatterseiten.
+aus array_format importiere ArrayLayout, ArrayIdentitaet, ArrayMitgliedsdaten, ARRAY_DATEN, ARRAY_PARITAET_P
+aus array_pq_format importiere ARRAY_PARITAET_Q, array_pq_superblock_lesen
+aus array_paritaet importiere ArrayAnschluss, ArrayMedien
+aus array_pq_rebuild_seiten importiere ArrayPQRebuild, ArrayPQRebuildArbeit
+aus array_pq_rebuild importiere array_pq_rebuild_anlegen, array_pq_rebuild_oeffnen
+aus array_pq_rebuild_io importiere array_pq_rebuild_schreiben, array_pq_rebuild_lesen
+aus array_pq_scrub importiere ArrayPQScrub, ArrayPQScrubArbeit, array_pq_scrub_seite, array_pq_scrub_starten, array_pq_scrub_schritt, array_pq_scrub_gleich
+aus array_pq_verwaltung importiere array_pq_daten_hinzufuegen, array_pq_paritaet_tauschen
+aus array_gf256 importiere ArrayGf256, array_gf256_starten
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_ram importiere FatRam, fat_ram_einrichten
+aus ds_moofs importiere MooFsFehler, moofs_crc, moofs_oeffnen, MooFsVolume
+aus ds_moofs_formate importiere MooFsKopf
+aus ds_moofs_format importiere MooFsQuelle, MooFsFormatSpeicher, moofs_formatieren
+aus ds_moofs_pruefen importiere MooFsPruefung, MooFsPruefRecord, moofs_pruefung_starten, moofs_pruefung_schritt
+aus nativ_block importiere BlockGeometrie, BlockFehler, BLOCK_EA, BLOCK_SCHREIBEN, BLOCK_FLUSH
+
+struktur ScrubProbeStrom:
+    grenze: u64
+    schritte: u64
+    tot: bool
+
+@nativ
+statisch SCRUB_PROBE_STROM: ScrubProbeStrom auf 0
+
+# Präfixmodell: ein harter Ausfall vor jedem Schreiben/jeder Barriere,
+# danach scheitern sämtliche I/O bis zum simulierten Wiederanlauf.
+struktur ScrubProbeTransport implementiert FatTransport:
+    unter: ptr[dyn FatTransport]
+
+    funktion geometrie(selbst) -> BlockGeometrie:
+        unsicher:
+            gib_zurück selbst.unter.geometrie()
+
+    funktion uebertragen(selbst, art: u32, lba: u64, anzahl: u64, adresse: u64, bytes: u64) -> ergebnis[void, BlockFehler]:
+        unsicher:
+            setze strom: ptr[ScrubProbeStrom] auf zeiger(adresse_von(SCRUB_PROBE_STROM))
+            wenn strom.tot:
+                gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 470))
+            wenn art == BLOCK_SCHREIBEN oder art == BLOCK_FLUSH:
+                setze strom.schritte auf strom.schritte + 1
+                wenn strom.grenze != 0 und strom.schritte == strom.grenze:
+                    setze strom.tot auf wahr
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 470))
+            gib_zurück selbst.unter.uebertragen(art, lba, anzahl, adresse, bytes)
+
+struktur ScrubProbePlatte:
+    daten: [u8; 49152]
+    meta: [u8; 40960]
+    ram: FatRam
+    metaram: FatRam
+    daten_transport: ScrubProbeTransport
+    meta_transport: ScrubProbeTransport
+struktur ScrubProbe:
+    platten: [ScrubProbePlatte; 7]
+    sicherung: [ScrubProbePlatte; 4]
+    anschluss: [ArrayAnschluss; 7]
+    auswahl: [ArrayAnschluss; 7]
+    r: ArrayPQRebuild
+    w: ArrayPQRebuildArbeit
+    a: ArrayPQScrubArbeit
+    gf: ArrayGf256
+    format: MooFsFormatSpeicher
+    quelle: MooFsQuelle
+    inhalt: [u8; 5000]
+    fs: MooFsPruefung
+    records: [MooFsPruefRecord; 32]
+    karte: [u8; 2]
+    abbrueche: [u64; 4]
+
+@nativ
+statisch SCRUB_PROBE: ScrubProbe auf 0
+
+@nativ
+funktion scrub_probe_fordern(gut: bool, nr: u32) -> ergebnis[void, BlockFehler]:
+    wenn nicht gut:
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, nr))
+    gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_initialisieren(p: ptr[ScrubProbe], sektor: u64, modus: u32) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze strom: ScrubProbeStrom auf 0
+        setze SCRUB_PROBE_STROM auf strom
+        setze leer: ArrayPQRebuild auf 0
+        setze p.r auf leer
+        array_gf256_starten(zeiger(adresse_von(p.gf)))
+        setze layout: ArrayLayout auf 0
+        setze layout.guid_lo auf 71
+        setze layout.guid_hi auf 81
+        setze layout.generation auf 1
+        setze layout.anzahl auf 4
+        setze i: u64 auf 0
+        solange i < 7:
+            setze pl: ptr[ScrubProbePlatte] auf zeiger(adresse_von(p.platten[i]))
+            setze cap: u64 auf 8
+            wenn i == 1 oder i == 2:
+                setze cap auf 10
+            wenn i == 4:
+                setze cap auf 9
+            wenn i == 5 oder i == 6:
+                setze cap auf 12
+            setze j: u64 auf 0
+            solange j < 49152:
+                pl.daten[j] = 0
+                setze j auf j + 1
+            setze j auf 0
+            solange j < 40960:
+                pl.meta[j] = 0
+                setze j auf j + 1
+            weitergeben(fat_ram_einrichten(zeiger(adresse_von(pl.ram)), adresse_von(pl.daten[0]), cap * 4096, sektor, falsch))
+            weitergeben(fat_ram_einrichten(zeiger(adresse_von(pl.metaram)), adresse_von(pl.meta[0]), 40960, sektor, falsch))
+            setze ident: ArrayIdentitaet auf 0
+            setze ident.guid_lo auf i + 1
+            setze ident.guid_hi auf 97
+            setze ident.serien_bytes auf 1
+            ident.serie[0] = als(u8, i + 65)
+            setze dr: ptr[FatRam] auf zeiger(adresse_von(pl.ram))
+            setze mr: ptr[FatRam] auf zeiger(adresse_von(pl.metaram))
+            setze d: ptr[dyn FatTransport] auf dr
+            setze m: ptr[dyn FatTransport] auf mr
+            setze pl.daten_transport.unter auf d
+            setze pl.meta_transport.unter auf m
+            setze dp: ptr[ScrubProbeTransport] auf zeiger(adresse_von(pl.daten_transport))
+            setze mp: ptr[ScrubProbeTransport] auf zeiger(adresse_von(pl.meta_transport))
+            setze dt: ptr[dyn FatTransport] auf dp
+            setze mt: ptr[dyn FatTransport] auf mp
+            p.anschluss[i] = ArrayAnschluss(ident, ArrayMedien(dt, mt))
+            wenn i < 4:
+                setze rolle: u32 auf ARRAY_DATEN
+                wenn i == 1:
+                    setze rolle auf ARRAY_PARITAET_P
+                wenn i == 2:
+                    setze rolle auf ARRAY_PARITAET_Q
+                layout.mitglieder[i] = ArrayMitgliedsdaten(rolle, cap, ident)
+            setze i auf i + 1
+        setze qu: MooFsQuelle auf 0
+        setze qu.nummer auf 2
+        setze qu.eltern auf 1
+        setze qu.art auf 1
+        setze qu.name_bytes auf 1
+        qu.name[0] = 120
+        setze qu.bytes auf 5000
+        setze qu.daten auf adresse_von(p.inhalt[0])
+        setze p.quelle auf qu
+        setze i auf 0
+        solange i < 5000:
+            p.inhalt[i] = als_wrap(u8, i * 37 + 11)
+            setze i auf i + 1
+        weitergeben(scrub_probe_fordern(ist_erfolg(moofs_formatieren(p.anschluss[0].medien.daten, zeiger(adresse_von(p.quelle)), 1, 123, 456, zeiger(adresse_von(p.format)))), 401))
+        weitergeben(scrub_probe_fordern(ist_erfolg(moofs_formatieren(p.anschluss[3].medien.daten, zeiger(adresse_von(p.quelle)), 1, 124, 457, zeiger(adresse_von(p.format)))), 402))
+        setze gebaut: u64 auf weitergeben(array_pq_rebuild_anlegen(zeiger(adresse_von(p.r)), zeiger(adresse_von(layout)), zeiger(adresse_von(p.anschluss[0])), 4, modus, zeiger(adresse_von(p.gf)), zeiger(adresse_von(p.w))))
+        weitergeben(scrub_probe_fordern(gebaut == 8, 403))
+        setze i auf 0
+        solange i < 4:
+            setze p.sicherung[i] auf p.platten[i]
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_snapshot(p: ptr[ScrubProbe], zurueck: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4:
+            setze j: u64 auf 0
+            solange j < 49152:
+                wenn zurueck:
+                    p.platten[i].daten[j] = p.sicherung[i].daten[j]
+                sonst wenn p.platten[i].daten[j] != p.sicherung[i].daten[j]:
+                    gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 410 + als(u32, i)))
+                setze j auf j + 1
+            setze i auf i + 1
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_fehler(p: ptr[ScrubProbe], maske: u64, stale: bool) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze i: u64 auf 0
+        solange i < 4:
+            wenn (maske & (1 << i)) != 0:
+                p.platten[i].daten[3 * 4096 + 100 + i] = p.platten[i].daten[3 * 4096 + 100 + i] ^ 0x71
+                wenn stale:
+                    setze bytes: puffer[u8] auf pufferansicht(p.platten[i].daten, 3 * 4096, 4096)
+                    setze crc: u32 auf 0
+                    setze c: ergebnis[u32, MooFsFehler] auf moofs_crc(bytes)
+                    weitergeben(scrub_probe_fordern(ist_erfolg(c), 420))
+                    setze crc auf ergebnis_wert(c)
+                    setze h: puffer[MooFsKopf] auf sicht(bytes, MooFsKopf, 0)
+                    setze h[0].crc32c auf crc
+            setze i auf i + 1
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(p.r))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(p.w))
+        setze a: ptr[ArrayPQScrubArbeit] auf zeiger(adresse_von(p.a))
+        setze folge: u64 auf r.stand.folge
+        setze erkannt: u64 auf weitergeben(array_pq_scrub_seite(r, 3, falsch, w, a))
+        weitergeben(scrub_probe_fordern(erkannt == maske und r.stand.folge == folge, 421))
+        # Erst nach der Nur-Prüfen-Phase darf überhaupt geschrieben werden.
+        setze i auf 0
+        solange i < 4:
+            wenn (maske & (1 << i)) == 0:
+                weitergeben(scrub_probe_fordern(array_pq_scrub_gleich(pufferansicht(p.platten[i].daten), pufferansicht(p.sicherung[i].daten)), 422))
+            sonst:
+                weitergeben(scrub_probe_fordern(p.platten[i].daten[3 * 4096 + 100 + i] != p.sicherung[i].daten[3 * 4096 + 100 + i], 423))
+            setze i auf i + 1
+        setze repariert: u64 auf weitergeben(array_pq_scrub_seite(r, 3, wahr, w, a))
+        weitergeben(scrub_probe_fordern(repariert == maske, 424))
+        weitergeben(scrub_probe_snapshot(p, falsch))
+        setze heil: u64 auf weitergeben(array_pq_scrub_seite(r, 3, falsch, w, a))
+        weitergeben(scrub_probe_fordern(heil == 0, 425))
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_oeffnen(p: ptr[ScrubProbe], modus: u32, anzahl: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze leer: ArrayPQRebuild auf 0
+        setze p.r auf leer
+        setze stand: u64 auf weitergeben(array_pq_rebuild_oeffnen(zeiger(adresse_von(p.r)), zeiger(adresse_von(p.auswahl[0])), anzahl, modus, zeiger(adresse_von(p.gf)), zeiger(adresse_von(p.w))))
+        weitergeben(scrub_probe_fordern(stand == 0 und p.r.stand.fehlende == 0, 430))
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_grenzen(p: ptr[ScrubProbe]) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(p.r))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(p.w))
+        setze a: ptr[ArrayPQScrubArbeit] auf zeiger(adresse_von(p.a))
+        setze folge: u64 auf r.stand.folge
+        setze i: u64 auf 0
+        solange i < 9 * 4096:
+            p.platten[4].daten[i] = 0xAC
+            setze i auf i + 1
+        setze p.platten[4].ram.geo.nur_lesend auf wahr
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[4])), w)), 480))
+        setze p.platten[4].ram.geo.nur_lesend auf falsch
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[5])), w)), 481))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[0])), w)), 482))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_paritaet_tauschen(r, 0, zeiger(adresse_von(p.anschluss[5])), w)), 483))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_paritaet_tauschen(r, 1, zeiger(adresse_von(p.anschluss[4])), w)), 484))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_scrub_seite(r, r.daten_max, wahr, w, a)), 485))
+        setze r.stand.fehlende auf 1
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_scrub_seite(r, 0, wahr, w, a)), 486))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[4])), w)), 487))
+        setze r.stand.fehlende auf 0
+        weitergeben(scrub_probe_fordern(r.stand.folge == folge, 488))
+        setze i auf 0
+        solange i < 9 * 4096:
+            weitergeben(scrub_probe_fordern(p.platten[4].daten[i] == 0xAC, 489))
+            setze i auf i + 1
+        weitergeben(scrub_probe_snapshot(p, falsch))
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_lauf(sektor: u64, modus: u32) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ScrubProbe] auf zeiger(adresse_von(SCRUB_PROBE))
+        weitergeben(scrub_probe_initialisieren(p, sektor, modus))
+        weitergeben(scrub_probe_grenzen(p))
+        setze i: u64 auf 0
+        solange i < 4:
+            weitergeben(scrub_probe_fehler(p, 1 << i, falsch))
+            setze j: u64 auf i + 1
+            solange j < 4:
+                weitergeben(scrub_probe_fehler(p, (1 << i) | (1 << j), falsch))
+                setze j auf j + 1
+            setze i auf i + 1
+        # Eine intern resealte Datenseite ist ohne externe Referenz
+        # mehrdeutig zu einem Fehler beider Paritäten: keine Reparatur.
+        p.platten[0].daten[12388] = p.platten[0].daten[12388] ^ 0x71
+        setze reseal_bytes: puffer[u8] auf pufferansicht(p.platten[0].daten, 3 * 4096, 4096)
+        setze reseal_crc: ergebnis[u32, MooFsFehler] auf moofs_crc(reseal_bytes)
+        weitergeben(scrub_probe_fordern(ist_erfolg(reseal_crc), 491))
+        setze reseal_h: puffer[MooFsKopf] auf sicht(reseal_bytes, MooFsKopf, 0)
+        setze reseal_h[0].crc32c auf ergebnis_wert(reseal_crc)
+        setze reseal: ergebnis[u64, BlockFehler] auf array_pq_scrub_seite(zeiger(adresse_von(p.r)), 3, wahr, zeiger(adresse_von(p.w)), zeiger(adresse_von(p.a)))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(reseal), 492))
+        weitergeben(scrub_probe_fordern(array_pq_scrub_gleich(reseal_bytes, pufferansicht(p.a.original[0].bytes)), 493))
+        weitergeben(scrub_probe_snapshot(p, wahr))
+        # P bleibt beim Tausch zweier gültiger Superseiten gleich, Q ändert
+        # sich. Q-Einzelfehler und zwei Datenfehler dürfen nicht verwechselt werden.
+        setze tausch: u64 auf 0
+        solange tausch < 4096:
+            setze temp: u8 auf p.platten[0].daten[tausch]
+            p.platten[0].daten[tausch] = p.platten[3].daten[tausch]
+            p.platten[3].daten[tausch] = temp
+            setze tausch auf tausch + 1
+        setze getauscht: ergebnis[u64, BlockFehler] auf array_pq_scrub_seite(zeiger(adresse_von(p.r)), 0, wahr, zeiger(adresse_von(p.w)), zeiger(adresse_von(p.a)))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(getauscht), 494))
+        weitergeben(scrub_probe_fordern(array_pq_scrub_gleich(pufferansicht(p.platten[0].daten, 0, 4096), pufferansicht(p.sicherung[3].daten, 0, 4096)) und array_pq_scrub_gleich(pufferansicht(p.platten[3].daten, 0, 4096), pufferansicht(p.sicherung[0].daten, 0, 4096)), 495))
+        weitergeben(scrub_probe_snapshot(p, wahr))
+        # Drei widersprüchliche Beschädigungen dürfen nichts überschreiben.
+        p.platten[0].daten[12300] = p.platten[0].daten[12300] ^ 0x42
+        p.platten[1].daten[12400] = p.platten[1].daten[12400] ^ 0x35
+        p.platten[2].daten[12500] = p.platten[2].daten[12500] ^ 0x72
+        setze fraglich: ergebnis[u64, BlockFehler] auf array_pq_scrub_seite(zeiger(adresse_von(p.r)), 3, wahr, zeiger(adresse_von(p.w)), zeiger(adresse_von(p.a)))
+        weitergeben(scrub_probe_fordern(nicht ist_erfolg(fraglich), 440))
+        setze unveraendert: u64 auf 0
+        solange unveraendert < 4:
+            weitergeben(scrub_probe_fordern(array_pq_scrub_gleich(pufferansicht(p.platten[unveraendert].daten, 3 * 4096, 4096), pufferansicht(p.a.original[unveraendert].bytes)), 490))
+            setze unveraendert auf unveraendert + 1
+        weitergeben(scrub_probe_snapshot(p, wahr))
+        setze worker: ArrayPQScrub auf 0
+        setze wp: ptr[ArrayPQScrub] auf zeiger(adresse_von(worker))
+        weitergeben(array_pq_scrub_starten(wp, zeiger(adresse_von(p.r)), wahr))
+        solange nicht worker.fertig:
+            setze fertig: bool auf weitergeben(array_pq_scrub_schritt(wp, zeiger(adresse_von(p.r)), zeiger(adresse_von(p.w)), zeiger(adresse_von(p.a))))
+            weitergeben(scrub_probe_fordern(fertig == worker.fertig, 441))
+        weitergeben(scrub_probe_fordern(worker.geprueft == 8 und worker.repariert == 0, 442))
+        # Echte vollständige referenzierte MooFS-Prüfung nach der Reparatur.
+        setze fs: ptr[MooFsPruefung] auf zeiger(adresse_von(p.fs))
+        setze fs_start: ergebnis[void, MooFsFehler] auf moofs_pruefung_starten(fs, p.anschluss[0].medien.daten, zeiger(adresse_von(p.records[0])), 32, zeiger(adresse_von(p.karte[0])), 2)
+        weitergeben(scrub_probe_fordern(ist_erfolg(fs_start), 443))
+        solange nicht fs.fertig:
+            setze schritt: ergebnis[bool, MooFsFehler] auf moofs_pruefung_schritt(fs, 8)
+            weitergeben(scrub_probe_fordern(ist_erfolg(schritt), 444))
+        # Noch ungeprüfter neuer Datenträger ist absichtlich voll Nichtnull.
+        setze i auf 0
+        solange i < 9 * 4096:
+            p.platten[4].daten[i] = 0xAC
+            setze i auf i + 1
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(p.r))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(p.w))
+        setze slot: u64 auf weitergeben(array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[4])), w))
+        weitergeben(scrub_probe_fordern(slot == 4 und r.basis.anzahl == 5 und r.daten_max == 9 und r.stand.fehlende == 0, 450))
+        setze i auf 0
+        solange i < 9 * 4096:
+            weitergeben(scrub_probe_fordern(p.platten[4].daten[i] == 0, 451))
+            setze i auf i + 1
+        weitergeben(scrub_probe_snapshot(p, falsch))
+        setze i auf 0
+        solange i < 5:
+            p.auswahl[4 - i] = p.anschluss[i]
+            setze i auf i + 1
+        weitergeben(scrub_probe_oeffnen(p, modus, 5))
+        weitergeben(scrub_probe_fordern(p.r.basis.anzahl == 5 und p.r.daten_max == 9, 452))
+        setze a: ptr[ArrayPQScrubArbeit] auf zeiger(adresse_von(p.a))
+        setze i auf 0
+        solange i < 9:
+            setze ok: u64 auf weitergeben(array_pq_scrub_seite(r, i, falsch, w, a))
+            weitergeben(scrub_probe_fordern(ok == 0, 453))
+            setze i auf i + 1
+        # P und Q werden unabhängig auf größere Medien gewechselt.
+        setze pslot: u64 auf weitergeben(array_pq_paritaet_tauschen(r, 1, zeiger(adresse_von(p.anschluss[5])), w))
+        weitergeben(scrub_probe_fordern(pslot == 1 und r.basis.mitglieder[1].seiten == 12 und r.stand.fehlende == 0, 460))
+        p.auswahl[3] = p.anschluss[5]
+        weitergeben(scrub_probe_oeffnen(p, modus, 5))
+        setze qslot: u64 auf weitergeben(array_pq_paritaet_tauschen(r, 2, zeiger(adresse_von(p.anschluss[6])), w))
+        weitergeben(scrub_probe_fordern(qslot == 2 und r.basis.mitglieder[2].seiten == 12 und r.stand.fehlende == 0, 461))
+        p.auswahl[2] = p.anschluss[6]
+        weitergeben(scrub_probe_oeffnen(p, modus, 5))
+        setze i auf 0
+        solange i < 9:
+            setze korrekt: u64 auf weitergeben(array_pq_scrub_seite(r, i, falsch, w, a))
+            weitergeben(scrub_probe_fordern(korrekt == 0, 462))
+            setze i auf i + 1
+        # Die bisherigen P/Q-Träger und Daten wurden beim Wechsel nicht berührt.
+        weitergeben(scrub_probe_snapshot(p, falsch))
+        gib_zurück erfolg()
+
+@nativ
+funktion scrub_probe_operation(p: ptr[ScrubProbe], op: u64) -> ergebnis[u64, BlockFehler]:
+    unsicher:
+        setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(p.r))
+        setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(p.w))
+        wenn op == 0:
+            gib_zurück array_pq_scrub_seite(r, 3, wahr, w, zeiger(adresse_von(p.a)))
+        wenn op == 1:
+            gib_zurück array_pq_daten_hinzufuegen(r, zeiger(adresse_von(p.anschluss[4])), w)
+        wenn op == 2:
+            gib_zurück array_pq_paritaet_tauschen(r, 1, zeiger(adresse_von(p.anschluss[5])), w)
+        gib_zurück array_pq_paritaet_tauschen(r, 2, zeiger(adresse_von(p.anschluss[6])), w)
+
+@nativ
+funktion scrub_probe_abbruch(op: u64) -> ergebnis[void, BlockFehler]:
+    unsicher:
+        setze p: ptr[ScrubProbe] auf zeiger(adresse_von(SCRUB_PROBE))
+        setze strom: ptr[ScrubProbeStrom] auf zeiger(adresse_von(SCRUB_PROBE_STROM))
+        setze grenze: u64 auf 1
+        solange grenze < 200:
+            weitergeben(scrub_probe_initialisieren(p, 512, 1))
+            setze r: ptr[ArrayPQRebuild] auf zeiger(adresse_von(p.r))
+            setze w: ptr[ArrayPQRebuildArbeit] auf zeiger(adresse_von(p.w))
+            wenn op == 0:
+                p.platten[0].daten[12388] = p.platten[0].daten[12388] ^ 0x71
+                p.platten[1].daten[12389] = p.platten[1].daten[12389] ^ 0x71
+            setze strom.schritte auf 0
+            setze strom.grenze auf grenze
+            setze er: ergebnis[u64, BlockFehler] auf scrub_probe_operation(p, op)
+            setze beendet: bool auf ist_erfolg(er)
+            setze strom.grenze auf 0
+            setze strom.tot auf falsch
+            # Neue und alte Parität können beide angeschlossen bleiben.
+            # Der Loader wählt die im maßgeblichen Journal benannte Identität.
+            setze i: u64 auf 0
+            solange i < 4:
+                p.auswahl[i] = p.anschluss[i]
+                setze i auf i + 1
+            setze n: u64 auf 4
+            wenn op != 0:
+                setze neu_slot: u64 auf op + 3
+                setze layout: ArrayLayout auf 0
+                setze base: ergebnis[u64, BlockFehler] auf array_pq_superblock_lesen(pufferansicht(p.platten[neu_slot].meta, 0, 4096), zeiger(adresse_von(layout)))
+                wenn ist_erfolg(base):
+                    p.auswahl[4] = p.anschluss[neu_slot]
+                    setze n auf 5
+            weitergeben(scrub_probe_oeffnen(p, 1, n))
+            setze seite: u64 auf 0
+            solange seite < p.r.daten_max:
+                setze maske: u64 auf weitergeben(array_pq_scrub_seite(r, seite, wahr, w, zeiger(adresse_von(p.a))))
+                weitergeben(scrub_probe_fordern(maske == 0 oder op == 0, 471))
+                setze seite auf seite + 1
+            weitergeben(scrub_probe_snapshot(p, falsch))
+            wenn beendet:
+                setze p.abbrueche[op] auf grenze - 1
+                gib_zurück erfolg()
+            setze grenze auf grenze + 1
+        gib_zurück fehlschlag(BlockFehler(BLOCK_EA, 472))
+
+@nativ
+@einstieg
+funktion array_pq_scrub_probe() -> u64:
+    unsicher:
+        setze sektor: u64 auf 512
+        solange sektor <= 4096:
+            setze modus: u32 auf 0
+            solange modus < 3:
+                setze e: ergebnis[void, BlockFehler] auf scrub_probe_lauf(sektor, modus)
+                wenn nicht ist_erfolg(e):
+                    setze f: BlockFehler auf ergebnis_fehler(e)
+                    gib_zurück (u64(f.code) << 32) | u64(f.geraete_status)
+                setze modus auf modus + 1
+            setze sektor auf sektor * 8
+        setze op: u64 auf 0
+        solange op < 4:
+            setze abbruch: ergebnis[void, BlockFehler] auf scrub_probe_abbruch(op)
+            wenn nicht ist_erfolg(abbruch):
+                setze af: BlockFehler auf ergebnis_fehler(abbruch)
+                gib_zurück (u64(af.code) << 32) | u64(af.geraete_status)
+            setze op auf op + 1
+        gib_zurück 0
+
+
+@nativ
+funktion array_pq_scrub_abbruchzahl(op: u64) -> u64:
+    unsicher:
+        wenn op >= 4:
+            gib_zurück 0
+        gib_zurück SCRUB_PROBE.abbrueche[op]
