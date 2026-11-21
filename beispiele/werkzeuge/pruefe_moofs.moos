@@ -1,0 +1,136 @@
+# Hosted-Prüfer: readonly Dateideskriptor, dieselbe vollständige Prüfung wie im Kern.
+aus ds_moofs importiere MooFsFehler, MOOFS_ARGUMENT, MOOFS_EA
+aus ds_moofs_pruefen importiere MooFsPruefung, MooFsPruefRecord, moofs_pruefung_starten, moofs_pruefung_schritt
+aus ds_fat_transport importiere FatTransport
+aus ds_fat_posix importiere FatPosix, fat_posix_einrichten, lseek
+extern "C" funktion getenv(name: ptr[u8]) -> ptr[u8]
+extern "C" funktion open(name: ptr[u8], flags: i32) -> i32
+extern "C" funktion close(fd: i32) -> i32
+extern "C" funktion mmap(hinweis: ptr[u8], bytes: u64, schutz: i32, flags: i32, fd: i32, offset: i64) -> ptr[u8]
+extern "C" funktion munmap(basis: ptr[u8], bytes: u64) -> i32
+
+@nativ
+konstante MOOFS_PRUEF_ENV: [u8; _] auf "MOO_MOOFS_PRUEF_BILD"
+@nativ
+konstante MOOFS_PRUEF_RECORDS: [u8; _] auf "MOO_MOOFS_PRUEF_RECORDS"
+@nativ
+statisch MOOFS_HOST_PRUEFUNG: MooFsPruefung auf 0
+@nativ
+statisch MOOFS_HOST_FEHLER: MooFsFehler auf 0
+
+@nativ
+funktion moofs_pruefer_close(fd: i32) -> void:
+    unsicher:
+        setze status: i32 auf close(fd)
+@nativ
+funktion moofs_pruefer_unmap(p: ptr[u8], n: u64) -> void:
+    unsicher:
+        setze status: i32 auf munmap(p, n)
+
+@nativ
+funktion moofs_pruefer_kapazitaet() -> ergebnis[u64, MooFsFehler]:
+    unsicher:
+        setze textwert: ptr[u8] auf getenv(zeiger(adresse_von(MOOFS_PRUEF_RECORDS)))
+        wenn u64(textwert) == 0 oder textwert[0] == 0:
+            gib_zurück erfolg(4096)
+        setze n: u64 auf 0
+        setze i: u64 auf 0
+        solange i < 20 und textwert[i] != 0:
+            wenn textwert[i] < 48 oder textwert[i] > 57 oder n > (0x7FFFFFFFFFFFFFFF - 9) / 10:
+                gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 740, 0))
+            setze n auf n * 10 + u64(textwert[i] - 48)
+            setze i auf i + 1
+        wenn i == 20 oder n == 0 oder n > 0x7FFFFFFFFFFFFFFF / groesse_von(MooFsPruefRecord):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 741, 0))
+        gib_zurück erfolg(n)
+
+@nativ
+funktion moofs_pruefer_ablauf() -> ergebnis[void, MooFsFehler]:
+    unsicher:
+        setze name: ptr[u8] auf getenv(zeiger(adresse_von(MOOFS_PRUEF_ENV)))
+        wenn u64(name) == 0 oder name[0] == 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 742, 0))
+        setze fd: i32 auf open(name, 0)
+        wenn fd < 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 740, 0))
+        aufräumen: moofs_pruefer_close(fd)
+        setze laenge: i64 auf lseek(fd, 0, 2)
+        wenn laenge < 16384 oder u64(laenge) % 4096 != 0:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 743, 0))
+        setze kapazitaet: u64 auf weitergeben(moofs_pruefer_kapazitaet())
+        setze record_bytes: u64 auf kapazitaet * groesse_von(MooFsPruefRecord)
+        setze bitmap_bytes: u64 auf (u64(laenge) / 4096 + 7) / 8
+        wenn bitmap_bytes > 0x7FFFFFFFFFFFFFFF - record_bytes:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_ARGUMENT, 744, 0))
+        setze bytes: u64 auf record_bytes + bitmap_bytes
+        setze mapping: ptr[u8] auf mmap(nichts, bytes, 3, 34, -1, 0)
+        wenn u64(mapping) == 0xFFFFFFFFFFFFFFFF:
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 741, 0))
+        aufräumen: moofs_pruefer_unmap(mapping, bytes)
+        setze records: ptr[MooFsPruefRecord] auf zeiger(u64(mapping))
+        setze bitmap: ptr[u8] auf zeiger(u64(mapping) + record_bytes)
+        setze adapter: FatPosix auf 0
+        setze fp: ptr[FatPosix] auf zeiger(adresse_von(adapter))
+        wenn nicht ist_erfolg(fat_posix_einrichten(fp, fd, 512, wahr)):
+            gib_zurück fehlschlag(MooFsFehler(MOOFS_EA, 742, 0))
+        setze transport: ptr[dyn FatTransport] auf fp
+        setze s: ptr[MooFsPruefung] auf zeiger(adresse_von(MOOFS_HOST_PRUEFUNG))
+        weitergeben(moofs_pruefung_starten(s, transport, records, kapazitaet, bitmap, bitmap_bytes))
+        setze fertig: bool auf falsch
+        solange nicht fertig:
+            setze fertig auf weitergeben(moofs_pruefung_schritt(s, 64))
+        gib_zurück erfolg()
+
+@nativ
+funktion moofs_pruefer_start() -> bool:
+    unsicher:
+        setze r: ergebnis[void, MooFsFehler] auf moofs_pruefer_ablauf()
+        wenn nicht ist_erfolg(r):
+            setze MOOFS_HOST_FEHLER auf ergebnis_fehler(r)
+            gib_zurück falsch
+        gib_zurück wahr
+
+@nativ
+funktion moofs_pruefer_wert(nr: u64) -> u64:
+    unsicher:
+        wenn nr == 0:
+            gib_zurück u64(MOOFS_HOST_FEHLER.code)
+        wenn nr == 1:
+            gib_zurück u64(MOOFS_HOST_FEHLER.grund)
+        wenn nr == 2:
+            gib_zurück MOOFS_HOST_FEHLER.block
+        wenn nr == 3:
+            gib_zurück MOOFS_HOST_PRUEFUNG.kopie
+        wenn nr == 4:
+            gib_zurück MOOFS_HOST_PRUEFUNG.fund.objekt
+        wenn nr == 5:
+            gib_zurück MOOFS_HOST_PRUEFUNG.fund.index
+        wenn nr == 6:
+            gib_zurück MOOFS_HOST_PRUEFUNG.problem_block
+        wenn nr == 7:
+            gib_zurück MOOFS_HOST_PRUEFUNG.generation
+        wenn nr == 8:
+            gib_zurück MOOFS_HOST_PRUEFUNG.superbloecke
+        wenn nr == 9:
+            gib_zurück MOOFS_HOST_PRUEFUNG.knoten
+        wenn nr == 10:
+            gib_zurück MOOFS_HOST_PRUEFUNG.daten
+        gib_zurück MOOFS_HOST_PRUEFUNG.eintraege
+
+# FEHLERPFAD(M-F001): Werkzeug beendet sich bei unerwarteten Sprachfehlern.
+unsicher:
+    wenn nicht moofs_pruefer_start():
+        zeige "MooFS FEHLER " + text(moofs_pruefer_wert(0))
+        zeige "GRUND " + text(moofs_pruefer_wert(1))
+        zeige "BLOCK " + text(moofs_pruefer_wert(2))
+        zeige "SUPERKOPIE " + text(moofs_pruefer_wert(3))
+        zeige "INODE " + text(moofs_pruefer_wert(4))
+        zeige "LOGISCH " + text(moofs_pruefer_wert(5))
+        zeige "ZWEITER_BLOCK " + text(moofs_pruefer_wert(6))
+        beende(1)
+    zeige "MooFS OK"
+    zeige "GENERATION " + text(moofs_pruefer_wert(7))
+    zeige "SUPERBLOECKE " + text(moofs_pruefer_wert(8))
+    zeige "KNOTEN " + text(moofs_pruefer_wert(9))
+    zeige "DATEN " + text(moofs_pruefer_wert(10))
+    zeige "RECORDS " + text(moofs_pruefer_wert(11))
