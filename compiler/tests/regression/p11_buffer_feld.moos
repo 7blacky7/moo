@@ -1,0 +1,5 @@
+importiere "../p11/buffer_feld"
+setze punkte auf puffer_erstellen(BufferFeldPunkt, 2)
+# Der Selbsttest soll bei einem unerwarteten Fehler abbrechen.
+unsicher:
+    zeige buffer_feld_probe(punkte)
